@@ -1,12 +1,19 @@
 {
     "name": "IOWarp Core",
-    "image": "iowarp/ppi-jarvis-cd-build:latest",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "."
+    },
     "workspaceFolder": "/workspace",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
     "mounts": [
         "source=${localEnv:HOME}/.ssh,target=/tmp/host-ssh,type=bind,readonly",
         "source=${localEnv:HOME}/.claude,target=/tmp/host-claude,type=bind,readonly",
-        "source=${localEnv:HOME}/.claude.json,target=/tmp/host-claude.json,type=bind,readonly"
+        "source=${localEnv:HOME}/.claude.json,target=/tmp/host-claude.json,type=bind,readonly",
+        "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+    ],
+    "runArgs": [
+        "--privileged"
     ],
     "customizations": {
         "vscode": {
@@ -24,6 +31,6 @@
             }
         }
     },
-    "postCreateCommand": "bash -c 'git config --global --add safe.directory /workspace && sudo rm -rf /home/iowarp/.ssh && sudo cp -r /tmp/host-ssh /home/iowarp/.ssh && sudo chown -R iowarp:iowarp /home/iowarp/.ssh && chmod 700 /home/iowarp/.ssh && chmod 600 /home/iowarp/.ssh/* && chmod 644 /home/iowarp/.ssh/*.pub 2>/dev/null || true && sudo cp -r /tmp/host-claude /home/iowarp/.claude && sudo cp /tmp/host-claude.json /home/iowarp/.claude.json && sudo chown -R iowarp:iowarp /home/iowarp/.claude /home/iowarp/.claude.json && sudo service ssh start'",
+    "postCreateCommand": "bash -c 'git config --global --add safe.directory /workspace && sudo rm -rf /home/iowarp/.ssh && sudo cp -r /tmp/host-ssh /home/iowarp/.ssh && sudo chown -R iowarp:iowarp /home/iowarp/.ssh && chmod 700 /home/iowarp/.ssh && chmod 600 /home/iowarp/.ssh/* && chmod 644 /home/iowarp/.ssh/*.pub 2>/dev/null || true && sudo cp -r /tmp/host-claude /home/iowarp/.claude && sudo cp /tmp/host-claude.json /home/iowarp/.claude.json && sudo chown -R iowarp:iowarp /home/iowarp/.claude /home/iowarp/.claude.json && sudo chmod 666 /var/run/docker.sock && sudo service ssh start'",
     "remoteUser": "iowarp"
 }
