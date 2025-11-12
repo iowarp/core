@@ -91,10 +91,10 @@ add_executable(${COMPOSE_TEST_TARGET} ${COMPOSE_TEST_SOURCES})
 
 # Include directories for compose tests
 target_include_directories(${COMPOSE_TEST_TARGET} PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
-  ${CMAKE_SOURCE_DIR}/test  # For simple_test.h
-  ${CMAKE_SOURCE_DIR}/modules/admin/include  # For admin client
-  ${CMAKE_SOURCE_DIR}/modules/bdev/include   # For bdev client
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/admin/include  # For admin client
+  ${CHIMAERA_ROOT}/modules/bdev/include   # For bdev client
 )
 
 # Link against required libraries for compose tests
@@ -126,9 +126,9 @@ add_executable(${TASK_ARCHIVE_TEST_TARGET} ${TASK_ARCHIVE_TEST_SOURCES})
 
 # Include directories for task archive tests
 target_include_directories(${TASK_ARCHIVE_TEST_TARGET} PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
-  ${CMAKE_SOURCE_DIR}/test  # For simple_test.h
-  ${CMAKE_SOURCE_DIR}/modules/admin/include  # For admin tasks
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/admin/include  # For admin tasks
 )
 
 # Link against required libraries for task archive tests
@@ -157,10 +157,10 @@ add_executable(${FLUSH_TEST_TARGET} ${FLUSH_TEST_SOURCES})
 
 # Include directories for flush tests
 target_include_directories(${FLUSH_TEST_TARGET} PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
-  ${CMAKE_SOURCE_DIR}/runtime/test  # For simple_test.h
-  ${CMAKE_SOURCE_DIR}/modules/admin/include  # For admin tasks
-  ${CMAKE_SOURCE_DIR}/modules/MOD_NAME/include  # For MOD_NAME tasks
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/admin/include  # For admin tasks
+  ${CHIMAERA_ROOT}/modules/MOD_NAME/include  # For MOD_NAME tasks
 )
 
 # Link against required libraries for flush tests
@@ -193,10 +193,10 @@ add_executable(${BDEV_TEST_TARGET} ${BDEV_TEST_SOURCES})
 
 # Include directories for bdev tests
 target_include_directories(${BDEV_TEST_TARGET} PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
-  ${CMAKE_SOURCE_DIR}/test  # For simple_test.h
-  ${CMAKE_SOURCE_DIR}/modules/admin/include  # For admin tasks
-  ${CMAKE_SOURCE_DIR}/modules/bdev/include   # For bdev tasks and client
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/admin/include  # For admin tasks
+  ${CHIMAERA_ROOT}/modules/bdev/include   # For bdev tasks and client
 )
 
 # Link against required libraries for bdev tests
@@ -227,7 +227,7 @@ add_executable(${FIBER_TEST_TARGET} ${FIBER_TEST_SOURCES})
 
 # Include directories for fiber tests
 target_include_directories(${FIBER_TEST_TARGET} PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
+  ${CHIMAERA_ROOT}/include
 )
 
 # Find Boost context library for fiber tests
@@ -256,7 +256,7 @@ add_executable(${WORKER_FIBER_TEST_TARGET} ${WORKER_FIBER_TEST_SOURCES})
 
 # Include directories for worker fiber pattern tests
 target_include_directories(${WORKER_FIBER_TEST_TARGET} PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
+  ${CHIMAERA_ROOT}/include
 )
 
 # Link against hermes-shm target for worker fiber pattern tests
@@ -282,7 +282,7 @@ add_executable(${SEGFAULT_DEBUG_TEST_TARGET} ${SEGFAULT_DEBUG_TEST_SOURCES})
 
 # Include directories for segfault debug tests
 target_include_directories(${SEGFAULT_DEBUG_TEST_TARGET} PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
+  ${CHIMAERA_ROOT}/include
 )
 
 # Link against hermes-shm target for segfault debug tests
@@ -308,10 +308,10 @@ add_executable(${COMUTEX_TEST_TARGET} ${COMUTEX_TEST_SOURCES})
 
 # Include directories for CoMutex tests
 target_include_directories(${COMUTEX_TEST_TARGET} PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
-  ${CMAKE_SOURCE_DIR}/test  # For simple_test.h
-  ${CMAKE_SOURCE_DIR}/modules/admin/include  # For admin tasks
-  ${CMAKE_SOURCE_DIR}/modules/MOD_NAME/include  # For MOD_NAME tasks and client
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/admin/include  # For admin tasks
+  ${CHIMAERA_ROOT}/modules/MOD_NAME/include  # For MOD_NAME tasks and client
 )
 
 # Link against required libraries for CoMutex tests
@@ -342,10 +342,10 @@ add_executable(${WAIT_FUNCTIONALITY_TEST_TARGET} ${WAIT_FUNCTIONALITY_TEST_SOURC
 
 # Include directories for Wait Functionality tests
 target_include_directories(${WAIT_FUNCTIONALITY_TEST_TARGET} PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
-  ${CMAKE_SOURCE_DIR}/test  # For simple_test.h
-  ${CMAKE_SOURCE_DIR}/modules/admin/include  # For admin tasks
-  ${CMAKE_SOURCE_DIR}/modules/MOD_NAME/include  # For MOD_NAME tasks and client
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/admin/include  # For admin tasks
+  ${CHIMAERA_ROOT}/modules/MOD_NAME/include  # For MOD_NAME tasks and client
 )
 
 # Link against required libraries for Wait Functionality tests
@@ -374,8 +374,8 @@ add_executable(${IPC_ALLOCATE_BUFFER_TEST_TARGET} ${IPC_ALLOCATE_BUFFER_TEST_SOU
 
 # Include directories for IPC AllocateBuffer tests
 target_include_directories(${IPC_ALLOCATE_BUFFER_TEST_TARGET} PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
-  ${CMAKE_SOURCE_DIR}/test  # For test utilities
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For test utilities
 )
 
 # Link against required libraries for IPC AllocateBuffer tests
@@ -399,14 +399,11 @@ set_target_properties(${IPC_ALLOCATE_BUFFER_TEST_TARGET} PROPERTIES
 # Create Unordered Map LL test executable
 add_executable(${UNORDERED_MAP_LL_TEST_TARGET} ${UNORDERED_MAP_LL_TEST_SOURCES})
 
-# Include directories for Unordered Map LL tests
-target_include_directories(${UNORDERED_MAP_LL_TEST_TARGET} PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/../../include  # Runtime include directory for chimaera headers
-)
-
 # Link against required libraries for Unordered Map LL tests
+# Note: chimaera::cxx provides runtime headers automatically via transitive includes
 target_link_libraries(${UNORDERED_MAP_LL_TEST_TARGET}
   ${CMAKE_THREAD_LIBS_INIT}  # Threading support
+  chimaera::cxx              # Core library with runtime headers
 )
 
 # Set C++ standard for Unordered Map LL tests
@@ -425,10 +422,10 @@ add_executable(${SAVE_LOAD_TASK_TEST_TARGET} ${SAVE_LOAD_TASK_TEST_SOURCES})
 
 # Include directories for SaveTask/LoadTask tests
 target_include_directories(${SAVE_LOAD_TASK_TEST_TARGET} PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
-  ${CMAKE_SOURCE_DIR}/test  # For simple_test.h
-  ${CMAKE_SOURCE_DIR}/modules/admin/include  # For admin tasks
-  ${CMAKE_SOURCE_DIR}/modules/bdev/include   # For bdev tasks
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/admin/include  # For admin tasks
+  ${CHIMAERA_ROOT}/modules/bdev/include   # For bdev tasks
 )
 
 # Link against required libraries for SaveTask/LoadTask tests
@@ -457,8 +454,8 @@ add_executable(${TEST_TARGET} ${TEST_SOURCES})
 
 # Include directories
 target_include_directories(${TEST_TARGET} PRIVATE
-  ${CMAKE_SOURCE_DIR}/include
-  ${CMAKE_SOURCE_DIR}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
 )
 
 # Link against required libraries

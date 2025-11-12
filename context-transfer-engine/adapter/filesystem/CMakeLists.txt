@@ -1,10 +1,3 @@
-include_directories(
-        ${CMAKE_SOURCE_DIR}
-        ${CMAKE_SOURCE_DIR}/context-transfer-engine  # For adapter/adapter_types.h
-        .)
-
-# Include directories are handled by target dependencies
-
 # Create the metadata manager singleton + FS base class
 add_library(wrp_cte_fs_base SHARED
         filesystem.cc
@@ -12,15 +5,17 @@ add_library(wrp_cte_fs_base SHARED
         filesystem_io_client.h
         filesystem_mdm.h)
 
-# Add bdev ChiMod include directory and adapter parent directory (unified build mode)
+# Local includes for adapter headers
+# Note: bdev headers come transitively via chimaera_bdev_client
+# Note: core headers come transitively via wrp_cte_core_client
 target_include_directories(wrp_cte_fs_base PRIVATE
-  ${CMAKE_SOURCE_DIR}/runtime/modules/bdev/include
-  ${CMAKE_SOURCE_DIR}/context-transfer-engine  # For adapter/adapter_types.h
+  ${CMAKE_CURRENT_SOURCE_DIR}       # For local headers
+  ${WRP_CTE_ROOT}                   # For adapter/adapter_types.h include path
 )
 
 target_link_libraries(wrp_cte_fs_base
         MPI::MPI_CXX
-        wrp_cte_core_client
+        wrp_cte_core_client      # Provides core and bdev headers transitively
         wrp_cte_cae_config
         ${HSHM_TARGET})
 

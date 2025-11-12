@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(content_transfer_engine)
 
+# Set root directory for this component
+set(WRP_CTE_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Python bindings are controlled by WRP_CORE_ENABLE_PYTHON in root CMakeLists.txt
 # Component-specific option: only effective when WRP_CORE_ENABLE_PYTHON=ON
 option(WRP_CTE_ENABLE_PYTHON "Enable Python bindings for CTE (requires WRP_CORE_ENABLE_PYTHON=ON)" ON)
@@ -74,4 +77,4 @@ add_subdirectory(benchmark)
 
 message(STATUS "CTE Core and Bdev ChiMods configured for compilation")
 
-jarvis_repo_add(${CMAKE_SOURCE_DIR}/test/jarvis_wrp_cte "")
+jarvis_repo_add(${WRP_CTE_ROOT}/test/jarvis_wrp_cte "")

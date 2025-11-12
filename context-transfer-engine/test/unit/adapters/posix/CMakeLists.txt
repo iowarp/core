@@ -1,7 +1,7 @@
 # POSIX Adapter Unit Tests
 
 include_directories(
-    ${CMAKE_SOURCE_DIR}
+    ${WRP_CTE_ROOT}
     .
 )
 

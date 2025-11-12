@@ -1,5 +1,5 @@
 include_directories(
-        ${CMAKE_SOURCE_DIR}
+        ${WRP_CTE_ROOT}
         ${HERMES_SRC_DIR}
         ${HERMES_ADAPTER_DIR}
         ${HERMES_IO_CLIENT_DIR}

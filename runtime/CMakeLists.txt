@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 project(chimaera VERSION 1.0.0)
 
+# Set root directory for this component
+set(CHIMAERA_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Read namespace from chimaera_repo.yaml in project root (function defined in ChimaeraCommon.cmake)
 # This will be called after the utilities are included below
 
@@ -31,14 +34,14 @@ endif()
 # SECTION 5: SOURCE COMPILATION
 #------------------------------------------------------------------------------
 # Include directories
-include_directories(${CMAKE_SOURCE_DIR}/include)
+include_directories(${CHIMAERA_ROOT}/include)
 include_directories(${HermesShm_INCLUDE_DIRS})
 
 # Output directories are set by root CMakeLists.txt
 
 # Read namespace from chimaera_repo.yaml BEFORE processing subdirectories
-# This searches up the directory tree starting from CMAKE_SOURCE_DIR
-read_repo_namespace(CHIMAERA_NAMESPACE "${CMAKE_SOURCE_DIR}")
+# This searches up the directory tree starting from CHIMAERA_ROOT
+read_repo_namespace(CHIMAERA_NAMESPACE "${CHIMAERA_ROOT}")
 # Set namespace as cache variable so it's available to all CMakeLists.txt
 set(CHIMAERA_NAMESPACE "${CHIMAERA_NAMESPACE}" CACHE STRING "Project namespace for chimod targets")
 message(STATUS "Chimaera namespace: ${CHIMAERA_NAMESPACE}")
@@ -64,9 +67,9 @@ endif()
 
 #------------------------------------------------------------------------------
 # SECTION 6: JARVIS INTEGRATION
-#------------------------------------------------------------------------------ 
+#------------------------------------------------------------------------------
 # Add Jarvis WRP runtime packages
-jarvis_repo_add(${CMAKE_SOURCE_DIR}/test/jarvis_wrp_runtime "")
+jarvis_repo_add(${CHIMAERA_ROOT}/test/jarvis_wrp_runtime "")
 
 #------------------------------------------------------------------------------
 # SECTION 7: INSTALL CODE

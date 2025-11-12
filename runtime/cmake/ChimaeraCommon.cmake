@@ -159,6 +159,12 @@ endfunction()
 #   INCLUDE_LIBRARIES   - Libraries whose includes should be added
 #   INCLUDE_DIRECTORIES - Additional include directories
 #
+# Automatic Cross-Namespace Dependencies (Unified Builds):
+#   For non-chimaera namespaces (e.g., wrp_cte, wrp_cae), this function automatically
+#   links chimaera admin and bdev client libraries if they are available as targets.
+#   This enables wrp_* ChiMods to use chimaera ChiMod headers and functionality without
+#   explicit dependency declarations in their CMakeLists.txt files.
+#
 function(add_chimod_client)
   cmake_parse_arguments(
     ARG
@@ -186,35 +192,32 @@ function(add_chimod_client)
       ${CHIMAERA_COMMON_COMPILE_DEFS}
       ${ARG_COMPILE_DEFINITIONS}
   )
-  
-  # Add include directories
+
+  # Add include directories with proper BUILD_INTERFACE and INSTALL_INTERFACE
+  # This ensures downstream targets automatically get includes via target_link_libraries
   target_include_directories(${TARGET_NAME}
     PUBLIC
+      # Module's own include directory - available in both build and install trees
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
       $<INSTALL_INTERFACE:include>
-      ${CHIMAERA_COMMON_INCLUDES}
   )
-  
+
   # Add additional include directories with BUILD_INTERFACE wrapper
   foreach(INCLUDE_DIR ${ARG_INCLUDE_DIRECTORIES})
     target_include_directories(${TARGET_NAME} PUBLIC
       $<BUILD_INTERFACE:${INCLUDE_DIR}>
     )
   endforeach()
-  
-  # Add include directories from INCLUDE_LIBRARIES
-  foreach(LIB ${ARG_INCLUDE_LIBRARIES})
-    get_target_property(LIB_INCLUDES ${LIB} INTERFACE_INCLUDE_DIRECTORIES)
-    if(LIB_INCLUDES)
-      target_include_directories(${TARGET_NAME} PUBLIC ${LIB_INCLUDES})
-    endif()
-  endforeach()
-  
+
+  # Note: Boost and cereal includes are handled via target_link_libraries below
+  # When we link to Boost::fiber, Boost::context, etc., their INTERFACE_INCLUDE_DIRECTORIES
+  # are automatically propagated to downstream targets. Same applies to linked ChiMod targets.
+
   # Add link directories
   if(ARG_LINK_DIRECTORIES)
     target_link_directories(${TARGET_NAME} PUBLIC ${ARG_LINK_DIRECTORIES})
   endif()
-  
+
   # Link libraries - use hermes_shm::cxx for internal builds, chimaera::cxx for external
   set(CORE_LIB "")
   if(TARGET chimaera::cxx)
@@ -228,12 +231,27 @@ function(add_chimod_client)
   else()
     message(FATAL_ERROR "Neither chimaera::cxx, hermes_shm::cxx, HermesShm::cxx nor cxx target found")
   endif()
-  
+
+  # Automatically add chimaera ChiMod dependencies in unified builds
+  # This handles cross-namespace dependencies (e.g., wrp_cte depending on chimaera modules)
+  set(CHIMAERA_CHIMOD_DEPS "")
+  if(NOT "${CHIMAERA_NAMESPACE}" STREQUAL "chimaera")
+    # For non-chimaera namespaces, check if chimaera admin and bdev are available
+    # These are common dependencies for most ChiMods
+    if(TARGET chimaera_admin_client)
+      list(APPEND CHIMAERA_CHIMOD_DEPS chimaera_admin_client)
+    endif()
+    if(TARGET chimaera_bdev_client)
+      list(APPEND CHIMAERA_CHIMOD_DEPS chimaera_bdev_client)
+    endif()
+  endif()
+
   target_link_libraries(${TARGET_NAME}
     PUBLIC
       ${CORE_LIB}
       ${CHIMAERA_COMMON_LIBS}
       ${ARG_LINK_LIBRARIES}
+      ${CHIMAERA_CHIMOD_DEPS}
   )
   
   # Create alias for external use
@@ -285,6 +303,12 @@ endfunction()
 #   INCLUDE_LIBRARIES   - Libraries whose includes should be added
 #   INCLUDE_DIRECTORIES - Additional include directories
 #
+# Automatic Cross-Namespace Dependencies (Unified Builds):
+#   For non-chimaera namespaces (e.g., wrp_cte, wrp_cae), this function automatically
+#   links chimaera admin and bdev runtime libraries if they are available as targets.
+#   This enables wrp_* ChiMods to use chimaera ChiMod headers and functionality without
+#   explicit dependency declarations in their CMakeLists.txt files.
+#
 function(add_chimod_runtime)
   cmake_parse_arguments(
     ARG
@@ -313,35 +337,32 @@ function(add_chimod_runtime)
       ${CHIMAERA_COMMON_COMPILE_DEFS}
       ${ARG_COMPILE_DEFINITIONS}
   )
-  
-  # Add include directories
+
+  # Add include directories with proper BUILD_INTERFACE and INSTALL_INTERFACE
+  # This ensures downstream targets automatically get includes via target_link_libraries
   target_include_directories(${TARGET_NAME}
     PUBLIC
+      # Module's own include directory - available in both build and install trees
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
       $<INSTALL_INTERFACE:include>
-      ${CHIMAERA_COMMON_INCLUDES}
   )
-  
+
   # Add additional include directories with BUILD_INTERFACE wrapper
   foreach(INCLUDE_DIR ${ARG_INCLUDE_DIRECTORIES})
     target_include_directories(${TARGET_NAME} PUBLIC
       $<BUILD_INTERFACE:${INCLUDE_DIR}>
     )
   endforeach()
-  
-  # Add include directories from INCLUDE_LIBRARIES
-  foreach(LIB ${ARG_INCLUDE_LIBRARIES})
-    get_target_property(LIB_INCLUDES ${LIB} INTERFACE_INCLUDE_DIRECTORIES)
-    if(LIB_INCLUDES)
-      target_include_directories(${TARGET_NAME} PUBLIC ${LIB_INCLUDES})
-    endif()
-  endforeach()
-  
+
+  # Note: Boost and cereal includes are handled via target_link_libraries below
+  # When we link to Boost::fiber, Boost::context, etc., their INTERFACE_INCLUDE_DIRECTORIES
+  # are automatically propagated to downstream targets. Same applies to linked ChiMod targets.
+
   # Add link directories
   if(ARG_LINK_DIRECTORIES)
     target_link_directories(${TARGET_NAME} PUBLIC ${ARG_LINK_DIRECTORIES})
   endif()
-  
+
   # Link libraries - use hermes_shm::cxx for internal builds, chimaera::cxx for external
   set(CORE_LIB "")
   if(TARGET chimaera::cxx)
@@ -369,7 +390,20 @@ function(add_chimod_runtime)
     list(APPEND RUNTIME_LINK_LIBS ${CHIMAERA_MODULE_CLIENT_TARGET})
     message(STATUS "Runtime ${TARGET_NAME} linking to client ${CHIMAERA_MODULE_CLIENT_TARGET}")
   endif()
-  
+
+  # Automatically add chimaera ChiMod dependencies in unified builds
+  # This handles cross-namespace dependencies (e.g., wrp_cte depending on chimaera modules)
+  if(NOT "${CHIMAERA_NAMESPACE}" STREQUAL "chimaera")
+    # For non-chimaera namespaces, check if chimaera admin and bdev are available
+    # These are common dependencies for most ChiMods
+    if(TARGET chimaera_admin_runtime)
+      list(APPEND RUNTIME_LINK_LIBS chimaera_admin_runtime)
+    endif()
+    if(TARGET chimaera_bdev_runtime)
+      list(APPEND RUNTIME_LINK_LIBS chimaera_bdev_runtime)
+    endif()
+  endif()
+
   target_link_libraries(${TARGET_NAME}
     PUBLIC
       ${RUNTIME_LINK_LIBS}

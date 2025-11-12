@@ -8,16 +8,17 @@ add_library(wrp_cte_cae_config SHARED
     cae_config.h
 )
 
+# Note: wrp_cte_core_client provides core/include via transitive includes
+# LOCAL includes for this library's own headers and adapter/ path resolution
 target_include_directories(wrp_cte_cae_config PRIVATE
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/core/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/..  # For adapter/cae_config.h include
+    ${CMAKE_CURRENT_SOURCE_DIR}  # For cae_config.h in same directory
+    ${WRP_CTE_ROOT}              # For adapter/cae_config.h and adapter/adapter_types.h include paths
 )
 
 target_link_libraries(wrp_cte_cae_config
     yaml-cpp
     ${HSHM_TARGET}
-    wrp_cte_core_client
+    wrp_cte_core_client  # Provides core headers transitively
 )
 
 # CTE adapter singleton implementation - moved to filesystem directory

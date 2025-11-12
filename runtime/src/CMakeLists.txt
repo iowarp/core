@@ -59,7 +59,7 @@ target_link_libraries(${CHIMAERA_LIB_NAME}
 set_target_properties(${CHIMAERA_LIB_NAME} PROPERTIES
   VERSION ${PROJECT_VERSION}
   SOVERSION 1
-  PUBLIC_HEADER "${CMAKE_SOURCE_DIR}/include/chimaera/chimaera.h"
+  PUBLIC_HEADER "${CHIMAERA_ROOT}/include/chimaera/chimaera.h"
   OUTPUT_NAME "${CHIMAERA_NAMESPACE}_cxx"
 )
 

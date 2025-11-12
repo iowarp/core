@@ -89,22 +89,8 @@ target_compile_options(test_query PRIVATE
     $<$<CONFIG:Release>:-O3>     # Optimization for release
 )
 
-# Include directories
-target_include_directories(cte_core_unit_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/core/include
-    ${CMAKE_SOURCE_DIR}/core/src
-)
-
-target_include_directories(test_core_functionality PRIVATE
-    ${CMAKE_SOURCE_DIR}/core/include
-    ${CMAKE_SOURCE_DIR}/core/src
-)
-
-# Include directories for test_query
-target_include_directories(test_query PRIVATE
-    ${CMAKE_SOURCE_DIR}/core/include
-    ${CMAKE_SOURCE_DIR}/core/src
-)
+# Note: Include directories are provided automatically via linked ChiMod targets
+# wrp_cte_core_client provides ${WRP_CTE_ROOT}/core/include via transitive includes
 
 # Add test discovery for CTest integration
 include(CTest)

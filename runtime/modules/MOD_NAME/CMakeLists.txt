@@ -6,7 +6,7 @@ add_chimod_client(
   SOURCES
     src/MOD_NAME_client.cc
   INCLUDE_DIRECTORIES
-    ${CMAKE_SOURCE_DIR}/modules/admin/include  # MOD_NAME needs admin headers
+    ${CHIMAERA_ROOT}/modules/admin/include  # MOD_NAME needs admin headers
 )
 
 # Create runtime library
@@ -15,5 +15,5 @@ add_chimod_runtime(
     src/MOD_NAME_runtime.cc
     src/autogen/MOD_NAME_lib_exec.cc
   INCLUDE_DIRECTORIES
-    ${CMAKE_SOURCE_DIR}/modules/admin/include  # MOD_NAME needs admin headers
+    ${CHIMAERA_ROOT}/modules/admin/include  # MOD_NAME needs admin headers
 )

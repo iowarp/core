@@ -12,10 +12,11 @@ nanobind_add_module(
 # Link against the core client library
 target_link_libraries(wrp_cte_core_ext PRIVATE wrp_cte_core_client)
 
-# Include directories for headers
+# Note: core/include is provided transitively via wrp_cte_core_client
+# Note: nanobind includes are provided via nanobind::module target
+# Local includes only
 target_include_directories(wrp_cte_core_ext PRIVATE
-    ${CMAKE_SOURCE_DIR}/core/include
-    ${CMAKE_SOURCE_DIR}/external/nanobind/include
+    ${CMAKE_CURRENT_SOURCE_DIR}  # For local headers in wrapper/python
 )
 
 # Ensure C++17 standard

@@ -128,11 +128,15 @@ message(STATUS "Building context-transport-primitives component")
 # Enable ELF support for adapter real API functionality
 set(HSHM_ENABLE_ELF ON CACHE BOOL "Enable ELF support for adapters" FORCE)
 add_subdirectory(context-transport-primitives)
+# Set HSHM_ROOT for cross-component access
+set(HSHM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/context-transport-primitives" CACHE PATH "Root directory for context-transport-primitives")
 
 # Runtime component
 if(WRP_CORE_ENABLE_RUNTIME)
     message(STATUS "Building runtime component")
     add_subdirectory(runtime)
+    # Set CHIMAERA_ROOT for cross-component access (e.g., CTE needs bdev includes)
+    set(CHIMAERA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/runtime" CACHE PATH "Root directory for runtime component")
 else()
     message(STATUS "Runtime component disabled")
 endif()

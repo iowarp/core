@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(context_exploration_engine)
 
+# Set root directory for this component
+set(WRP_CEE_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Placeholder CMakeLists.txt for context-exploration-engine
 # This component is under development and does not yet have build targets
 
