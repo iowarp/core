@@ -1,0 +1,23 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+            "cStandard": "c17",
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "linux-gcc-x64",
+            "configurationProvider": "ms-vscode.cmake-tools",
+            "includePath": [
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/context-transfer-engine/include",
+                "${workspaceFolder}/context-transport-primitives/include",
+                "${workspaceFolder}/context-assimilation-engine/include",
+                "${workspaceFolder}/context-exploration-engine/include",
+                "${workspaceFolder}/runtime/include",
+                "/usr/local/include/chimaera",
+                "/usr/local/include/hermes-shm"
+            ]
+        }
+    ],
+    "version": 4
+}
