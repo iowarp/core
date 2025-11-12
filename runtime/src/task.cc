@@ -62,6 +62,12 @@ void Task::Wait(double block_time_us, bool from_yield) {
     // No need for a while loop here.
     worker->AddToBlockedQueue(run_ctx);
     YieldBase();
+
+    // After yielding, check if task is complete
+    // If not complete, set task_did_work_ to false to indicate blocked work
+    if (!IsComplete()) {
+      worker->SetTaskDidWork(false);
+    }
   } else {
     // Client implementation: Wait loop using Yield()
     while (!IsComplete()) {

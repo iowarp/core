@@ -83,8 +83,14 @@ jarvis_repo_add(${CHIMAERA_ROOT}/test/jarvis_wrp_runtime "")
 set(MAIN_EXPORT_NAME "${CHIMAERA_NAMESPACE}_coreTargets")
 set(MAIN_PACKAGE_NAME "${CHIMAERA_NAMESPACE}")
 
+# Include cereal in export if it was built as a submodule
+set(_CEREAL_TARGET "")
+if(TARGET cereal)
+    set(_CEREAL_TARGET cereal)
+endif()
+
 # Install main library
-install(TARGETS ${CHIMAERA_NAMESPACE}_cxx
+install(TARGETS ${CHIMAERA_NAMESPACE}_cxx ${_CEREAL_TARGET}
   EXPORT ${MAIN_EXPORT_NAME}
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib

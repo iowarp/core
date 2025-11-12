@@ -401,51 +401,21 @@ void Runtime::SendIn(hipc::FullPtr<SendTask> task, chi::RunContext &rctx) {
     // automatically for bulks)
     container->SaveTask(task_copy->method_, archive, task_copy);
 
-    // Send using Lightbeam with retry logic for system boot
-    // Get retry configuration from config manager
-    chi::u32 wait_for_restart_timeout =
-        config_manager->GetWaitForRestartTimeout();
-    chi::u32 poll_period = config_manager->GetWaitForRestartPollPeriod();
+    // Send using Lightbeam asynchronously (non-blocking)
+    hshm::lbm::LbmContext ctx(0);  // Non-blocking async send
+    int rc = lbm_client->Send(archive, ctx);
 
-    int rc = -1;
-    chi::u32 elapsed_seconds = 0;
-    bool send_succeeded = false;
-
-    // Use synchronous sends for reliability during boot
-    hshm::lbm::LbmContext ctx(hshm::lbm::LBM_SYNC);
-
-    while (elapsed_seconds < wait_for_restart_timeout) {
-      rc = lbm_client->Send(archive, ctx);
-      if (rc == 0) {
-        send_succeeded = true;
-        break;
-      }
-
-      // Send failed, wait before retrying
-      HELOG(kWarning,
-            "[SendIn] Task {} Send failed (rc={}), retrying in {} seconds... "
-            "(elapsed: {}/{}s)",
-            origin_task->task_id_, rc, poll_period, elapsed_seconds,
-            wait_for_restart_timeout);
-
-      // Use task->Wait() with poll_period seconds to yield control
-      task->Wait(poll_period);
-      elapsed_seconds += poll_period;
-    }
-
-    if (!send_succeeded) {
+    if (rc != 0) {
       HELOG(kError,
-            "[SendIn] Task {} Lightbeam Send FAILED after {} seconds with "
-            "error code {}",
-            origin_task->task_id_, wait_for_restart_timeout, rc);
+            "[SendIn] Task {} Lightbeam async Send FAILED with error code {}",
+            origin_task->task_id_, rc);
       continue;
     }
 
     HILOG(kDebug,
-          "[SendIn] Successfully sent task copy {} to node {} ({}) after {} "
-          "seconds",
-          task_copy->task_id_, target_node_id, target_host->ip_address,
-          elapsed_seconds);
+          "[SendIn] Successfully sent task copy {} to node {} ({}) "
+          "asynchronously",
+          task_copy->task_id_, target_node_id, target_host->ip_address);
   }
 
   HILOG(kDebug, "=== [SendIn END] Task {} completed sending to {} targets ===",

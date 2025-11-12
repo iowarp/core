@@ -71,9 +71,22 @@ endif()
 # -----------------------------------------------------------------------------
 # Add Target(s) to CMake Install
 # -----------------------------------------------------------------------------
+# Include yaml-cpp and cereal in export if they were built as submodules
+set(_YAML_CPP_TARGET "")
+if(TARGET yaml-cpp)
+    set(_YAML_CPP_TARGET yaml-cpp)
+endif()
+
+set(_CEREAL_TARGET "")
+if(TARGET cereal)
+    set(_CEREAL_TARGET cereal)
+endif()
+
 install(TARGETS
     ${HSHM_LIBS}
     host_deps
+    ${_YAML_CPP_TARGET}
+    ${_CEREAL_TARGET}
     EXPORT
     ${HSHM_EXPORTED_TARGETS}
     LIBRARY DESTINATION ${HSHM_INSTALL_LIB_DIR}

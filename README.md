@@ -140,13 +140,100 @@ Interactive tools and interfaces for exploring scientific data contents and meta
 
 IOWarp Core requires the following dependencies:
 
-**System Requirements:**
+#### Required Dependencies
+
+These dependencies must be installed on your system:
+
+**Build Tools:**
 - C++17 compatible compiler (GCC >= 9, Clang >= 10)
-- CMake >= 3.10
-- Linux (Ubuntu 20.04+, CentOS 8+, or similar)
-- Optional: CUDA toolkit (for GPU support)
-- Optional: ROCm (for AMD GPU support)
-- Optional: MPI, ZeroMQ, Thallium (for distributed computing)
+- CMake >= 3.20
+- pkg-config
+
+**Core Libraries:**
+- **Boost** >= 1.70 (components: context, fiber, system)
+- **libelf** (ELF binary parsing for adapter functionality)
+- **ZeroMQ (libzmq)** (distributed communication)
+- **Threads** (POSIX threads library)
+
+**Compression Libraries** (if `HSHM_ENABLE_COMPRESS=ON`):
+- bzip2
+- lzo2
+- libzstd
+- liblz4
+- zlib
+- liblzma
+- libbrotli (libbrotlicommon, libbrotlidec, libbrotlienc)
+- snappy
+- blosc2
+
+**Encryption Libraries** (if `HSHM_ENABLE_ENCRYPT=ON`):
+- libcrypto (OpenSSL)
+
+#### Optional Dependencies
+
+These dependencies enable additional features:
+
+**Testing:**
+- **Catch2** >= 3.0.1 (if `WRP_CORE_ENABLE_TESTS=ON`)
+
+**Documentation:**
+- **Doxygen** (if `HSHM_ENABLE_DOXYGEN=ON`)
+- **Perl** (required by Doxygen)
+
+**Distributed Computing:**
+- **MPI** (MPICH, OpenMPI, or compatible) (if `HSHM_ENABLE_MPI=ON`)
+- **libfabric** (high-performance networking) (if `HSHM_ENABLE_LIBFABRIC=ON`)
+- **Thallium** (RPC framework) (if `HSHM_ENABLE_THALLIUM=ON`)
+
+**Parallel Computing:**
+- **OpenMP** (if `HSHM_ENABLE_OPENMP=ON`)
+
+**GPU Support:**
+- **CUDA Toolkit** >= 11.0 (if `HSHM_ENABLE_CUDA=ON`)
+- **ROCm/HIP** >= 4.0 (if `HSHM_ENABLE_ROCM=ON`)
+
+**Context Assimilation Engine (CAE):**
+- **HDF5** with C components (if `CAE_ENABLE_HDF5=ON`, default: ON)
+- **POCO** (Net, NetSSL, Crypto, JSON components) (if `CAE_ENABLE_GLOBUS=ON`)
+- **nlohmann_json** (if `CAE_ENABLE_GLOBUS=ON`)
+
+**Python Bindings:**
+- **Python 3** with development headers (if `WRP_CORE_ENABLE_PYTHON=ON`)
+- **nanobind** (included as submodule in `external/nanobind`)
+
+#### Submodules (Included)
+
+These dependencies are included as git submodules and built automatically:
+- **cereal** (in `external/cereal`) - Header-only serialization library
+- **yaml-cpp** (in `external/yaml-cpp`) - YAML parsing
+- **Catch2** (in `external/Catch2`) - Testing framework
+- **nanobind** (in `external/nanobind`) - Python bindings (if enabled)
+
+#### Installation Commands
+
+**Ubuntu/Debian:**
+```bash
+# Required dependencies
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential cmake pkg-config \
+  libboost-context-dev libboost-fiber-dev libboost-system-dev \
+  libelf-dev libzmq3-dev
+
+# Optional: Compression libraries
+sudo apt-get install -y \
+  libbz2-dev liblzo2-dev libzstd-dev liblz4-dev \
+  zlib1g-dev liblzma-dev libbrotli-dev libsnappy-dev libblosc2-dev
+
+# Optional: HDF5 support (for CAE)
+sudo apt-get install -y libhdf5-dev
+
+# Optional: MPI support
+sudo apt-get install -y libmpich-dev
+
+# Optional: Testing framework (or use submodule)
+sudo apt-get install -y catch2
+```
 
 **Docker Container (Recommended):**
 All dependencies are pre-installed in our Docker container:

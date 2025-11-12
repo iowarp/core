@@ -29,7 +29,10 @@ endif()
 find_package(Boost REQUIRED COMPONENTS fiber context system)
 
 # Find cereal
-find_package(cereal REQUIRED)
+# Skip find_package if target already exists (from submodule)
+if(NOT TARGET cereal AND NOT TARGET cereal::cereal)
+  find_package(cereal REQUIRED)
+endif()
 
 # Find MPI (optional)
 find_package(MPI QUIET)

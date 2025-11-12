@@ -155,6 +155,22 @@ if(WRP_CORE_ENABLE_TESTS)
   add_subdirectory(external/Catch2)
 endif()
 
+# Add cereal header-only library
+message(STATUS "Building cereal library (header-only)")
+set(JUST_INSTALL_CEREAL ON CACHE BOOL "Just install cereal headers" FORCE)
+set(BUILD_DOC OFF CACHE BOOL "Disable cereal documentation" FORCE)
+set(BUILD_SANDBOX OFF CACHE BOOL "Disable cereal sandbox" FORCE)
+set(SKIP_PERFORMANCE_COMPARISON ON CACHE BOOL "Skip cereal performance comparison" FORCE)
+add_subdirectory(external/cereal)
+
+# Add yaml-cpp library
+message(STATUS "Building yaml-cpp library")
+set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "Disable yaml-cpp tests" FORCE)
+set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "Disable yaml-cpp tools" FORCE)
+set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "Disable yaml-cpp contrib" FORCE)
+set(YAML_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS} CACHE BOOL "Build yaml-cpp as shared library" FORCE)
+add_subdirectory(external/yaml-cpp)
+
 # Context Transport Primitives (formerly cte-hermes-shm) - Required by runtime
 message(STATUS "Building context-transport-primitives component")
 # Enable ELF support for adapter real API functionality

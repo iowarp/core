@@ -32,7 +32,10 @@ endif()
 #------------------------------------------------------------------------------
 # Find yaml-cpp package (required for OMNI file parsing)
 #------------------------------------------------------------------------------
-find_package(yaml-cpp REQUIRED)
+# Skip find_package if target already exists (from submodule)
+if(NOT TARGET yaml-cpp AND NOT TARGET yaml-cpp::yaml-cpp)
+  find_package(yaml-cpp REQUIRED)
+endif()
 
 #------------------------------------------------------------------------------
 # Optional HDF5 support (controlled by root CMakeLists.txt)
