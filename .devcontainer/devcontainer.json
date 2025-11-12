@@ -6,6 +6,9 @@
     },
     "workspaceFolder": "/workspace",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "containerEnv": {
+        "IOWARP_CORE_ROOT": "${localWorkspaceFolder}"
+    },
     "mounts": [
         "source=${localEnv:HOME}/.ssh,target=/tmp/host-ssh,type=bind,readonly",
         "source=${localEnv:HOME}/.claude,target=/tmp/host-claude,type=bind,readonly",
@@ -24,7 +27,8 @@
                 "twxs.cmake",
                 "KylinIdeTeam.cppdebug",
                 "llvm-vs-code-extensions.vscode-clangd",
-                "ms-vscode.cmake-tools"
+                "ms-vscode.cmake-tools",
+                "ms-azuretools.vscode-docker"
             ],
             "settings": {
                 "cmake.configureOnOpen": false

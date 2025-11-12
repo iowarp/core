@@ -1,16 +1,14 @@
 services:
   # Node 1 - Test coordinator that runs the test binary
   iowarp-node1:
-    image: iowarp/iowarp-runtime-build:latest
+    image: iowarp/core-build:latest
     container_name: iowarp-distributed-node1
     hostname: iowarp-node1
     networks:
       iowarp-cluster:
         ipv4_address: 172.25.0.10
     volumes:
-      - ./hostfile:/etc/iowarp/hostfile:ro
-      - ./chimaera_distributed.yaml:/etc/iowarp/chimaera_distributed.yaml:ro
-      - ../../../build/bin/chimaera_bdev_chimod_tests:/usr/local/bin/chimaera_bdev_chimod_tests:ro
+      - ${IOWARP_CORE_ROOT:-.}/:/etc/iowarp:ro
     environment:
       - NODE_ID=1
       - NODE_IP=172.25.0.10
@@ -24,9 +22,8 @@ services:
       "
         echo 'Node 1: Starting runtime...' &&
         export PATH=/usr/local/bin:$PATH &&
-        CHI_SERVER_CONF=/etc/iowarp/chimaera_distributed.yaml chimaera_start_runtime &
+        chimaera_start_runtime &
         RUNTIME_PID=\$! &&
-        sleep 5 &&
         echo 'Node 1: Runtime started (PID \$RUNTIME_PID). Running distributed tests...' &&
         chimaera_bdev_chimod_tests bdev_file_explicit_backend &&
         echo 'Node 1: Tests completed.' &&
@@ -36,15 +33,14 @@ services:
 
   # Node 2
   iowarp-node2:
-    image: iowarp/iowarp-runtime-build:latest
+    image: iowarp/core-build:latest
     container_name: iowarp-distributed-node2
     hostname: iowarp-node2
     networks:
       iowarp-cluster:
         ipv4_address: 172.25.0.11
     volumes:
-      - ./hostfile:/etc/iowarp/hostfile:ro
-      - ./chimaera_distributed.yaml:/etc/iowarp/chimaera_distributed.yaml:ro
+      - ${IOWARP_CORE_ROOT:-.}/:/etc/iowarp:ro
     environment:
       - NODE_ID=2
       - NODE_IP=172.25.0.11
@@ -58,7 +54,7 @@ services:
       "
         echo 'Node 2: Starting runtime...' &&
         export PATH=/usr/local/bin:$PATH &&
-        CHI_SERVER_CONF=/etc/iowarp/chimaera_distributed.yaml chimaera_start_runtime &
+        chimaera_start_runtime &
         RUNTIME_PID=\$! &&
         echo \"Node 2: Runtime started (PID \$RUNTIME_PID). Waiting for tests...\" &&
         tail -f /dev/null
@@ -66,15 +62,14 @@ services:
 
   # Node 3
   iowarp-node3:
-    image: iowarp/iowarp-runtime-build:latest
+    image: iowarp/core-build:latest
     container_name: iowarp-distributed-node3
     hostname: iowarp-node3
     networks:
       iowarp-cluster:
         ipv4_address: 172.25.0.12
     volumes:
-      - ./hostfile:/etc/iowarp/hostfile:ro
-      - ./chimaera_distributed.yaml:/etc/iowarp/chimaera_distributed.yaml:ro
+      - ${IOWARP_CORE_ROOT:-.}/:/etc/iowarp:ro
     environment:
       - NODE_ID=3
       - NODE_IP=172.25.0.12
@@ -88,7 +83,7 @@ services:
       "
         echo 'Node 3: Starting runtime...' &&
         export PATH=/usr/local/bin:$PATH &&
-        CHI_SERVER_CONF=/etc/iowarp/chimaera_distributed.yaml chimaera_start_runtime &
+        chimaera_start_runtime &
         RUNTIME_PID=\$! &&
         echo \"Node 3: Runtime started (PID \$RUNTIME_PID). Waiting for tests...\" &&
         tail -f /dev/null
@@ -96,15 +91,14 @@ services:
 
   # Node 4
   iowarp-node4:
-    image: iowarp/iowarp-runtime-build:latest
+    image: iowarp/core-build:latest
     container_name: iowarp-distributed-node4
     hostname: iowarp-node4
     networks:
       iowarp-cluster:
         ipv4_address: 172.25.0.13
     volumes:
-      - ./hostfile:/etc/iowarp/hostfile:ro
-      - ./chimaera_distributed.yaml:/etc/iowarp/chimaera_distributed.yaml:ro
+      - ${IOWARP_CORE_ROOT}/runtime/test/unit/distributed:/etc/iowarp:ro
     environment:
       - NODE_ID=4
       - NODE_IP=172.25.0.13
@@ -118,7 +112,7 @@ services:
       "
         echo 'Node 4: Starting runtime...' &&
         export PATH=/usr/local/bin:$PATH &&
-        CHI_SERVER_CONF=/etc/iowarp/chimaera_distributed.yaml chimaera_start_runtime &
+        chimaera_start_runtime &
         RUNTIME_PID=\$! &&
         echo \"Node 4: Runtime started (PID \$RUNTIME_PID). Waiting for tests...\" &&
         tail -f /dev/null

@@ -96,6 +96,7 @@ nanobind.egg-info
 *~
 *.swp
 .*.swp
+.env
 
 # IDE and editor files
 .vs/

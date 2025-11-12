@@ -257,7 +257,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Expected " << expected_datasets.size() << " datasets to be created" << std::endl;
 
-    int datasets_found = 0;
+    size_t datasets_found = 0;
     for (const auto& dataset_name : expected_datasets) {
       std::string full_tag_name = kTestTagBase + "/" + dataset_name;
       std::cout << "\nChecking dataset: " << dataset_name << std::endl;

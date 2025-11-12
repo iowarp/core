@@ -14,11 +14,23 @@ option(WRP_CORE_ENABLE_CAE "Enable context-assimilation-engine component" ON)
 option(WRP_CORE_ENABLE_CEE "Enable context-exploration-engine component" ON)
 
 # Global options
-option(WRP_CORE_ENABLE_TESTS "Enable testing for all components" ON)
+option(WRP_CORE_ENABLE_TESTS "Enable testing for all components" OFF)
 option(WRP_CORE_ENABLE_CMAKE_DOTENV "Enable reading environment variables from .env.cmake" ON)
 option(WRP_CORE_ENABLE_PYTHON "Enable Python bindings for all components" OFF)
 option(WRP_CORE_ENABLE_ASAN "Enable AddressSanitizer for debugging" OFF)
 option(WRP_CORE_ENABLE_COVERAGE "Enable code coverage instrumentation for all components" OFF)
+
+# Propagate global test option to component-specific test options
+set(HSHM_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS} CACHE BOOL "Enable testing for context-transport-primitives" FORCE)
+set(CHIMAERA_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS} CACHE BOOL "Enable testing for runtime" FORCE)
+set(WRP_CTE_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS} CACHE BOOL "Enable testing for context-transfer-engine" FORCE)
+set(WRP_CAE_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS} CACHE BOOL "Enable testing for context-assimilation-engine" FORCE)
+set(WRP_CEE_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS} CACHE BOOL "Enable testing for context-exploration-engine" FORCE)
+
+# Propagate benchmark options (default OFF)
+set(HSHM_ENABLE_BENCHMARKS OFF CACHE BOOL "Enable benchmarks for context-transport-primitives" FORCE)
+set(CHIMAERA_ENABLE_BENCHMARKS OFF CACHE BOOL "Enable benchmarks for runtime" FORCE)
+set(WRP_CTE_ENABLE_BENCHMARKS OFF CACHE BOOL "Enable benchmarks for context-transfer-engine" FORCE)
 
 # Read environment variables from .env.cmake if enabled
 if(WRP_CORE_ENABLE_CMAKE_DOTENV)

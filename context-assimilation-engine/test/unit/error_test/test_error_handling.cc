@@ -46,7 +46,7 @@ bool GenerateTestFile(const std::string& file_path, size_t size_bytes) {
     return false;
   }
 
-  std::vector<char> data(size_bytes, 0xAB);
+  std::vector<char> data(size_bytes, static_cast<char>(0xAB));
   file.write(data.data(), size_bytes);
   file.close();
   return true;

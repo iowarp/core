@@ -12,12 +12,12 @@ TEST_CASE("SpscKeySet") {
   hshm::spsc_key_set<size_t> count;
   count.Init(32);
   std::vector<hshm::size_t> keys(64);
-  for (int i = 0; i < 64; ++i) {
+  for (size_t i = 0; i < 64; ++i) {
     size_t entry = i;
     count.emplace(keys[i], entry);
   }
 
-  for (int i = 0; i < 64; ++i) {
+  for (size_t i = 0; i < 64; ++i) {
     size_t entry;
     count.pop(keys[i], entry);
     REQUIRE(entry == i);
@@ -29,12 +29,12 @@ TEST_CASE("MpmcKeySet") {
   count.Init(32);
   std::vector<hshm::size_t> keys(32);
 
-  for (int i = 0; i < 32; ++i) {
+  for (size_t i = 0; i < 32; ++i) {
     size_t entry = i;
     count.emplace(keys[i], entry);
   }
 
-  for (int i = 0; i < 32; ++i) {
+  for (size_t i = 0; i < 32; ++i) {
     size_t entry;
     count.pop(keys[i], entry);
     REQUIRE(entry == i);
