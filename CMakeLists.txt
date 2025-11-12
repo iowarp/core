@@ -20,17 +20,37 @@ option(WRP_CORE_ENABLE_PYTHON "Enable Python bindings for all components" OFF)
 option(WRP_CORE_ENABLE_ASAN "Enable AddressSanitizer for debugging" OFF)
 option(WRP_CORE_ENABLE_COVERAGE "Enable code coverage instrumentation for all components" OFF)
 
-# Propagate global test option to component-specific test options
-set(HSHM_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS} CACHE BOOL "Enable testing for context-transport-primitives" FORCE)
-set(CHIMAERA_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS} CACHE BOOL "Enable testing for runtime" FORCE)
-set(WRP_CTE_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS} CACHE BOOL "Enable testing for context-transfer-engine" FORCE)
-set(WRP_CAE_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS} CACHE BOOL "Enable testing for context-assimilation-engine" FORCE)
-set(WRP_CEE_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS} CACHE BOOL "Enable testing for context-exploration-engine" FORCE)
+# Automatically set component test/benchmark variables based on global flags and component enable status
+# These are variables, not options - they're derived from WRP_CORE_ENABLE_TESTS and WRP_CORE_ENABLE_[COMPONENT]
+# Tests are enabled if both the global test flag AND the component are enabled
+set(HSHM_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS})
+set(CHIMAERA_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS})
 
-# Propagate benchmark options (default OFF)
-set(HSHM_ENABLE_BENCHMARKS OFF CACHE BOOL "Enable benchmarks for context-transport-primitives" FORCE)
-set(CHIMAERA_ENABLE_BENCHMARKS OFF CACHE BOOL "Enable benchmarks for runtime" FORCE)
-set(WRP_CTE_ENABLE_BENCHMARKS OFF CACHE BOOL "Enable benchmarks for context-transfer-engine" FORCE)
+# CTE tests: enabled if global tests ON and CTE component ON
+if(WRP_CORE_ENABLE_TESTS AND WRP_CORE_ENABLE_CTE)
+    set(WRP_CTE_ENABLE_TESTS ON)
+else()
+    set(WRP_CTE_ENABLE_TESTS OFF)
+endif()
+
+# CAE tests: enabled if global tests ON and CAE component ON
+if(WRP_CORE_ENABLE_TESTS AND WRP_CORE_ENABLE_CAE)
+    set(WRP_CAE_ENABLE_TESTS ON)
+else()
+    set(WRP_CAE_ENABLE_TESTS OFF)
+endif()
+
+# CEE tests: enabled if global tests ON and CEE component ON
+if(WRP_CORE_ENABLE_TESTS AND WRP_CORE_ENABLE_CEE)
+    set(WRP_CEE_ENABLE_TESTS ON)
+else()
+    set(WRP_CEE_ENABLE_TESTS OFF)
+endif()
+
+# Benchmarks (currently always OFF, but follow same pattern for consistency)
+set(HSHM_ENABLE_BENCHMARKS OFF)
+set(CHIMAERA_ENABLE_BENCHMARKS OFF)
+set(WRP_CTE_ENABLE_BENCHMARKS OFF)
 
 # Read environment variables from .env.cmake if enabled
 if(WRP_CORE_ENABLE_CMAKE_DOTENV)
@@ -182,9 +202,9 @@ set(HSHM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/context-transport-primitives" CACHE P
 # Runtime component
 if(WRP_CORE_ENABLE_RUNTIME)
     message(STATUS "Building runtime component")
-    add_subdirectory(runtime)
+    add_subdirectory(context-runtime)
     # Set CHIMAERA_ROOT for cross-component access (e.g., CTE needs bdev includes)
-    set(CHIMAERA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/runtime" CACHE PATH "Root directory for runtime component")
+    set(CHIMAERA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/context-runtime" CACHE PATH "Root directory for runtime component")
 else()
     message(STATUS "Runtime component disabled")
 endif()

@@ -81,7 +81,7 @@ High-performance shared memory library containing data structures and synchroniz
 **[Read more →](context-transport-primitives/README.md)**
 
 ### 2. Chimaera Runtime
-**Location:** [`runtime/`](runtime/)
+**Location:** [`context-runtime/`](context-runtime/)
 
 High-performance modular runtime for scientific computing and storage systems with coroutine-based task execution.
 
@@ -92,7 +92,7 @@ High-performance modular runtime for scientific computing and storage systems wi
 - Distributed architecture with shared memory IPC
 - Built-in storage backends (RAM, file-based, custom block devices)
 
-**[Read more →](runtime/README.md)**
+**[Read more →](context-runtime/README.md)**
 
 ### 3. Context Transfer Engine
 **Location:** [`context-transfer-engine/`](context-transfer-engine/)
@@ -344,7 +344,7 @@ Comprehensive documentation is available for each component:
 
 - **[CLAUDE.md](CLAUDE.md)**: Unified development guide and coding standards
 - **[Context Transport Primitives](context-transport-primitives/README.md)**: Shared memory data structures
-- **[Chimaera Runtime](runtime/README.md)**: Modular runtime system and ChiMod development
+- **[Chimaera Runtime](context-runtime/README.md)**: Modular runtime system and ChiMod development
   - [MODULE_DEVELOPMENT_GUIDE.md](context-transport-primitives/docs/MODULE_DEVELOPMENT_GUIDE.md): Complete ChiMod development guide
 - **[Context Transfer Engine](context-transfer-engine/README.md)**: I/O buffering and acceleration
   - [CTE API Documentation](context-transfer-engine/docs/cte/cte.md): Complete API reference

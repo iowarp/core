@@ -26,7 +26,7 @@ if(NOT TARGET chimaera::cxx AND NOT TARGET chimaera_cxx)
 else()
   # When built as subdirectory, manually include ChimaeraCommon.cmake
   message(STATUS "Using Chimaera as subdirectory - including ChimaeraCommon.cmake")
-  list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/cmake")
+  list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../context-runtime/cmake")
   include(ChimaeraCommon)
 endif()
 
