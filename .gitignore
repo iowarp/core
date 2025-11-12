@@ -98,7 +98,6 @@ nanobind.egg-info
 .*.swp
 
 # IDE and editor files
-.vscode/
 .vs/
 *.sln
 *.sdf

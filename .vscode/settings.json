@@ -1,0 +1,34 @@
+{
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "cmake.configureSettings": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "WRP_CORE_ENABLE_RUNTIME": "ON",
+        "WRP_CORE_ENABLE_CTE": "ON",
+        "WRP_CORE_ENABLE_CAE": "ON",
+        "WRP_CORE_ENABLE_CEE": "ON"
+    },
+    "files.associations": {
+        "*.tcc": "cpp",
+        "*.inc": "cpp"
+    },
+    "C_Cpp.formatting": "Disabled",
+    "editor.formatOnSave": false,
+    "clang-tidy.lintOnSave": true,
+    "clang-tidy.checks": [
+        "clang-analyzer-*",
+        "performance-*",
+        "modernize-*",
+        "-modernize-use-trailing-return-type"
+    ],
+    "clang-format.style": "{BasedOnStyle: Google, ColumnLimit: 120, AllowShortIfStatementsOnASingleLine: Empty, AllowShortLoopsOnASingleLine: false}",
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/CVS": true,
+        "**/.DS_Store": true,
+        "build": true,
+        "out": true,
+        "cmake-build*": true
+    }
+}
