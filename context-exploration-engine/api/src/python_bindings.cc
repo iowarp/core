@@ -43,18 +43,19 @@ NB_MODULE(iowarp_cee_api, m) {
     });
 
   // Bind ContextInterface class
+  // C++ uses PascalCase (Google style), Python exposes snake_case
   nb::class_<iowarp::ContextInterface>(m, "ContextInterface",
       "High-level API for context exploration and management")
     .def(nb::init<>(),
          "Default constructor - initializes the interface")
-    .def("context_bundle", &iowarp::ContextInterface::context_bundle,
+    .def("context_bundle", &iowarp::ContextInterface::ContextBundle,
          "bundle"_a,
          "Bundle a group of related objects together and assimilate them\n\n"
          "Parameters:\n"
          "  bundle: List of AssimilationCtx objects to assimilate\n\n"
          "Returns:\n"
          "  0 on success, non-zero error code on failure")
-    .def("context_query", &iowarp::ContextInterface::context_query,
+    .def("context_query", &iowarp::ContextInterface::ContextQuery,
          "tag_re"_a, "blob_re"_a,
          "Retrieve the identities of objects matching tag and blob patterns\n\n"
          "Parameters:\n"
@@ -62,7 +63,7 @@ NB_MODULE(iowarp_cee_api, m) {
          "  blob_re: Blob regex pattern to match\n\n"
          "Returns:\n"
          "  List of matching blob names")
-    .def("context_retrieve", &iowarp::ContextInterface::context_retrieve,
+    .def("context_retrieve", &iowarp::ContextInterface::ContextRetrieve,
          "tag_re"_a, "blob_re"_a,
          "Retrieve the identities and data of objects (NOT YET IMPLEMENTED)\n\n"
          "Parameters:\n"
@@ -70,7 +71,7 @@ NB_MODULE(iowarp_cee_api, m) {
          "  blob_re: Blob regex pattern to match\n\n"
          "Returns:\n"
          "  List of object identities (currently returns empty list)")
-    .def("context_splice", &iowarp::ContextInterface::context_splice,
+    .def("context_splice", &iowarp::ContextInterface::ContextSplice,
          "new_ctx"_a, "tag_re"_a, "blob_re"_a,
          "Split/splice objects into a new context (NOT YET IMPLEMENTED)\n\n"
          "Parameters:\n"
@@ -79,7 +80,7 @@ NB_MODULE(iowarp_cee_api, m) {
          "  blob_re: Blob regex pattern to match for source objects\n\n"
          "Returns:\n"
          "  0 on success, non-zero error code on failure")
-    .def("context_destroy", &iowarp::ContextInterface::context_destroy,
+    .def("context_destroy", &iowarp::ContextInterface::ContextDestroy,
          "context_names"_a,
          "Destroy contexts by name\n\n"
          "Parameters:\n"

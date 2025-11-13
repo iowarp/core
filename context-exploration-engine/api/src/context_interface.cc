@@ -28,7 +28,7 @@ ContextInterface::~ContextInterface() {
   // Cleanup if needed
 }
 
-int ContextInterface::context_bundle(
+int ContextInterface::ContextBundle(
     const std::vector<wrp_cae::core::AssimilationCtx> &bundle) {
   if (!is_initialized_) {
     std::cerr << "Error: ContextInterface not initialized" << std::endl;
@@ -36,7 +36,7 @@ int ContextInterface::context_bundle(
   }
 
   if (bundle.empty()) {
-    std::cerr << "Warning: Empty bundle provided to context_bundle" << std::endl;
+    std::cerr << "Warning: Empty bundle provided to ContextBundle" << std::endl;
     return 0;
   }
 
@@ -53,18 +53,18 @@ int ContextInterface::context_bundle(
       return static_cast<int>(result);
     }
 
-    std::cout << "context_bundle completed successfully!" << std::endl;
+    std::cout << "ContextBundle completed successfully!" << std::endl;
     std::cout << "  Tasks scheduled: " << num_tasks_scheduled << std::endl;
 
     return 0;
 
   } catch (const std::exception& e) {
-    std::cerr << "Error in context_bundle: " << e.what() << std::endl;
+    std::cerr << "Error in ContextBundle: " << e.what() << std::endl;
     return 1;
   }
 }
 
-std::vector<std::string> ContextInterface::context_query(
+std::vector<std::string> ContextInterface::ContextQuery(
     const std::string &tag_re,
     const std::string &blob_re) {
   if (!is_initialized_) {
@@ -91,23 +91,23 @@ std::vector<std::string> ContextInterface::context_query(
     return results;
 
   } catch (const std::exception& e) {
-    std::cerr << "Error in context_query: " << e.what() << std::endl;
+    std::cerr << "Error in ContextQuery: " << e.what() << std::endl;
     return std::vector<std::string>();
   }
 }
 
-std::vector<std::string> ContextInterface::context_retrieve(
+std::vector<std::string> ContextInterface::ContextRetrieve(
     const std::string &tag_re,
     const std::string &blob_re) {
   (void)tag_re;   // Suppress unused parameter warning
   (void)blob_re;  // Suppress unused parameter warning
 
   // Not yet implemented
-  std::cerr << "Warning: context_retrieve is not yet implemented" << std::endl;
+  std::cerr << "Warning: ContextRetrieve is not yet implemented" << std::endl;
   return std::vector<std::string>();
 }
 
-int ContextInterface::context_splice(
+int ContextInterface::ContextSplice(
     const std::string &new_ctx,
     const std::string &tag_re,
     const std::string &blob_re) {
@@ -116,11 +116,11 @@ int ContextInterface::context_splice(
   (void)blob_re;  // Suppress unused parameter warning
 
   // Not yet implemented
-  std::cerr << "Warning: context_splice is not yet implemented" << std::endl;
+  std::cerr << "Warning: ContextSplice is not yet implemented" << std::endl;
   return 1;
 }
 
-int ContextInterface::context_destroy(
+int ContextInterface::ContextDestroy(
     const std::vector<std::string> &context_names) {
   if (!is_initialized_) {
     std::cerr << "Error: ContextInterface not initialized" << std::endl;
@@ -128,7 +128,7 @@ int ContextInterface::context_destroy(
   }
 
   if (context_names.empty()) {
-    std::cerr << "Warning: Empty context_names list provided to context_destroy" << std::endl;
+    std::cerr << "Warning: Empty context_names list provided to ContextDestroy" << std::endl;
     return 0;
   }
 
@@ -153,15 +153,15 @@ int ContextInterface::context_destroy(
     }
 
     if (error_count > 0) {
-      std::cerr << "context_destroy completed with " << error_count << " error(s)" << std::endl;
+      std::cerr << "ContextDestroy completed with " << error_count << " error(s)" << std::endl;
       return 1;
     }
 
-    std::cout << "context_destroy completed successfully!" << std::endl;
+    std::cout << "ContextDestroy completed successfully!" << std::endl;
     return 0;
 
   } catch (const std::exception& e) {
-    std::cerr << "Error in context_destroy: " << e.what() << std::endl;
+    std::cerr << "Error in ContextDestroy: " << e.what() << std::endl;
     return 1;
   }
 }

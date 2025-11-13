@@ -19,30 +19,30 @@ namespace iowarp {
 class ContextInterface {
 public:
   // Bundle a group of related objects together and assimilate them
-  int context_bundle(const std::vector<wrp_cae::core::AssimilationCtx> &bundle);
+  int ContextBundle(const std::vector<wrp_cae::core::AssimilationCtx> &bundle);
 
   // Retrieve the identities of objects matching tag and blob patterns
-  std::vector<std::string> context_query(const std::string &tag_re,
+  std::vector<std::string> ContextQuery(const std::string &tag_re,
                                          const std::string &blob_re);
 
   // Retrieve the identities and data of objects (NOT YET IMPLEMENTED)
-  std::vector<std::string> context_retrieve(const std::string &tag_re,
+  std::vector<std::string> ContextRetrieve(const std::string &tag_re,
                                             const std::string &blob_re);
 
   // Split/splice objects into a new context (NOT YET IMPLEMENTED)
-  int context_splice(const std::string &new_ctx,
+  int ContextSplice(const std::string &new_ctx,
                      const std::string &tag_re,
                      const std::string &blob_re);
 
   // Destroy contexts by name
-  int context_destroy(const std::vector<std::string> &context_names);
+  int ContextDestroy(const std::vector<std::string> &context_names);
 };
 }
 ```
 
 ## Implemented Methods
 
-### 1. context_bundle
+### 1. ContextBundle
 
 **Implementation**: [src/context_interface.cc:32](../src/context_interface.cc#L32)
 
@@ -68,13 +68,13 @@ ctx1.dst = "iowarp::my_tag";
 ctx1.format = "binary";
 bundle.push_back(ctx1);
 
-int result = ctx.context_bundle(bundle);
+int result = ctx.ContextBundle(bundle);
 if (result == 0) {
   std::cout << "Bundle assimilated successfully!" << std::endl;
 }
 ```
 
-### 2. context_query
+### 2. ContextQuery
 
 **Implementation**: [src/context_interface.cc:66](../src/context_interface.cc#L66)
 
@@ -94,14 +94,14 @@ Queries the CTE system for blobs matching specified regex patterns.
 iowarp::ContextInterface ctx;
 
 // Query all blobs in tags starting with "dataset_"
-auto results = ctx.context_query("dataset_.*", ".*");
+auto results = ctx.ContextQuery("dataset_.*", ".*");
 
 for (const auto& blob_name : results) {
   std::cout << "Found blob: " << blob_name << std::endl;
 }
 ```
 
-### 3. context_destroy
+### 3. ContextDestroy
 
 **Implementation**: [src/context_interface.cc:127](../src/context_interface.cc#L127)
 
@@ -121,14 +121,14 @@ Destroys contexts by deleting their corresponding tags from the CTE system.
 iowarp::ContextInterface ctx;
 
 std::vector<std::string> contexts_to_delete = {"old_context_1", "old_context_2"};
-int result = ctx.context_destroy(contexts_to_delete);
+int result = ctx.ContextDestroy(contexts_to_delete);
 
 if (result == 0) {
   std::cout << "All contexts destroyed successfully!" << std::endl;
 }
 ```
 
-### 4. context_retrieve (NOT YET IMPLEMENTED)
+### 4. ContextRetrieve (NOT YET IMPLEMENTED)
 
 **Implementation**: [src/context_interface.cc:91](../src/context_interface.cc#L91)
 
@@ -136,7 +136,7 @@ Placeholder for future implementation. Currently returns an empty vector.
 
 **Planned Functionality**: Retrieve both identities and data of objects matching patterns.
 
-### 5. context_splice (NOT YET IMPLEMENTED)
+### 5. ContextSplice (NOT YET IMPLEMENTED)
 
 **Implementation**: [src/context_interface.cc:103](../src/context_interface.cc#L103)
 
@@ -220,21 +220,47 @@ If nanobind is not found, the build will skip Python bindings with a warning.
 
 ### Unit Tests
 
+#### Building Tests
+
 ```bash
 # Build all tests
 cmake --build build --target test_context_bundle test_context_query test_context_destroy
+```
 
-# Run tests with CTest
+#### Starting the Chimaera Runtime
+
+**IMPORTANT**: Tests require the Chimaera runtime to be running. Start it before running tests:
+
+```bash
+# Terminal 1: Start the Chimaera runtime
+cd build
+LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH \
+WRP_CTE_CONF=/workspace/context-assimilation-engine/test/unit/wrp_config.yaml \
+./bin/chimaera_start_runtime
+
+# Wait for message: "Successfully started local server at 127.0.0.1:9129"
+```
+
+#### Running Tests
+
+```bash
+# Terminal 2: Run tests with CTest
 cd build
 ctest -L cee
 
-# Or run individual tests directly
-./bin/test_context_bundle
-./bin/test_context_query
-./bin/test_context_destroy
+# Or run individual tests directly (must set LD_LIBRARY_PATH)
+LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH ./bin/test_context_bundle
+LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH ./bin/test_context_query
+LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH ./bin/test_context_destroy
 ```
 
-**Note**: Tests require the Chimaera runtime to be active.
+#### Stopping the Runtime
+
+```bash
+# When done testing
+cd build
+./bin/chimaera_stop_runtime
+```
 
 ## Unit Tests
 
@@ -303,9 +329,9 @@ target_link_libraries(my_app
 ## Status
 
 ### Implemented
-- ✅ context_bundle - Fully functional
-- ✅ context_query - Fully functional
-- ✅ context_destroy - Fully functional
+- ✅ ContextBundle - Fully functional
+- ✅ ContextQuery - Fully functional
+- ✅ ContextDestroy - Fully functional
 - ✅ C++ API and library
 - ✅ Python bindings structure (requires nanobind)
 - ✅ Unit tests for all implemented methods
@@ -313,8 +339,8 @@ target_link_libraries(my_app
 - ✅ Package configuration for external integration
 
 ### Planned
-- ⏳ context_retrieve - Placeholder implementation
-- ⏳ context_splice - Placeholder implementation
+- ⏳ ContextRetrieve - Placeholder implementation
+- ⏳ ContextSplice - Placeholder implementation
 
 ## See Also
 

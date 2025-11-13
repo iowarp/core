@@ -35,7 +35,7 @@ public:
    * @param bundle Vector of AssimilationCtx objects to assimilate
    * @return 0 on success, non-zero error code on failure
    */
-  int context_bundle(const std::vector<wrp_cae::core::AssimilationCtx> &bundle);
+  int ContextBundle(const std::vector<wrp_cae::core::AssimilationCtx> &bundle);
 
   /**
    * Retrieve the identities of objects matching tag and blob patterns
@@ -47,7 +47,7 @@ public:
    * @param blob_re Blob regex pattern to match
    * @return Vector of matching blob names
    */
-  std::vector<std::string> context_query(const std::string &tag_re,
+  std::vector<std::string> ContextQuery(const std::string &tag_re,
                                          const std::string &blob_re);
 
   /**
@@ -59,7 +59,7 @@ public:
    * @param blob_re Blob regex pattern to match
    * @return Vector of object identities (currently returns empty vector)
    */
-  std::vector<std::string> context_retrieve(const std::string &tag_re,
+  std::vector<std::string> ContextRetrieve(const std::string &tag_re,
                                             const std::string &blob_re);
 
   /**
@@ -72,9 +72,9 @@ public:
    * @param blob_re Blob regex pattern to match for source objects
    * @return 0 on success, non-zero error code on failure
    */
-  int context_splice(const std::string &new_ctx,
-                     const std::string &tag_re,
-                     const std::string &blob_re);
+  int ContextSplice(const std::string &new_ctx,
+                    const std::string &tag_re,
+                    const std::string &blob_re);
 
   /**
    * Destroy contexts by name
@@ -85,7 +85,7 @@ public:
    * @param context_names Vector of context names to destroy
    * @return 0 on success, non-zero error code on failure
    */
-  int context_destroy(const std::vector<std::string> &context_names);
+  int ContextDestroy(const std::vector<std::string> &context_names);
 
 private:
   bool is_initialized_;  /**< Flag indicating whether the interface is initialized */
