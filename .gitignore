@@ -87,7 +87,6 @@ nanobind.egg-info
 # Documentation build
 /docs/.build
 /docs/_build/*
-autogen/
 
 # Environment files
 /*env*/
