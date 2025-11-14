@@ -1,0 +1,59 @@
+services:
+  # IOWarp Runtime Service
+  # Provides the runtime that CAE clients connect to
+  iowarp-runtime:
+    build:
+      context: /workspace
+      dockerfile: /workspace/docker/test_external/runtime.Dockerfile
+    container_name: iowarp-runtime-external
+    # Use host network so both containers can communicate via 127.0.0.1
+    network_mode: host
+    environment:
+      - WRP_RUNTIME_CONF=/etc/iowarp/wrp_conf.yaml
+    # Share IPC namespace so CAE can connect to runtime
+    ipc: host
+    shm_size: '16gb'
+    mem_limit: 16g
+    working_dir: /workspace
+    entrypoint: [ "/bin/bash", "-c" ]
+    command: >
+      "
+        echo 'Runtime: Starting...' &&
+        export PATH=/usr/local/bin:$PATH &&
+        chimaera_start_runtime &
+        RUNTIME_PID=\$! &&
+        echo \"Runtime: Started (PID \$RUNTIME_PID). Waiting...\" &&
+        tail -f /dev/null
+      "
+
+  # CAE Service
+  # Sends omni files to the runtime
+  cae:
+    build:
+      context: /workspace
+      dockerfile: /workspace/docker/test_external/cae.Dockerfile
+    container_name: cae-external
+    environment:
+      - WRP_RUNTIME_CONF=/etc/iowarp/wrp_conf.yaml
+    # Share IPC namespace with host for Chimaera communication
+    ipc: host
+    # Use host network so both containers can communicate via 127.0.0.1
+    network_mode: host
+    shm_size: '16gb'
+    mem_limit: 16g
+    working_dir: /workspace
+    depends_on:
+      - iowarp-runtime
+    entrypoint: [ "/bin/bash", "-c" ]
+    command: >
+      "
+        echo 'CAE: Waiting for runtime to be ready...' &&
+        sleep 5 &&
+        echo 'CAE: Sending omni file...' &&
+        export PATH=/usr/local/bin:$PATH &&
+        wrp_cae_omni /binary_assim.yaml &&
+        echo 'CAE: Completed.' &&
+        tail -f /dev/null
+      "
+
+

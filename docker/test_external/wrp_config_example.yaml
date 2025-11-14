@@ -1,0 +1,62 @@
+# IOWarp Runtime and CTE Configuration File
+# Combines Chimaera runtime configuration with CTE compose deployment
+
+# Worker thread configuration
+workers:
+  sched_threads: 4
+  slow_threads: 4
+
+# Memory segment configuration
+memory:
+  main_segment_size: 4GB
+  client_data_segment_size: 2GB
+  runtime_data_segment_size: 2GB
+
+# Network configuration
+networking:
+  port: 5555
+  neighborhood_size: 32
+
+# Logging configuration
+logging:
+  level: info
+  file: /tmp/chimaera.log
+
+# Runtime configuration
+runtime:
+  stack_size: 65536
+  queue_depth: 10000
+  lane_map_policy: round_robin
+  heartbeat_interval: 1000
+
+# Compose section - declarative pool creation
+# Creates CTE Core ChiMod with storage devices and DPE configuration
+compose:
+  # CTE Core ChiMod with storage configuration
+  - mod_name: wrp_cte_core
+    pool_name: cte_main
+    pool_query: local
+    pool_id: "512.0"
+    # Storage block device configuration
+    # RAM-only configuration for testing
+    storage:
+      - path: "ram::cte_ram_tier1"
+        bdev_type: "ram"
+        capacity_limit: "16GB"
+        score: 0.0           # Manual score override (0.0-1.0) - highest tier
+    # Data Placement Engine configuration
+    dpe:
+      dpe_type: "max_bw"  # Options: "random", "round_robin", "max_bw"
+    # Target management configuration
+    targets:
+      neighborhood: 1
+      default_target_timeout_ms: 30000
+      poll_period_ms: 5000
+
+  # CAE Core ChiMod for content assimilation
+  - mod_name: wrp_cae_core
+    pool_name: wrp_cae_core_pool
+    pool_query: local
+    pool_id: "400.0"
+    worker_count: 4
+
