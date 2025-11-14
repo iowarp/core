@@ -7,6 +7,40 @@
     },
     "configurePresets": [
         {
+            "name": "minimalist",
+            "hidden": false,
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "WRP_CORE_ENABLE_RUNTIME": "ON",
+                "WRP_CORE_ENABLE_CTE": "ON",
+                "WRP_CORE_ENABLE_CAE": "ON",
+                "WRP_CORE_ENABLE_CEE": "ON",
+                "WRP_CORE_ENABLE_TESTS": "OFF",
+                "WRP_CORE_ENABLE_BENCHMARKS": "OFF",
+                "WRP_CORE_ENABLE_PYTHON": "OFF",
+                "WRP_CORE_ENABLE_CMAKE_DOTENV": "OFF",
+                "WRP_CORE_ENABLE_ASAN": "OFF",
+                "WRP_CORE_ENABLE_COVERAGE": "OFF",
+                "WRP_CORE_ENABLE_DOXYGEN": "OFF",
+                "WRP_CORE_ENABLE_RPATH": "OFF",
+                "WRP_CORE_ENABLE_MPI": "OFF",
+                "WRP_CORE_ENABLE_ZMQ": "ON",
+                "WRP_CORE_ENABLE_LIBFABRIC": "OFF",
+                "WRP_CORE_ENABLE_THALLIUM": "OFF",
+                "WRP_CORE_ENABLE_CEREAL": "ON",
+                "WRP_CORE_ENABLE_COMPRESS": "OFF",
+                "WRP_CORE_ENABLE_ENCRYPT": "OFF",
+                "WRP_CORE_ENABLE_HDF5": "ON",
+                "WRP_CORE_ENABLE_ELF": "OFF",
+                "WRP_CORE_ENABLE_OPENMP": "OFF",
+                "WRP_CORE_ENABLE_CUDA": "OFF",
+                "WRP_CORE_ENABLE_ROCM": "OFF",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
             "name": "debug",
             "hidden": false,
             "generator": "Unix Makefiles",
@@ -18,8 +52,7 @@
                 "WRP_CORE_ENABLE_CAE": "ON",
                 "WRP_CORE_ENABLE_CEE": "ON",
                 "WRP_CORE_ENABLE_TESTS": "ON",
-                "WRP_CORE_ENABLE_BENCHMARKS": "ON",
-                "WRP_CORE_ENABLE_ELF": "ON",
+                "WRP_CORE_ENABLE_ELF": "OFF",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "WRP_CORE_ENABLE_ASAN": "OFF"
             }
@@ -74,9 +107,8 @@
                 "WRP_CORE_ENABLE_CTE": "ON",
                 "WRP_CORE_ENABLE_CAE": "ON",
                 "WRP_CORE_ENABLE_CEE": "ON",
-                "WRP_CORE_ENABLE_TESTS": "OFF",
-                "WRP_CORE_ENABLE_BENCHMARKS": "ON",
-                "WRP_CORE_ENABLE_ELF": "ON",
+                "WRP_CORE_ENABLE_TESTS": "ON",
+                "WRP_CORE_ENABLE_ELF": "OFF",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "WRP_CORE_ENABLE_ASAN": "OFF"
             }

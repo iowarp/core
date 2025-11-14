@@ -22,6 +22,7 @@ set(WRP_CORE_ENABLE_COMPRESS @WRP_CORE_ENABLE_COMPRESS@)
 set(WRP_CORE_ENABLE_ENCRYPT @WRP_CORE_ENABLE_ENCRYPT@)
 set(WRP_CORE_ENABLE_ELF @WRP_CORE_ENABLE_ELF@)
 set(WRP_CORE_ENABLE_DOXYGEN @WRP_CORE_ENABLE_DOXYGEN@)
+set(WRP_CORE_ENABLE_RPATH @WRP_CORE_ENABLE_RPATH@)
 
 # Installation paths
 set(IOWARP_CORE_PREFIX @CMAKE_INSTALL_PREFIX@)
@@ -63,8 +64,10 @@ if(@WRP_CORE_ENABLE_CAE@)
     list(APPEND _IOWARP_OPTIONAL_CHIMODS "wrp_cae_core")
 endif()
 
-# Add installation library directory to RPATH
-list(APPEND CMAKE_INSTALL_RPATH "@CMAKE_INSTALL_PREFIX@/lib")
+# RPATH configuration (conditional based on build-time setting)
+if(@WRP_CORE_ENABLE_RPATH@)
+    list(APPEND CMAKE_INSTALL_RPATH "@CMAKE_INSTALL_PREFIX@/lib")
+endif()
 
 # Include the exported targets (if any core targets need to be exported)
 # This would be populated based on what the unified IOWarp Core exports

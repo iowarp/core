@@ -5,8 +5,7 @@ project(content_transfer_engine)
 set(WRP_CTE_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Python bindings are controlled by WRP_CORE_ENABLE_PYTHON in root CMakeLists.txt
-# Component-specific option: only effective when WRP_CORE_ENABLE_PYTHON=ON
-option(WRP_CTE_ENABLE_PYTHON "Enable Python bindings for CTE (requires WRP_CORE_ENABLE_PYTHON=ON)" ON)
+# WRP_CTE_ENABLE_PYTHON is defined in root CMakeLists.txt
 # CTE_ENABLE_ASAN is set by root CMakeLists.txt
 
 # C++ standard, compile commands, RPATH, ASAN, and output directories are all set by root CMakeLists.txt

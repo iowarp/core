@@ -122,3 +122,8 @@ sosize-*.txt
 
 # CMake user presets (typo in original, keeping for compatibility)
 CMakeUserPresents.json
+
+# External submodules - managed by .gitmodules
+# (Uncomment to ignore locally, but these are tracked as submodules)
+#external/boost/
+#external/libzmq/

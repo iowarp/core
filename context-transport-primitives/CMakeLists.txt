@@ -21,12 +21,7 @@ add_compile_definitions(_CRT_SECURE_NO_DEPRECATE)
 # CMAKE_EXPORT_COMPILE_COMMANDS is set by root CMakeLists.txt
 # BUILD_SHARED_LIBS is set by root CMakeLists.txt
 # HSHM_ENABLE_TESTS and HSHM_ENABLE_BENCHMARKS are set by root CMakeLists.txt
-
-# Platform-specific options that are not globally controlled
-option(HSHM_ENABLE_WINDOWS_THREADS "Support spawning windows threads" OFF)
-option(HSHM_ENABLE_PTHREADS "Support spawning pthreads" OFF)
-option(HSHM_DEBUG_LOCK "Used for debugging locks" OFF)
-option(HSHM_NO_COMPILE "Disable compiling / installing this library" OFF)
+# HSHM_ENABLE_WINDOWS_THREADS, HSHM_ENABLE_PTHREADS, HSHM_DEBUG_LOCK, and HSHM_NO_COMPILE are set by root CMakeLists.txt
 
 if(WIN32)
     message(STATUS "Detected Windows OS")
@@ -125,7 +120,6 @@ endif()
 # No local includes needed
 
 # CMAKE_EXPORT_COMPILE_COMMANDS and RPATH settings are set by root CMakeLists.txt
-list(APPEND CMAKE_INSTALL_RPATH "${HSHM_INSTALL_LIB_DIR}")
 
 # ENABLE GPU SUPPORT
 if(HSHM_ENABLE_CUDA)

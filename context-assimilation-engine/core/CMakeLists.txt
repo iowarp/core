@@ -14,18 +14,18 @@ project(wrp_cae_core VERSION 1.0.0)
 #------------------------------------------------------------------------------
 # Optional HDF5 support (found by root CMakeLists.txt)
 #------------------------------------------------------------------------------
-if(CAE_ENABLE_HDF5)
+if(WRP_CAE_ENABLE_HDF5)
   # HDF5 is already found by root CMakeLists.txt
 
   if(HDF5_FOUND)
     message(STATUS "CAE HDF5 support: ENABLED")
-    add_compile_definitions(CAE_ENABLE_HDF5)
+    add_compile_definitions(WRP_CAE_ENABLE_HDF5)
     set(HDF5_ENABLED TRUE)
   else()
-    message(WARNING "CAE_ENABLE_HDF5 is ON but HDF5 package not found")
+    message(WARNING "WRP_CAE_ENABLE_HDF5 is ON but HDF5 package not found")
     message(WARNING "HDF5 support will be disabled. Install HDF5 to enable.")
     set(HDF5_ENABLED FALSE)
-    set(CAE_ENABLE_HDF5 OFF)
+    set(WRP_CAE_ENABLE_HDF5 OFF PARENT_SCOPE)
   endif()
 else()
   message(STATUS "CAE HDF5 support: DISABLED")

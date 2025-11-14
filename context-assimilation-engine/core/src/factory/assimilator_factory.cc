@@ -1,6 +1,6 @@
 #include <wrp_cae/core/factory/assimilator_factory.h>
 #include <wrp_cae/core/factory/binary_file_assimilator.h>
-#ifdef CAE_ENABLE_HDF5
+#ifdef WRP_CAE_ENABLE_HDF5
 #include <wrp_cae/core/factory/hdf5_file_assimilator.h>
 #endif
 #ifdef CAE_ENABLE_GLOBUS
@@ -37,14 +37,14 @@ std::unique_ptr<BaseAssimilator> AssimilatorFactory::Get(const std::string& src)
     // For file protocol, return a BinaryFileAssimilator
     return std::make_unique<BinaryFileAssimilator>(cte_client_);
   } else if (protocol == "hdf5") {
-#ifdef CAE_ENABLE_HDF5
+#ifdef WRP_CAE_ENABLE_HDF5
     HILOG(kInfo, "AssimilatorFactory: Creating Hdf5FileAssimilator for 'hdf5' protocol");
     // For hdf5 protocol, return an Hdf5FileAssimilator
     return std::make_unique<Hdf5FileAssimilator>(cte_client_);
 #else
     // HDF5 support not compiled in
     HELOG(kError, "AssimilatorFactory: HDF5 protocol requested but HDF5 support not compiled in. "
-                  "Rebuild with -DCAE_ENABLE_HDF5=ON to enable HDF5 support.");
+                  "Rebuild with -DWRP_CORE_ENABLE_HDF5=ON to enable HDF5 support.");
     return nullptr;
 #endif
   } else if (protocol == "globus") {

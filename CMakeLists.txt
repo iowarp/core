@@ -3,50 +3,103 @@ project(iowarp-core VERSION 1.0.0 LANGUAGES C CXX)
 
 #------------------------------------------------------------------------------
 # Project Options
-#------------------------------------------------------------------------------
-# Build configuration
-option(BUILD_SHARED_LIBS "Build shared libraries (.dll/.so) instead of static ones (.lib/.a)" ON)
+#==============================================================================
+# BUILD CONFIGURATION OPTIONS
+#==============================================================================
+# All build options are centralized here for easy configuration and discovery.
+# Options are organized by component for clarity.
+#==============================================================================
 
-# Component enable/disable
+#------------------------------------------------------------------------------
+# Component Enable/Disable
+#------------------------------------------------------------------------------
 option(WRP_CORE_ENABLE_RUNTIME "Enable runtime component" ON)
 option(WRP_CORE_ENABLE_CTE "Enable context-transfer-engine component" ON)
 option(WRP_CORE_ENABLE_CAE "Enable context-assimilation-engine component" ON)
 option(WRP_CORE_ENABLE_CEE "Enable context-exploration-engine component" ON)
 
-# Global master switches
+#------------------------------------------------------------------------------
+# Global Master Switches
+#------------------------------------------------------------------------------
 option(WRP_CORE_ENABLE_TESTS "Master switch: Enable testing for all components" OFF)
 option(WRP_CORE_ENABLE_BENCHMARKS "Master switch: Enable benchmarks for all components" OFF)
-option(WRP_CORE_ENABLE_CMAKE_DOTENV "Enable reading environment variables from .env.cmake" ON)
 option(WRP_CORE_ENABLE_PYTHON "Enable Python bindings for all components" OFF)
+option(WRP_CORE_ENABLE_CMAKE_DOTENV "Enable reading environment variables from .env.cmake" OFF)
 option(WRP_CORE_ENABLE_ASAN "Enable AddressSanitizer for debugging" OFF)
 option(WRP_CORE_ENABLE_COVERAGE "Enable code coverage instrumentation for all components" OFF)
+option(WRP_CORE_ENABLE_DOXYGEN "Check how well the code is documented" OFF)
+option(WRP_CORE_ENABLE_RPATH "Enable RPATH for installed libraries" OFF)
+option(BUILD_SHARED_LIBS "Build shared libraries (.dll/.so) instead of static ones (.lib/.a)" ON)
 
-# Transport and runtime features (consolidated from HSHM_ENABLE_*)
+#------------------------------------------------------------------------------
+# Transport and Network Features
+#------------------------------------------------------------------------------
 option(WRP_CORE_ENABLE_MPI "Enable MPI support" OFF)
 option(WRP_CORE_ENABLE_ZMQ "Enable ZeroMQ transport" ON)
 option(WRP_CORE_ENABLE_LIBFABRIC "Enable Libfabric transport" OFF)
 option(WRP_CORE_ENABLE_THALLIUM "Build tests which depend on thallium" OFF)
-option(WRP_CORE_ENABLE_OPENMP "Enable the use of OpenMP" OFF)
+
+#------------------------------------------------------------------------------
+# Data and Serialization Features
+#------------------------------------------------------------------------------
 option(WRP_CORE_ENABLE_CEREAL "Enable serialization using cereal" ON)
-option(WRP_CORE_ENABLE_DOXYGEN "Check how well the code is documented" OFF)
 option(WRP_CORE_ENABLE_COMPRESS "Enable compression" OFF)
 option(WRP_CORE_ENABLE_ENCRYPT "Enable encryption" OFF)
-option(WRP_CORE_ENABLE_ELF "Enable elf" OFF)
+option(WRP_CORE_ENABLE_HDF5 "Enable HDF5 support in CAE" ON)
+
+#------------------------------------------------------------------------------
+# System and Runtime Features
+#------------------------------------------------------------------------------
+option(WRP_CORE_ENABLE_ELF "Enable ELF support (required for CTE adapters)" OFF)
+option(WRP_CORE_ENABLE_OPENMP "Enable the use of OpenMP" OFF)
 option(WRP_CORE_ENABLE_CUDA "Enable CUDA support" OFF)
 option(WRP_CORE_ENABLE_ROCM "Enable ROCm support" OFF)
 
-# Individual component test/benchmark options
-# These allow fine-grained control when master switches are ON
-option(HSHM_ENABLE_TESTS "Enable tests for HermesShm (context-transport-primitives)" ON)
-option(HSHM_ENABLE_BENCHMARKS "Enable benchmarks for HermesShm (context-transport-primitives)" ON)
+#------------------------------------------------------------------------------
+# HermesShm (context-transport-primitives) Options
+#------------------------------------------------------------------------------
+option(HSHM_ENABLE_TESTS "Enable tests for HermesShm" ON)
+option(HSHM_ENABLE_BENCHMARKS "Enable benchmarks for HermesShm" ON)
+option(HSHM_ENABLE_PTHREADS "Support spawning pthreads" OFF)
+option(HSHM_ENABLE_WINDOWS_THREADS "Support spawning windows threads" OFF)
+option(HSHM_DEBUG_LOCK "Used for debugging locks" OFF)
+option(HSHM_NO_COMPILE "Disable compiling / installing this library" OFF)
+
+#------------------------------------------------------------------------------
+# Chimaera (context-runtime) Options
+#------------------------------------------------------------------------------
 option(CHIMAERA_ENABLE_TESTS "Enable tests for Chimaera runtime" ON)
 option(CHIMAERA_ENABLE_BENCHMARKS "Enable benchmarks for Chimaera runtime" ON)
-option(WRP_CTE_ENABLE_TESTS "Enable tests for CTE (context-transfer-engine)" ON)
-option(WRP_CTE_ENABLE_BENCHMARKS "Enable benchmarks for CTE (context-transfer-engine)" ON)
-option(WRP_CAE_ENABLE_TESTS "Enable tests for CAE (context-assimilation-engine)" ON)
-option(WRP_CAE_ENABLE_BENCHMARKS "Enable benchmarks for CAE (context-assimilation-engine)" ON)
-option(WRP_CEE_ENABLE_TESTS "Enable tests for CEE (context-exploration-engine)" ON)
-option(WRP_CEE_ENABLE_BENCHMARKS "Enable benchmarks for CEE (context-exploration-engine)" ON)
+
+#------------------------------------------------------------------------------
+# CTE (context-transfer-engine) Options
+#------------------------------------------------------------------------------
+option(WRP_CTE_ENABLE_TESTS "Enable tests for CTE" ON)
+option(WRP_CTE_ENABLE_BENCHMARKS "Enable benchmarks for CTE" ON)
+option(WRP_CTE_ENABLE_PYTHON "Enable Python bindings for CTE (requires WRP_CORE_ENABLE_PYTHON=ON)" ON)
+
+# CTE Adapter Options (require WRP_CORE_ENABLE_ELF=ON)
+option(WRP_CTE_ENABLE_STDIO_ADAPTER "Enable STDIO adapter" OFF)
+option(WRP_CTE_ENABLE_MPIIO_ADAPTER "Enable MPI-IO adapter" OFF)
+option(WRP_CTE_ENABLE_VFD "Enable HDF5 VFD adapter" OFF)
+option(WRP_CTE_ENABLE_NVIDIA_GDS_ADAPTER "Enable NVIDIA GDS adapter" OFF)
+
+#------------------------------------------------------------------------------
+# CAE (context-assimilation-engine) Options
+#------------------------------------------------------------------------------
+option(WRP_CAE_ENABLE_TESTS "Enable tests for CAE" ON)
+option(WRP_CAE_ENABLE_BENCHMARKS "Enable benchmarks for CAE" ON)
+option(CAE_ENABLE_GLOBUS "Enable Globus transfer support in CAE" OFF)
+
+#------------------------------------------------------------------------------
+# CEE (context-exploration-engine) Options
+#------------------------------------------------------------------------------
+option(WRP_CEE_ENABLE_TESTS "Enable tests for CEE" ON)
+option(WRP_CEE_ENABLE_BENCHMARKS "Enable benchmarks for CEE" ON)
+
+#==============================================================================
+# END BUILD CONFIGURATION OPTIONS
+#==============================================================================
 
 # Hierarchical control logic:
 # If WRP_CORE_ENABLE_TESTS is OFF, force all component tests OFF
@@ -154,9 +207,32 @@ else()
     set(YAML_CPP_LIBS yaml-cpp)
 endif()
 
-# Boost components
-find_package(Boost REQUIRED COMPONENTS fiber context system)
-message(STATUS "found boost at ${Boost_INCLUDE_DIRS}")
+# Boost components - try system first, fall back to submodule
+find_package(Boost QUIET COMPONENTS fiber context system)
+if(Boost_FOUND)
+    message(STATUS "found boost at ${Boost_INCLUDE_DIRS}")
+else()
+    message(STATUS "System Boost not found, building from submodule")
+
+    # Initialize boost submodule if not already done
+    if(NOT EXISTS "${CMAKE_SOURCE_DIR}/external/boost/CMakeLists.txt")
+        message(STATUS "Initializing boost submodule...")
+        execute_process(
+            COMMAND git submodule update --init --recursive external/boost
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            RESULT_VARIABLE GIT_SUBMOD_RESULT
+        )
+        if(NOT GIT_SUBMOD_RESULT EQUAL "0")
+            message(FATAL_ERROR "git submodule update --init failed for external/boost")
+        endif()
+    endif()
+
+    # Build required Boost libraries from submodule
+    set(BOOST_INCLUDE_LIBRARIES fiber context system)
+    set(BOOST_ENABLE_CMAKE ON)
+    add_subdirectory(external/boost EXCLUDE_FROM_ALL)
+    message(STATUS "Building Boost fiber, context, and system from submodule")
+endif()
 
 # Cereal
 # Skip find_package if target already exists (from submodule)
@@ -291,13 +367,44 @@ endif()
 
 # Note: ELF library detection moved to after HSHM_ENABLE_ELF is set (line ~520)
 
-# ZeroMQ (conditional)
+# ZeroMQ (conditional) - try system first, fall back to submodule
 if(WRP_CORE_ENABLE_ZMQ)
-    pkg_check_modules(ZeroMQ REQUIRED libzmq)
-    message(STATUS "found zmq.h at ${ZeroMQ_INCLUDE_DIRS}")
-    set(ZMQ_LIBS ${ZeroMQ_LIBRARIES})
-    set(ZMQ_INCLUDES ${ZeroMQ_INCLUDE_DIRS})
-    set(ZMQ_LIB_DIRS ${ZeroMQ_LIBRARY_DIRS})
+    pkg_check_modules(ZeroMQ QUIET libzmq)
+    if(ZeroMQ_FOUND)
+        message(STATUS "found zmq.h at ${ZeroMQ_INCLUDE_DIRS}")
+        set(ZMQ_LIBS ${ZeroMQ_LIBRARIES})
+        set(ZMQ_INCLUDES ${ZeroMQ_INCLUDE_DIRS})
+        set(ZMQ_LIB_DIRS ${ZeroMQ_LIBRARY_DIRS})
+    else()
+        message(STATUS "System ZeroMQ not found, building from submodule")
+
+        # Initialize libzmq submodule if not already done
+        if(NOT EXISTS "${CMAKE_SOURCE_DIR}/external/libzmq/CMakeLists.txt")
+            message(STATUS "Initializing libzmq submodule...")
+            execute_process(
+                COMMAND git submodule update --init --recursive external/libzmq
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                RESULT_VARIABLE GIT_SUBMOD_RESULT
+            )
+            if(NOT GIT_SUBMOD_RESULT EQUAL "0")
+                message(FATAL_ERROR "git submodule update --init failed for external/libzmq")
+            endif()
+        endif()
+
+        # Build libzmq from submodule
+        set(WITH_PERF_TOOL OFF CACHE BOOL "Build with perf-tools")
+        set(ZMQ_BUILD_TESTS OFF CACHE BOOL "Build the tests")
+        set(ENABLE_CPACK OFF CACHE BOOL "Enable CPack")
+        set(BUILD_SHARED OFF CACHE BOOL "Build shared library")
+        set(BUILD_STATIC ON CACHE BOOL "Build static library")
+        add_subdirectory(external/libzmq EXCLUDE_FROM_ALL)
+
+        # Set variables for our build system
+        set(ZMQ_LIBS libzmq-static)
+        set(ZMQ_INCLUDES ${CMAKE_SOURCE_DIR}/external/libzmq/include)
+        set(ZMQ_LIB_DIRS "")
+        message(STATUS "Building ZeroMQ from submodule")
+    endif()
 endif()
 
 # Libfabric (conditional)
@@ -309,10 +416,48 @@ if(WRP_CORE_ENABLE_LIBFABRIC)
     set(LIBFABRIC_LIB_DIRS ${Libfabric_LIBRARY_DIRS})
 endif()
 
-# HDF5 (optional - for CAE component)
-find_package(HDF5 COMPONENTS C QUIET)
-if(HDF5_FOUND)
-    message(STATUS "found HDF5 at ${HDF5_INCLUDE_DIRS}")
+# HDF5 (optional - for CAE component) - try system first, fall back to submodule
+if(WRP_CORE_ENABLE_HDF5)
+    find_package(HDF5 COMPONENTS C QUIET)
+    if(HDF5_FOUND)
+        message(STATUS "found HDF5 at ${HDF5_INCLUDE_DIRS}")
+    else()
+        message(STATUS "System HDF5 not found, building from submodule")
+
+        # Initialize hdf5 submodule if not already done
+        if(NOT EXISTS "${CMAKE_SOURCE_DIR}/external/hdf5/CMakeLists.txt")
+            message(STATUS "Initializing hdf5 submodule...")
+            execute_process(
+                COMMAND git submodule update --init --recursive external/hdf5
+                WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                RESULT_VARIABLE GIT_SUBMOD_RESULT
+            )
+            if(NOT GIT_SUBMOD_RESULT EQUAL "0")
+                message(FATAL_ERROR "git submodule update --init failed for external/hdf5")
+            endif()
+        endif()
+
+        # Build HDF5 from submodule with minimal configuration
+        set(HDF5_BUILD_EXAMPLES OFF CACHE BOOL "Build HDF5 examples")
+        set(HDF5_BUILD_TOOLS OFF CACHE BOOL "Build HDF5 tools")
+        set(BUILD_TESTING OFF CACHE BOOL "Build HDF5 tests")
+        set(HDF5_BUILD_CPP_LIB OFF CACHE BOOL "Build HDF5 C++ library")
+        set(HDF5_BUILD_FORTRAN OFF CACHE BOOL "Build HDF5 Fortran library")
+        set(HDF5_BUILD_JAVA OFF CACHE BOOL "Build HDF5 Java library")
+        set(HDF5_ENABLE_PARALLEL OFF CACHE BOOL "Enable parallel HDF5")
+        set(HDF5_ENABLE_Z_LIB_SUPPORT OFF CACHE BOOL "Enable Zlib support")
+        set(HDF5_ENABLE_SZIP_SUPPORT OFF CACHE BOOL "Enable SZIP support")
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries")
+        add_subdirectory(external/hdf5 EXCLUDE_FROM_ALL)
+
+        # Set variables for our build system
+        set(HDF5_FOUND TRUE)
+        set(HDF5_LIBRARIES hdf5-static)
+        set(HDF5_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/external/hdf5/src ${CMAKE_BINARY_DIR}/external/hdf5)
+        message(STATUS "Building HDF5 from submodule")
+    endif()
+else()
+    message(STATUS "HDF5 support disabled")
 endif()
 
 # Poco and nlohmann_json (optional - for CAE Globus support)
@@ -365,18 +510,24 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Position Independent Code - Applied to all subdirectories
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Enable RPATH
-set(CMAKE_SKIP_BUILD_RPATH FALSE)
-set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+# RPATH configuration (optional)
+if(WRP_CORE_ENABLE_RPATH)
+    message(STATUS "RPATH enabled for installed libraries")
+    set(CMAKE_SKIP_BUILD_RPATH FALSE)
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
+    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+    set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 
-# Platform-specific RPATH configuration
-if(APPLE)
-    set(CMAKE_MACOSX_RPATH TRUE)
-    set(CMAKE_INSTALL_RPATH "@loader_path/../lib:@loader_path:${CMAKE_INSTALL_PREFIX}/lib")
-elseif(UNIX)
-    set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN:${CMAKE_INSTALL_PREFIX}/lib")
+    # Platform-specific RPATH configuration
+    if(APPLE)
+        set(CMAKE_MACOSX_RPATH TRUE)
+        set(CMAKE_INSTALL_RPATH "@loader_path/../lib:@loader_path:${CMAKE_INSTALL_PREFIX}/lib")
+    elseif(UNIX)
+        set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN:${CMAKE_INSTALL_PREFIX}/lib")
+    endif()
+else()
+    message(STATUS "RPATH disabled - libraries will not have embedded runtime paths")
+    set(CMAKE_SKIP_INSTALL_RPATH TRUE)
 endif()
 
 #------------------------------------------------------------------------------
