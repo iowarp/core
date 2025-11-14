@@ -46,7 +46,7 @@ install(
         FILES
         ${WRP_CTE_HEADERS}
         DESTINATION
-        ${CMAKE_INSTALL_PREFIX}/include/adapter/filesystem
+        include/adapter/filesystem
         COMPONENT
         headers
 )
