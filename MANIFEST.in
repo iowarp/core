@@ -54,8 +54,13 @@ recursive-exclude * CMakeFiles
 recursive-exclude * _deps
 recursive-exclude * build
 recursive-exclude * Testing
+recursive-exclude * .github
+recursive-exclude * .vscode
+recursive-exclude * .devcontainer
+recursive-exclude * .claude
 
-# Exclude .vscode, .devcontainer, and .github unless specifically needed
+# Exclude .vscode, .devcontainer, .github, and .claude unless specifically needed
 prune .vscode
 prune .github
 prune .devcontainer
+prune .claude

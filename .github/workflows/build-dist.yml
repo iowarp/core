@@ -18,7 +18,46 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-sdist:
+    # Build source distribution once (platform-independent)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine setuptools-scm
+
+    - name: Build source distribution
+      run: |
+        python -m build --sdist
+
+    - name: Check source distribution
+      run: |
+        twine check dist/*.tar.gz
+        ls -lh dist/
+
+    - name: Upload source distribution
+      uses: actions/upload-artifact@v4
+      with:
+        name: source-distribution
+        path: dist/*.tar.gz
+        retention-days: 7
+
   build:
+    # Binary wheel distribution - currently DISABLED
+    # Uncomment to re-enable binary wheel builds
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -78,11 +117,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install build twine check-wheel-contents nanobind setuptools-scm
 
-    - name: Build source distribution
-      shell: bash -l {0}
-      run: |
-        python -m build --sdist
-
     # Binary wheel distribution disabled - publish source distribution only
     # Uncomment to enable binary wheel distribution in the future:
     #
@@ -105,30 +139,30 @@ jobs:
     #       fi
     #     done
     #     ls -lh dist/
-
-    - name: Check distribution
-      shell: bash -l {0}
-      run: |
-        twine check dist/*
-        ls -lh dist/
-
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: distributions-${{ matrix.os }}-py${{ matrix.python-version }}
-        path: dist/
-        retention-days: 7
+    #
+    # - name: Check distribution
+    #   shell: bash -l {0}
+    #   run: |
+    #     twine check dist/*
+    #     ls -lh dist/
+    #
+    # - name: Upload artifacts
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: distributions-${{ matrix.os }}-py${{ matrix.python-version }}
+    #     path: dist/
+    #     retention-days: 7
 
   test-sdist:
-    needs: build
+    needs: build-sdist
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
-    - name: Download artifacts
+    - name: Download source distribution
       uses: actions/download-artifact@v4
       with:
-        name: distributions-ubuntu-latest-py3.10
+        name: source-distribution
         path: dist/
 
     - name: Set up Miniconda
@@ -267,7 +301,7 @@ jobs:
     name: Publish to PyPI
     # Only source distribution (sdist) is published - binary wheels disabled
     # To re-enable binary distribution, add test-wheel-py313 to needs list
-    needs: [build, test-sdist]
+    needs: [build-sdist, test-sdist]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     environment:
@@ -277,21 +311,20 @@ jobs:
       id-token: write  # Required for trusted publishing
 
     steps:
-    - name: Download all artifacts
+    - name: Download source distribution
       uses: actions/download-artifact@v4
       with:
-        pattern: distributions-*
-        path: dist-temp/
-        merge-multiple: true
+        name: source-distribution
+        path: dist/
 
-    - name: Prepare distribution directory
+    - name: Verify distribution
       run: |
-        mkdir -p dist/
-        cp dist-temp/*/* dist/ 2>/dev/null || cp dist-temp/* dist/ 2>/dev/null || true
         echo "=== Distribution files to publish ==="
         ls -lh dist/
-        echo "=== Note: Only source distributions (.tar.gz) will be published ==="
-        ls dist/*.tar.gz 2>/dev/null || echo "No source distributions found"
+        echo ""
+        echo "=== Verifying source distribution ==="
+        python -m pip install --upgrade pip twine
+        twine check dist/*.tar.gz
 
     - name: Publish to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
