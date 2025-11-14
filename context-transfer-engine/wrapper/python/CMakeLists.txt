@@ -59,9 +59,7 @@ install(
 # If you see "refusing to add duplicate key" errors, uninstall the system version:
 #   sudo rm /usr/local/lib/wrp_cte_core_ext*.so
 # Or run tests after: make uninstall
-if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
-    include(CTest)
-    if(BUILD_TESTING)
+if(BUILD_TESTING)
         # Full Python bindings test (includes runtime initialization)
         # Use -I flag to run in isolated mode (ignore user site-packages)
         add_test(
@@ -84,6 +82,13 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
             WORKING_DIRECTORY $<TARGET_FILE_DIR:wrp_cte_core_ext>
         )
 
+        # Tag wrapper bindings test
+        add_test(
+            NAME python_tag_wrapper_bindings_test
+            COMMAND ${Python_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/test_tag_wrapper_bindings.py
+            WORKING_DIRECTORY $<TARGET_FILE_DIR:wrp_cte_core_ext>
+        )
+
         # Set properties for tests
         # Tests use -I (isolated mode) and manually add current directory to sys.path
         # No PYTHONPATH needed since tests run in module directory and add it explicitly
@@ -91,6 +96,7 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
             python_bindings_test
             python_bindings_compilation_test
             python_query_bindings_test
+            python_tag_wrapper_bindings_test
             PROPERTIES
             LABELS "python;bindings"
             TIMEOUT 60
@@ -101,8 +107,8 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
             python_bindings_test
             python_bindings_compilation_test
             python_query_bindings_test
+            python_tag_wrapper_bindings_test
             PROPERTIES
             DEPENDS wrp_cte_core_ext
         )
-    endif()
 endif()

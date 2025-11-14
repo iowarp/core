@@ -2,6 +2,7 @@
 #include <nanobind/stl/chrono.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/string_view.h>
 #include <nanobind/stl/vector.h>
 
 #include <wrp_cte/core/core_client.h>
@@ -43,6 +44,16 @@ NB_MODULE(wrp_cte_core_ext, m) {
   // Bind MemContext for method calls
   nb::class_<hipc::MemContext>(m, "MemContext")
       .def(nb::init<>());
+
+  // Bind PoolQuery for routing queries
+  nb::class_<chi::PoolQuery>(m, "PoolQuery")
+      .def(nb::init<>())
+      .def_static("Broadcast", &chi::PoolQuery::Broadcast,
+                  "Create a Broadcast pool query (routes to all nodes)")
+      .def_static("Dynamic", &chi::PoolQuery::Dynamic,
+                  "Create a Dynamic pool query (automatic routing optimization)")
+      .def_static("Local", &chi::PoolQuery::Local,
+                  "Create a Local pool query (routes to local node only)");
 
   // Bind CteTelemetry structure
   nb::class_<wrp_cte::core::CteTelemetry>(m, "CteTelemetry")
@@ -89,6 +100,52 @@ NB_MODULE(wrp_cte_core_ext, m) {
          },
          "mctx"_a, "tag_regex"_a, "blob_regex"_a, "max_blobs"_a = 0, "pool_query"_a,
          "Query blobs by tag and blob regex patterns, returns vector of (tag_name, blob_name) pairs");
+
+  // Bind Tag wrapper class - provides convenient API for tag operations
+  // This class wraps tag operations and provides automatic memory management
+  nb::class_<wrp_cte::core::Tag>(m, "Tag")
+      .def(nb::init<const std::string &>(),
+           "tag_name"_a,
+           "Create or get a tag by name. Calls GetOrCreateTag internally.")
+      .def(nb::init<const wrp_cte::core::TagId &>(),
+           "tag_id"_a,
+           "Create tag wrapper from existing TagId")
+      .def("PutBlob",
+           [](wrp_cte::core::Tag &self, const std::string &blob_name,
+              nb::bytes data, size_t off) {
+             // Use nb::bytes to accept bytes from Python
+             // c_str() returns const char*, size() returns size
+             self.PutBlob(blob_name, data.c_str(), data.size(), off);
+           },
+           "blob_name"_a, "data"_a, "off"_a = 0,
+           "Put blob data. Automatically allocates shared memory and copies data. "
+           "Args: blob_name (str), data (bytes), off (int, optional)")
+      .def("GetBlob",
+           [](wrp_cte::core::Tag &self, const std::string &blob_name,
+              size_t data_size, size_t off) -> std::string {
+             // Allocate buffer and retrieve blob data
+             std::string result(data_size, '\0');
+             self.GetBlob(blob_name, result.data(), data_size, off);
+             return result;
+           },
+           "blob_name"_a, "data_size"_a, "off"_a = 0,
+           "Get blob data. Automatically allocates shared memory and copies data. "
+           "Args: blob_name (str), data_size (int), off (int, optional). "
+           "Returns: str/bytes containing blob data")
+      .def("GetBlobScore", &wrp_cte::core::Tag::GetBlobScore,
+           "blob_name"_a,
+           "Get blob placement score (0.0-1.0). "
+           "Args: blob_name (str). Returns: float")
+      .def("GetBlobSize", &wrp_cte::core::Tag::GetBlobSize,
+           "blob_name"_a,
+           "Get blob size in bytes. "
+           "Args: blob_name (str). Returns: int")
+      .def("GetContainedBlobs", &wrp_cte::core::Tag::GetContainedBlobs,
+           "Get all blob names contained in this tag. "
+           "Returns: list of str")
+      .def("GetTagId", &wrp_cte::core::Tag::GetTagId,
+           "Get the TagId for this tag. "
+           "Returns: TagId");
 
   // Module-level convenience functions
   m.def(
