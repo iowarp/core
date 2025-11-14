@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iowarp-core"
+version = "1.0.0"
+description = "IOWarp Core - A Comprehensive Platform for Context Management in Scientific Computing"
+readme = "README.md"
+authors = [
+    { name = "IoWarp Team - Gnosis Research Center", email = "grc@illinoistech.edu" }
+]
+license = { text = "BSD-3-Clause" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: C++ Libraries",
+    "Topic :: System :: Distributed Computing",
+]
+keywords = [
+    "hpc", "scientific-computing", "distributed-systems", "storage-systems",
+    "data-processing", "context-management", "high-performance-computing"
+]
+requires-python = ">=3.8"
+dependencies = [
+    "click>=8.0.0",
+    "psutil>=5.8.0",
+    "pyyaml>=5.4.0",
+]
+
+[project.urls]
+Homepage = "https://grc.iit.edu/research/projects/iowarp"
+Documentation = "https://grc.iit.edu/docs/category/iowarp"
+Repository = "https://github.com/iowarp/iowarp-core"
+"Bug Tracker" = "https://github.com/iowarp/iowarp-core/issues"
+
+[project.scripts]
+iowarp-install = "iowarp_core.installer:main"
+iowarp-config = "iowarp_core.config:main"
+iowarp-test = "iowarp_core.test:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0.0",
+    "pytest-cov>=2.12.0",
+    "black>=22.0.0",
+    "isort>=5.0.0",
+    "mypy>=0.900",
+]
+
+[tool.setuptools]
+packages = ["iowarp_core"]
+
+[tool.setuptools.package-data]
+iowarp_core = ["scripts/*", "configs/*", "*.sh"]
+
+[tool.black]
+line-length = 88
+target-version = ["py38", "py39", "py310", "py311", "py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

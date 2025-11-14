@@ -1,0 +1,11 @@
+include README.md
+include LICENSE
+include CLAUDE.md
+include CMakeLists.txt
+include CMakePresets.json
+include CPPLINT.cfg
+recursive-include iowarp_core *.py
+recursive-include iowarp_core *.sh
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+global-exclude .DS_Store

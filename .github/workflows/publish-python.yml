@@ -1,0 +1,72 @@
+name: Publish Python packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      test_pypi:
+        description: 'Publish to Test PyPI'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+
+    - name: Build iowarp-core package
+      run: |
+        cd ${{ github.workspace }}
+        python -m build
+
+    - name: Build iowarp installer package
+      run: |
+        cd ${{ github.workspace }}/iowarp-installer
+        python -m build
+
+    - name: Publish iowarp-core to Test PyPI
+      if: ${{ github.event.inputs.test_pypi == 'true' }}
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+      run: |
+        python -m twine upload --repository testpypi dist/*
+
+    - name: Publish iowarp installer to Test PyPI
+      if: ${{ github.event.inputs.test_pypi == 'true' }}
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+      run: |
+        python -m twine upload --repository testpypi iowarp-installer/dist/*
+
+    - name: Publish iowarp-core to PyPI
+      if: ${{ github.event_name == 'release' }}
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      run: |
+        python -m twine upload dist/*
+
+    - name: Publish iowarp installer to PyPI
+      if: ${{ github.event_name == 'release' }}
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+      run: |
+        python -m twine upload iowarp-installer/dist/*
