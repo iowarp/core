@@ -75,16 +75,30 @@ endif()
 
 # Cereal
 if(HSHM_ENABLE_CEREAL)
-    # Skip find_package if target already exists (from submodule)
+    # Skip find_package if target already exists (from submodule or export)
     if(NOT TARGET cereal AND NOT TARGET cereal::cereal)
-        find_package(cereal CONFIG REQUIRED)
+        find_package(cereal CONFIG QUIET)
 
         if(cereal_FOUND)
             message(STATUS "found cereal at ${cereal_DIR}")
+        else()
+            message(STATUS "cereal not found via find_package, checking if headers are available")
+            # Cereal is header-only, so we can create an interface target if headers exist
+            if(EXISTS "${HSHM_INCLUDE_DIR}/cereal")
+                add_library(cereal INTERFACE IMPORTED)
+                set_target_properties(cereal PROPERTIES
+                    INTERFACE_INCLUDE_DIRECTORIES "${HSHM_INCLUDE_DIR}"
+                )
+                message(STATUS "Created cereal interface target from installed headers")
+            endif()
         endif()
     endif()
 
-    set(SERIALIZATION_LIBS cereal::cereal ${SERIALIZATION_LIBS})
+    if(TARGET cereal::cereal)
+        set(SERIALIZATION_LIBS cereal::cereal ${SERIALIZATION_LIBS})
+    elseif(TARGET cereal)
+        set(SERIALIZATION_LIBS cereal ${SERIALIZATION_LIBS})
+    endif()
 endif()
 
 # Boost
