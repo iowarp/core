@@ -1,0 +1,10 @@
+name: file_assets_assimilation
+
+transfers:
+  - src: file::/workspace/context-assimilation-engine/data/file_assets.csv
+    dst: iowarp::file_assets_tag
+    format: binary
+    depends_on: ""
+    range_off: 0
+    range_size: 0
+
