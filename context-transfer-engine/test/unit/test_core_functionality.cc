@@ -2222,3 +2222,160 @@ TEST_CASE_METHOD(CTECoreFunctionalTestFixture, "End-to-End CTE Core Workflow",
   REQUIRE(final_targets.size() >= target_suffixes.size());
   INFO("Integration test completed successfully - all steps verified");
 }
+
+/**
+ * FUNCTIONAL Test Case: Distributed Execution Validation
+ *
+ * This test validates that data operations are being distributed across nodes
+ * by performing iterative PutBlob and GetBlob operations and tracking which
+ * nodes completed each operation. It verifies:
+ * 1. Multiple Put/Get operations can be executed successfully
+ * 2. Operations are distributed across multiple nodes (when available)
+ * 3. Completer tracking works correctly to identify execution location
+ * 4. Average completer value indicates distributed execution
+ *
+ * Environment Variables:
+ * - CTE_NUM_NODES: Number of nodes in the distributed system (default: 1)
+ */
+TEST_CASE_METHOD(CTECoreFunctionalTestFixture,
+                 "FUNCTIONAL - Distributed Execution Validation",
+                 "[cte][core][distributed][validation]") {
+  // Parse number of nodes from environment variable
+  int num_nodes = 1;
+  const char* num_nodes_env = std::getenv("CTE_NUM_NODES");
+  if (num_nodes_env != nullptr) {
+    num_nodes = std::atoi(num_nodes_env);
+    if (num_nodes < 1) {
+      num_nodes = 1;
+    }
+  }
+  INFO("Running distributed execution test with " << num_nodes << " nodes");
+
+  // Setup: Create core pool and register target
+  chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
+  wrp_cte::core::CreateParams params;
+
+  REQUIRE_NOTHROW(core_client_->Create(mctx_, pool_query, kCTECorePoolName,
+                                       kCTECorePoolId, params));
+  REQUIRE(core_client_->GetReturnCode() == 0);
+
+  // Use the test_storage_path_ as target_name
+  const std::string target_name = test_storage_path_;
+  chi::u32 reg_result = core_client_->RegisterTarget(
+      mctx_, target_name, chimaera::bdev::BdevType::kFile, kTestTargetSize,
+      chi::PoolQuery::Local(), chi::PoolId(608, 0));
+  REQUIRE(reg_result == 0);
+
+  // Create a test tag for blob grouping
+  const std::string tag_name = "distributed_test_tag";
+  wrp_cte::core::TagId tag_id = core_client_->GetOrCreateTag(mctx_, tag_name);
+  REQUIRE(!tag_id.IsNull());
+
+  // Test configuration
+  constexpr int num_iterations = 16;
+  constexpr chi::u64 blob_size = 4096; // 4KB per blob
+  const float score = 0.75f;
+
+  // Tracking variables for completer statistics
+  chi::u64 put_completer_sum = 0;
+  chi::u64 get_completer_sum = 0;
+
+  INFO("Starting " << num_iterations << " Put/Get iterations...");
+
+  // Perform iterative PutBlob and GetBlob operations
+  for (int i = 0; i < num_iterations; ++i) {
+    std::string blob_name = "dist_blob_" + std::to_string(i);
+
+    // Create unique test data for this blob
+    char pattern = static_cast<char>('A' + (i % 26));
+    auto test_data = CreateTestData(blob_size, pattern);
+    REQUIRE(VerifyTestData(test_data, pattern));
+
+    // Allocate shared memory for blob data
+    hipc::FullPtr<char> blob_data_fullptr =
+        CHI_IPC->AllocateBuffer(blob_size);
+    REQUIRE(!blob_data_fullptr.IsNull());
+    hipc::Pointer blob_data_ptr = blob_data_fullptr.shm_;
+
+    // Copy test data to shared memory
+    REQUIRE(CopyToSharedMemory(blob_data_fullptr, test_data));
+
+    // Execute PutBlob operation
+    auto put_task = core_client_->AsyncPutBlob(
+        mctx_, tag_id, blob_name, 0, blob_size, blob_data_ptr, score, 0);
+
+    REQUIRE(!put_task.IsNull());
+    REQUIRE(WaitForTaskCompletion(put_task, 10000));
+    REQUIRE(put_task->return_code_.load() == 0);
+
+    // Track the completer for PutBlob
+    chi::ContainerId put_completer = put_task->completer_.load();
+    put_completer_sum += static_cast<chi::u64>(put_completer);
+    INFO("Put iteration " << i << ": blob_name=" << blob_name
+                          << ", completer=" << put_completer);
+
+    // Cleanup put task
+    CHI_IPC->DelTask(put_task);
+
+    // Allocate buffer for GetBlob result
+    hipc::FullPtr<char> get_blob_data_fullptr =
+        CHI_IPC->AllocateBuffer(blob_size);
+    REQUIRE(!get_blob_data_fullptr.IsNull());
+    hipc::Pointer get_blob_data_ptr = get_blob_data_fullptr.shm_;
+
+    // Execute GetBlob operation
+    auto get_task = core_client_->AsyncGetBlob(mctx_, tag_id, blob_name, 0,
+                                               blob_size, 0, get_blob_data_ptr);
+
+    REQUIRE(!get_task.IsNull());
+    REQUIRE(WaitForTaskCompletion(get_task, 10000));
+    REQUIRE(get_task->return_code_.load() == 0);
+
+    // Track the completer for GetBlob
+    chi::ContainerId get_completer = get_task->completer_.load();
+    get_completer_sum += static_cast<chi::u64>(get_completer);
+    INFO("Get iteration " << i << ": blob_name=" << blob_name
+                          << ", completer=" << get_completer);
+
+    // Verify retrieved data matches original
+    hipc::Pointer retrieved_data_ptr = get_task->blob_data_;
+    REQUIRE(!retrieved_data_ptr.IsNull());
+    auto retrieved_data = CopyFromSharedMemory(retrieved_data_ptr, blob_size);
+    REQUIRE(retrieved_data.size() == blob_size);
+    REQUIRE(VerifyTestData(retrieved_data, pattern));
+
+    // Cleanup get task
+    CHI_IPC->DelTask(get_task);
+
+    INFO("Iteration " << i << " completed successfully");
+  }
+
+  INFO("All " << num_iterations << " iterations completed");
+
+  // Calculate average completer values (without rounding error)
+  double put_avg_completer =
+      static_cast<double>(put_completer_sum) / static_cast<double>(num_iterations);
+  double get_avg_completer =
+      static_cast<double>(get_completer_sum) / static_cast<double>(num_iterations);
+
+  HILOG(kInfo, "PutBlob completer statistics:");
+  HILOG(kInfo, "  Sum: {}", put_completer_sum);
+  HILOG(kInfo, "  Average: {}", put_avg_completer);
+
+  HILOG(kInfo, "GetBlob completer statistics:");
+  HILOG(kInfo, "  Sum: {}", get_completer_sum);
+  HILOG(kInfo, "  Average: {}", get_avg_completer);
+
+  // Validation: If multiple nodes exist, average completer should be > 0
+  // indicating distributed execution
+  if (num_nodes > 1) {
+    REQUIRE(put_avg_completer > 0.0);
+    REQUIRE(get_avg_completer > 0.0);
+    INFO("SUCCESS: Distributed execution validated - operations executed "
+         "across multiple nodes");
+  } else {
+    INFO("Single node test - distributed execution validation skipped");
+  }
+
+  INFO("Distributed execution validation test completed successfully");
+}

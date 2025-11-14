@@ -33,9 +33,11 @@ runtime:
   heartbeat_interval: 1000
 
 # Compose section - declarative pool creation
-# Creates CTE Core ChiMod with storage devices and DPE configuration
+# Creates CTE and CAE ChiMods with their respective configurations
 compose:
   # CTE Core ChiMod with storage configuration
+  # Pool ID: 512.0 (defined in wrp_cte/core/constants.h)
+  # Pool name: "cte_main" (user-defined)
   - mod_name: wrp_cte_core
     pool_name: cte_main
     pool_query: local
@@ -74,3 +76,10 @@ compose:
       max_concurrent_operations: 64
       score_threshold: 0.7
       score_difference_threshold: 0.05
+  # CAE Core ChiMod for data assimilation
+  # Pool ID: 400.0 (defined in wrp_cae/core/constants.h as kCaePoolId)
+  # Pool name: "cae_main" (user-defined)
+  - mod_name: wrp_cae_core
+    pool_name: cae_main
+    pool_query: local
+    pool_id: "400.0"

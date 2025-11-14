@@ -21,6 +21,8 @@ services:
       - TEST_FILTER=${TEST_FILTER:-}
       - SECTION_FILTER=${SECTION_FILTER:-}
       - WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml
+      - CTE_NUM_NODES=4
+      - CTE_INIT_RUNTIME=0
     shm_size: '16gb'
     mem_limit: 16g
     entrypoint: [ "/bin/bash", "-c" ]
@@ -34,38 +36,37 @@ services:
         sudo chown -R iowarp:iowarp /mnt &&
         echo 'Node 1: Creating storage directories...' &&
         mkdir -p /mnt/hdd1 /mnt/hdd2 /mnt/hdd3 /mnt/hdd4 &&
-        echo 'Node 1: Starting Chimaera runtime...' &&
         export PATH=/usr/local/bin:$$PATH &&
         export WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml &&
+        echo '========================================' &&
+        echo 'Node 1: Starting Chimaera runtime in background' &&
+        echo '========================================' &&
         chimaera_start_runtime &
         RUNTIME_PID=$$! &&
         echo \"Node 1: Runtime started (PID $$RUNTIME_PID)\" &&
         echo '========================================' &&
-        echo 'Node 1: Creating CTE pools via chimaera_compose' &&
-        echo '========================================' &&
-        chimaera_compose /etc/iowarp/wrp_config.yaml &&
-        echo 'Node 1: CTE pools created successfully' &&
-        echo '========================================' &&
         echo 'Node 1: Running distributed unit tests' &&
         echo '========================================' &&
+        echo 'Flushing output before test execution...' &&
+        sync &&
         if [ -z \"$$TEST_FILTER\" ] && [ -z \"$$SECTION_FILTER\" ]; then
-          echo 'Running all tests (no filter)'
-          test_core_functionality --reporter console
+          echo 'Running all tests (no filter)' &&
+          test_core_functionality --reporter console --verbosity high --durations yes 2>&1
           TEST_EXIT_CODE=$$?
         elif [ -n \"$$TEST_FILTER\" ] && [ -z \"$$SECTION_FILTER\" ]; then
-          echo \"Test filter: $$TEST_FILTER\"
-          test_core_functionality --reporter console \"$$TEST_FILTER\"
+          echo \"Test filter: $$TEST_FILTER\" &&
+          test_core_functionality --reporter console --verbosity high --durations yes \"$$TEST_FILTER\" 2>&1
           TEST_EXIT_CODE=$$?
         elif [ -z \"$$TEST_FILTER\" ] && [ -n \"$$SECTION_FILTER\" ]; then
-          echo \"Section filter: $$SECTION_FILTER\"
-          test_core_functionality --reporter console -c \"$$SECTION_FILTER\"
+          echo \"Section filter: $$SECTION_FILTER\" &&
+          test_core_functionality --reporter console --verbosity high --durations yes -c \"$$SECTION_FILTER\" 2>&1
           TEST_EXIT_CODE=$$?
         else
-          echo \"Test filter: $$TEST_FILTER\"
-          echo \"Section filter: $$SECTION_FILTER\"
-          test_core_functionality --reporter console \"$$TEST_FILTER\" -c \"$$SECTION_FILTER\"
+          echo \"Test filter: $$TEST_FILTER\" &&
+          echo \"Section filter: $$SECTION_FILTER\" &&
+          test_core_functionality --reporter console --verbosity high --durations yes \"$$TEST_FILTER\" -c \"$$SECTION_FILTER\" 2>&1
           TEST_EXIT_CODE=$$?
-        fi
+        fi &&
         echo '========================================'
         echo 'Node 1: Tests complete'
         echo '========================================'
@@ -83,13 +84,13 @@ services:
         ipv4_address: 172.26.0.11
     volumes:
       - ${IOWARP_CORE_ROOT:-.}/context-transfer-engine/test/unit/distributed:/etc/iowarp:ro
-      
       - hdd2-storage:/mnt/hdd2
     environment:
       - NODE_ID=2
       - NODE_IP=172.26.0.11
       - CONTAINER_HOSTFILE=/etc/iowarp/hostfile
       - WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml
+      - CTE_NUM_NODES=4
     shm_size: '16gb'
     mem_limit: 16g
     entrypoint: [ "/bin/bash", "-c" ]
@@ -99,16 +100,12 @@ services:
         echo '========================================' &&
         echo 'Node 2: Starting initialization' &&
         echo '========================================' &&
-        echo '========================================' &&
-        echo 'Node 2: Setting up storage and runtime' &&
-        echo '========================================' &&
         sudo chown -R iowarp:iowarp /mnt &&
         mkdir -p /mnt/hdd2 &&
-        echo 'Node 2: Starting Chimaera runtime...' &&
         export PATH=/usr/local/bin:$$PATH &&
         export WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml &&
         echo '========================================' &&
-        echo 'Node 2: Runtime running in foreground' &&
+        echo 'Node 2: Starting Chimaera runtime in foreground' &&
         echo '========================================' &&
         chimaera_start_runtime
       "
@@ -124,13 +121,13 @@ services:
         ipv4_address: 172.26.0.12
     volumes:
       - ${IOWARP_CORE_ROOT:-.}/context-transfer-engine/test/unit/distributed:/etc/iowarp:ro
-      
       - hdd3-storage:/mnt/hdd3
     environment:
       - NODE_ID=3
       - NODE_IP=172.26.0.12
       - CONTAINER_HOSTFILE=/etc/iowarp/hostfile
       - WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml
+      - CTE_NUM_NODES=4
     shm_size: '16gb'
     mem_limit: 16g
     entrypoint: [ "/bin/bash", "-c" ]
@@ -140,16 +137,12 @@ services:
         echo '========================================' &&
         echo 'Node 3: Starting initialization' &&
         echo '========================================' &&
-        echo '========================================' &&
-        echo 'Node 3: Setting up storage and runtime' &&
-        echo '========================================' &&
         sudo chown -R iowarp:iowarp /mnt &&
         mkdir -p /mnt/hdd3 &&
-        echo 'Node 3: Starting Chimaera runtime...' &&
         export PATH=/usr/local/bin:$$PATH &&
         export WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml &&
         echo '========================================' &&
-        echo 'Node 3: Runtime running in foreground' &&
+        echo 'Node 3: Starting Chimaera runtime in foreground' &&
         echo '========================================' &&
         chimaera_start_runtime
       "
@@ -165,13 +158,13 @@ services:
         ipv4_address: 172.26.0.13
     volumes:
       - ${IOWARP_CORE_ROOT:-.}/context-transfer-engine/test/unit/distributed:/etc/iowarp:ro
-      
       - hdd4-storage:/mnt/hdd4
     environment:
       - NODE_ID=4
       - NODE_IP=172.26.0.13
       - CONTAINER_HOSTFILE=/etc/iowarp/hostfile
       - WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml
+      - CTE_NUM_NODES=4
     shm_size: '16gb'
     mem_limit: 16g
     entrypoint: [ "/bin/bash", "-c" ]
@@ -181,16 +174,12 @@ services:
         echo '========================================' &&
         echo 'Node 4: Starting initialization' &&
         echo '========================================' &&
-        echo '========================================' &&
-        echo 'Node 4: Setting up storage and runtime' &&
-        echo '========================================' &&
         sudo chown -R iowarp:iowarp /mnt &&
         mkdir -p /mnt/hdd4 &&
-        echo 'Node 4: Starting Chimaera runtime...' &&
         export PATH=/usr/local/bin:$$PATH &&
         export WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml &&
         echo '========================================' &&
-        echo 'Node 4: Runtime running in foreground' &&
+        echo 'Node 4: Starting Chimaera runtime in foreground' &&
         echo '========================================' &&
         chimaera_start_runtime
       "

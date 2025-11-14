@@ -17,29 +17,23 @@ namespace wrp_cae::core {
  * Contains configuration parameters for core container creation
  */
 struct CreateParams {
-  // Core-specific parameters
-  chi::u32 worker_count_;
-
   // Required: chimod library name for module manager
   static constexpr const char* chimod_lib_name = "wrp_cae_core";
 
   // Default constructor
-  CreateParams() : worker_count_(1) {}
+  CreateParams() {}
 
-  // Constructor with allocator and parameters
-  CreateParams(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
-               chi::u32 worker_count = 1)
-      : worker_count_(worker_count) {}
+  // Constructor with allocator
+  CreateParams(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc) {}
 
   // Copy constructor with allocator (for BaseCreateTask)
   CreateParams(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
-               const CreateParams& other)
-      : worker_count_(other.worker_count_) {}
+               const CreateParams& other) {}
 
   // Serialization support for cereal
   template<class Archive>
   void serialize(Archive& ar) {
-    ar(worker_count_);
+    // No members to serialize
   }
 };
 

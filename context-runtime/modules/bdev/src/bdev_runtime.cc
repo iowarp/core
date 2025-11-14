@@ -158,7 +158,7 @@ bool Heap::Allocate(size_t block_size, int block_type, Block &block) {
   // Align the requested size
   chi::u64 aligned_size =
       ((block_size + alignment - 1) / alignment) * alignment;
-  HILOG(kInfo,
+  HILOG(kDebug,
         "Allocating block: block_size = {}, alignment = {}, aligned_size = {}",
         block_size, alignment, aligned_size);
 
@@ -210,8 +210,8 @@ void Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx) {
   // Get the pool name which serves as the file path for file-based operations
   std::string pool_name = task->pool_name_.str();
 
-  HILOG(kInfo,
-        "DEBUG: Bdev runtime received params: bdev_type={}, pool_name='{}', "
+  HILOG(kDebug,
+        "Bdev runtime received params: bdev_type={}, pool_name='{}', "
         "total_size={}, io_depth={}, alignment={}",
         static_cast<chi::u32>(params.bdev_type_), pool_name, params.total_size_,
         params.io_depth_, params.alignment_);
@@ -240,7 +240,7 @@ void Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx) {
     }
 
     file_size_ = st.st_size;
-    HILOG(kInfo, "File stat: st.st_size={}, params.total_size={}", file_size_, params.total_size_);
+    HILOG(kDebug, "File stat: st.st_size={}, params.total_size={}", file_size_, params.total_size_);
 
     if (params.total_size_ > 0 && params.total_size_ < file_size_) {
       file_size_ = params.total_size_;
@@ -250,7 +250,7 @@ void Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx) {
     if (file_size_ == 0) {
       file_size_ = (params.total_size_ > 0) ? params.total_size_
                                             : (1ULL << 30); // 1GB default
-      HILOG(kInfo, "File is empty, setting file_size_ to {} and calling ftruncate", file_size_);
+      HILOG(kDebug, "File is empty, setting file_size_ to {} and calling ftruncate", file_size_);
       if (ftruncate(file_fd_, file_size_) != 0) {
         task->return_code_ = 3;
         HELOG(kError, "Failed to truncate file: {}, errno: {}, strerror: {}", pool_name, errno, strerror(errno));
@@ -258,9 +258,9 @@ void Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx) {
         file_fd_ = -1;
         return;
       }
-      HILOG(kInfo, "ftruncate succeeded, file_size_={}", file_size_);
+      HILOG(kDebug, "ftruncate succeeded, file_size_={}", file_size_);
     }
-    HILOG(kInfo, "Create: Final file_size_={}, initializing allocator", file_size_);
+    HILOG(kDebug, "Create: Final file_size_={}, initializing allocator", file_size_);
 
     // Initialize async I/O for file backend
     InitializeAsyncIO();
@@ -450,7 +450,7 @@ void Runtime::GetStats(hipc::FullPtr<GetStatsTask> task, chi::RunContext &ctx) {
   // Get remaining size from heap allocator
   chi::u64 remaining = heap_.GetRemainingSize();
   task->remaining_size_ = remaining;
-  HILOG(kInfo, "GetStats: file_size_={}, remaining={}", file_size_, remaining);
+  HILOG(kDebug, "GetStats: file_size_={}, remaining={}", file_size_, remaining);
   task->return_code_ = 0;
 }
 
