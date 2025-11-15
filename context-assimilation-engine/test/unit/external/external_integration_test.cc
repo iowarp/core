@@ -11,8 +11,9 @@
 #include <memory>
 
 // CAE Core includes
-#include <wrp_cae/core/cae_client.h>
-#include <wrp_cae/core/cae_tasks.h>
+#include <wrp_cae/core/core_client.h>
+#include <wrp_cae/core/core_tasks.h>
+#include <wrp_cae/core/constants.h>
 #include <chimaera/chimaera.h>
 
 // HSHM includes
@@ -51,32 +52,17 @@ public:
                 return false;
             }
 
-            // Step 3: Initialize CAE subsystem
-            std::cout << "3. Initializing CAE subsystem..." << std::endl;
-            bool cae_init = wrp_cae::core::WRP_CAE_CLIENT_INIT();
-            if (!cae_init) {
-                std::cerr << "Failed to initialize CAE subsystem" << std::endl;
-                return false;
-            }
-
-            // Step 4: Get CAE client instance
-            std::cout << "4. Getting CAE client instance..." << std::endl;
-            auto *global_client = WRP_CAE_CLIENT;
-            if (!global_client) {
-                std::cerr << "Failed to get CAE client instance" << std::endl;
-                return false;
-            }
-
-            // Create our own client instance for testing
+            // Step 3: Create CAE client instance
+            std::cout << "3. Creating CAE client instance..." << std::endl;
             cae_client_ = std::make_unique<wrp_cae::core::Client>();
 
-            // Step 5: Create CAE container
-            std::cout << "5. Creating CAE container..." << std::endl;
+            // Step 4: Create CAE container
+            std::cout << "4. Creating CAE container..." << std::endl;
             wrp_cae::core::CreateParams create_params;
 
             try {
                 cae_client_->Create(hipc::MemContext(), chi::PoolQuery::Dynamic(),
-                                   wrp_cae::core::kCaePoolName,
+                                   "cae_test_pool",
                                    wrp_cae::core::kCaePoolId, create_params);
                 std::cout << "   CAE container created successfully" << std::endl;
             } catch (const std::exception& e) {

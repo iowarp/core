@@ -399,12 +399,13 @@ if(WRP_CORE_ENABLE_HDF5)
         # Ensure HDF5_LIBRARIES is set for both CONFIG and MODULE mode
         if(NOT HDF5_LIBRARIES)
             # CONFIG mode creates targets but may not set HDF5_LIBRARIES
-            if(TARGET hdf5-static)
-                set(HDF5_LIBRARIES hdf5-static)
+            # Prefer shared libraries over static for better compatibility
+            if(TARGET HDF5::HDF5)
+                set(HDF5_LIBRARIES HDF5::HDF5)
             elseif(TARGET hdf5-shared)
                 set(HDF5_LIBRARIES hdf5-shared)
-            elseif(TARGET HDF5::HDF5)
-                set(HDF5_LIBRARIES HDF5::HDF5)
+            elseif(TARGET hdf5-static)
+                set(HDF5_LIBRARIES hdf5-static)
             endif()
         endif()
     else()

@@ -13,6 +13,9 @@ find_package(iowarp-core REQUIRED)
 #   - chimaera::admin_client and chimaera::admin_runtime
 #   - ChiMod build utilities
 
+# Find system dependencies
+find_package(Threads REQUIRED)
+
 # Create test executable
 add_executable(test_external_chimod test_external_chimod.cc)
 
