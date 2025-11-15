@@ -231,7 +231,7 @@ target_include_directories(${FIBER_TEST_TARGET} PRIVATE
 )
 
 # Find Boost context library for fiber tests
-find_package(Boost REQUIRED COMPONENTS context)
+# Boost is already found by root CMakeLists.txt
 
 # Link against hermes-shm target for fiber tests (which includes boost)
 target_link_libraries(${FIBER_TEST_TARGET}

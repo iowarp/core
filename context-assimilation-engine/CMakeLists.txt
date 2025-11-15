@@ -20,8 +20,9 @@ set(CAE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
 include(CTest)
 
 # CAE Feature Options - External Library Support
-option(CAE_ENABLE_HDF5 "Enable HDF5 format support in CAE" ON)
-option(CAE_ENABLE_GLOBUS "Enable Globus transfer support in CAE" OFF)
+# WRP_CAE_ENABLE_HDF5 is set from WRP_CORE_ENABLE_HDF5 (defined in root CMakeLists.txt)
+set(WRP_CAE_ENABLE_HDF5 ${WRP_CORE_ENABLE_HDF5} CACHE BOOL "Enable HDF5 format support in CAE (controlled by WRP_CORE_ENABLE_HDF5)" FORCE)
+# CAE_ENABLE_GLOBUS is defined in root CMakeLists.txt
 
 # Coverage is controlled by WRP_CORE_ENABLE_COVERAGE in root CMakeLists.txt
 # Root CMakeLists already applies coverage flags globally via add_compile_options/add_link_options
@@ -43,30 +44,14 @@ endif()
 # ------------------------------------------------------------------------------
 # Setup install and output Directories
 # ------------------------------------------------------------------------------
-include(GNUInstallDirs)
-
-if(NOT CAE_INSTALL_BIN_DIR)
-    set(CAE_INSTALL_BIN_DIR ${CMAKE_INSTALL_BINDIR})
-endif()
-
-if(NOT CAE_INSTALL_LIB_DIR)
-    set(CAE_INSTALL_LIB_DIR ${CMAKE_INSTALL_LIBDIR})
-endif()
-
-if(NOT CAE_INSTALL_INCLUDE_DIR)
-    set(CAE_INSTALL_INCLUDE_DIR ${CMAKE_INSTALL_INCLUDEDIR})
-endif()
-
-if(NOT CAE_INSTALL_DATA_DIR)
-    set(CAE_INSTALL_DATA_DIR ${CMAKE_INSTALL_DATADIR})
-endif()
+# Installation directories use relative paths for proper --prefix override support
+# Removed CAE_INSTALL_*_DIR macros - use lib, include, bin, share directly
 
 # -----------------------------------------------------------------------------
 # Find Packages
 # -----------------------------------------------------------------------------
 
 # CMAKE_EXPORT_COMPILE_COMMANDS and RPATH settings are set by root CMakeLists.txt
-list(APPEND CMAKE_INSTALL_RPATH "${CAE_INSTALL_LIB_DIR}")
 
 # Output directories are set by root CMakeLists.txt
 

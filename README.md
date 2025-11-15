@@ -136,6 +136,41 @@ Interactive tools and interfaces for exploring scientific data contents and meta
 
 ## Getting Started
 
+### Quick Install with pip (Recommended) - Zero System Dependencies!
+
+The easiest way to install IOWarp is using pip. **No system packages required** - all dependencies (MPI, HDF5, ZeroMQ) are automatically installed from PyPI!
+
+**Prerequisites:** Only Python 3.8+ and a C++ compiler
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install -y build-essential python3-dev python3-pip
+
+# macOS (Xcode command line tools)
+xcode-select --install
+```
+
+**Install IOWarp:**
+```bash
+# One command - everything is automatic!
+pip install git+https://github.com/iowarp/core.git
+
+# Or from a local clone
+git clone https://github.com/iowarp/core.git
+cd core
+pip install .
+```
+
+**Verify installation:**
+```python
+import iowarp
+print(f"IOWarp version: {iowarp.get_version()}")
+```
+
+**Note:** First installation takes 10-15 minutes as dependencies build from source.
+
+**For detailed installation instructions and troubleshooting, see [INSTALL.md](INSTALL.md) or [QUICKSTART.md](QUICKSTART.md).**
+
 ### Prerequisites
 
 IOWarp Core requires the following dependencies:
@@ -311,16 +346,33 @@ int main() {
 
 **Build and Link:**
 ```cmake
-find_package(chimaera REQUIRED)
-find_package(chimaera_admin REQUIRED)
-find_package(chimaera_bdev REQUIRED)
+# Unified package includes everything - HermesShm, Chimaera, and all ChiMods
+find_package(iowarp-core REQUIRED)
 
 target_link_libraries(my_app
-  chimaera::cxx
-  chimaera::admin_client
-  chimaera::bdev_client
+  chimaera::admin_client  # Admin ChiMod (always available)
+  chimaera::bdev_client   # Block device ChiMod (always available)
+  # Optional: Add hshm modular targets if needed
+  # hshm::configure    # For YAML configuration
+  # hshm::serialize    # For object serialization
+  # hshm::mpi          # For MPI support
 )
 ```
+
+**What `find_package(iowarp-core)` provides:**
+
+*Core Components:*
+- All `hshm::*` modular targets (cxx, configure, serialize, interceptor, lightbeam, thread_all, mpi, compress, encrypt)
+- `chimaera::cxx` (core runtime library)
+- ChiMod build utilities
+
+*Core ChiMods (Always Available):*
+- `chimaera::admin_client`, `chimaera::admin_runtime`
+- `chimaera::bdev_client`, `chimaera::bdev_runtime`
+
+*Optional ChiMods (if enabled at build time):*
+- `wrp_cte::core_client`, `wrp_cte::core_runtime` (Context Transfer Engine)
+- `wrp_cae::core_client`, `wrp_cae::core_runtime` (Context Assimilation Engine)
 
 ## Testing
 

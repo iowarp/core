@@ -18,13 +18,13 @@ cmake_minimum_required(VERSION 3.10)
 enable_testing()
 
 # Find required dependencies
-find_package(yaml-cpp REQUIRED)
+# yaml-cpp is already found by root CMakeLists.txt
 
 # Conditionally find HDF5 if enabled
-if(CAE_ENABLE_HDF5)
-  find_package(HDF5 COMPONENTS C)
+if(WRP_CAE_ENABLE_HDF5)
+  # HDF5 is already found by root CMakeLists.txt
   if(NOT HDF5_FOUND)
-    message(WARNING "CAE_ENABLE_HDF5 is ON but HDF5 not found. HDF5 tests will be disabled.")
+    message(WARNING "WRP_CAE_ENABLE_HDF5 is ON but HDF5 not found. HDF5 tests will be disabled.")
     set(HDF5_ENABLED FALSE)
   else()
     set(HDF5_ENABLED TRUE)
@@ -60,7 +60,7 @@ function(add_cae_unit_test TEST_NAME TEST_SOURCE)
       wrp_cae_core_client
       wrp_cte_core_client
       chimaera::cxx
-      yaml-cpp
+      hshm::configure
       ${ARG_EXTRA_LIBS}
   )
 
@@ -141,7 +141,7 @@ add_cae_unit_test(test_error_handling
 # - Tests dataset discovery and transfer
 # - Validates metadata and tensor information
 # - Tests hierarchical group structures
-# Note: Requires CAE_ENABLE_HDF5=ON
+# Note: Requires WRP_CORE_ENABLE_HDF5=ON
 #------------------------------------------------------------------------------
 if(HDF5_ENABLED)
   add_cae_unit_test(test_hdf5_assim
@@ -201,7 +201,7 @@ message(STATUS "  Error Handling Test:      ENABLED")
 if(HDF5_ENABLED)
   message(STATUS "  HDF5 Format Test:         ENABLED")
 else()
-  message(STATUS "  HDF5 Format Test:         DISABLED (set -DCAE_ENABLE_HDF5=ON to enable)")
+  message(STATUS "  HDF5 Format Test:         DISABLED (set -DWRP_CORE_ENABLE_HDF5=ON to enable)")
 endif()
 message(STATUS "")
 message(STATUS "Run tests with:")

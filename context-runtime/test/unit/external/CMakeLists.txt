@@ -5,15 +5,16 @@ project(external_chimod_test)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Load environment variables from .env.cmake if it exists
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.env.cmake")
-  message(STATUS "Loading environment from ${CMAKE_CURRENT_SOURCE_DIR}/.env.cmake")
-  include("${CMAKE_CURRENT_SOURCE_DIR}/.env.cmake")
-endif()
+# Unified IOWarp Core package - includes HermesShm, Chimaera, and build utilities
+find_package(iowarp-core REQUIRED)
+# This automatically provides:
+#   - All hshm::* modular targets (hshm::cxx, hshm::configure, hshm::serialize, etc.)
+#   - chimaera::cxx (core runtime library)
+#   - chimaera::admin_client and chimaera::admin_runtime
+#   - ChiMod build utilities
 
-# Find required Chimaera packages
-find_package(chimaera REQUIRED)
-find_package(chimaera_admin REQUIRED)
+# Find system dependencies
+find_package(Threads REQUIRED)
 
 # Create test executable
 add_executable(test_external_chimod test_external_chimod.cc)

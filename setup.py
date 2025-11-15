@@ -51,141 +51,57 @@ class CMakeBuild(build_ext):
             self.copy_binaries_to_package(build_temp)
 
     def build_iowarp_core(self, build_temp):
-        """Build IOWarp core using CMake presets from included source or clone."""
+        """Build IOWarp core using install.sh script."""
         print(f"\n{'='*60}")
-        print(f"Building IOWarp Core")
+        print(f"Building IOWarp Core using install.sh")
         print(f"{'='*60}\n")
 
-        # Set up directories
-        source_dir = build_temp / "iowarp-core"
-        build_dir = source_dir / "build"
-
         # Determine install prefix based on whether we're bundling binaries
-        bundle_binaries = os.environ.get("IOWARP_BUNDLE_BINARIES", "ON").upper() == "ON"
+        # For IOWarp Core, install directly to the Python environment (sys.prefix)
+        # This is the standard approach for packages with C++ libraries that need to be
+        # found by CMake and linked by other applications.
+        # Libraries → {sys.prefix}/lib/
+        # Headers → {sys.prefix}/include/
+        # CMake configs → {sys.prefix}/lib/cmake/
+        bundle_binaries = os.environ.get("IOWARP_BUNDLE_BINARIES", "OFF").upper() == "ON"
         if bundle_binaries:
             # Install to a staging directory that we'll copy into the wheel
+            # (Not recommended for IOWarp - use IOWARP_BUNDLE_BINARIES=ON to enable)
             install_prefix = build_temp / "install"
         else:
-            # Install to system prefix (for editable installs)
+            # Install directly to Python environment prefix
+            # This ensures libraries/headers are in standard locations
             install_prefix = Path(sys.prefix).absolute()
 
-        # Check if source is in the package root directory (direct copy)
+        print(f"Install prefix: {install_prefix}")
+
+        # Find install.sh in package root
         package_root = Path(__file__).parent.absolute()
-        root_cmake = package_root / "CMakeLists.txt"
+        install_script = package_root / "install.sh"
 
-        if not source_dir.exists():
-            if root_cmake.exists():
-                # Use source from package root (direct copy approach)
-                print(f"Using C++ source from package root: {package_root}")
-                print(f"Copying source to build directory...")
-                # Copy all C++ source directories
-                for item in ["CMakeLists.txt", "CMakePresets.json", "context-runtime",
-                           "context-transfer-engine", "context-assimilation-engine",
-                           "context-transport-primitives", "context-exploration-engine",
-                           "external", "docker", "ai-prompts"]:
-                    src_path = package_root / item
-                    if src_path.exists():
-                        dest_path = source_dir / item
-                        if src_path.is_dir():
-                            shutil.copytree(src_path, dest_path, symlinks=True, dirs_exist_ok=True)
-                        else:
-                            source_dir.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(src_path, dest_path)
-                print(f"Source copied to {source_dir}")
-            else:
-                # Clone repository (fallback for old source distributions)
-                print(f"Source not found in package root, cloning {self.REPO_URL}...")
-                subprocess.check_call(["git", "clone", "--recursive", self.REPO_URL, str(source_dir)])
-        else:
-            print(f"Using existing source at {source_dir}")
+        if not install_script.exists():
+            raise RuntimeError(f"install.sh not found at {install_script}")
 
-        # Determine build type
-        build_type = os.environ.get("IOWARP_BUILD_TYPE", "release").lower()
-        preset = f"{build_type}"
+        # Make install.sh executable
+        install_script.chmod(0o755)
 
-        print(f"Configuring with CMake preset: {preset}")
-
-        # Configure using CMake preset
-        cmake_preset_args = [
-            "cmake",
-            f"--preset={preset}",
-        ]
-
-        # Additional configuration options
-        additional_args = []
-
-        # Override install prefix
-        additional_args.append(f"-DCMAKE_INSTALL_PREFIX={install_prefix}")
-
-        # Set RPATH for bundled binaries to find their libraries
-        if bundle_binaries:
-            # Disable building tests for distribution builds
-            additional_args.append("-DWRP_CORE_ENABLE_TESTS=OFF")
-
-            rpaths = []
-            if sys.platform.startswith("linux"):
-                rpaths.append("$ORIGIN/../lib")
-                conda_prefix = os.environ.get("CONDA_PREFIX")
-                if conda_prefix:
-                    rpaths.append(f"{conda_prefix}/lib")
-            elif sys.platform == "darwin":
-                rpaths.append("@loader_path/../lib")
-                conda_prefix = os.environ.get("CONDA_PREFIX")
-                if conda_prefix:
-                    rpaths.append(f"{conda_prefix}/lib")
-
-            if rpaths:
-                rpath = ":".join(rpaths) if sys.platform.startswith("linux") else ";".join(rpaths)
-                additional_args.extend([
-                    f"-DCMAKE_INSTALL_RPATH={rpath}",
-                    "-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=TRUE",
-                    "-DCMAKE_BUILD_WITH_INSTALL_RPATH=TRUE",
-                ])
-
-        # Add HDF5_ROOT to use conda's HDF5 if available
-        conda_prefix = os.environ.get("CONDA_PREFIX")
-        if conda_prefix:
-            # Explicitly ignore paths that might have incompatible HDF5
-            home_dir = str(Path.home())
-            hdf5_lib = f"{conda_prefix}/lib/libhdf5.so"
-            additional_args.extend([
-                f"-DHDF5_ROOT={conda_prefix}",
-                f"-DHDF5_C_LIBRARY={hdf5_lib}",
-                f"-DHDF5_INCLUDE_DIR={conda_prefix}/include",
-                f"-DCMAKE_PREFIX_PATH={conda_prefix}",
-                f"-DCMAKE_IGNORE_PATH=/usr/lib/x86_64-linux-gnu/hdf5;{home_dir}/hdf5-install;{home_dir}/hdf5;/opt/hdf5",
-                "-DCMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH=FALSE",
-            ])
-
-        # Apply additional CMake arguments if preset configuration needs overrides
-        if additional_args:
-            # First configure with preset
-            subprocess.check_call(cmake_preset_args, cwd=source_dir)
-            # Then apply additional configuration
-            cmake_config_args = ["cmake", "build"] + additional_args
-            print(f"Applying additional configuration: {' '.join(additional_args)}")
-            subprocess.check_call(cmake_config_args, cwd=source_dir)
-        else:
-            subprocess.check_call(cmake_preset_args, cwd=source_dir)
-
-        # Build
-        print(f"\nBuilding IOWarp core...")
-        build_args = ["cmake", "--build", "build"]
+        # Prepare environment for install.sh
+        env = os.environ.copy()
+        env["INSTALL_PREFIX"] = str(install_prefix)
 
         # Determine number of parallel jobs
         if hasattr(self, "parallel") and self.parallel:
-            build_args.extend(["--parallel", str(self.parallel)])
+            env["BUILD_JOBS"] = str(self.parallel)
         else:
-            # Use all available cores
             import multiprocessing
-            build_args.extend(["--parallel", str(multiprocessing.cpu_count())])
+            env["BUILD_JOBS"] = str(multiprocessing.cpu_count())
 
-        subprocess.check_call(build_args, cwd=source_dir)
+        print(f"\nRunning install.sh with:")
+        print(f"  INSTALL_PREFIX={env['INSTALL_PREFIX']}")
+        print(f"  BUILD_JOBS={env['BUILD_JOBS']}\n")
 
-        # Install
-        print(f"\nInstalling IOWarp core...")
-        install_args = ["cmake", "--install", "build", "--prefix", str(install_prefix)]
-        subprocess.check_call(install_args, cwd=source_dir)
+        # Run install.sh
+        subprocess.check_call([str(install_script)], cwd=package_root, env=env)
 
         print(f"\nIOWarp core built and installed successfully!\n")
 

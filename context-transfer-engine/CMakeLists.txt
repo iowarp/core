@@ -5,8 +5,7 @@ project(content_transfer_engine)
 set(WRP_CTE_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Python bindings are controlled by WRP_CORE_ENABLE_PYTHON in root CMakeLists.txt
-# Component-specific option: only effective when WRP_CORE_ENABLE_PYTHON=ON
-option(WRP_CTE_ENABLE_PYTHON "Enable Python bindings for CTE (requires WRP_CORE_ENABLE_PYTHON=ON)" ON)
+# WRP_CTE_ENABLE_PYTHON is defined in root CMakeLists.txt
 # CTE_ENABLE_ASAN is set by root CMakeLists.txt
 
 # C++ standard, compile commands, RPATH, ASAN, and output directories are all set by root CMakeLists.txt
@@ -14,31 +13,9 @@ option(WRP_CTE_ENABLE_PYTHON "Enable Python bindings for CTE (requires WRP_CORE_
 # CTE_ENABLE_CMAKE_DOTENV is set by root CMakeLists.txt
 # DOTENV handling is done by root CMakeLists.txt
 
-# Add local cmake modules to path
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-
-# Find required Chimaera framework packages following MODULE_DEVELOPMENT_GUIDE.md patterns
-# For internal ChiMod development within the main repository, we need the core framework
-# Skip find_package if targets already exist (unified build as subdirectory)
-if(NOT TARGET chimaera::cxx AND NOT TARGET chimaera_cxx)
-  find_package(chimaera REQUIRED)              # Core Chimaera (automatically includes ChimaeraCommon.cmake)
-  message(STATUS "Found Chimaera package: ${chimaera_FOUND}")
-else()
-  # When built as subdirectory, manually include ChimaeraCommon.cmake
-  message(STATUS "Using Chimaera as subdirectory - including ChimaeraCommon.cmake")
-  list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../context-runtime/cmake")
-  include(ChimaeraCommon)
-endif()
-
-# Determine which HermesShm target to use (for both installed and subdirectory modes)
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindHSHMTarget.cmake)
-
-if(NOT TARGET chimaera::admin_client AND NOT TARGET chimaera_admin_client)
-  find_package(chimaera_admin REQUIRED)        # Admin ChiMod (often required for ChiMod operations)
-  message(STATUS "Found chimaera_admin package: ${chimaera_admin_FOUND}")
-else()
-  message(STATUS "Using chimaera_admin as subdirectory")
-endif()
+# CMake modules and ChiMod utilities are now provided by IowarpCoreCommon.cmake
+# All find_package calls are handled by root CMakeLists.txt
+# Targets chimaera::cxx, chimaera_admin_client, etc. are already available
 
 # Python bindings configuration
 # nanobind is configured by root CMakeLists.txt when WRP_CORE_ENABLE_PYTHON=ON
@@ -85,4 +62,6 @@ endif()
 
 message(STATUS "CTE Core and Bdev ChiMods configured for compilation")
 
-jarvis_repo_add(${WRP_CTE_ROOT}/test/jarvis_wrp_cte "")
+if(WRP_CORE_ENABLE_JARVIS)
+    jarvis_repo_add(${WRP_CTE_ROOT}/test/jarvis_wrp_cte)
+endif()

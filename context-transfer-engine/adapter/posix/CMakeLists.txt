@@ -17,7 +17,8 @@ target_link_libraries(wrp_cte_posix
         wrp_cte_fs_base          # Provides filesystem headers
         wrp_cte_core_client      # Provides core and bdev headers transitively
         wrp_cte_cae_config
-        ${HSHM_TARGET})
+        hshm::cxx
+        hshm::interceptor)       # Provides ELF support and HSHM_ENABLE_ELF definition
 set_target_properties(wrp_cte_posix PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 

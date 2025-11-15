@@ -34,27 +34,55 @@ cmake ../ -DHSHM_ENABLE_CUDA=OFF -DHSHM_ENABLE_ROCM=OFF
 make -j8
 ```
 
-## CMake
+## CMake Integration
 
-### For CPU-Only Version
-```
-find_package(HermesShm CONFIG REQUIRED)
-message(STATUS "found cte-hermes-shm.h at ${HermesShm_INCLUDE_DIRS}")
-target_link_libraries(hshm::cxx)
-```
+HermesShm provides modular CMake targets for flexible dependency management. Link only what you need.
 
-### For CUDA Version
-```
+### Core Library (CPU-Only)
+```cmake
 find_package(HermesShm CONFIG REQUIRED)
-message(STATUS "found cte-hermes-shm.h at ${HermesShm_INCLUDE_DIRS}")
-target_link_libraries(hshm::cudacxx)
+target_link_libraries(your_target hshm::cxx)
 ```
 
-### For ROCM Version
-```
+### Modular Dependency Targets
+
+HermesShm provides fine-grained modular targets for optional dependencies:
+
+```cmake
 find_package(HermesShm CONFIG REQUIRED)
-message(STATUS "found cte-hermes-shm.h at ${HermesShm_INCLUDE_DIRS}")
-target_link_libraries(hshm::rocmcxx_gpu)
+
+target_link_libraries(your_target
+  hshm::cxx              # Core library (required)
+  hshm::configure        # YAML configuration parsing (instead of yaml-cpp directly)
+  hshm::serialize        # Object serialization (instead of cereal directly)
+  hshm::interceptor      # ELF interception for adapters
+  hshm::lightbeam        # Network transport (ZMQ, libfabric, Thallium)
+  hshm::thread_all       # Threading support (pthread, OpenMP)
+  hshm::mpi              # MPI support (use only where needed)
+  hshm::compress         # Compression utilities
+  hshm::encrypt          # Encryption utilities
+)
+```
+
+**Key Guidelines:**
+- Always link `hshm::cxx` as the base
+- Use `hshm::configure` instead of linking to `yaml-cpp` directly
+- Use `hshm::serialize` instead of linking to `cereal` directly
+- Link only the modular targets you actually need
+- Each modular target includes appropriate compile definitions
+
+### GPU Support
+
+**CUDA Version:**
+```cmake
+find_package(HermesShm CONFIG REQUIRED)
+target_link_libraries(your_target hshm::cudacxx)
+```
+
+**ROCm Version:**
+```cmake
+find_package(HermesShm CONFIG REQUIRED)
+target_link_libraries(your_target hshm::rocmcxx_gpu)
 ```
 
 ## Tests

@@ -2,56 +2,30 @@ cmake_minimum_required(VERSION 3.20)
 project(wrp_cae_core VERSION 1.0.0)
 
 #------------------------------------------------------------------------------
-# Find Chimaera package
+# ChiMod utilities and dependencies
 #------------------------------------------------------------------------------
-# Skip find_package if targets already exist (unified build as subdirectory)
-if(NOT TARGET chimaera::cxx AND NOT TARGET chimaera_cxx)
-  find_package(chimaera REQUIRED)
-  # Add Chimaera CMake modules to the module path
-  list(APPEND CMAKE_MODULE_PATH "${chimaera_DIR}")
-  include(ChimaeraCommon)
-  message(STATUS "Found Chimaera package")
-else()
-  # When built as subdirectory, manually include ChimaeraCommon.cmake
-  message(STATUS "Using Chimaera as subdirectory - including ChimaeraCommon.cmake")
-  list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../context-runtime/cmake")
-  include(ChimaeraCommon)
-endif()
+# ChiMod utilities are now provided by IowarpCoreCommon.cmake in /workspace/cmake
+# All find_package calls are handled by root CMakeLists.txt
+# Targets chimaera::cxx, wrp_cte::core_client, etc. are already available
+
+# All required packages (chimaera, wrp_cte_core, yaml-cpp) are already found
+# by IowarpCoreCommon.cmake in the root CMakeLists.txt
 
 #------------------------------------------------------------------------------
-# Find wrp_cte package
+# Optional HDF5 support (found by root CMakeLists.txt)
 #------------------------------------------------------------------------------
-# Skip find_package if targets already exist (unified build as subdirectory)
-if(NOT TARGET wrp_cte::core_client AND NOT TARGET wrp_cte_core_client)
-  find_package(wrp_cte_core REQUIRED)
-  message(STATUS "Found wrp_cte_core package")
-else()
-  message(STATUS "Using wrp_cte_core as subdirectory")
-endif()
-
-#------------------------------------------------------------------------------
-# Find yaml-cpp package (required for OMNI file parsing)
-#------------------------------------------------------------------------------
-# Skip find_package if target already exists (from submodule)
-if(NOT TARGET yaml-cpp AND NOT TARGET yaml-cpp::yaml-cpp)
-  find_package(yaml-cpp REQUIRED)
-endif()
-
-#------------------------------------------------------------------------------
-# Optional HDF5 support (controlled by root CMakeLists.txt)
-#------------------------------------------------------------------------------
-if(CAE_ENABLE_HDF5)
-  find_package(HDF5 COMPONENTS C)
+if(WRP_CAE_ENABLE_HDF5)
+  # HDF5 is already found by root CMakeLists.txt
 
   if(HDF5_FOUND)
     message(STATUS "CAE HDF5 support: ENABLED")
-    add_compile_definitions(CAE_ENABLE_HDF5)
+    add_compile_definitions(WRP_CAE_ENABLE_HDF5)
     set(HDF5_ENABLED TRUE)
   else()
-    message(WARNING "CAE_ENABLE_HDF5 is ON but HDF5 package not found")
+    message(WARNING "WRP_CAE_ENABLE_HDF5 is ON but HDF5 package not found")
     message(WARNING "HDF5 support will be disabled. Install HDF5 to enable.")
     set(HDF5_ENABLED FALSE)
-    set(CAE_ENABLE_HDF5 OFF)
+    set(WRP_CAE_ENABLE_HDF5 OFF PARENT_SCOPE)
   endif()
 else()
   message(STATUS "CAE HDF5 support: DISABLED")
@@ -59,14 +33,10 @@ else()
 endif()
 
 #------------------------------------------------------------------------------
-# Optional Globus support (controlled by root CMakeLists.txt)
+# Optional Globus support (found by root CMakeLists.txt)
 #------------------------------------------------------------------------------
 if(CAE_ENABLE_GLOBUS)
-  # Find POCO libraries for Globus HTTP requests
-  find_package(Poco COMPONENTS Net NetSSL Crypto JSON)
-
-  # Find nlohmann_json for JSON parsing
-  find_package(nlohmann_json)
+  # Poco and nlohmann_json are already found by root CMakeLists.txt
 
   if(Poco_FOUND AND nlohmann_json_FOUND)
     message(STATUS "CAE Globus support: ENABLED")
@@ -145,7 +115,7 @@ target_link_libraries(wrp_cae_omni
   PRIVATE
     wrp_cae_core_client
     chimaera::cxx
-    yaml-cpp
+    hshm::configure
 )
 install(TARGETS wrp_cae_omni DESTINATION bin)
 

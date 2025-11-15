@@ -13,20 +13,23 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-# Add .env.cmake if it exists (for development environment)
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../../.env.cmake")
-    include("${CMAKE_CURRENT_SOURCE_DIR}/../../../.env.cmake")
-endif()
-
-# Find required Chimaera framework packages - core dependencies
-find_package(chimaera REQUIRED)              # Core Chimaera library (libcxx.so)
-find_package(chimaera_admin REQUIRED)        # Admin ChiMod (required for most applications)
-
-# Find CTE Core ChiMod package (main target for external applications)
-find_package(wrp_cte_core REQUIRED)          # CTE Core ChiMod package
+# Unified IOWarp Core package - includes everything
+find_package(iowarp-core CONFIG REQUIRED)
+# This automatically provides:
+#   Core Components:
+#     - All hshm::* modular targets (hshm::cxx, hshm::configure, hshm::serialize, etc.)
+#     - chimaera::cxx (core runtime library)
+#     - ChiMod build utilities (add_chimod_client, add_chimod_runtime, etc.)
+#
+#   Core ChiMods (Always Available):
+#     - chimaera::admin_client, chimaera::admin_runtime
+#     - chimaera::bdev_client, chimaera::bdev_runtime
+#
+#   Optional ChiMods (if enabled at build time):
+#     - wrp_cte::core_client, wrp_cte::core_runtime (CTE - included if WRP_CORE_ENABLE_CTE=ON)
+#     - wrp_cae::core_client, wrp_cae::core_runtime (CAE - included if WRP_CORE_ENABLE_CAE=ON)
 
 # Find additional system dependencies
-find_package(yaml-cpp REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -66,17 +69,19 @@ add_custom_target(run_external_test
 message(STATUS "CTE External Integration Test Configuration:")
 message(STATUS "  CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  CMAKE_CXX_STANDARD: ${CMAKE_CXX_STANDARD}")
-message(STATUS "  Chimaera Core Found: ${chimaera_FOUND}")
-message(STATUS "  Chimaera Admin Found: ${chimaera_admin_FOUND}")
-message(STATUS "  CTE Core Found: ${wrp_cte_core_FOUND}")
-message(STATUS "  yaml-cpp Found: ${yaml-cpp_FOUND}")
+message(STATUS "  IOWarp Core Found: ${iowarp-core_FOUND}")
 
 # Instructions for external developers
 message(STATUS "")
 message(STATUS "External Developer Notes:")
-message(STATUS "  This test demonstrates proper external linking to CTE Core libraries.")
-message(STATUS "  Required packages: chimaera, chimaera_admin, wrp_cte_core")
-message(STATUS "  Main target: wrp_cte::core_client (ChiMod client library)")
-message(STATUS "  Optional: wrp_cte::core_runtime (ChiMod runtime library)")
-message(STATUS "  Framework dependencies are automatically included by ChiMod targets.")
+message(STATUS "  This test demonstrates proper external linking to IOWarp libraries.")
+message(STATUS "  Required package: iowarp-core (single unified package)")
+message(STATUS "  iowarp-core automatically provides:")
+message(STATUS "    - HermesShm: All hshm::* modular targets")
+message(STATUS "    - Chimaera: chimaera::cxx and build utilities")
+message(STATUS "    - Core ChiMods: admin, bdev (always available)")
+message(STATUS "    - Optional ChiMods: CTE, CAE (if enabled at build time)")
+message(STATUS "  Main targets used in this test:")
+message(STATUS "    - wrp_cte::core_client (CTE ChiMod client)")
+message(STATUS "    - wrp_cte::core_runtime (CTE ChiMod runtime)")
 message(STATUS "")

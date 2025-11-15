@@ -11,14 +11,19 @@ add_executable(wrp_cte_posix_unit_tests
 )
 
 target_link_libraries(wrp_cte_posix_unit_tests
-    MPI::MPI_CXX
     wrp_cte_posix
     wrp_cte_fs_base
     wrp_cte_core_client
     wrp_cte_cae_config
-    ${HSHM_TARGET}
+    hshm::cxx
+    hshm::interceptor
     Catch2::Catch2WithMain
 )
+
+# Link MPI only if enabled
+if(WRP_CORE_ENABLE_MPI)
+    target_link_libraries(wrp_cte_posix_unit_tests MPI::MPI_CXX)
+endif()
 
 # Install the test executable
 install(

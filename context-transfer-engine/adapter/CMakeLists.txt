@@ -16,36 +16,41 @@ target_include_directories(wrp_cte_cae_config PRIVATE
 )
 
 target_link_libraries(wrp_cte_cae_config
-    yaml-cpp
-    ${HSHM_TARGET}
+    hshm::configure
+    hshm::cxx
     wrp_cte_core_client  # Provides core headers transitively
 )
 
 # CTE adapter singleton implementation - moved to filesystem directory
 # to leverage existing working build configuration
 
-# Core adapters that are always built
-add_subdirectory(filesystem)
-add_subdirectory(posix)
+# Adapters require ELF support (for real_api.h)
+# Disable all adapters when ELF is disabled
+if(WRP_CORE_ENABLE_ELF)
+    message(STATUS "CTE Adapters: ENABLED (ELF support available)")
 
-# Optional adapters - only build if explicitly enabled
-# These are currently disabled for CTE as they may need additional updates
-option(WRP_CTE_ENABLE_STDIO_ADAPTER "Enable STDIO adapter" OFF)
-option(WRP_CTE_ENABLE_MPIIO_ADAPTER "Enable MPI-IO adapter" OFF)
-option(WRP_CTE_ENABLE_VFD "Enable HDF5 VFD adapter" OFF)
-option(WRP_CTE_ENABLE_NVIDIA_GDS_ADAPTER "Enable NVIDIA GDS adapter" OFF)
+    # Core adapters that are built when ELF is enabled
+    add_subdirectory(filesystem)
 
-if (WRP_CTE_ENABLE_STDIO_ADAPTER)
-    add_subdirectory(stdio)
-endif()
-if (WRP_CTE_ENABLE_MPIIO_ADAPTER)
-    add_subdirectory(mpiio)
-endif()
-if (WRP_CTE_ENABLE_VFD)
-    add_subdirectory(vfd)
-endif()
-if (WRP_CTE_ENABLE_NVIDIA_GDS_ADAPTER)
-    add_subdirectory(nvidia_gds)
+    # Optional adapters - controlled by root CMakeLists.txt options
+    if (WRP_CTE_ENABLE_POSIX_ADAPTER)
+        add_subdirectory(posix)
+    endif()
+    if (WRP_CTE_ENABLE_STDIO_ADAPTER)
+        add_subdirectory(stdio)
+    endif()
+    if (WRP_CTE_ENABLE_MPIIO_ADAPTER)
+        add_subdirectory(mpiio)
+    endif()
+    if (WRP_CTE_ENABLE_VFD)
+        add_subdirectory(vfd)
+    endif()
+    if (WRP_CTE_ENABLE_NVIDIA_GDS_ADAPTER)
+        add_subdirectory(nvidia_gds)
+    endif()
+else()
+    message(STATUS "CTE Adapters: DISABLED (ELF support not enabled)")
+    message(STATUS "  To enable adapters, configure with -DWRP_CORE_ENABLE_ELF=ON")
 endif()
 
 #-----------------------------------------------------------------------------

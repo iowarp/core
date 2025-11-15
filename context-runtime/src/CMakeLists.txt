@@ -31,32 +31,17 @@ target_compile_definitions(${CHIMAERA_LIB_NAME} PRIVATE
   CHI_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
 )
 
-# Determine which HermesShm target to use (handles both installed and subdirectory modes)
-# When used as subdirectory, prefer hermes_shm_host directly for proper include propagation
-set(HSHM_TARGET "")
-if(TARGET hermes_shm_host)
-  # Building as subdirectory - use hermes_shm_host directly
-  set(HSHM_TARGET hermes_shm_host)
-  message(STATUS "Using HermesShm target: hermes_shm_host")
-elseif(TARGET hshm::cxx)
-  # Using installed package
-  set(HSHM_TARGET hshm::cxx)
-  message(STATUS "Using HermesShm target: hshm::cxx")
-elseif(TARGET cxx)
-  # Fallback to cxx
-  set(HSHM_TARGET cxx)
-  message(STATUS "Using HermesShm target: cxx")
-else()
-  message(FATAL_ERROR "No HermesShm target found")
-endif()
-
 # Link libraries
+# Chimaera runtime links to Boost directly and hshm modular targets
+# Clients only link to hshm::cxx
 target_link_libraries(${CHIMAERA_LIB_NAME}
   PUBLIC
-    ${HSHM_TARGET}
-    cereal::cereal
+    hshm::cxx
+    hshm::serialize  # For cereal
     Boost::fiber
     Boost::context
+    Threads::Threads
+    hshm::lightbeam  # For ZMQ transport
     # chimods_admin_client  # Admin client library for global task routing - TODO: Enable when admin chimod is built
 )
 

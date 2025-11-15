@@ -9,7 +9,7 @@ cmake_minimum_required(VERSION 3.10)
 # CMAKE_RUNTIME_OUTPUT_DIRECTORY setting
 
 # Find required test dependencies
-find_package(Catch2 REQUIRED)
+# Catch2 is already found by root CMakeLists.txt
 
 # Create the test executable
 add_executable(cte_core_unit_tests
@@ -36,7 +36,6 @@ target_link_libraries(cte_core_unit_tests
     chimaera::admin_client       # Modern Chimaera admin target (if needed)
     chimaera::bdev_client        # Bdev client for BdevType enum
     Catch2::Catch2WithMain       # Catch2 testing framework with main
-    MPI::MPI_CXX                 # MPI support if needed
 )
 
 # Link test_core_functionality
@@ -47,7 +46,6 @@ target_link_libraries(test_core_functionality
     chimaera::admin_client       # Modern Chimaera admin target (if needed)
     chimaera::bdev_client        # Bdev client for BdevType enum
     Catch2::Catch2WithMain       # Catch2 testing framework with main
-    MPI::MPI_CXX                 # MPI support if needed
 )
 
 # Link test_query
@@ -58,7 +56,6 @@ target_link_libraries(test_query
     chimaera::admin_client       # Modern Chimaera admin target (if needed)
     chimaera::bdev_client        # Bdev client for BdevType enum
     Catch2::Catch2WithMain       # Catch2 testing framework with main
-    MPI::MPI_CXX                 # MPI support if needed
 )
 
 # Set compile definitions for runtime initialization control
@@ -272,9 +269,9 @@ endif()
 # Install Targets
 # ------------------------------------------------------------------------------
 install(TARGETS cte_core_unit_tests test_core_functionality test_query
-    LIBRARY DESTINATION ${HERMES_INSTALL_LIB_DIR}
-    ARCHIVE DESTINATION ${HERMES_INSTALL_LIB_DIR}
-    RUNTIME DESTINATION ${HERMES_INSTALL_BIN_DIR}
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+    RUNTIME DESTINATION bin
 )
 
 # ------------------------------------------------------------------------------

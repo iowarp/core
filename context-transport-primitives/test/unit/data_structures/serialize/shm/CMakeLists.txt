@@ -8,8 +8,8 @@ project(hermes_shm)
 set (LIBS
         hermes_shm_host
         Catch2::Catch2
-        ${MPI_LIBS}
-        ${OpenMP_LIBS})
+        hshm::mpi
+        hshm::thread_all)
 add_executable(test_shm_exec
         ${TEST_MAIN}/main.cc
         test_init.cc
@@ -25,9 +25,9 @@ add_test(NAME test_shm COMMAND ${CMAKE_BINARY_DIR}/bin/test_shm_exec)
 #------------------------------------------------------------------------------
 install(TARGETS
         test_shm_exec
-        LIBRARY DESTINATION ${HSHM_INSTALL_LIB_DIR}
-        ARCHIVE DESTINATION ${HSHM_INSTALL_LIB_DIR}
-        RUNTIME DESTINATION ${HSHM_INSTALL_BIN_DIR})
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        RUNTIME DESTINATION bin)
 
 #-----------------------------------------------------------------------------
 # Coverage

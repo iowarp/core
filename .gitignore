@@ -122,3 +122,12 @@ sosize-*.txt
 
 # CMake user presets (typo in original, keeping for compatibility)
 CMakeUserPresents.json
+
+# External dependencies
+# Boost is downloaded and built by install.sh, not a submodule
+external/boost-*.tar.gz
+external/boost-*/
+external/boost/
+
+# Submodules managed by .gitmodules
+#external/libzmq/

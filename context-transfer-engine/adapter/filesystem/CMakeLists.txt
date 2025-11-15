@@ -17,7 +17,8 @@ target_link_libraries(wrp_cte_fs_base
         MPI::MPI_CXX
         wrp_cte_core_client      # Provides core and bdev headers transitively
         wrp_cte_cae_config
-        ${HSHM_TARGET})
+        hshm::cxx
+        hshm::interceptor)       # Provides ELF support for posix_api.h
 
 # -----------------------------------------------------------------------------
 # Add Target(s) to CMake Install

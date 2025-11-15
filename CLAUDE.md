@@ -201,14 +201,126 @@ ChiMod libraries automatically handle common dependencies:
 - Admin includes: Automatically added to include directories for non-admin ChiMods
 
 **For External Applications:**
-When linking against installed ChiMod libraries, use the underscore-based target pattern:
+
+Use the unified `find_package(iowarp-core)` which automatically includes all components and ChiMods:
+
 ```cmake
+# Single find_package call includes everything
+find_package(iowarp-core REQUIRED)
+# This automatically provides:
+#   Core Components:
+#     - All hshm::* modular targets (hshm::cxx, hshm::configure, hshm::serialize, etc.)
+#     - chimaera::cxx (core runtime library)
+#     - ChiMod build utilities (add_chimod_client, add_chimod_runtime, etc.)
+#
+#   Core ChiMods (Always Available):
+#     - chimaera::admin_client, chimaera::admin_runtime
+#     - chimaera::bdev_client, chimaera::bdev_runtime
+#
+#   Optional ChiMods (if enabled at build time):
+#     - wrp_cte::core_client, wrp_cte::core_runtime (if WRP_CORE_ENABLE_CTE=ON)
+#     - wrp_cae::core_client, wrp_cae::core_runtime (if WRP_CORE_ENABLE_CAE=ON)
+
+# Then link to the ChiMod libraries you need
 target_link_libraries(your_target
-  chimaera::mod_name_runtime    # Specific ChiMod runtime library
-  chimaera::mod_name_client     # Specific ChiMod client library
+  chimaera::admin_client     # Admin ChiMod (always available)
+  chimaera::bdev_client      # Block device ChiMod (always available)
+  wrp_cte::core_client       # CTE ChiMod (if enabled)
+  wrp_cae::core_client       # CAE ChiMod (if enabled)
 )
-# rt, admin, and chimaera::cxx dependencies are automatically included by ChiMod libraries
-# All target names use underscores consistently
+# Dependencies are automatically included by ChiMod libraries
+# No need to manually link hshm::cxx or chimaera::cxx
+```
+
+**Alternative (Manual):**
+If you need finer control, you can still find packages individually:
+```cmake
+find_package(HermesShm REQUIRED)        # Provides hshm::* targets
+find_package(chimaera REQUIRED)         # Provides chimaera::cxx
+find_package(chimaera_admin REQUIRED)   # Provides admin ChiMod
+find_package(chimaera_bdev REQUIRED)    # Provides bdev ChiMod
+find_package(wrp_cte_core REQUIRED)     # Provides CTE ChiMod (if enabled)
+find_package(wrp_cae_core REQUIRED)     # Provides CAE ChiMod (if enabled)
+```
+
+### HSHM Modular Dependency Targets
+
+HSHM (HermesShm/context-transport-primitives) provides modular INTERFACE library targets for optional dependencies. Each target includes only the specific dependency it represents, along with the associated compile definitions.
+
+**Available Modular Targets:**
+
+- **`hshm::cxx`** - Core HSHM library
+  - Provides: Basic shared memory and data structures
+  - Links to: `configure`, `thread_all`
+  - Always required by all HSHM users
+
+- **`hshm::configure`** - Configuration parsing (yaml-cpp)
+  - Provides: YAML configuration file parsing
+  - Use instead of linking to yaml-cpp directly
+  - Compile definitions: None (yaml-cpp is always enabled)
+
+- **`hshm::serialize`** - Serialization (cereal)
+  - Provides: Object serialization/deserialization
+  - Use instead of linking to cereal directly
+  - Compile definitions: `HSHM_ENABLE_CEREAL`
+
+- **`hshm::interceptor`** - ELF interception
+  - Provides: Dynamic library interception support
+  - Required for: Adapter real API functionality
+  - Compile definitions: `HSHM_ENABLE_ELF`
+
+- **`hshm::lightbeam`** - Network transport (ZeroMQ, libfabric, Thallium)
+  - Provides: High-performance network communication
+  - Used by: Chimaera runtime for distributed operations
+  - Compile definitions: `HSHM_ENABLE_ZMQ`, `HSHM_ENABLE_LIBFABRIC`, `HSHM_ENABLE_THALLIUM`
+
+- **`hshm::thread_all`** - Threading support
+  - Provides: pthread, OpenMP support
+  - Includes: Thread model definitions
+  - Compile definitions: `HSHM_ENABLE_OPENMP`, `HSHM_ENABLE_PTHREADS`, `HSHM_ENABLE_WINDOWS_THREADS`, `HSHM_DEFAULT_THREAD_MODEL`, `HSHM_DEFAULT_THREAD_MODEL_GPU`
+
+- **`hshm::mpi`** - MPI support
+  - Provides: Message Passing Interface
+  - Use only where MPI is actually needed
+  - Compile definitions: `HSHM_ENABLE_MPI`
+
+- **`hshm::compress`** - Compression libraries
+  - Provides: Data compression support
+  - Compile definitions: `HSHM_ENABLE_COMPRESS`
+
+- **`hshm::encrypt`** - Encryption libraries
+  - Provides: Data encryption support
+  - Compile definitions: `HSHM_ENABLE_ENCRYPT`
+
+**Linking Guidelines:**
+
+1. **Never link to yaml-cpp directly** - Use `hshm::configure` instead (except within hshm::configure itself)
+2. **Never link to cereal directly** - Use `hshm::serialize` instead
+3. **Be selective** - Only link to the modular targets you actually need
+4. **ChiMod clients** - Should only link to `hshm::cxx` (automatically included)
+5. **ChiMod runtimes** - May link to additional modular targets as needed
+6. **Tests** - Link only to the specific modular targets they test
+
+**Example Usage:**
+```cmake
+# External application needing configuration and serialization
+target_link_libraries(my_app
+  wrp_cte::core_client      # Provides hshm::cxx automatically
+  hshm::configure           # For YAML config parsing
+  hshm::serialize           # For object serialization
+)
+
+# Adapter needing ELF interception
+target_link_libraries(my_adapter
+  hshm::cxx
+  hshm::interceptor         # For real API functionality
+)
+
+# Test needing MPI
+target_link_libraries(my_test
+  hshm::cxx
+  hshm::mpi                 # Only link MPI where needed
+)
 ```
 
 ## ChiMod Runtime Code Standards

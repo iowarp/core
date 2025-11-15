@@ -9,13 +9,10 @@ name: Build Distribution
 # 3. Update publish job needs to include: [build, test-sdist, test-wheel-py313]
 
 on:
+  workflow_dispatch:
   push:
-    branches: [ main ]
     tags:
       - 'v*'
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
 
 jobs:
   build-sdist:

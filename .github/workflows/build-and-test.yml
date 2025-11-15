@@ -22,13 +22,15 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install required dependencies
+    - name: Install system build tools
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           build-essential cmake pkg-config \
-          libboost-context-dev libboost-fiber-dev libboost-system-dev \
-          libelf-dev libzmq3-dev libyaml-cpp-dev
+          libelf-dev \
+          libssl-dev \
+          doxygen \
+          perl
 
     - name: Install compression libraries
       run: |
@@ -36,24 +38,18 @@ jobs:
           libbz2-dev liblzo2-dev libzstd-dev liblz4-dev \
           zlib1g-dev liblzma-dev libbrotli-dev libsnappy-dev libblosc2-dev
 
-    - name: Install HDF5 support
-      run: |
-        sudo apt-get install -y libhdf5-dev
-
     - name: Install MPI support
       run: |
         sudo apt-get install -y libmpich-dev
 
-    - name: Install Catch2 testing framework
+    - name: Build and install dependencies using install.sh
       run: |
-        sudo apt-get install -y catch2 || echo "Using bundled Catch2 from submodules"
-
-    - name: Install additional dependencies
-      run: |
-        sudo apt-get install -y \
-          libssl-dev \
-          doxygen \
-          perl
+        chmod +x install.sh
+        sudo DEPS_ONLY=TRUE INSTALL_PREFIX=/usr/local ./install.sh
+        # Fix ownership of build directory created by install.sh
+        sudo chown -R $USER:$USER build/ || true
+      env:
+        DEBIAN_FRONTEND: noninteractive
 
     - name: Show system information
       run: |
@@ -68,13 +64,19 @@ jobs:
         g++ --version
         cmake --version
         echo ""
-        echo "=== Dependency Versions ==="
-        dpkg -l | grep -E "libboost|libzmq|libhdf5|libmpich" || true
+        echo "=== Installed Dependencies (apt) ==="
+        dpkg -l | grep -E "libmpich" || true
+        echo ""
+        echo "=== Installed Dependencies (install.sh) ==="
+        ls -la /usr/local/lib/libboost* /usr/local/lib/libzmq* /usr/local/lib/libhdf5* /usr/local/lib/libyaml* 2>/dev/null | head -20 || echo "Dependencies not yet visible"
 
     - name: Configure with CMake preset (debug)
       run: |
-        git submodule update --init --recursive      
+        git submodule update --init --recursive
+        # Remove build directory from install.sh to ensure clean build
+        rm -rf build
         cmake --preset=debug \
+          -DCMAKE_PREFIX_PATH="/usr/local/lib/cmake;/usr/local/cmake;/usr/local" \
           -DWRP_CORE_ENABLE_RUNTIME=ON \
           -DWRP_CORE_ENABLE_CTE=ON \
           -DWRP_CORE_ENABLE_CAE=ON \
@@ -83,6 +85,7 @@ jobs:
       env:
         CC: gcc
         CXX: g++
+        PKG_CONFIG_PATH: /usr/local/lib/pkgconfig
 
     - name: Build all components
       run: |
@@ -137,49 +140,48 @@ jobs:
         echo "=== CMake Config Files ==="
         find ${{ github.workspace }}/install -name "*Config.cmake" -o -name "*-config.cmake" | head -20
 
-    - name: Test external project linking
+    - name: Test external project linking (CTE)
       run: |
-        # Create a simple test project that links against installed libraries
-        mkdir -p ${{ github.workspace }}/test-external
-        cd ${{ github.workspace }}/test-external
+        echo "=== Testing CTE external integration ==="
+        cd context-transfer-engine/test/unit/external
+        mkdir -p build && cd build
+        echo "CMAKE_PREFIX_PATH: ${{ github.workspace }}/install/lib/cmake;${{ github.workspace }}/install"
+        cmake -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install/lib/cmake;${{ github.workspace }}/install;/usr/local/lib/cmake;/usr/local/cmake;/usr/local" \
+              --debug-find \
+              ..
+        cmake --build .
+        echo "✓ CTE external test built successfully"
+      continue-on-error: false
 
-        # Create a minimal CMakeLists.txt
-        cat > CMakeLists.txt << 'EOF'
-        cmake_minimum_required(VERSION 3.20)
-        project(TestInstallation CXX)
+    - name: Test external project linking (Runtime)
+      run: |
+        echo "=== Testing Runtime external integration ==="
+        cd context-runtime/test/unit/external
+        mkdir -p build && cd build
+        cmake -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install/lib/cmake;${{ github.workspace }}/install;/usr/local/lib/cmake;/usr/local/cmake;/usr/local" ..
+        cmake --build .
+        echo "✓ Runtime external test built successfully"
+      continue-on-error: false
 
-        set(CMAKE_CXX_STANDARD 17)
-        set(CMAKE_PREFIX_PATH "${{ github.workspace }}/install")
+    - name: Test external project linking (Transport Primitives)
+      run: |
+        echo "=== Testing Transport Primitives external integration ==="
+        cd context-transport-primitives/test/unit/external
+        mkdir -p build && cd build
+        cmake -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install/lib/cmake;${{ github.workspace }}/install;/usr/local/lib/cmake;/usr/local/cmake;/usr/local" ..
+        cmake --build .
+        echo "✓ Transport Primitives external test built successfully"
+      continue-on-error: false
 
-        # Try to find the installed package
-        find_package(chimaera QUIET)
-
-        if(chimaera_FOUND)
-          message(STATUS "Found chimaera package")
-          add_executable(test_app main.cpp)
-          target_link_libraries(test_app chimaera::cxx)
-        else()
-          message(STATUS "chimaera package not found - creating minimal test")
-          add_executable(test_app main.cpp)
-        endif()
-        EOF
-
-        # Create a minimal test application
-        cat > main.cpp << 'EOF'
-        #include <iostream>
-        int main() {
-          std::cout << "Installation test successful" << std::endl;
-          return 0;
-        }
-        EOF
-
-        # Try to build
-        cmake -B build -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install"
-        cmake --build build
-        ./build/test_app
-        echo ""
-        echo "=== External project linking test PASSED ==="
-      continue-on-error: true
+    - name: Test external project linking (CAE)
+      run: |
+        echo "=== Testing CAE external integration ==="
+        cd context-assimilation-engine/test/unit/external
+        mkdir -p build && cd build
+        cmake -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install/lib/cmake;${{ github.workspace }}/install;/usr/local/lib/cmake;/usr/local/cmake;/usr/local" ..
+        cmake --build .
+        echo "✓ CAE external test built successfully"
+      continue-on-error: false
 
     - name: Create package with CPack
       run: |

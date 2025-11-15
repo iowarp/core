@@ -22,14 +22,24 @@ target_include_directories(wrp_cte_core_ext PRIVATE
 # Ensure C++17 standard
 target_compile_features(wrp_cte_core_ext PRIVATE cxx_std_17)
 
-# Install the Python module to lib directory
-# Following the project pattern of installing shared libraries to lib
-install(
-    TARGETS wrp_cte_core_ext
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
-)
+# Install the Python module to the appropriate location
+# If WRP_CORE_INSTALL_WRAPPER_TO_VENV is ON, install to Python site-packages
+# Otherwise, install to lib/ directory (for system-wide installations)
+if(WRP_CORE_INSTALL_WRAPPER_TO_VENV)
+    install(
+        TARGETS wrp_cte_core_ext
+        LIBRARY DESTINATION ${Python_SITEARCH}
+    )
+    message(STATUS "Python wrapper will be installed to: ${Python_SITEARCH}")
+else()
+    install(
+        TARGETS wrp_cte_core_ext
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        RUNTIME DESTINATION bin
+    )
+    message(STATUS "Python wrapper will be installed to: ${CMAKE_INSTALL_PREFIX}/lib")
+endif()
 
 # Generate stub file for type hints
 # Note: Stub generation is disabled because the module requires runtime initialization

@@ -17,34 +17,11 @@ add_compile_definitions(_CRT_SECURE_NO_DEPRECATE)
 # ------------------------------------------------------------------------------
 # Options
 # ------------------------------------------------------------------------------
+# All HSHM_ENABLE_* options are now set by root CMakeLists.txt from WRP_CORE_* parameters
 # CMAKE_EXPORT_COMPILE_COMMANDS is set by root CMakeLists.txt
 # BUILD_SHARED_LIBS is set by root CMakeLists.txt
 # HSHM_ENABLE_TESTS and HSHM_ENABLE_BENCHMARKS are set by root CMakeLists.txt
-
-option(HSHM_ENABLE_MPI "Enable MPI support" OFF)
-option(HSHM_ENABLE_ZMQ "Enable ZeroMQ transport" ON)
-option(HSHM_ENABLE_LIBFABRIC "Enable Libfabric transport" OFF)
-option(HSHM_ENABLE_THALLIUM "Build tests which depend on thallium" OFF)
-option(HSHM_ENABLE_OPENMP "Enable the use of OpenMP" OFF)
-option(HSHM_ENABLE_CEREAL "Enable serialization using cereal" ON)
-# Coverage is controlled by WRP_CORE_ENABLE_COVERAGE in root CMakeLists.txt
-# Set local variable for backward compatibility with existing checks
-if(DEFINED WRP_CORE_ENABLE_COVERAGE)
-  set(HSHM_ENABLE_COVERAGE ${WRP_CORE_ENABLE_COVERAGE})
-else()
-  set(HSHM_ENABLE_COVERAGE OFF)
-endif()
-option(HSHM_ENABLE_DOXYGEN "Check how well the code is documented" OFF)
-
-option(HSHM_ENABLE_WINDOWS_THREADS "Support spawning windows threads" OFF)
-option(HSHM_ENABLE_PTHREADS "Support spawning pthreads" OFF)
-option(HSHM_DEBUG_LOCK "Used for debugging locks" OFF)
-option(HSHM_ENABLE_COMPRESS "Enable compression" OFF)
-option(HSHM_ENABLE_ENCRYPT "Enable encryption" OFF)
-option(HSHM_ENABLE_ELF "Enable elf" OFF)
-option(HSHM_ENABLE_CUDA "Enable CUDA support" OFF)
-option(HSHM_ENABLE_ROCM "Enable ROCm support" OFF)
-option(HSHM_NO_COMPILE "Disable compiling / installing this library" OFF)
+# HSHM_ENABLE_WINDOWS_THREADS, HSHM_ENABLE_PTHREADS, HSHM_DEBUG_LOCK, and HSHM_NO_COMPILE are set by root CMakeLists.txt
 
 if(WIN32)
     message(STATUS "Detected Windows OS")
@@ -74,29 +51,14 @@ set(HSHM_EXPORTED_TARGETS "HermesShm")
 # ------------------------------------------------------------------------------
 # Setup install and output Directories
 # ------------------------------------------------------------------------------
-if(NOT HSHM_INSTALL_BIN_DIR)
-    set(HSHM_INSTALL_BIN_DIR bin)
-endif()
-
-if(NOT HSHM_INSTALL_LIB_DIR)
-    set(HSHM_INSTALL_LIB_DIR lib)
-endif()
-
-if(NOT HSHM_INSTALL_INCLUDE_DIR)
-    set(HSHM_INSTALL_INCLUDE_DIR include)
-endif()
-
-if(NOT HSHM_INSTALL_DATA_DIR)
-    set(HSHM_INSTALL_DATA_DIR share)
-endif()
+# Installation directories use relative paths for proper --prefix override support
+# Removed HSHM_INSTALL_*_DIR macros - use lib, include, bin, share directly
 
 # ------------------------------------------------------------------------------
 # CMake Modules
 # ------------------------------------------------------------------------------
-if(NOT IS_HSHM_MAIN)
-    set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
-    message(${CMAKE_MODULE_PATH})
-endif()
+# CMake modules are now loaded from /workspace/cmake via IowarpCoreCommon.cmake
+# No need for local cmake directory
 
 # ------------------------------------------------------------------------------
 # Optimization
@@ -141,46 +103,140 @@ endif()
 # ------------------------------------------------------------------------------
 # External libraries
 # ------------------------------------------------------------------------------
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/HermesShmCommonConfig.cmake)
+# External libraries are now found by IowarpCoreCommon.cmake in /workspace/cmake
+# No local includes needed
 
 # CMAKE_EXPORT_COMPILE_COMMANDS and RPATH settings are set by root CMakeLists.txt
-list(APPEND CMAKE_INSTALL_RPATH "${HSHM_INSTALL_LIB_DIR}")
 
 # ENABLE GPU SUPPORT
 if(HSHM_ENABLE_CUDA)
-    hshm_enable_cuda(17)
+    wrp_core_enable_cuda(17)
 endif()
 
 if(HSHM_ENABLE_ROCM)
-    hshm_enable_rocm("HIP" 17)
+    wrp_core_enable_rocm("HIP" 17)
 endif()
 
-# HOST DEPENDENCIES
-add_library(host_deps INTERFACE)
+# ------------------------------------------------------------------------------
+# Modular dependency targets
+# ------------------------------------------------------------------------------
 
-target_link_libraries(host_deps INTERFACE
-    ${YAML_CPP_LIBS}
-    ${REAL_TIME_FLAGS}
-    ${SERIALIZATION_LIBS}
-    ${COMPRESS_LIBS}
-    ${ENCRYPT_LIBS}
-    ${Boost_LIBRARIES}
-    ${ELF_LIBS}
-    ${ZMQ_LIBS}
-    ${LIBFABRIC_LIBS}
-    ${MPI_LIBS}
-    ${OpenMP_LIBS}
+# hshm::configure - Configuration parsing (yaml-cpp)
+add_library(configure INTERFACE)
+target_link_libraries(configure INTERFACE yaml-cpp)
+add_library(hshm::configure ALIAS configure)
+
+# hshm::serialize - Serialization (cereal)
+add_library(serialize INTERFACE)
+if(HSHM_ENABLE_CEREAL)
+    target_link_libraries(serialize INTERFACE ${SERIALIZATION_LIBS})
+endif()
+target_compile_definitions(serialize INTERFACE
+    HSHM_ENABLE_CEREAL=$<BOOL:${HSHM_ENABLE_CEREAL}>
 )
-target_link_directories(host_deps INTERFACE
-    ${COMPRESS_LIB_DIRS} ${ENCRYPT_LIB_DIRS} ${Boost_LIBRARY_DIRS}
-    ${ELF_LIB_DIRS} ${YAML_CPP_LIBRARY_DIR} ${ZMQ_LIB_DIRS} ${LIBFABRIC_LIB_DIRS})
-target_include_directories(host_deps INTERFACE
-    ${COMPRESS_INCLUDES} ${ENCRYPT_INCLUDES} ${Boost_INCLUDE_DIRS}
-    ${ELF_INCLUDES} ${YAML_CPP_INCLUDE_DIR} ${ZMQ_INCLUDES} ${LIBFABRIC_INCLUDES})
+add_library(hshm::serialize ALIAS serialize)
 
-if(HSHM_ENABLE_PTHREADS)
-    target_link_libraries(host_deps INTERFACE pthread)
+# hshm::interceptor - ELF interception support
+add_library(interceptor INTERFACE)
+if(HSHM_ENABLE_ELF)
+    target_link_libraries(interceptor INTERFACE ${ELF_LIBS})
+    target_link_directories(interceptor INTERFACE ${ELF_LIB_DIRS})
+    target_include_directories(interceptor INTERFACE ${ELF_INCLUDES})
 endif()
+target_compile_definitions(interceptor INTERFACE
+    HSHM_ENABLE_ELF=$<BOOL:${HSHM_ENABLE_ELF}>
+)
+add_library(hshm::interceptor ALIAS interceptor)
+
+# hshm::lightbeam - ZeroMQ and Thallium transport
+add_library(lightbeam INTERFACE)
+if(HSHM_ENABLE_ZMQ)
+    target_link_libraries(lightbeam INTERFACE ${ZMQ_LIBS})
+    target_link_directories(lightbeam INTERFACE ${ZMQ_LIB_DIRS})
+    target_include_directories(lightbeam INTERFACE ${ZMQ_INCLUDES})
+endif()
+if(HSHM_ENABLE_LIBFABRIC)
+    target_link_libraries(lightbeam INTERFACE ${LIBFABRIC_LIBS})
+    target_link_directories(lightbeam INTERFACE ${LIBFABRIC_LIB_DIRS})
+    target_include_directories(lightbeam INTERFACE ${LIBFABRIC_INCLUDES})
+endif()
+if(HSHM_ENABLE_THALLIUM)
+    # Thallium dependencies would go here
+endif()
+target_compile_definitions(lightbeam INTERFACE
+    HSHM_ENABLE_ZMQ=$<BOOL:${HSHM_ENABLE_ZMQ}>
+    HSHM_ENABLE_LIBFABRIC=$<BOOL:${HSHM_ENABLE_LIBFABRIC}>
+    HSHM_ENABLE_THALLIUM=$<BOOL:${HSHM_ENABLE_THALLIUM}>
+)
+add_library(hshm::lightbeam ALIAS lightbeam)
+
+# hshm::thread_all - Threading support (includes Thallium if enabled)
+add_library(thread_all INTERFACE)
+if(HSHM_ENABLE_OPENMP)
+    target_link_libraries(thread_all INTERFACE ${OpenMP_LIBS})
+endif()
+if(HSHM_ENABLE_THALLIUM)
+    # Thallium threading dependencies would go here
+endif()
+if(HSHM_ENABLE_PTHREADS)
+    target_link_libraries(thread_all INTERFACE pthread)
+endif()
+target_compile_definitions(thread_all INTERFACE
+    HSHM_ENABLE_OPENMP=$<BOOL:${HSHM_ENABLE_OPENMP}>
+    HSHM_ENABLE_PTHREADS=$<BOOL:${HSHM_ENABLE_PTHREADS}>
+    HSHM_ENABLE_WINDOWS_THREADS=$<BOOL:${HSHM_ENABLE_WINDOWS_THREADS}>
+    HSHM_DEFAULT_THREAD_MODEL=hshm::thread::$<IF:$<BOOL:${HSHM_ENABLE_PTHREADS}>,Pthread,$<IF:$<BOOL:${HSHM_ENABLE_WINDOWS_THREADS}>,StdThread,StdThread>>
+    HSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::$<IF:$<BOOL:${HSHM_ENABLE_CUDA}>,Cuda,$<IF:$<BOOL:${HSHM_ENABLE_ROCM}>,Rocm,StdThread>>
+)
+add_library(hshm::thread_all ALIAS thread_all)
+
+# hshm::mpi - MPI support
+add_library(mpi INTERFACE)
+if(HSHM_ENABLE_MPI)
+    target_link_libraries(mpi INTERFACE ${MPI_LIBS})
+endif()
+target_compile_definitions(mpi INTERFACE
+    HSHM_ENABLE_MPI=$<BOOL:${HSHM_ENABLE_MPI}>
+)
+add_library(hshm::mpi ALIAS mpi)
+
+# hshm::compress - Compression support
+add_library(compress INTERFACE)
+if(HSHM_ENABLE_COMPRESS)
+    target_link_libraries(compress INTERFACE ${COMPRESS_LIBS})
+    target_link_directories(compress INTERFACE ${COMPRESS_LIB_DIRS})
+    target_include_directories(compress INTERFACE ${COMPRESS_INCLUDES})
+endif()
+target_compile_definitions(compress INTERFACE
+    HSHM_ENABLE_COMPRESS=$<BOOL:${HSHM_ENABLE_COMPRESS}>
+)
+add_library(hshm::compress ALIAS compress)
+
+# hshm::encrypt - Encryption support
+add_library(encrypt INTERFACE)
+if(HSHM_ENABLE_ENCRYPT)
+    target_link_libraries(encrypt INTERFACE ${ENCRYPT_LIBS})
+    target_link_directories(encrypt INTERFACE ${ENCRYPT_LIB_DIRS})
+    target_include_directories(encrypt INTERFACE ${ENCRYPT_INCLUDES})
+endif()
+target_compile_definitions(encrypt INTERFACE
+    HSHM_ENABLE_ENCRYPT=$<BOOL:${HSHM_ENABLE_ENCRYPT}>
+)
+add_library(hshm::encrypt ALIAS encrypt)
+
+# Legacy host_deps for backwards compatibility (will be removed)
+add_library(host_deps INTERFACE)
+target_link_libraries(host_deps INTERFACE
+    configure
+    serialize
+    interceptor
+    lightbeam
+    thread_all
+    mpi
+    compress
+    encrypt
+    ${REAL_TIME_FLAGS}
+)
 
 # -----------------------------------------------------------------------------
 # Documentation
@@ -222,35 +278,23 @@ endif()
 # ------------------------------------------------------------------------------
 function(hshm_target_compile_definitions target)
     get_target_property(target_type ${target} TYPE)
-    
-    # Common definitions for all target types
+
+    # Core definitions for all HSHM targets
+    # Module-specific definitions (MPI, ZMQ, etc.) are now handled by modular targets
     set(common_definitions
         HSHM_COMPILER_MSVC=$<BOOL:${HSHM_COMPILER_MSVC}>
         HSHM_COMPILER_GNU=$<BOOL:${HSHM_COMPILER_GNU}>
-        HSHM_ENABLE_MPI=$<BOOL:${HSHM_ENABLE_MPI}>
-        HSHM_ENABLE_ZMQ=$<BOOL:${HSHM_ENABLE_ZMQ}>
-        HSHM_ENABLE_LIBFABRIC=$<BOOL:${HSHM_ENABLE_LIBFABRIC}>
-        HSHM_ENABLE_THALLIUM=$<BOOL:${HSHM_ENABLE_THALLIUM}>
-        HSHM_ENABLE_OPENMP=$<BOOL:${HSHM_ENABLE_OPENMP}>
-        HSHM_ENABLE_CEREAL=$<BOOL:${HSHM_ENABLE_CEREAL}>
         HSHM_ENABLE_WINDOWS_SYSINFO=$<BOOL:${HSHM_ENABLE_WINDOWS_SYSINFO}>
         HSHM_ENABLE_PROCFS_SYSINFO=$<BOOL:${HSHM_ENABLE_PROCFS_SYSINFO}>
-        HSHM_ENABLE_WINDOWS_THREADS=$<BOOL:${HSHM_ENABLE_WINDOWS_THREADS}>
-        HSHM_ENABLE_PTHREADS=$<BOOL:${HSHM_ENABLE_PTHREADS}>
-        HSHM_ENABLE_COMPRESS=$<BOOL:${HSHM_ENABLE_COMPRESS}>
-        HSHM_ENABLE_ENCRYPT=$<BOOL:${HSHM_ENABLE_ENCRYPT}>
-        HSHM_ENABLE_ELF=$<BOOL:${HSHM_ENABLE_ELF}>
         HSHM_ENABLE_COVERAGE=$<BOOL:${HSHM_ENABLE_COVERAGE}>
         HSHM_ENABLE_DOXYGEN=$<BOOL:${HSHM_ENABLE_DOXYGEN}>
         HSHM_DEBUG_LOCK=$<BOOL:${HSHM_DEBUG_LOCK}>
-        HSHM_DEFAULT_THREAD_MODEL=hshm::thread::$<IF:$<BOOL:${HSHM_ENABLE_PTHREADS}>,Pthread,$<IF:$<BOOL:${HSHM_ENABLE_WINDOWS_THREADS}>,StdThread,StdThread>>
-        HSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::$<IF:$<BOOL:${HSHM_ENABLE_CUDA}>,Cuda,$<IF:$<BOOL:${HSHM_ENABLE_ROCM}>,Rocm,StdThread>>
         HSHM_DEFAULT_ALLOC_T=hipc::ThreadLocalAllocator
         HSHM_ENABLE_DLL_EXPORT=$<BOOL:${BUILD_SHARED_LIBS}>
         HSHM_ENABLE_CUDA=$<BOOL:${HSHM_ENABLE_CUDA}>
         HSHM_ENABLE_ROCM=$<BOOL:${HSHM_ENABLE_ROCM}>
     )
-    
+
     if(target_type STREQUAL "INTERFACE_LIBRARY")
         target_compile_definitions(${target} INTERFACE ${common_definitions})
     else()
@@ -296,24 +340,8 @@ endif()
 # ------------------------------------------------------------------------------
 install(DIRECTORY include/ DESTINATION include)
 
-
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HermesShmConfig.cmake
-    ${PROJECT_BINARY_DIR}/CMakeFiles/HermesShmConfig.cmake @ONLY
-)
-
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HermesShmCommonConfig.cmake
-    ${PROJECT_BINARY_DIR}/CMakeFiles/HermesShmCommonConfig.cmake @ONLY
-)
-
-install(
-    FILES
-    ${PROJECT_BINARY_DIR}/CMakeFiles/HermesShmConfig.cmake
-    ${PROJECT_BINARY_DIR}/CMakeFiles/HermesShmCommonConfig.cmake
-    DESTINATION
-    lib/cmake/HermesShm
-)
+# Component config files are no longer installed separately
+# All configuration is handled by unified IOWarp Core (IowarpCoreConfig.cmake)
 
 install(EXPORT ${HSHM_EXPORTED_TARGETS}
     FILE ${HSHM_EXPORTED_TARGETS}CoreConfig.cmake
@@ -321,4 +349,6 @@ install(EXPORT ${HSHM_EXPORTED_TARGETS}
     DESTINATION lib/cmake/HermesShm
 )
 
-jarvis_repo_add("${HSHM_ROOT}/test/jarvis_hshm" "")
+if(WRP_CORE_ENABLE_JARVIS)
+    jarvis_repo_add("${HSHM_ROOT}/test/jarvis_hshm")
+endif()

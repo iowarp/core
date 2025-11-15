@@ -10,8 +10,8 @@ set(CHIMAERA_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 #------------------------------------------------------------------------------
 # SECTION 3: CHIMOD CMAKE UTILITIES AND DEPENDENCIES
 #------------------------------------------------------------------------------
-# Include common utilities and dependencies early so find_package calls are available
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ChimaeraCommon.cmake)
+# ChiMod utilities are now provided by IowarpCoreCommon.cmake in /workspace/cmake
+# No local includes needed - all find_package calls are in root CMakeLists.txt
 
 #------------------------------------------------------------------------------
 # SECTION 4: DEPENDENCY VERIFICATION
@@ -74,7 +74,9 @@ endif()
 # SECTION 6: JARVIS INTEGRATION
 #------------------------------------------------------------------------------
 # Add Jarvis WRP runtime packages
-jarvis_repo_add(${CHIMAERA_ROOT}/test/jarvis_wrp_runtime "")
+if(WRP_CORE_ENABLE_JARVIS)
+    jarvis_repo_add(${CHIMAERA_ROOT}/test/jarvis_wrp_runtime)
+endif()
 
 #------------------------------------------------------------------------------
 # SECTION 7: INSTALL CODE
@@ -121,8 +123,26 @@ install(EXPORT ${MAIN_EXPORT_NAME}
 # Generate and install package config file for main library
 include(CMakePackageConfigHelpers)
 
+# Generate ChimaeraConfig.cmake inline (no template file needed)
+set(CHIMAERA_CONFIG_CONTENT "@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# All dependencies are handled by root CMakeLists.txt
+# Include IowarpCoreCommon for external ChiMod development
+include(\"\${CMAKE_CURRENT_LIST_DIR}/IowarpCoreCommon.cmake\")
+
+# Include the exported targets
+include(\"\${CMAKE_CURRENT_LIST_DIR}/@MAIN_EXPORT_NAME@.cmake\")
+
+# Provide components
+check_required_components(@MAIN_PACKAGE_NAME@)
+")
+
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/${MAIN_PACKAGE_NAME}Config.cmake.in" "${CHIMAERA_CONFIG_CONTENT}")
+
 configure_package_config_file(
-  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ChimaeraConfig.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/${MAIN_PACKAGE_NAME}Config.cmake.in"
   "${CMAKE_CURRENT_BINARY_DIR}/${MAIN_PACKAGE_NAME}Config.cmake"
   INSTALL_DESTINATION lib/cmake/${MAIN_PACKAGE_NAME}
 )
@@ -136,7 +156,7 @@ write_basic_package_version_file(
 install(FILES
   "${CMAKE_CURRENT_BINARY_DIR}/${MAIN_PACKAGE_NAME}Config.cmake"
   "${CMAKE_CURRENT_BINARY_DIR}/${MAIN_PACKAGE_NAME}ConfigVersion.cmake"
-  "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ChimaeraCommon.cmake"
+  "${CMAKE_SOURCE_DIR}/cmake/IowarpCoreCommon.cmake"
   DESTINATION lib/cmake/${MAIN_PACKAGE_NAME}
 )
 

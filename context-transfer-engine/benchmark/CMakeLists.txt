@@ -1,8 +1,11 @@
 # Benchmark directory CMakeLists.txt
 cmake_minimum_required(VERSION 3.20)
 
-# Find required packages
-find_package(MPI REQUIRED)
+# MPI is found in root CMakeLists.txt - benchmarks require MPI
+if(NOT WRP_CORE_ENABLE_MPI)
+  message(WARNING "CTE benchmarks require MPI but WRP_CORE_ENABLE_MPI is OFF - skipping benchmarks")
+  return()
+endif()
 
 # Create wrp_cte_bench executable
 add_executable(wrp_cte_bench

@@ -11,7 +11,7 @@ add_executable(test_types_exec
         test_atomics.cc)
 add_dependencies(test_types_exec hermes_shm_host)
 target_link_libraries(test_types_exec
-        hermes_shm_host Catch2::Catch2 ${MPI_LIBS} ${OpenMP_LIBS})
+        hermes_shm_host Catch2::Catch2 hshm::thread_all hshm::mpi)
 if(NOT WIN32)	
 add_test(NAME test_types COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_types_exec "~[error=FatalError]")
@@ -34,7 +34,7 @@ if (HSHM_ENABLE_MPI AND HSHM_ENABLE_OPENMP)
             test_timers.cc)
     add_dependencies(test_timers_exec hermes_shm_host)
     target_link_libraries(test_timers_exec
-            hermes_shm_host Catch2::Catch2 ${MPI_LIBS} ${OpenMP_LIBS})
+            hermes_shm_host Catch2::Catch2 hshm::thread_all hshm::mpi)
 
     add_test(NAME test_timers COMMAND
             ${CMAKE_BINARY_DIR}/bin/test_timers_exec)
@@ -46,9 +46,9 @@ endif()
 #------------------------------------------------------------------------------
 install(TARGETS
         ${INSTALLS}
-        LIBRARY DESTINATION ${HSHM_INSTALL_LIB_DIR}
-        ARCHIVE DESTINATION ${HSHM_INSTALL_LIB_DIR}
-        RUNTIME DESTINATION ${HSHM_INSTALL_BIN_DIR})
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        RUNTIME DESTINATION bin)
 
 #-----------------------------------------------------------------------------
 # Coverage

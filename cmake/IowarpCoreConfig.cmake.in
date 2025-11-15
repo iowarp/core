@@ -1,0 +1,128 @@
+# IowarpCoreConfig.cmake.in
+# Config file for the IOWarp Core package
+
+@PACKAGE_INIT@
+
+# Version information
+set(IOWARP_CORE_VERSION_MAJOR @PROJECT_VERSION_MAJOR@)
+set(IOWARP_CORE_VERSION_MINOR @PROJECT_VERSION_MINOR@)
+set(IOWARP_CORE_VERSION_PATCH @PROJECT_VERSION_PATCH@)
+set(IOWARP_CORE_VERSION "@PROJECT_VERSION@")
+
+# Feature flags
+set(WRP_CORE_ENABLE_MPI @WRP_CORE_ENABLE_MPI@)
+set(WRP_CORE_ENABLE_CUDA @WRP_CORE_ENABLE_CUDA@)
+set(WRP_CORE_ENABLE_ROCM @WRP_CORE_ENABLE_ROCM@)
+set(WRP_CORE_ENABLE_OPENMP @WRP_CORE_ENABLE_OPENMP@)
+set(WRP_CORE_ENABLE_ZMQ @WRP_CORE_ENABLE_ZMQ@)
+set(WRP_CORE_ENABLE_LIBFABRIC @WRP_CORE_ENABLE_LIBFABRIC@)
+set(WRP_CORE_ENABLE_THALLIUM @WRP_CORE_ENABLE_THALLIUM@)
+set(WRP_CORE_ENABLE_CEREAL @WRP_CORE_ENABLE_CEREAL@)
+set(WRP_CORE_ENABLE_COMPRESS @WRP_CORE_ENABLE_COMPRESS@)
+set(WRP_CORE_ENABLE_ENCRYPT @WRP_CORE_ENABLE_ENCRYPT@)
+set(WRP_CORE_ENABLE_ELF @WRP_CORE_ENABLE_ELF@)
+set(WRP_CORE_ENABLE_DOXYGEN @WRP_CORE_ENABLE_DOXYGEN@)
+set(WRP_CORE_ENABLE_RPATH @WRP_CORE_ENABLE_RPATH@)
+
+# Installation paths
+set(IOWARP_CORE_PREFIX @CMAKE_INSTALL_PREFIX@)
+set(IOWARP_CORE_LIB_DIR @CMAKE_INSTALL_PREFIX@/lib)
+set(IOWARP_CORE_INCLUDE_DIR @CMAKE_INSTALL_PREFIX@/include)
+set(IOWARP_CORE_BIN_DIR @CMAKE_INSTALL_PREFIX@/bin)
+
+# Include common utilities for external repos
+include("${CMAKE_CURRENT_LIST_DIR}/IowarpCoreCommon.cmake")
+
+# Find required dependencies
+include(CMakeFindDependencyMacro)
+
+# Find common dependencies used by IOWarp Core components
+find_dependency(Boost REQUIRED COMPONENTS fiber context filesystem)
+find_dependency(cereal REQUIRED)
+
+# Find HDF5 if CAE is enabled (required for CAE runtime)
+if(@WRP_CORE_ENABLE_CAE@)
+    # Try CONFIG mode first (for HDF5 installed to non-standard cmake/ directory)
+    find_package(HDF5 COMPONENTS C QUIET CONFIG)
+    if(NOT HDF5_FOUND)
+        # Fallback to module mode (for system HDF5 installations)
+        find_package(HDF5 COMPONENTS C QUIET)
+    endif()
+    if(HDF5_FOUND)
+        # Ensure HDF5_LIBRARIES is set for both CONFIG and MODULE mode
+        if(NOT HDF5_LIBRARIES)
+            # CONFIG mode creates targets but may not set HDF5_LIBRARIES
+            # Prefer shared libraries over static for better compatibility
+            if(TARGET HDF5::HDF5)
+                set(HDF5_LIBRARIES HDF5::HDF5)
+            elseif(TARGET hdf5-shared)
+                set(HDF5_LIBRARIES hdf5-shared)
+            elseif(TARGET hdf5-static)
+                set(HDF5_LIBRARIES hdf5-static)
+            endif()
+        endif()
+    endif()
+endif()
+
+# Include HermesShm (context-transport-primitives) export file directly
+# This provides all hshm::* modular targets
+include("${CMAKE_CURRENT_LIST_DIR}/../HermesShm/HermesShmCoreConfig.cmake")
+
+# Include Chimaera runtime export file directly
+# This provides chimaera::cxx and chimaera build utilities
+include("${CMAKE_CURRENT_LIST_DIR}/../chimaera/chimaera_coreTargets.cmake")
+
+# Include Chimaera ChiMods based on enabled features
+# Core ChiMods that are always available:
+include("${CMAKE_CURRENT_LIST_DIR}/../chimaera_admin/chimaera_admin.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../chimaera_bdev/chimaera_bdev.cmake")
+
+# Feature-dependent ChiMods (only include if enabled at build time)
+set(_IOWARP_OPTIONAL_CHIMODS "")
+
+# Context Transfer Engine (CTE) - only if enabled
+if(@WRP_CORE_ENABLE_CTE@)
+    include("${CMAKE_CURRENT_LIST_DIR}/../wrp_cte_core/wrp_cte_core.cmake")
+    list(APPEND _IOWARP_OPTIONAL_CHIMODS "wrp_cte_core")
+endif()
+
+# Context Assimilation Engine (CAE) - only if enabled
+if(@WRP_CORE_ENABLE_CAE@)
+    include("${CMAKE_CURRENT_LIST_DIR}/../wrp_cae_core/wrp_cae_core.cmake")
+    list(APPEND _IOWARP_OPTIONAL_CHIMODS "wrp_cae_core")
+endif()
+
+# RPATH configuration (conditional based on build-time setting)
+if(@WRP_CORE_ENABLE_RPATH@)
+    list(APPEND CMAKE_INSTALL_RPATH "@CMAKE_INSTALL_PREFIX@/lib")
+endif()
+
+# Include the exported targets (if any core targets need to be exported)
+# This would be populated based on what the unified IOWarp Core exports
+
+message(STATUS "IOWarp Core found:")
+message(STATUS "  Version: ${IOWARP_CORE_VERSION}")
+message(STATUS "  Prefix: ${IOWARP_CORE_PREFIX}")
+message(STATUS "")
+message(STATUS "Core Components:")
+message(STATUS "  HermesShm: Available (hshm::cxx, hshm::configure, hshm::serialize, etc.)")
+message(STATUS "  Chimaera Runtime: Available (chimaera::cxx)")
+message(STATUS "  IowarpCoreCommon: Available (ChiMod build utilities)")
+message(STATUS "")
+message(STATUS "Core ChiMods (Always Available):")
+message(STATUS "  Admin: Available (chimaera::admin_client, chimaera::admin_runtime)")
+message(STATUS "  Bdev: Available (chimaera::bdev_client, chimaera::bdev_runtime)")
+
+if(_IOWARP_OPTIONAL_CHIMODS)
+    message(STATUS "")
+    message(STATUS "Optional ChiMods (Build-time enabled):")
+    foreach(_chimod ${_IOWARP_OPTIONAL_CHIMODS})
+        if(_chimod STREQUAL "wrp_cte_core")
+            message(STATUS "  CTE Core: Available (wrp_cte::core_client, wrp_cte::core_runtime)")
+        elseif(_chimod STREQUAL "wrp_cae_core")
+            message(STATUS "  CAE Core: Available (wrp_cae::core_client, wrp_cae::core_runtime)")
+        endif()
+    endforeach()
+endif()
+
+check_required_components(iowarp-core)

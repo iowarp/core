@@ -30,8 +30,9 @@ add_executable(test_data_structure_exec
 
 add_dependencies(test_data_structure_exec hermes_shm_host)
 target_link_libraries(test_data_structure_exec
-        hermes_shm_host Catch2::Catch2
-        ${MPI_LIBS} ${OpenMP_LIBS})
+        hermes_shm_host
+        Catch2::Catch2
+        hshm::thread_all)
 
 # ------------------------------------------------------------------------------
 # Test Cases
@@ -84,9 +85,9 @@ endif()
 # ------------------------------------------------------------------------------
 install(TARGETS
         test_data_structure_exec
-        LIBRARY DESTINATION ${HSHM_INSTALL_LIB_DIR}
-        ARCHIVE DESTINATION ${HSHM_INSTALL_LIB_DIR}
-        RUNTIME DESTINATION ${HSHM_INSTALL_BIN_DIR})
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        RUNTIME DESTINATION bin)
 
 # -----------------------------------------------------------------------------
 # Coverage

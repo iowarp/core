@@ -13,7 +13,7 @@ if (HSHM_ENABLE_MPI)
             memory_manager.cc)
     add_dependencies(test_backend_exec hermes_shm_host)
     target_link_libraries(test_backend_exec
-            hermes_shm_host Catch2::Catch2 ${MPI_LIBS})
+            hermes_shm_host Catch2::Catch2 hshm::mpi)
 
     #------------------------------------------------------------------------------
     # Test Cases
@@ -31,9 +31,9 @@ if (HSHM_ENABLE_MPI)
     #------------------------------------------------------------------------------
     install(TARGETS
             test_backend_exec
-            LIBRARY DESTINATION ${HSHM_INSTALL_LIB_DIR}
-            ARCHIVE DESTINATION ${HSHM_INSTALL_LIB_DIR}
-            RUNTIME DESTINATION ${HSHM_INSTALL_BIN_DIR})
+            LIBRARY DESTINATION lib
+            ARCHIVE DESTINATION lib
+            RUNTIME DESTINATION bin)
 
     #-----------------------------------------------------------------------------
     # Coverage
