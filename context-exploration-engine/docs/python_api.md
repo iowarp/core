@@ -285,7 +285,7 @@ if blobs:
 
 ---
 
-#### `context_retrieve(tag_re, blob_re, max_results=1024, max_context_size=268435456, max_blob_size=1048576, batch_size=32)`
+#### `context_retrieve(tag_re, blob_re, max_results=1024, max_context_size=268435456, batch_size=32)`
 
 Retrieve blob data matching patterns into packed binary context.
 
@@ -296,7 +296,6 @@ packed_data = ctx_interface.context_retrieve(
     blob_re,
     max_results=1024,
     max_context_size=256*1024*1024,
-    max_blob_size=1*1024*1024,
     batch_size=32
 )
 ```
@@ -309,9 +308,6 @@ packed_data = ctx_interface.context_retrieve(
   - Default: `1024`
 - **`max_context_size`** (int, optional): Maximum total context size in bytes
   - Default: `268435456` (256MB)
-- **`max_blob_size`** (int, optional): Maximum size per blob in bytes
-  - Blobs larger than this are skipped with a warning
-  - Default: `1048576` (1MB)
 - **`batch_size`** (int, optional): Number of concurrent `AsyncGetBlob` operations
   - Controls parallelism
   - Default: `32`
@@ -346,7 +342,6 @@ packed_data = ctx_interface.context_retrieve(
     blob_re="chunk_.*",
     max_results=100,           # Limit to 100 blobs
     max_context_size=100*1024*1024,  # 100MB total
-    max_blob_size=5*1024*1024,       # 5MB per blob
     batch_size=64              # 64 concurrent operations
 )
 
@@ -360,7 +355,6 @@ if packed_data and len(packed_data) > 0:
 **Notes:**
 - Data is packed sequentially (blob1 + blob2 + blob3...)
 - No delimiters or metadata between blobs
-- Blobs larger than `max_blob_size` are skipped
 - Retrieval stops when buffer is full or all blobs retrieved
 
 ---

@@ -109,7 +109,6 @@ std::vector<std::string> ContextInterface::ContextRetrieve(
     const std::string &blob_re,
     unsigned int max_results,
     size_t max_context_size,
-    size_t max_blob_size,
     unsigned int batch_size) {
   if (!is_initialized_) {
     std::cerr << "Error: ContextInterface not initialized" << std::endl;
@@ -168,12 +167,6 @@ std::vector<std::string> ContextInterface::ContextRetrieve(
       for (size_t i = batch_start; i < batch_end; ++i) {
         const auto& [tag_name, blob_name] = query_results[i];
 
-        // Check if we have space left in buffer
-        if (buffer_offset + max_blob_size > max_context_size) {
-          std::cout << "ContextRetrieve: Buffer full, stopping at blob " << i << std::endl;
-          break;
-        }
-
         // Get or create tag to get tag_id
         wrp_cte::core::TagId tag_id = cte_client->GetOrCreateTag(HSHM_MCTX, tag_name);
         if (tag_id.IsNull()) {
@@ -193,13 +186,6 @@ std::vector<std::string> ContextInterface::ContextRetrieve(
           std::cout << "ContextRetrieve: Not enough space for blob '" << blob_name
                     << "' (" << blob_size << " bytes), stopping" << std::endl;
           break;
-        }
-
-        // Check if blob exceeds max blob size
-        if (blob_size > max_blob_size) {
-          std::cerr << "Warning: Blob '" << blob_name << "' size " << blob_size
-                    << " exceeds max " << max_blob_size << ", skipping" << std::endl;
-          continue;
         }
 
         // Calculate buffer pointer for this blob
@@ -231,11 +217,6 @@ std::vector<std::string> ContextInterface::ContextRetrieve(
       // Delete all tasks in this batch
       for (auto& task : tasks) {
         ipc_manager->DelTask(task);
-      }
-
-      // If we ran out of buffer space, stop processing
-      if (buffer_offset + max_blob_size > max_context_size) {
-        break;
       }
     }
 

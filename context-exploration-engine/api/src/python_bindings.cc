@@ -67,7 +67,6 @@ NB_MODULE(wrp_cee, m) {
          nb::arg("tag_re"), nb::arg("blob_re"),
          nb::arg("max_results") = 1024,
          nb::arg("max_context_size") = 256 * 1024 * 1024,
-         nb::arg("max_blob_size") = 1 * 1024 * 1024,
          nb::arg("batch_size") = 32,
          "Retrieve the identities and data of objects matching patterns\n\n"
          "Queries for blobs matching patterns and retrieves their data into a\n"
@@ -77,7 +76,6 @@ NB_MODULE(wrp_cee, m) {
          "  blob_re: Blob regex pattern to match\n"
          "  max_results: Max number of blobs (0=unlimited, default: 1024)\n"
          "  max_context_size: Max total size in bytes (default: 256MB)\n"
-         "  max_blob_size: Max size per blob in bytes (default: 1MB)\n"
          "  batch_size: Concurrent AsyncGetBlob operations (default: 32)\n\n"
          "Returns:\n"
          "  List with one string containing packed binary context data (empty if none)")

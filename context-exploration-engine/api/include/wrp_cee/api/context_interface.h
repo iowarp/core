@@ -65,7 +65,6 @@ public:
    * @param blob_re Blob regex pattern to match
    * @param max_results Maximum number of blobs to retrieve (0 = unlimited, default: 1024)
    * @param max_context_size Maximum total context size in bytes (default: 256MB)
-   * @param max_blob_size Maximum size per blob in bytes (default: 1MB, larger blobs skipped)
    * @param batch_size Number of concurrent AsyncGetBlob operations (default: 32)
    * @return Vector containing one string with packed binary context data (empty if no data)
    */
@@ -73,7 +72,6 @@ public:
                                             const std::string &blob_re,
                                             unsigned int max_results = 1024,
                                             size_t max_context_size = 256 * 1024 * 1024,
-                                            size_t max_blob_size = 1 * 1024 * 1024,
                                             unsigned int batch_size = 32);
 
   /**
