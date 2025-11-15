@@ -362,4 +362,6 @@ install(EXPORT ${HSHM_EXPORTED_TARGETS}
     DESTINATION lib/cmake/HermesShm
 )
 
-jarvis_repo_add("${HSHM_ROOT}/test/jarvis_hshm" "")
+if(WRP_CORE_ENABLE_JARVIS)
+    jarvis_repo_add("${HSHM_ROOT}/test/jarvis_hshm")
+endif()

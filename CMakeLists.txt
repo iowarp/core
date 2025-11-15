@@ -54,6 +54,7 @@ option(WRP_CORE_ENABLE_ELF "Enable ELF support (required for CTE adapters)" OFF)
 option(WRP_CORE_ENABLE_OPENMP "Enable the use of OpenMP" OFF)
 option(WRP_CORE_ENABLE_CUDA "Enable CUDA support" OFF)
 option(WRP_CORE_ENABLE_ROCM "Enable ROCm support" OFF)
+option(WRP_CORE_ENABLE_JARVIS "Enable Jarvis CI infrastructure installation" OFF)
 
 #------------------------------------------------------------------------------
 # HermesShm (context-transport-primitives) Options

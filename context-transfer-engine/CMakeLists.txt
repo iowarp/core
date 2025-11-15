@@ -62,4 +62,6 @@ endif()
 
 message(STATUS "CTE Core and Bdev ChiMods configured for compilation")
 
-jarvis_repo_add(${WRP_CTE_ROOT}/test/jarvis_wrp_cte "")
+if(WRP_CORE_ENABLE_JARVIS)
+    jarvis_repo_add(${WRP_CTE_ROOT}/test/jarvis_wrp_cte)
+endif()

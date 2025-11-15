@@ -74,7 +74,9 @@ endif()
 # SECTION 6: JARVIS INTEGRATION
 #------------------------------------------------------------------------------
 # Add Jarvis WRP runtime packages
-jarvis_repo_add(${CHIMAERA_ROOT}/test/jarvis_wrp_runtime "")
+if(WRP_CORE_ENABLE_JARVIS)
+    jarvis_repo_add(${CHIMAERA_ROOT}/test/jarvis_wrp_runtime)
+endif()
 
 #------------------------------------------------------------------------------
 # SECTION 7: INSTALL CODE
