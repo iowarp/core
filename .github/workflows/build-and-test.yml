@@ -22,13 +22,15 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install required dependencies
+    - name: Install system build tools
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           build-essential cmake pkg-config \
-          libboost-context-dev libboost-fiber-dev libboost-system-dev \
-          libelf-dev libzmq3-dev libyaml-cpp-dev
+          libelf-dev \
+          libssl-dev \
+          doxygen \
+          perl
 
     - name: Install compression libraries
       run: |
@@ -36,24 +38,16 @@ jobs:
           libbz2-dev liblzo2-dev libzstd-dev liblz4-dev \
           zlib1g-dev liblzma-dev libbrotli-dev libsnappy-dev libblosc2-dev
 
-    - name: Install HDF5 support
-      run: |
-        sudo apt-get install -y libhdf5-dev
-
     - name: Install MPI support
       run: |
         sudo apt-get install -y libmpich-dev
 
-    - name: Install Catch2 testing framework
+    - name: Build and install dependencies using install.sh
       run: |
-        sudo apt-get install -y catch2 || echo "Using bundled Catch2 from submodules"
-
-    - name: Install additional dependencies
-      run: |
-        sudo apt-get install -y \
-          libssl-dev \
-          doxygen \
-          perl
+        chmod +x install.sh
+        sudo DEPS_ONLY=TRUE INSTALL_PREFIX=/usr/local ./install.sh
+      env:
+        DEBIAN_FRONTEND: noninteractive
 
     - name: Show system information
       run: |
@@ -68,13 +62,17 @@ jobs:
         g++ --version
         cmake --version
         echo ""
-        echo "=== Dependency Versions ==="
-        dpkg -l | grep -E "libboost|libzmq|libhdf5|libmpich" || true
+        echo "=== Installed Dependencies (apt) ==="
+        dpkg -l | grep -E "libmpich" || true
+        echo ""
+        echo "=== Installed Dependencies (install.sh) ==="
+        ls -la /usr/local/lib/libboost* /usr/local/lib/libzmq* /usr/local/lib/libhdf5* /usr/local/lib/libyaml* 2>/dev/null | head -20 || echo "Dependencies not yet visible"
 
     - name: Configure with CMake preset (debug)
       run: |
-        git submodule update --init --recursive      
+        git submodule update --init --recursive
         cmake --preset=debug \
+          -DCMAKE_PREFIX_PATH="/usr/local/lib/cmake;/usr/local/cmake;/usr/local" \
           -DWRP_CORE_ENABLE_RUNTIME=ON \
           -DWRP_CORE_ENABLE_CTE=ON \
           -DWRP_CORE_ENABLE_CAE=ON \
@@ -83,6 +81,7 @@ jobs:
       env:
         CC: gcc
         CXX: g++
+        PKG_CONFIG_PATH: /usr/local/lib/pkgconfig
 
     - name: Build all components
       run: |

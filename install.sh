@@ -1,6 +1,6 @@
 #!/bin/bash
 # install.sh - Install IOWarp Core and all dependencies to a single prefix
-# This script detects missing dependencies and builds/installs them from submodules
+# This script detects missing dependencies and builds/installs them from downloaded sources or submodules
 
 set -e  # Exit on error
 
@@ -11,12 +11,14 @@ cd "$SCRIPT_DIR"
 # Default install prefix
 : ${INSTALL_PREFIX:=/usr/local}
 : ${BUILD_JOBS:=$(nproc)}
+: ${DEPS_ONLY:=FALSE}
 
 echo "======================================================================"
 echo "IOWarp Core Installer"
 echo "======================================================================"
 echo "Install prefix: $INSTALL_PREFIX"
 echo "Build jobs: $BUILD_JOBS"
+echo "Dependencies only: $DEPS_ONLY"
 echo ""
 
 #------------------------------------------------------------------------------
@@ -218,6 +220,24 @@ echo ""
 #------------------------------------------------------------------------------
 # Step 3: Build and Install IOWarp Core
 #------------------------------------------------------------------------------
+
+# Skip IOWarp Core build if DEPS_ONLY is set
+if [ "$DEPS_ONLY" = "TRUE" ] || [ "$DEPS_ONLY" = "true" ] || [ "$DEPS_ONLY" = "1" ]; then
+    echo ""
+    echo "======================================================================"
+    echo "✓ Dependencies installed successfully!"
+    echo "======================================================================"
+    echo "DEPS_ONLY mode enabled - skipping IOWarp Core build"
+    echo "Installation prefix: $INSTALL_PREFIX"
+    echo ""
+    echo "To build IOWarp Core manually, run:"
+    echo "  cmake --preset=minimalist -DCMAKE_INSTALL_PREFIX=\"$INSTALL_PREFIX\" -DCMAKE_PREFIX_PATH=\"$INSTALL_PREFIX/lib/cmake;$INSTALL_PREFIX/cmake;$INSTALL_PREFIX\""
+    echo "  cmake --build build -j${BUILD_JOBS}"
+    echo "  cmake --install build"
+    echo ""
+    exit 0
+fi
+
 echo "======================================================================"
 echo ">>> Building IOWarp Core..."
 echo "======================================================================"
