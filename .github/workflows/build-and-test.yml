@@ -46,6 +46,8 @@ jobs:
       run: |
         chmod +x install.sh
         sudo DEPS_ONLY=TRUE INSTALL_PREFIX=/usr/local ./install.sh
+        # Fix ownership of build directory created by install.sh
+        sudo chown -R $USER:$USER build/ || true
       env:
         DEBIAN_FRONTEND: noninteractive
 
@@ -71,6 +73,8 @@ jobs:
     - name: Configure with CMake preset (debug)
       run: |
         git submodule update --init --recursive
+        # Remove build directory from install.sh to ensure clean build
+        rm -rf build
         cmake --preset=debug \
           -DCMAKE_PREFIX_PATH="/usr/local/lib/cmake;/usr/local/cmake;/usr/local" \
           -DWRP_CORE_ENABLE_RUNTIME=ON \
@@ -141,8 +145,7 @@ jobs:
         echo "=== Testing CTE external integration ==="
         cd context-transfer-engine/test/unit/external
         mkdir -p build && cd build
-        cmake -DIowarpCore_DIR=${{ github.workspace }}/install/lib/cmake/iowarp-core \
-              -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install ..
+        cmake -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install;/usr/local/lib/cmake;/usr/local/cmake;/usr/local" ..
         cmake --build .
         echo "CTE external test built successfully"
       continue-on-error: true
@@ -152,8 +155,7 @@ jobs:
         echo "=== Testing Runtime external integration ==="
         cd context-runtime/test/unit/external
         mkdir -p build && cd build
-        cmake -DIowarpCore_DIR=${{ github.workspace }}/install/lib/cmake/iowarp-core \
-              -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install ..
+        cmake -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install;/usr/local/lib/cmake;/usr/local/cmake;/usr/local" ..
         cmake --build .
         echo "Runtime external test built successfully"
       continue-on-error: true
@@ -163,9 +165,19 @@ jobs:
         echo "=== Testing Transport Primitives external integration ==="
         cd context-transport-primitives/test/unit/external
         mkdir -p build && cd build
-        cmake -DCMAKE_PREFIX_PATH=${{ github.workspace }}/install ..
+        cmake -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install;/usr/local/lib/cmake;/usr/local/cmake;/usr/local" ..
         cmake --build .
         echo "Transport Primitives external test built successfully"
+      continue-on-error: true
+
+    - name: Test external project linking (CAE)
+      run: |
+        echo "=== Testing CAE external integration ==="
+        cd context-assimilation-engine/test/unit/external
+        mkdir -p build && cd build
+        cmake -DCMAKE_PREFIX_PATH="${{ github.workspace }}/install;/usr/local/lib/cmake;/usr/local/cmake;/usr/local" ..
+        cmake --build .
+        echo "CAE external test built successfully"
       continue-on-error: true
 
     - name: Create package with CPack
