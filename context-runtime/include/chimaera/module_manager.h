@@ -144,6 +144,16 @@ class ModuleManager {
   std::vector<std::string> GetScanDirectories() const;
 
   /**
+   * Get the directory path where the runtime shared object is located
+   *
+   * Uses dladdr() to discover the runtime location of the shared object,
+   * allowing dynamic loading of sibling modules in the same directory.
+   *
+   * @return Absolute directory path, or empty string on failure
+   */
+  std::string GetModuleDirectory() const;
+
+  /**
    * Check if file is a potential ChiMod library
    * @param file_path Path to file
    * @return true if file looks like a shared library

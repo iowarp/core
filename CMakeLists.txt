@@ -436,18 +436,22 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # RPATH configuration (optional)
 if(WRP_CORE_ENABLE_RPATH)
-    message(STATUS "RPATH enabled for installed libraries")
+    message(STATUS "RPATH enabled with relative paths for relocatable installations")
     set(CMAKE_SKIP_BUILD_RPATH FALSE)
     set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
-    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
-    set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 
-    # Platform-specific RPATH configuration
+    # Platform-specific RPATH configuration using relative paths
+    # This allows the installation to be relocated to any directory
     if(APPLE)
         set(CMAKE_MACOSX_RPATH TRUE)
-        set(CMAKE_INSTALL_RPATH "@loader_path/../lib:@loader_path:${CMAKE_INSTALL_PREFIX}/lib")
+        # Use @loader_path for macOS - relative to the loading binary/library
+        set(CMAKE_INSTALL_RPATH "@loader_path/../lib:@loader_path")
+        set(CMAKE_BUILD_RPATH "@loader_path/../lib:@loader_path")
     elseif(UNIX)
-        set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN:${CMAKE_INSTALL_PREFIX}/lib")
+        # Use $ORIGIN for Linux - relative to the loading binary/library
+        set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib:$ORIGIN")
+        set(CMAKE_BUILD_RPATH "$ORIGIN/../lib:$ORIGIN")
     endif()
 else()
     message(STATUS "RPATH disabled - libraries will not have embedded runtime paths")

@@ -59,6 +59,14 @@ cmake --preset=debug -DWRP_CORE_ENABLE_CTE=ON -DWRP_CORE_ENABLE_CAE=OFF
 - Follow ChiMod build patterns from MODULE_DEVELOPMENT_GUIDE.md
 - All compilation warnings have been resolved as of the current state
 
+### RPATH Configuration
+The build system uses **relative RPATHs** for relocatable installations:
+- **Linux**: Uses `$ORIGIN` for runtime library search paths relative to the binary/library
+- **macOS**: Uses `@loader_path` for runtime library search paths relative to the binary/library
+- Libraries search for dependencies in `$ORIGIN/../lib` and `$ORIGIN` (or macOS equivalents)
+- This allows the entire installation directory to be moved to any location without breaking library dependencies
+- RPATH is enabled by default via `WRP_CORE_ENABLE_RPATH=ON`
+
 ### HSHM Usage
 
 Always use HSHM_MCTX macro unless we are writing GPU code, which necessitates a specific mctx to be created.

@@ -6,11 +6,20 @@
 #include "chimaera/container.h"
 #include <cstring>
 #include <filesystem>
+#include <dlfcn.h>
+#include <limits.h>
+#include <libgen.h>
 
 // Global pointer variable definition for Module manager singleton
 HSHM_DEFINE_GLOBAL_PTR_VAR_CC(chi::ModuleManager, g_module_manager);
 
 namespace chi {
+
+// Helper function to get a symbol address for dladdr
+// This avoids issues with member function pointer casts
+static void* GetSymbolForDlAddr() {
+  return reinterpret_cast<void*>(&GetSymbolForDlAddr);
+}
 
 // Constructor and destructor removed - handled by HSHM singleton pattern
 
@@ -144,6 +153,12 @@ void ModuleManager::ScanForChiMods() {
 std::vector<std::string> ModuleManager::GetScanDirectories() const {
   std::vector<std::string> directories;
 
+  // Add module directory first (highest priority)
+  std::string module_dir = GetModuleDirectory();
+  if (!module_dir.empty()) {
+    directories.push_back(module_dir);
+  }
+
   // Get CHI_REPO_PATH
   const char *chi_repo_path = std::getenv("CHI_REPO_PATH");
   if (chi_repo_path) {
@@ -178,15 +193,6 @@ std::vector<std::string> ModuleManager::GetScanDirectories() const {
     directories.push_back(path_str.substr(start));
   }
 
-  // Add CMAKE_INSTALL_PREFIX/lib if it was defined at compile time
-#ifdef CHI_INSTALL_PREFIX
-  std::string install_prefix(CHI_INSTALL_PREFIX);
-  if (!install_prefix.empty()) {
-    std::string install_lib_path = install_prefix + "/lib";
-    directories.push_back(install_lib_path);
-  }
-#endif
-
   // Add default directories
   directories.push_back("./lib");
   directories.push_back("../lib");
@@ -199,6 +205,26 @@ std::vector<std::string> ModuleManager::GetScanDirectories() const {
   }
 
   return directories;
+}
+
+std::string ModuleManager::GetModuleDirectory() const {
+  Dl_info dl_info;
+  // Use address of a function in this shared object to identify it
+  void* symbol_addr = GetSymbolForDlAddr();
+
+  if (dladdr(symbol_addr, &dl_info) == 0) {
+    return "";
+  }
+
+  char resolved_path[PATH_MAX];
+  if (realpath(dl_info.dli_fname, resolved_path) == nullptr) {
+    return "";
+  }
+
+  char path_copy[PATH_MAX];
+  strncpy(path_copy, resolved_path, PATH_MAX);
+  path_copy[PATH_MAX - 1] = '\0';  // Ensure null termination
+  return std::string(dirname(path_copy));
 }
 
 bool ModuleManager::IsSharedLibrary(const std::string &file_path) const {
