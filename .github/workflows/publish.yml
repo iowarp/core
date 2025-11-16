@@ -45,18 +45,13 @@ jobs:
           echo "Building release version: $VERSION"
         else
           # Dev version from branch commit
+          # NOTE: PyPI does not allow local version identifiers (PEP 440)
+          # Format: X.Y.Z.devN where N is timestamp-based for uniqueness
           BASE_VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
           TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          SHORT_SHA=${GITHUB_SHA:0:7}
-          BRANCH_NAME=${GITHUB_REF#refs/heads/}
-          BRANCH_NAME_SAFE=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9]/_/g')
 
-          # Include branch name for non-main branches to distinguish test builds
-          if [[ "$BRANCH_NAME" == "main" ]]; then
-            VERSION="${BASE_VERSION}.dev${TIMESTAMP}+${SHORT_SHA}.${GITHUB_RUN_NUMBER}"
-          else
-            VERSION="${BASE_VERSION}.dev${TIMESTAMP}+${BRANCH_NAME_SAFE}.${SHORT_SHA}.${GITHUB_RUN_NUMBER}"
-          fi
+          # Use timestamp + run number for dev version number (ensures uniqueness)
+          VERSION="${BASE_VERSION}.dev${TIMESTAMP}${GITHUB_RUN_NUMBER}"
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "is_release=false" >> $GITHUB_OUTPUT
