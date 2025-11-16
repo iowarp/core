@@ -8,6 +8,11 @@ set -e  # Exit on error
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Initialize and update git submodules recursively
+echo ">>> Initializing git submodules..."
+git submodule update --init --recursive
+echo ""
+
 # Default install prefix
 : ${INSTALL_PREFIX:=/usr/local}
 : ${BUILD_JOBS:=$(nproc)}
@@ -86,8 +91,6 @@ if [ -f build/detect/dependency_status.txt ]; then
     echo "  NEED_BOOST:    $NEED_BOOST"
     echo "  NEED_ZEROMQ:   $NEED_ZEROMQ"
     echo "  NEED_HDF5:     $NEED_HDF5"
-    echo "  NEED_CEREAL:   $NEED_CEREAL"
-    echo "  NEED_YAML_CPP: $NEED_YAML_CPP"
     echo ""
 else
     echo "Warning: Could not find dependency detection results"
@@ -95,8 +98,6 @@ else
     NEED_BOOST=1
     NEED_ZEROMQ=1
     NEED_HDF5=1
-    NEED_CEREAL=1
-    NEED_YAML_CPP=1
 fi
 
 #------------------------------------------------------------------------------
@@ -115,15 +116,15 @@ if [ "$NEED_BOOST" = "1" ] || [ "$NEED_BOOST" = "TRUE" ]; then
     BOOST_DIR="boost-${BOOST_VERSION}"
 
     # Download Boost if not already downloaded
-    if [ ! -f "external/${BOOST_ARCHIVE}" ]; then
+    if [ ! -f "build/external/${BOOST_ARCHIVE}" ]; then
         echo "Downloading Boost ${BOOST_VERSION}..."
-        mkdir -p external
-        curl -L -o "external/${BOOST_ARCHIVE}" "${BOOST_URL}"
+        mkdir -p build/external
+        curl -L -o "build/external/${BOOST_ARCHIVE}" "${BOOST_URL}"
     fi
 
     # Extract Boost
     echo "Extracting Boost..."
-    cd external
+    cd build/external
     tar -xzf "${BOOST_ARCHIVE}"
     cd "${BOOST_DIR}"
 
@@ -150,12 +151,32 @@ fi
 echo ""
 
 #------------------------------------------------------------------------------
-# ZeroMQ - Build static library
+# ZeroMQ - Download and build static library
 #------------------------------------------------------------------------------
 if [ "$NEED_ZEROMQ" = "1" ] || [ "$NEED_ZEROMQ" = "TRUE" ]; then
-    echo ">>> Building ZeroMQ from submodule..."
-    mkdir -p external/libzmq/build
-    cd external/libzmq/build
+    echo ">>> Downloading and building ZeroMQ..."
+
+    ZEROMQ_VERSION="4.3.5"
+    ZEROMQ_ARCHIVE="libzmq-${ZEROMQ_VERSION}.tar.gz"
+    ZEROMQ_URL="https://github.com/zeromq/libzmq/archive/refs/tags/v${ZEROMQ_VERSION}.tar.gz"
+    ZEROMQ_DIR="libzmq-${ZEROMQ_VERSION}"
+
+    # Download ZeroMQ if not already downloaded
+    if [ ! -f "build/external/${ZEROMQ_ARCHIVE}" ]; then
+        echo "Downloading ZeroMQ ${ZEROMQ_VERSION}..."
+        mkdir -p build/external
+        curl -L -o "build/external/${ZEROMQ_ARCHIVE}" "${ZEROMQ_URL}"
+    fi
+
+    # Extract ZeroMQ
+    echo "Extracting ZeroMQ..."
+    cd build/external
+    tar -xzf "${ZEROMQ_ARCHIVE}"
+    cd "${ZEROMQ_DIR}"
+
+    # Build ZeroMQ using CMake
+    mkdir -p build
+    cd build
 
     cmake .. \
         -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
@@ -178,12 +199,32 @@ fi
 echo ""
 
 #------------------------------------------------------------------------------
-# HDF5 - Build static library
+# HDF5 - Download and build static library
 #------------------------------------------------------------------------------
 if [ "$NEED_HDF5" = "1" ] || [ "$NEED_HDF5" = "TRUE" ]; then
-    echo ">>> Building HDF5 from submodule..."
-    mkdir -p external/hdf5/build
-    cd external/hdf5/build
+    echo ">>> Downloading and building HDF5..."
+
+    HDF5_VERSION="2.0.0"
+    HDF5_ARCHIVE="hdf5-${HDF5_VERSION}.tar.gz"
+    HDF5_URL="https://github.com/HDFGroup/hdf5/archive/refs/tags/${HDF5_VERSION}.tar.gz"
+    HDF5_DIR="hdf5-${HDF5_VERSION}"
+
+    # Download HDF5 if not already downloaded
+    if [ ! -f "build/external/${HDF5_ARCHIVE}" ]; then
+        echo "Downloading HDF5 ${HDF5_VERSION}..."
+        mkdir -p build/external
+        curl -L -o "build/external/${HDF5_ARCHIVE}" "${HDF5_URL}"
+    fi
+
+    # Extract HDF5
+    echo "Extracting HDF5..."
+    cd build/external
+    tar -xzf "${HDF5_ARCHIVE}"
+    cd "${HDF5_DIR}"
+
+    # Build HDF5 using CMake
+    mkdir -p build
+    cd build
 
     cmake .. \
         -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
@@ -207,55 +248,6 @@ if [ "$NEED_HDF5" = "1" ] || [ "$NEED_HDF5" = "TRUE" ]; then
     echo "✓ HDF5 installed to $INSTALL_PREFIX"
 else
     echo "✓ HDF5 already available, skipping"
-fi
-echo ""
-
-#------------------------------------------------------------------------------
-# Cereal - Header-only library, install with CMake to generate config files
-#------------------------------------------------------------------------------
-if [ "$NEED_CEREAL" = "1" ] || [ "$NEED_CEREAL" = "TRUE" ]; then
-    echo ">>> Installing Cereal from submodule..."
-    mkdir -p external/cereal/build
-    cd external/cereal/build
-
-    cmake .. \
-        -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
-        -DJUST_INSTALL_CEREAL=ON \
-        -DSKIP_PERFORMANCE_COMPARISON=ON
-
-    cmake --install .
-
-    cd "$SCRIPT_DIR"
-    echo "✓ Cereal installed to $INSTALL_PREFIX"
-else
-    echo "✓ Cereal already available, skipping"
-fi
-echo ""
-
-#------------------------------------------------------------------------------
-# yaml-cpp - Build static library
-#------------------------------------------------------------------------------
-if [ "$NEED_YAML_CPP" = "1" ] || [ "$NEED_YAML_CPP" = "TRUE" ]; then
-    echo ">>> Building yaml-cpp from submodule..."
-    mkdir -p external/yaml-cpp/build
-    cd external/yaml-cpp/build
-
-    cmake .. \
-        -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-        -DBUILD_SHARED_LIBS=OFF \
-        -DYAML_CPP_BUILD_TESTS=OFF \
-        -DYAML_CPP_BUILD_TOOLS=OFF \
-        -DYAML_BUILD_SHARED_LIBS=OFF
-
-    cmake --build . -j${BUILD_JOBS}
-    cmake --install .
-
-    cd "$SCRIPT_DIR"
-    echo "✓ yaml-cpp installed to $INSTALL_PREFIX"
-else
-    echo "✓ yaml-cpp already available, skipping"
 fi
 echo ""
 
