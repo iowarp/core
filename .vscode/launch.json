@@ -84,16 +84,38 @@
             "preLaunchTask": "cmake-build-debug"
         },
         {
-            "name": "Python: CEE Demo",
-            "type": "debugpy",
+            "name": "C++: CEE Demo",
+            "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/context-exploration-engine/api/demo/demo.py",
-            "console": "integratedTerminal",
+            "program": "/usr/bin/python3",
+            "args": [
+                "${workspaceFolder}/context-exploration-engine/api/demo/demo.py"
+            ],
+            "stopAtEntry": false,
             "cwd": "${workspaceFolder}/context-exploration-engine/api/demo",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}/build/lib"
-            },
-            "justMyCode": false
+            "environment": [
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${workspaceFolder}/build/bin"
+                },
+                {
+                    "name": "CHIMAERA_WITH_RUNTIME",
+                    "value": "1"
+                },
+                {
+                    "name": "CHI_SERVER_CONF",
+                    "value": "/workspace/context-exploration-engine/api/demo/wrp_conf.yaml"
+                }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
         }
     ]
 }

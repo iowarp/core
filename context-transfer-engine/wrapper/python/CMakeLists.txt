@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.20)
 # Find Python for nanobind
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
+# Print Python installation path
+message(STATUS "Python_SITEARCH: ${Python_SITEARCH}")
+
 # Create the Python module
 nanobind_add_module(
     wrp_cte_core_ext
