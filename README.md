@@ -264,10 +264,10 @@ The install.sh script accepts environment variables to customize the build:
 
 ```bash
 # Install with tests and benchmarks enabled
-BUILD_TESTS=ON BUILD_BENCHMARKS=ON ./install.sh
+WRP_CORE_ENABLE_TESTS=ON WRP_CORE_ENABLE_BENCHMARKS=ON ./install.sh
 
 # Install with MPI support (checks for MPI installation first)
-WITH_MPI=ON ./install.sh
+WRP_CORE_ENABLE_MPI=ON ./install.sh
 
 # Install only dependencies (useful for development)
 DEPS_ONLY=TRUE ./install.sh
@@ -277,9 +277,9 @@ INSTALL_PREFIX=/opt/iowarp BUILD_JOBS=8 ./install.sh
 
 # Full customization example
 INSTALL_PREFIX=$HOME/iowarp \
-BUILD_TESTS=ON \
-BUILD_BENCHMARKS=ON \
-WITH_MPI=ON \
+WRP_CORE_ENABLE_TESTS=ON \
+WRP_CORE_ENABLE_BENCHMARKS=ON \
+WRP_CORE_ENABLE_MPI=ON \
 BUILD_JOBS=16 \
 ./install.sh
 ```
@@ -288,9 +288,9 @@ BUILD_JOBS=16 \
 - `INSTALL_PREFIX`: Installation directory (default: `/usr/local`)
 - `BUILD_JOBS`: Number of parallel build jobs (default: `$(nproc)`)
 - `DEPS_ONLY`: Only build dependencies, skip IOWarp Core (default: `FALSE`)
-- `BUILD_TESTS`: Enable building tests - maps to `WRP_CORE_ENABLE_TESTS` (default: `OFF`)
-- `BUILD_BENCHMARKS`: Enable building benchmarks - maps to `WRP_CORE_ENABLE_BENCHMARKS` (default: `OFF`)
-- `WITH_MPI`: Enable MPI support - maps to `WRP_CORE_ENABLE_MPI` (default: `OFF`)
+- `WRP_CORE_ENABLE_TESTS`: Enable building tests (default: `OFF`)
+- `WRP_CORE_ENABLE_BENCHMARKS`: Enable building benchmarks (default: `OFF`)
+- `WRP_CORE_ENABLE_MPI`: Enable MPI support (default: `OFF`)
 
 **All CMake Options Also Work:**
 
@@ -312,7 +312,7 @@ WRP_CORE_ENABLE_ASAN=ON WRP_CORE_ENABLE_COVERAGE=ON ./install.sh
 # Combined example with both install.sh and CMake options
 INSTALL_PREFIX=$HOME/iowarp \
 BUILD_JOBS=16 \
-WITH_MPI=ON \
+WRP_CORE_ENABLE_MPI=ON \
 WRP_CORE_ENABLE_COMPRESS=ON \
 WRP_CORE_ENABLE_CUDA=ON \
 WRP_CORE_ENABLE_OPENMP=ON \
