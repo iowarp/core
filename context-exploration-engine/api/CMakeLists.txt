@@ -63,14 +63,15 @@ if(WRP_CORE_ENABLE_PYTHON)
 
     # Configure RPATH for Python module
     # Uses $ORIGIN for relocatable installation
+    # When installed to site-packages, libraries are in site-packages/lib/
     if(WRP_CORE_ENABLE_RPATH)
       if(APPLE)
         set_target_properties(wrp_cee PROPERTIES
-          INSTALL_RPATH "@loader_path"
+          INSTALL_RPATH "@loader_path/lib:@loader_path/../lib:@loader_path"
         )
       elseif(UNIX)
         set_target_properties(wrp_cee PROPERTIES
-          INSTALL_RPATH "$ORIGIN"
+          INSTALL_RPATH "$ORIGIN/lib:$ORIGIN/../lib:$ORIGIN"
         )
       endif()
     endif()
