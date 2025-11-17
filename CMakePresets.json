@@ -25,7 +25,7 @@
                 "WRP_CORE_ENABLE_COVERAGE": "OFF",
                 "WRP_CORE_ENABLE_DOXYGEN": "OFF",
                 "WRP_CORE_ENABLE_RPATH": "ON",
-                "WRP_CORE_INSTALL_WRAPPER_TO_VENV": "ON",
+                "WRP_CORE_INSTALL_TO_VENV": "ON",
                 "WRP_CORE_ENABLE_MPI": "OFF",
                 "WRP_CORE_ENABLE_ZMQ": "ON",
                 "WRP_CORE_ENABLE_LIBFABRIC": "OFF",

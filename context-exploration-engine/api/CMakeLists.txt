@@ -51,9 +51,6 @@ if(WRP_CORE_ENABLE_PYTHON)
     # Find Python for nanobind
     find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
-    # Print Python installation path
-    message(STATUS "Python_SITEARCH: ${Python_SITEARCH}")
-
     # Create Python module
     nanobind_add_module(wrp_cee
       src/python_bindings.cc
@@ -64,22 +61,25 @@ if(WRP_CORE_ENABLE_PYTHON)
         wrp_cee_api
     )
 
-    # Install Python module to the appropriate location
-    # If WRP_CORE_INSTALL_WRAPPER_TO_VENV is ON, install to Python site-packages
-    # Otherwise, install to lib/ directory (for system-wide installations)
-    if(WRP_CORE_INSTALL_WRAPPER_TO_VENV)
-      install(TARGETS wrp_cee
-        LIBRARY DESTINATION ${Python_SITEARCH}
-      )
-      message(STATUS "CEE Python wrapper will be installed to: ${Python_SITEARCH}")
-    else()
-      install(TARGETS wrp_cee
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib
-        RUNTIME DESTINATION bin
-      )
-      message(STATUS "CEE Python wrapper will be installed to: ${CMAKE_INSTALL_PREFIX}/lib")
+    # Configure RPATH for Python module
+    # Uses $ORIGIN for relocatable installation
+    if(WRP_CORE_ENABLE_RPATH)
+      if(APPLE)
+        set_target_properties(wrp_cee PROPERTIES
+          INSTALL_RPATH "@loader_path"
+        )
+      elseif(UNIX)
+        set_target_properties(wrp_cee PROPERTIES
+          INSTALL_RPATH "$ORIGIN"
+        )
+      endif()
     endif()
+
+    # Install Python module to CMAKE_INSTALL_PREFIX
+    install(TARGETS wrp_cee
+      LIBRARY DESTINATION .
+    )
+    message(STATUS "CEE Python wrapper will be installed to: ${CMAKE_INSTALL_PREFIX}")
   endif()
 else()
   message(STATUS "Python bindings disabled - set WRP_CORE_ENABLE_PYTHON=ON to enable")

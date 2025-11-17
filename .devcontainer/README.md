@@ -43,7 +43,7 @@ cmake --preset=debug -DWRP_CORE_ENABLE_PYTHON=ON
 # Build
 make -j8
 
-# Install to venv (if WRP_CORE_INSTALL_WRAPPER_TO_VENV is ON)
+# Install to venv (if WRP_CORE_INSTALL_TO_VENV is ON)
 make install
 ```
 

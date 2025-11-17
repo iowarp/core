@@ -3,9 +3,6 @@ cmake_minimum_required(VERSION 3.20)
 # Find Python for nanobind
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
-# Print Python installation path
-message(STATUS "Python_SITEARCH: ${Python_SITEARCH}")
-
 # Create the Python module
 nanobind_add_module(
     wrp_cte_core_ext
@@ -25,24 +22,26 @@ target_include_directories(wrp_cte_core_ext PRIVATE
 # Ensure C++17 standard
 target_compile_features(wrp_cte_core_ext PRIVATE cxx_std_17)
 
-# Install the Python module to the appropriate location
-# If WRP_CORE_INSTALL_WRAPPER_TO_VENV is ON, install to Python site-packages
-# Otherwise, install to lib/ directory (for system-wide installations)
-if(WRP_CORE_INSTALL_WRAPPER_TO_VENV)
-    install(
-        TARGETS wrp_cte_core_ext
-        LIBRARY DESTINATION ${Python_SITEARCH}
-    )
-    message(STATUS "Python wrapper will be installed to: ${Python_SITEARCH}")
-else()
-    install(
-        TARGETS wrp_cte_core_ext
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib
-        RUNTIME DESTINATION bin
-    )
-    message(STATUS "Python wrapper will be installed to: ${CMAKE_INSTALL_PREFIX}/lib")
+# Configure RPATH for Python module
+# Uses $ORIGIN for relocatable installation
+if(WRP_CORE_ENABLE_RPATH)
+    if(APPLE)
+        set_target_properties(wrp_cte_core_ext PROPERTIES
+            INSTALL_RPATH "@loader_path"
+        )
+    elseif(UNIX)
+        set_target_properties(wrp_cte_core_ext PROPERTIES
+            INSTALL_RPATH "$ORIGIN"
+        )
+    endif()
 endif()
+
+# Install Python module to CMAKE_INSTALL_PREFIX
+install(
+    TARGETS wrp_cte_core_ext
+    LIBRARY DESTINATION .
+)
+message(STATUS "CTE Python wrapper will be installed to: ${CMAKE_INSTALL_PREFIX}")
 
 # Generate stub file for type hints
 # Note: Stub generation is disabled because the module requires runtime initialization

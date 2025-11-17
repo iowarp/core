@@ -79,7 +79,7 @@ option(CHIMAERA_ENABLE_BENCHMARKS "Enable benchmarks for Chimaera runtime" ON)
 option(WRP_CTE_ENABLE_TESTS "Enable tests for CTE" ON)
 option(WRP_CTE_ENABLE_BENCHMARKS "Enable benchmarks for CTE" ON)
 option(WRP_CTE_ENABLE_PYTHON "Enable Python bindings for CTE (requires WRP_CORE_ENABLE_PYTHON=ON)" ON)
-option(WRP_CORE_INSTALL_WRAPPER_TO_VENV "Install Python wrappers to Python site-packages instead of lib/" ON)
+option(WRP_CORE_INSTALL_TO_VENV "Install Python wrappers to Python site-packages instead of lib/" ON)
 
 # CTE Adapter Options (require WRP_CORE_ENABLE_ELF=ON)
 option(WRP_CTE_ENABLE_POSIX_ADAPTER "Enable POSIX adapter" ON)
@@ -417,6 +417,20 @@ if(WRP_CORE_ENABLE_PYTHON)
 
   # Add nanobind as subdirectory (git submodule)
   add_subdirectory(external/nanobind)
+
+  # Override CMAKE_INSTALL_PREFIX if installing to venv
+  # This makes the entire installation go to site-packages, creating a self-contained Python package
+  if(WRP_CORE_INSTALL_TO_VENV)
+    # Only override if not already set to site-packages
+    if(NOT CMAKE_INSTALL_PREFIX STREQUAL "${Python_SITEARCH}")
+      set(ORIGINAL_CMAKE_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
+      set(CMAKE_INSTALL_PREFIX "${Python_SITEARCH}" CACHE PATH "Install path prefix (overridden by WRP_CORE_INSTALL_TO_VENV)" FORCE)
+      message(STATUS "WRP_CORE_INSTALL_TO_VENV=ON: Overriding CMAKE_INSTALL_PREFIX")
+      message(STATUS "  Original: ${ORIGINAL_CMAKE_INSTALL_PREFIX}")
+      message(STATUS "  New:      ${CMAKE_INSTALL_PREFIX}")
+      message(STATUS "  All IOWarp components will be installed to Python site-packages")
+    endif()
+  endif()
 else()
   message(STATUS "Python bindings disabled")
 endif()
