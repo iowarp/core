@@ -18,7 +18,7 @@
                 "WRP_CORE_ENABLE_CAE": "ON",
                 "WRP_CORE_ENABLE_CEE": "ON",
                 "WRP_CORE_ENABLE_TESTS": "OFF",
-                "WRP_CORE_ENABLE_BENCHMARKS": "OFF",
+                "WRP_CORE_ENABLE_BENCHMARKS": "ON",
                 "WRP_CORE_ENABLE_PYTHON": "ON",
                 "WRP_CORE_ENABLE_CMAKE_DOTENV": "OFF",
                 "WRP_CORE_ENABLE_ASAN": "OFF",

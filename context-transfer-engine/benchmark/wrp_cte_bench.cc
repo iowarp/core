@@ -14,26 +14,27 @@
  * CTE Core Benchmark Application
  *
  * This benchmark measures the performance of Put, Get, and GetTagSize
- * operations in the Content Transfer Engine (CTE) with MPI support for parallel
- * I/O.
+ * operations in the Content Transfer Engine (CTE) with multi-threaded support.
  *
  * Usage:
- *   mpirun -n <num_procs> wrp_cte_bench <test_case> <depth> <io_size>
- * <io_count>
+ *   wrp_cte_bench <test_case> <num_threads> <depth> <io_size> <io_count>
  *
  * Parameters:
  *   test_case: Benchmark to conduct (Put, Get, PutGet)
- *   depth: Number of async requests to generate
+ *   num_threads: Number of worker threads to spawn (e.g., 4)
+ *   depth: Number of async requests to generate per thread
  *   io_size: Size of I/O operations in bytes (supports k/K, m/M, g/G suffixes)
- *   io_count: Number of I/O operations to generate per node
+ *   io_count: Number of I/O operations to generate per thread
  */
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
-#include <mpi.h>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -127,7 +128,6 @@ double CalcBandwidth(chi::u64 total_bytes, double milliseconds) {
   return megabytes / seconds;
 }
 
-
 } // namespace
 
 /**
@@ -135,9 +135,9 @@ double CalcBandwidth(chi::u64 total_bytes, double milliseconds) {
  */
 class CTEBenchmark {
 public:
-  CTEBenchmark(int rank, int size, const std::string &test_case, int depth,
+  CTEBenchmark(size_t num_threads, const std::string &test_case, int depth,
                chi::u64 io_size, int io_count)
-      : rank_(rank), size_(size), test_case_(test_case), depth_(depth),
+      : num_threads_(num_threads), test_case_(test_case), depth_(depth),
         io_size_(io_size), io_count_(io_count) {}
 
   ~CTEBenchmark() = default;
@@ -146,11 +146,7 @@ public:
    * Run the benchmark
    */
   void Run() {
-    if (rank_ == 0) {
-      PrintBenchmarkInfo();
-    }
-
-    MPI_Barrier(MPI_COMM_WORLD);
+    PrintBenchmarkInfo();
 
     if (test_case_ == "Put") {
       RunPutBenchmark();
@@ -159,34 +155,34 @@ public:
     } else if (test_case_ == "PutGet") {
       RunPutGetBenchmark();
     } else {
-      if (rank_ == 0) {
-        std::cerr << "Error: Unknown test case: " << test_case_ << std::endl;
-        std::cerr << "Valid options: Put, Get, PutGet" << std::endl;
-      }
+      std::cerr << "Error: Unknown test case: " << test_case_ << std::endl;
+      std::cerr << "Valid options: Put, Get, PutGet" << std::endl;
     }
-
-    MPI_Barrier(MPI_COMM_WORLD);
   }
 
 private:
   void PrintBenchmarkInfo() {
     std::cout << "=== CTE Core Benchmark ===" << std::endl;
     std::cout << "Test case: " << test_case_ << std::endl;
-    std::cout << "MPI ranks: " << size_ << std::endl;
-    std::cout << "Async depth: " << depth_ << std::endl;
+    std::cout << "Worker threads: " << num_threads_ << std::endl;
+    std::cout << "Async depth per thread: " << depth_ << std::endl;
     std::cout << "I/O size: " << FormatSize(io_size_) << std::endl;
-    std::cout << "I/O count per rank: " << io_count_ << std::endl;
-    std::cout << "Total I/O per rank: " << FormatSize(io_size_ * io_count_)
+    std::cout << "I/O count per thread: " << io_count_ << std::endl;
+    std::cout << "Total I/O per thread: " << FormatSize(io_size_ * io_count_)
               << std::endl;
-    std::cout << "Total I/O (all ranks): "
-              << FormatSize(io_size_ * io_count_ * size_) << std::endl;
+    std::cout << "Total I/O (all threads): "
+              << FormatSize(io_size_ * io_count_ * num_threads_) << std::endl;
     std::cout << "===========================" << std::endl << std::endl;
   }
 
-  void RunPutBenchmark() {
+  /**
+   * Worker thread for Put benchmark
+   */
+  void PutWorkerThread(size_t thread_id, std::atomic<bool> &error_flag,
+                       std::vector<long long> &thread_times) {
     // Allocate data buffer
     std::vector<char> data(io_size_);
-    std::memset(data.data(), rank_ & 0xFF, io_size_);
+    std::memset(data.data(), thread_id & 0xFF, io_size_);
 
     // Allocate shared memory buffer for async operations
     auto shm_buffer = CHI_IPC->AllocateBuffer(io_size_);
@@ -196,6 +192,10 @@ private:
     auto start_time = high_resolution_clock::now();
 
     for (int i = 0; i < io_count_; i += depth_) {
+      if (error_flag.load(std::memory_order_relaxed)) {
+        break;
+      }
+
       int batch_size = std::min(depth_, io_count_ - i);
       std::vector<hipc::FullPtr<wrp_cte::core::PutBlobTask>> tasks;
       tasks.reserve(batch_size);
@@ -203,7 +203,7 @@ private:
       // Generate async Put operations
       for (int j = 0; j < batch_size; ++j) {
         std::string tag_name =
-            "tag_r" + std::to_string(rank_) + "_i" + std::to_string(i + j);
+            "tag_t" + std::to_string(thread_id) + "_i" + std::to_string(i + j);
         wrp_cte::core::Tag tag(tag_name);
         std::string blob_name = "blob_0";
 
@@ -219,51 +219,65 @@ private:
     }
 
     auto end_time = high_resolution_clock::now();
-    auto duration_ms =
+    thread_times[thread_id] =
         duration_cast<milliseconds>(end_time - start_time).count();
 
-    PrintResults("Put", duration_ms);
+    // Free shared memory buffer
+    CHI_IPC->FreeBuffer(shm_buffer);
   }
 
-  void RunGetBenchmark() {
+  void RunPutBenchmark() {
+    std::vector<std::thread> threads;
+    std::vector<long long> thread_times(num_threads_);
+    std::atomic<bool> error_flag{false};
+
+    // Spawn worker threads
+    for (size_t i = 0; i < num_threads_; ++i) {
+      threads.emplace_back(&CTEBenchmark::PutWorkerThread, this, i,
+                           std::ref(error_flag), std::ref(thread_times));
+    }
+
+    // Wait for all threads to complete
+    for (auto &thread : threads) {
+      thread.join();
+    }
+
+    PrintResults("Put", thread_times);
+  }
+
+  /**
+   * Worker thread for Get benchmark
+   */
+  void GetWorkerThread(size_t thread_id, std::atomic<bool> &error_flag,
+                       std::vector<long long> &thread_times) {
     // Allocate data buffers
     std::vector<char> put_data(io_size_);
     std::vector<char> get_data(io_size_);
 
-    // Allocate shared memory buffer
-    auto shm_buffer = CHI_IPC->AllocateBuffer(io_size_);
-    hipc::Pointer shm_ptr = shm_buffer.shm_;
-
     // First populate data using Put operations
-    if (rank_ == 0) {
-      std::cout << "Populating data for Get benchmark..." << std::endl;
-    }
-
     for (int i = 0; i < io_count_; ++i) {
       std::string tag_name =
-          "tag_r" + std::to_string(rank_) + "_i" + std::to_string(i);
+          "tag_t" + std::to_string(thread_id) + "_i" + std::to_string(i);
       wrp_cte::core::Tag tag(tag_name);
       std::string blob_name = "blob_0";
 
-      std::memset(put_data.data(), (rank_ + i) & 0xFF, io_size_);
+      std::memset(put_data.data(), (thread_id + i) & 0xFF, io_size_);
       tag.PutBlob(blob_name, put_data.data(), io_size_);
-    }
-
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    if (rank_ == 0) {
-      std::cout << "Starting Get benchmark..." << std::endl;
     }
 
     auto start_time = high_resolution_clock::now();
 
     for (int i = 0; i < io_count_; i += depth_) {
+      if (error_flag.load(std::memory_order_relaxed)) {
+        break;
+      }
+
       int batch_size = std::min(depth_, io_count_ - i);
 
       // For Get operations, use synchronous API in batches
       for (int j = 0; j < batch_size; ++j) {
         std::string tag_name =
-            "tag_r" + std::to_string(rank_) + "_i" + std::to_string(i + j);
+            "tag_t" + std::to_string(thread_id) + "_i" + std::to_string(i + j);
         wrp_cte::core::Tag tag(tag_name);
         std::string blob_name = "blob_0";
 
@@ -272,19 +286,42 @@ private:
     }
 
     auto end_time = high_resolution_clock::now();
-    auto duration_ms =
+    thread_times[thread_id] =
         duration_cast<milliseconds>(end_time - start_time).count();
-
-    PrintResults("Get", duration_ms);
   }
 
-  void RunPutGetBenchmark() {
+  void RunGetBenchmark() {
+    std::cout << "Populating data for Get benchmark..." << std::endl;
+
+    std::vector<std::thread> threads;
+    std::vector<long long> thread_times(num_threads_);
+    std::atomic<bool> error_flag{false};
+
+    // Spawn worker threads
+    for (size_t i = 0; i < num_threads_; ++i) {
+      threads.emplace_back(&CTEBenchmark::GetWorkerThread, this, i,
+                           std::ref(error_flag), std::ref(thread_times));
+    }
+
+    // Wait for all threads to complete
+    for (auto &thread : threads) {
+      thread.join();
+    }
+
+    PrintResults("Get", thread_times);
+  }
+
+  /**
+   * Worker thread for PutGet benchmark
+   */
+  void PutGetWorkerThread(size_t thread_id, std::atomic<bool> &error_flag,
+                          std::vector<long long> &thread_times) {
     // Allocate data buffers
     std::vector<char> put_data(io_size_);
     std::vector<char> get_data(io_size_);
 
     // Fill put data with pattern
-    std::memset(put_data.data(), rank_ & 0xFF, io_size_);
+    std::memset(put_data.data(), thread_id & 0xFF, io_size_);
 
     // Allocate shared memory buffer for async Put
     auto shm_buffer = CHI_IPC->AllocateBuffer(io_size_);
@@ -294,6 +331,10 @@ private:
     auto start_time = high_resolution_clock::now();
 
     for (int i = 0; i < io_count_; i += depth_) {
+      if (error_flag.load(std::memory_order_relaxed)) {
+        break;
+      }
+
       int batch_size = std::min(depth_, io_count_ - i);
       std::vector<hipc::FullPtr<wrp_cte::core::PutBlobTask>> put_tasks;
       put_tasks.reserve(batch_size);
@@ -301,7 +342,7 @@ private:
       // Generate async Put operations
       for (int j = 0; j < batch_size; ++j) {
         std::string tag_name =
-            "tag_r" + std::to_string(rank_) + "_i" + std::to_string(i + j);
+            "tag_t" + std::to_string(thread_id) + "_i" + std::to_string(i + j);
         wrp_cte::core::Tag tag(tag_name);
         std::string blob_name = "blob_0";
 
@@ -318,7 +359,7 @@ private:
       // Perform Get operations synchronously
       for (int j = 0; j < batch_size; ++j) {
         std::string tag_name =
-            "tag_r" + std::to_string(rank_) + "_i" + std::to_string(i + j);
+            "tag_t" + std::to_string(thread_id) + "_i" + std::to_string(i + j);
         wrp_cte::core::Tag tag(tag_name);
         std::string blob_name = "blob_0";
 
@@ -327,61 +368,69 @@ private:
     }
 
     auto end_time = high_resolution_clock::now();
-    auto duration_ms =
+    thread_times[thread_id] =
         duration_cast<milliseconds>(end_time - start_time).count();
 
-    PrintResults("PutGet", duration_ms);
+    // Free shared memory buffer
+    CHI_IPC->FreeBuffer(shm_buffer);
   }
 
-  void PrintResults(const std::string &operation, long long duration_ms) {
-    // Gather timing results from all ranks
-    std::vector<long long> all_times;
-    if (rank_ == 0) {
-      all_times.resize(size_);
+  void RunPutGetBenchmark() {
+    std::vector<std::thread> threads;
+    std::vector<long long> thread_times(num_threads_);
+    std::atomic<bool> error_flag{false};
+
+    // Spawn worker threads
+    for (size_t i = 0; i < num_threads_; ++i) {
+      threads.emplace_back(&CTEBenchmark::PutGetWorkerThread, this, i,
+                           std::ref(error_flag), std::ref(thread_times));
     }
 
-    MPI_Gather(&duration_ms, 1, MPI_LONG_LONG, all_times.data(), 1,
-               MPI_LONG_LONG, 0, MPI_COMM_WORLD);
-
-    if (rank_ == 0) {
-      // Calculate statistics
-      long long min_time =
-          *std::min_element(all_times.begin(), all_times.end());
-      long long max_time =
-          *std::max_element(all_times.begin(), all_times.end());
-      long long sum_time = 0;
-      for (auto t : all_times) {
-        sum_time += t;
-      }
-      double avg_time = static_cast<double>(sum_time) / size_;
-
-      chi::u64 total_bytes = io_size_ * io_count_;
-      chi::u64 aggregate_bytes = total_bytes * size_;
-
-      double min_bw = CalcBandwidth(total_bytes, min_time);
-      double max_bw = CalcBandwidth(total_bytes, max_time);
-      double avg_bw = CalcBandwidth(total_bytes, avg_time);
-      double agg_bw = CalcBandwidth(aggregate_bytes, avg_time);
-
-      std::cout << std::endl;
-      std::cout << "=== " << operation << " Benchmark Results ===" << std::endl;
-      std::cout << "Time (min): " << FormatTime(min_time) << std::endl;
-      std::cout << "Time (max): " << FormatTime(max_time) << std::endl;
-      std::cout << "Time (avg): " << FormatTime(avg_time) << std::endl;
-      std::cout << std::endl;
-      std::cout << "Bandwidth per rank (min): " << min_bw << " MB/s"
-                << std::endl;
-      std::cout << "Bandwidth per rank (max): " << max_bw << " MB/s"
-                << std::endl;
-      std::cout << "Bandwidth per rank (avg): " << avg_bw << " MB/s"
-                << std::endl;
-      std::cout << "Aggregate bandwidth: " << agg_bw << " MB/s" << std::endl;
-      std::cout << "===========================" << std::endl;
+    // Wait for all threads to complete
+    for (auto &thread : threads) {
+      thread.join();
     }
+
+    PrintResults("PutGet", thread_times);
   }
 
-  int rank_;
-  int size_;
+  void PrintResults(const std::string &operation,
+                    const std::vector<long long> &thread_times) {
+    // Calculate statistics
+    long long min_time = *std::min_element(thread_times.begin(), thread_times.end());
+    long long max_time = *std::max_element(thread_times.begin(), thread_times.end());
+    long long sum_time = 0;
+    for (auto t : thread_times) {
+      sum_time += t;
+    }
+    double avg_time = static_cast<double>(sum_time) / num_threads_;
+
+    chi::u64 total_bytes = io_size_ * io_count_;
+    chi::u64 aggregate_bytes = total_bytes * num_threads_;
+
+    double min_bw = CalcBandwidth(total_bytes, min_time);
+    double max_bw = CalcBandwidth(total_bytes, max_time);
+    double avg_bw = CalcBandwidth(total_bytes, avg_time);
+    double agg_bw = CalcBandwidth(aggregate_bytes, avg_time);
+
+    std::cout << std::endl;
+    std::cout << "=== " << operation << " Benchmark Results ===" << std::endl;
+    std::cout << "Time (min): " << FormatTime(min_time) << std::endl;
+    std::cout << "Time (max): " << FormatTime(max_time) << std::endl;
+    std::cout << "Time (avg): " << FormatTime(avg_time) << std::endl;
+    std::cout << std::endl;
+    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "Bandwidth per thread (min): " << min_bw << " MB/s"
+              << std::endl;
+    std::cout << "Bandwidth per thread (max): " << max_bw << " MB/s"
+              << std::endl;
+    std::cout << "Bandwidth per thread (avg): " << avg_bw << " MB/s"
+              << std::endl;
+    std::cout << "Aggregate bandwidth: " << agg_bw << " MB/s" << std::endl;
+    std::cout << "===========================" << std::endl;
+  }
+
+  size_t num_threads_;
   std::string test_case_;
   int depth_;
   chi::u64 io_size_;
@@ -389,48 +438,35 @@ private:
 };
 
 int main(int argc, char **argv) {
-  // Initialize MPI
-  MPI_Init(&argc, &argv);
-
-  int rank, size;
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  MPI_Comm_size(MPI_COMM_WORLD, &size);
-
   // Check arguments
-  if (argc != 5) {
-    if (rank == 0) {
-      std::cerr << "Usage: " << argv[0]
-                << " <test_case> <depth> <io_size> <io_count>" << std::endl;
-      std::cerr << "  test_case: Put, Get, or PutGet" << std::endl;
-      std::cerr << "  depth: Number of async requests (e.g., 4)" << std::endl;
-      std::cerr << "  io_size: Size of I/O operations (e.g., 1m, 4k, 1g)"
-                << std::endl;
-      std::cerr << "  io_count: Number of I/O operations per rank (e.g., 100)"
-                << std::endl;
-      std::cerr << std::endl;
-      std::cerr << "Environment variables:" << std::endl;
-      std::cerr << "  CHIMAERA_WITH_RUNTIME: Set to '1', 'true', 'yes', or 'on' to "
-                   "initialize runtime"
-                << std::endl;
-      std::cerr
-          << "                         Default: assumes runtime already initialized"
-          << std::endl;
-    }
-    MPI_Finalize();
+  if (argc != 6) {
+    std::cerr << "Usage: " << argv[0]
+              << " <test_case> <num_threads> <depth> <io_size> <io_count>"
+              << std::endl;
+    std::cerr << "  test_case: Put, Get, or PutGet" << std::endl;
+    std::cerr << "  num_threads: Number of worker threads (e.g., 4)" << std::endl;
+    std::cerr << "  depth: Number of async requests per thread (e.g., 4)" << std::endl;
+    std::cerr << "  io_size: Size of I/O operations (e.g., 1m, 4k, 1g)"
+              << std::endl;
+    std::cerr << "  io_count: Number of I/O operations per thread (e.g., 100)"
+              << std::endl;
+    std::cerr << std::endl;
+    std::cerr << "Environment variables:" << std::endl;
+    std::cerr << "  CHIMAERA_WITH_RUNTIME: Set to '1', 'true', 'yes', or 'on' to "
+                 "initialize runtime"
+              << std::endl;
+    std::cerr
+        << "                         Default: assumes runtime already initialized"
+        << std::endl;
     return 1;
   }
 
   // Initialize Chimaera runtime and client
-  if (rank == 0) {
-    std::cout << "Initializing Chimaera runtime..." << std::endl;
-  }
+  std::cout << "Initializing Chimaera runtime..." << std::endl;
 
   // Initialize Chimaera (client with embedded runtime)
   if (!chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true)) {
-    if (rank == 0) {
-      std::cerr << "Error: Failed to initialize Chimaera runtime" << std::endl;
-    }
-    MPI_Finalize();
+    std::cerr << "Error: Failed to initialize Chimaera runtime" << std::endl;
     return 1;
   }
 
@@ -438,42 +474,34 @@ int main(int argc, char **argv) {
 
   // Initialize CTE client
   if (!wrp_cte::core::WRP_CTE_CLIENT_INIT()) {
-    if (rank == 0) {
-      std::cerr << "Error: Failed to initialize CTE client" << std::endl;
-    }
-    MPI_Finalize();
+    std::cerr << "Error: Failed to initialize CTE client" << std::endl;
     return 1;
   }
 
-  if (rank == 0) {
-    std::cout << "Runtime and client initialized successfully" << std::endl;
-  }
+  std::cout << "Runtime and client initialized successfully" << std::endl;
 
-  // Small delay to ensure all ranks are synchronized
-  MPI_Barrier(MPI_COMM_WORLD);
+  // Small delay to ensure initialization is complete
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
   std::string test_case = argv[1];
-  int depth = std::atoi(argv[2]);
-  chi::u64 io_size = ParseSize(argv[3]);
-  int io_count = std::atoi(argv[4]);
+  size_t num_threads = std::stoull(argv[2]);
+  int depth = std::atoi(argv[3]);
+  chi::u64 io_size = ParseSize(argv[4]);
+  int io_count = std::atoi(argv[5]);
 
   // Validate parameters
-  if (depth <= 0 || io_size == 0 || io_count <= 0) {
-    if (rank == 0) {
-      std::cerr << "Error: Invalid parameters" << std::endl;
-      std::cerr << "  depth must be > 0" << std::endl;
-      std::cerr << "  io_size must be > 0" << std::endl;
-      std::cerr << "  io_count must be > 0" << std::endl;
-    }
-    MPI_Finalize();
+  if (num_threads == 0 || depth <= 0 || io_size == 0 || io_count <= 0) {
+    std::cerr << "Error: Invalid parameters" << std::endl;
+    std::cerr << "  num_threads must be > 0" << std::endl;
+    std::cerr << "  depth must be > 0" << std::endl;
+    std::cerr << "  io_size must be > 0" << std::endl;
+    std::cerr << "  io_count must be > 0" << std::endl;
     return 1;
   }
 
   // Run benchmark
-  CTEBenchmark benchmark(rank, size, test_case, depth, io_size, io_count);
+  CTEBenchmark benchmark(num_threads, test_case, depth, io_size, io_count);
   benchmark.Run();
 
-  MPI_Finalize();
   return 0;
 }

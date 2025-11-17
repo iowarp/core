@@ -584,6 +584,41 @@ environment:
   - CHI_HOSTFILE=/etc/iowarp/hostfile
 ```
 
+## Python Wheel Distribution
+
+### Building Bundled Wheels
+
+IOWarp Core can be packaged as a self-contained Python wheel that includes all dependencies installed by `install.sh`.
+
+**Quick Build:**
+```bash
+# Build a bundled wheel with all dependencies
+export IOWARP_BUNDLE_BINARIES=ON
+python -m build --wheel
+
+# Or use the convenience script
+./build_wheel.sh
+```
+
+**What Gets Bundled:**
+- All IOWarp libraries (libchimaera_cxx.so, libhermes_shm_host.so, ChiMod libraries)
+- Dependencies from install.sh (Boost, HDF5, ZeroMQ, yaml-cpp, etc.)
+- Command-line tools (wrp_cte, wrp_cae_omni, chimaera_start_runtime, etc.)
+- Headers and CMake configuration files
+- Conda dependencies (if building in a Conda environment)
+
+**RPATH Configuration:**
+- All bundled libraries use relative RPATH (`$ORIGIN`)
+- The wheel is fully relocatable and works anywhere it's installed
+- No `LD_LIBRARY_PATH` configuration needed
+
+**Complete Documentation:** See `BUILD_WHEEL.md` for:
+- Detailed build instructions
+- Platform-specific wheels (manylinux, macOS)
+- CI/CD integration examples
+- Troubleshooting guide
+- PyPI distribution
+
 ## Documentation
 
 ### Contributing Guide

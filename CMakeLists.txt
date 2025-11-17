@@ -22,7 +22,7 @@ option(WRP_CORE_ENABLE_CEE "Enable context-exploration-engine component" ON)
 # Global Master Switches
 #------------------------------------------------------------------------------
 option(WRP_CORE_ENABLE_TESTS "Master switch: Enable testing for all components" OFF)
-option(WRP_CORE_ENABLE_BENCHMARKS "Master switch: Enable benchmarks for all components" OFF)
+option(WRP_CORE_ENABLE_BENCHMARKS "Master switch: Enable benchmarks for all components" ON)
 option(WRP_CORE_ENABLE_PYTHON "Enable Python bindings for all components" OFF)
 option(WRP_CORE_ENABLE_CMAKE_DOTENV "Enable reading environment variables from .env.cmake" OFF)
 option(WRP_CORE_ENABLE_ASAN "Enable AddressSanitizer for debugging" OFF)
