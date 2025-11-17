@@ -107,6 +107,13 @@ ensure_conda() {
 # Ensure conda is available
 ensure_conda
 
+# Configure conda channels (add conda-forge if not already present)
+echo -e "${BLUE}Configuring conda channels...${NC}"
+conda config --add channels conda-forge 2>/dev/null || true
+conda config --set channel_priority flexible 2>/dev/null || true
+echo -e "${GREEN}✓ Conda channels configured${NC}"
+echo ""
+
 # Create and activate environment if not already in one
 if [ -z "$CONDA_PREFIX" ]; then
     ENV_NAME="iowarp-build"
@@ -186,23 +193,38 @@ if ! conda build "$RECIPE_DIR" -c conda-forge; then
 fi
 
 echo ""
-
-# Get the output package path
-PACKAGE_PATH=$(conda build "$RECIPE_DIR" --output 2>/dev/null)
-
 echo -e "${GREEN}======================================================================"
 echo -e "Package built successfully!"
 echo -e "======================================================================${NC}"
 echo ""
-echo -e "${BLUE}Package location:${NC}"
-echo "  $PACKAGE_PATH"
-echo ""
+
+# Get the output package path (optional - for informational purposes only)
+# Note: This command may fail in some environments, but it's not critical
+echo -e "${BLUE}Locating built package...${NC}"
+set +e  # Temporarily disable exit-on-error for this non-critical operation
+PACKAGE_PATH=$(conda build "$RECIPE_DIR" --output 2>&1)
+PACKAGE_EXIT_CODE=$?
+set -e  # Re-enable exit-on-error
+
+if [ $PACKAGE_EXIT_CODE -eq 0 ] && [ -n "$PACKAGE_PATH" ]; then
+    echo -e "${BLUE}Package location:${NC}"
+    echo "  $PACKAGE_PATH"
+    echo ""
+else
+    echo -e "${YELLOW}Note: Could not determine package path (this is non-critical)${NC}"
+    echo ""
+fi
 
 # Install the package non-interactively
 echo -e "${BLUE}>>> Installing iowarp-core...${NC}"
 echo ""
 
-if conda install --use-local iowarp-core -y; then
+# Ensure conda is configured for non-interactive operation and has conda-forge channel
+conda config --set always_yes true 2>/dev/null || true
+conda config --add channels conda-forge 2>/dev/null || true
+conda config --set channel_priority flexible 2>/dev/null || true
+
+if conda install --use-local iowarp-core -c conda-forge -y 2>&1; then
     echo ""
     echo -e "${GREEN}======================================================================"
     echo -e "✓ IOWarp Core installed successfully!"
@@ -230,7 +252,11 @@ else
     echo -e "======================================================================${NC}"
     echo ""
     echo -e "${YELLOW}You can try installing manually:${NC}"
-    echo "  conda install --use-local iowarp-core"
+    echo "  conda config --add channels conda-forge"
+    echo "  conda install --use-local iowarp-core -c conda-forge"
+    echo ""
+    echo -e "${YELLOW}Or check that conda-forge channel is available:${NC}"
+    echo "  conda config --show channels"
     echo ""
     exit 1
 fi
