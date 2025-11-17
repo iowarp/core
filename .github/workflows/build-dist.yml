@@ -49,11 +49,12 @@ jobs:
 
   build:
     # Binary wheel distribution for multiple Python versions and architectures
+    # Using ubuntu-20.04 for better manylinux compatibility (GLIBC 2.31 -> manylinux_2_31)
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
       matrix:
-        os: ['ubuntu-latest', 'ubuntu-24.04-arm']
+        os: ['ubuntu-20.04', 'ubuntu-24.04-arm']
         python-version: ['3.10', '3.11', '3.12', '3.13']
 
     steps:
@@ -129,7 +130,7 @@ jobs:
 
   test-sdist:
     needs: build-sdist
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     timeout-minutes: 60
 
     steps:
@@ -192,14 +193,14 @@ jobs:
 
   test-wheel-py313:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     timeout-minutes: 60
 
     steps:
     - name: Download Python 3.13 wheel artifact
       uses: actions/download-artifact@v4
       with:
-        name: distributions-ubuntu-latest-py3.13
+        name: distributions-ubuntu-20.04-py3.13
         path: dist/
 
     - name: Set up Miniconda
@@ -251,11 +252,54 @@ jobs:
         echo "=== Unzip wheel to inspect structure ==="
         unzip -l dist/*.whl | head -50
 
-    - name: Check wheel with auditwheel
+    - name: Repair wheel with auditwheel (create manylinux-compliant wheel)
       shell: bash -l {0}
       run: |
-        echo "=== Auditwheel check ==="
-        auditwheel show dist/*.whl || true
+        echo "=== Repairing wheel with auditwheel ==="
+
+        # Let auditwheel auto-detect the best manylinux tag based on system GLIBC
+        # ubuntu-20.04 (GLIBC 2.31) -> manylinux_2_31
+        # ubuntu-24.04-arm (GLIBC varies) -> auto-detected
+        echo "System GLIBC version:"
+        ldd --version | head -1
+
+        # Repair wheel to bundle all dependencies and create manylinux-compliant wheel
+        # auditwheel will automatically select the appropriate manylinux tag
+        auditwheel repair dist/*.whl -w dist/repaired/
+
+        # Replace original wheel with repaired version
+        rm dist/*.whl
+        mv dist/repaired/*.whl dist/
+        rm -rf dist/repaired/
+
+        # Verify repaired wheel
+        echo ""
+        echo "=== Verifying repaired wheel ==="
+        auditwheel show dist/*.whl
+        echo ""
+        echo "=== Repaired wheel file ==="
+        ls -lh dist/
+
+    - name: Test wheel on clean system (without conda)
+      shell: bash
+      run: |
+        echo "=== Testing repaired wheel on clean system ==="
+        echo "This test verifies the wheel works without conda dependencies"
+
+        # Use system Python (not conda) to create a clean environment
+        /usr/bin/python3 -m venv /tmp/clean_wheel_test
+        source /tmp/clean_wheel_test/bin/activate
+
+        # Install wheel in clean environment
+        pip install dist/*.whl
+
+        # Test import
+        python -c "import iowarp_core; print('✓ Import successful on clean system')"
+        python -c "import iowarp_core; print('✓ Version:', iowarp_core.get_version())"
+        python -c "import sys; print('✓ Python version:', sys.version)"
+
+        deactivate
+        echo "✓ Clean system test passed - wheel is properly bundled!"
 
     - name: Install from wheel
       shell: bash -l {0}
