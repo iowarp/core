@@ -33,6 +33,7 @@ def run_binary(binary_name):
     binary_path = bin_dir / binary_name
 
     # Check if binary is bundled in package directory
+    print('HERE!!!')
     if not binary_path.exists():
         # Fall back to system-installed binary (from source distribution)
         import shutil
@@ -45,6 +46,7 @@ def run_binary(binary_name):
             print(f"  - Not found in PATH", file=sys.stderr)
             print(f"Make sure iowarp-core is installed correctly.", file=sys.stderr)
             sys.exit(1)
+    print(binary_path)
 
     # Set up environment with library path
     env = os.environ.copy()

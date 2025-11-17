@@ -46,7 +46,7 @@ Homepage = "https://github.com/iowarp"
 iowarp-core = "iowarp_core._cli:chimaera_start_runtime"
 
 # Original names (backwards compatibility)
-chimaera_start_runtime = "iowarp_core._cli:chimaera_start_runtime"
+chimaera_start_runtime2 = "iowarp_core._cli:chimaera_start_runtime"
 chimaera_stop_runtime = "iowarp_core._cli:chimaera_stop_runtime"
 chimaera_compose = "iowarp_core._cli:chimaera_compose"
 chi_refresh_repo = "iowarp_core._cli:chi_refresh_repo"
