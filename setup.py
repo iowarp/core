@@ -8,8 +8,10 @@ import os
 import sys
 import subprocess
 import shutil
+import platform
 from pathlib import Path
 from setuptools import setup, Extension
+from setuptools.dist import Distribution
 from setuptools.command.build_ext import build_ext
 from setuptools.command.sdist import sdist
 from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
@@ -405,6 +407,49 @@ class CMakeBuild(build_ext):
         print("\nBinary copying complete!\n")
 
 
+class BinaryDistribution(Distribution):
+    """Distribution which always forces a binary package with platform-specific tags."""
+
+    def has_ext_modules(self):
+        """Always return True to indicate this is a platform-specific package.
+
+        This forces setuptools to generate platform-specific wheel tags instead of
+        pure-python 'any' tags. Required for packages with compiled C/C++ extensions.
+        """
+        return True
+
+
+class CustomBdistWheel(_bdist_wheel):
+    """Custom bdist_wheel that automatically generates manylinux tags.
+
+    This eliminates the need for post-build wheel renaming scripts and ensures
+    proper platform tags are set during the build process.
+    """
+
+    def finalize_options(self):
+        """Override to set platform-specific wheel tags based on the target system."""
+        super().finalize_options()
+
+        # Only apply manylinux tags on Linux
+        if platform.system() == 'Linux':
+            machine = platform.machine()
+
+            # Map machine architecture to manylinux platform tag
+            # manylinux_2_17 is compatible with most modern Linux systems (RHEL 7+, Ubuntu 16.04+)
+            if machine == 'x86_64':
+                self.plat_name = 'manylinux_2_17_x86_64'
+            elif machine == 'aarch64':
+                self.plat_name = 'manylinux_2_17_aarch64'
+            elif machine == 'ppc64le':
+                self.plat_name = 'manylinux_2_17_ppc64le'
+            elif machine == 's390x':
+                self.plat_name = 'manylinux_2_17_s390x'
+            else:
+                # For unknown architectures, use the generic linux tag
+                print(f"Warning: Unknown architecture {machine}, using generic linux tag")
+                self.plat_name = f'linux_{machine}'
+
+
 # Create extensions list
 # Always include the CMake build extension so that source distributions work correctly.
 # The IOWARP_BUNDLE_BINARIES flag controls whether binaries are bundled into the wheel
@@ -418,6 +463,7 @@ ext_modules = [
 cmdclass = {
     "build_ext": CMakeBuild,
     "sdist": CustomSDist,
+    "bdist_wheel": CustomBdistWheel,
 }
 
 
@@ -425,4 +471,5 @@ if __name__ == "__main__":
     setup(
         ext_modules=ext_modules,
         cmdclass=cmdclass,
+        distclass=BinaryDistribution,
     )
