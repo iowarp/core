@@ -1,12 +1,16 @@
 {% set name = "iowarp-core" %}
-{% set version = "0.1.0" %}
+{% set version = environ.get('GIT_DESCRIBE_TAG', '0.0.0').lstrip('v') %}
 
 package:
   name: {{ name|lower }}
   version: {{ version }}
 
 source:
+  # For local builds
   path: ..
+  # Git metadata for version extraction
+  # When building from a git checkout, conda-build will automatically
+  # set GIT_DESCRIBE_TAG from the repository
 
 build:
   number: 0
