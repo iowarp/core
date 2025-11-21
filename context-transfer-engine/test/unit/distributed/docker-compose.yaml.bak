@@ -10,7 +10,6 @@ services:
         ipv4_address: 172.26.0.10
     volumes:
       - ${IOWARP_CORE_ROOT:-.}/context-transfer-engine/test/unit/distributed:/etc/iowarp:ro
-      - ${IOWARP_BUILD_DIR:-${IOWARP_CORE_ROOT:-.}/build}:/workspace/build:rw
       - hdd1-storage:/mnt/hdd1
       - hdd2-storage:/mnt/hdd2
       - hdd3-storage:/mnt/hdd3
@@ -85,7 +84,6 @@ services:
         ipv4_address: 172.26.0.11
     volumes:
       - ${IOWARP_CORE_ROOT:-.}/context-transfer-engine/test/unit/distributed:/etc/iowarp:ro
-      - ${IOWARP_BUILD_DIR:-${IOWARP_CORE_ROOT:-.}/build}:/workspace/build:rw
       - hdd2-storage:/mnt/hdd2
     environment:
       - NODE_ID=2
@@ -123,7 +121,6 @@ services:
         ipv4_address: 172.26.0.12
     volumes:
       - ${IOWARP_CORE_ROOT:-.}/context-transfer-engine/test/unit/distributed:/etc/iowarp:ro
-      - ${IOWARP_BUILD_DIR:-${IOWARP_CORE_ROOT:-.}/build}:/workspace/build:rw
       - hdd3-storage:/mnt/hdd3
     environment:
       - NODE_ID=3
@@ -161,7 +158,6 @@ services:
         ipv4_address: 172.26.0.13
     volumes:
       - ${IOWARP_CORE_ROOT:-.}/context-transfer-engine/test/unit/distributed:/etc/iowarp:ro
-      - ${IOWARP_BUILD_DIR:-${IOWARP_CORE_ROOT:-.}/build}:/workspace/build:rw
       - hdd4-storage:/mnt/hdd4
     environment:
       - NODE_ID=4

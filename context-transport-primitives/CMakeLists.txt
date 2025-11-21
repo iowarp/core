@@ -123,7 +123,7 @@ endif()
 
 # hshm::configure - Configuration parsing (yaml-cpp)
 add_library(configure INTERFACE)
-target_link_libraries(configure INTERFACE yaml-cpp)
+target_link_libraries(configure INTERFACE ${YAML_CPP_LIBS})
 add_library(hshm::configure ALIAS configure)
 
 # hshm::serialize - Serialization (cereal)

@@ -12,6 +12,26 @@ set(IOWARP_CORE_COMMON_INCLUDED TRUE)
 message(STATUS "Loading IowarpCoreCommon.cmake")
 
 #------------------------------------------------------------------------------
+# Dependency Target Resolution
+#------------------------------------------------------------------------------
+
+# Macro to resolve yaml-cpp target name across different versions
+# Older versions use "yaml-cpp", newer versions use "yaml-cpp::yaml-cpp"
+macro(resolve_yaml_cpp_target)
+  if(NOT DEFINED YAML_CPP_LIBS)
+    if(TARGET yaml-cpp::yaml-cpp)
+      set(YAML_CPP_LIBS yaml-cpp::yaml-cpp)
+      message(STATUS "Using yaml-cpp target: yaml-cpp::yaml-cpp")
+    elseif(TARGET yaml-cpp)
+      set(YAML_CPP_LIBS yaml-cpp)
+      message(STATUS "Using yaml-cpp target: yaml-cpp")
+    else()
+      message(FATAL_ERROR "yaml-cpp target not found. Expected either 'yaml-cpp::yaml-cpp' or 'yaml-cpp'")
+    endif()
+  endif()
+endmacro()
+
+#------------------------------------------------------------------------------
 # GPU Support Functions
 #------------------------------------------------------------------------------
 

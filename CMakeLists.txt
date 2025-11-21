@@ -236,6 +236,13 @@ if(WRP_CORE_ENABLE_CMAKE_DOTENV)
 endif()
 
 #------------------------------------------------------------------------------
+# Load IowarpCoreCommon utilities
+#------------------------------------------------------------------------------
+# Provides macros for dependency resolution and ChiMod build functions
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+include(IowarpCoreCommon)
+
+#------------------------------------------------------------------------------
 # External Library Discovery
 #------------------------------------------------------------------------------
 # Priority order for dependency discovery:
@@ -265,11 +272,7 @@ endif()
 find_package(yaml-cpp REQUIRED)
 if(yaml-cpp_FOUND)
     message(STATUS "found yaml-cpp at ${yaml-cpp_DIR}")
-    if(TARGET yaml-cpp::yaml-cpp)
-        set(YAML_CPP_LIBS yaml-cpp::yaml-cpp)
-    else()
-        set(YAML_CPP_LIBS yaml-cpp)
-    endif()
+    resolve_yaml_cpp_target()
 endif()
 
 # Boost components - find from system or install.sh installation
@@ -456,16 +459,6 @@ endif()
 # Poco and nlohmann_json (optional - for CAE Globus support)
 find_package(Poco COMPONENTS Net NetSSL Crypto JSON QUIET)
 find_package(nlohmann_json QUIET)
-
-#------------------------------------------------------------------------------
-# Load Common CMake Utilities (Functions Only)
-#------------------------------------------------------------------------------
-# Include IowarpCoreCommon.cmake which provides:
-# - GPU support macros (wrp_core_enable_cuda, wrp_core_enable_rocm)
-# - ChiMod build functions (add_chimod_client, add_chimod_runtime)
-# - Utility functions (jarvis_repo_add, add_doxygen_doc, find_first_path_python)
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
-include(IowarpCoreCommon)
 
 #------------------------------------------------------------------------------
 # Python Bindings Configuration
