@@ -122,6 +122,7 @@ endif()
 # ------------------------------------------------------------------------------
 
 # hshm::configure - Configuration parsing (yaml-cpp)
+# Uses system-provided yaml-cpp (assumes yaml-cpp is installed)
 add_library(configure INTERFACE)
 target_link_libraries(configure INTERFACE ${YAML_CPP_LIBS})
 add_library(hshm::configure ALIAS configure)

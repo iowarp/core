@@ -2,10 +2,6 @@
 	path = external/nanobind
 	url = https://github.com/wjakob/nanobind.git
 	branch = v2.9.2
-[submodule "external/yaml-cpp"]
-	path = external/yaml-cpp
-	url = https://github.com/jbeder/yaml-cpp.git
-	branch = 0.8.0
 [submodule "external/Catch2"]
 	path = external/Catch2
 	url = https://github.com/catchorg/Catch2.git

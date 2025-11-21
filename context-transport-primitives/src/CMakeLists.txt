@@ -87,13 +87,8 @@ endif()
 # -----------------------------------------------------------------------------
 # Add Target(s) to CMake Install
 # -----------------------------------------------------------------------------
-# Include yaml-cpp and cereal in export if they were built as submodules
-# Note: Only include if built as submodules (have bare target names, not imported targets)
-set(_YAML_CPP_TARGET "")
-if(TARGET yaml-cpp AND NOT TARGET yaml-cpp::yaml-cpp)
-    # Only include if built as submodule (not a system/imported target)
-    set(_YAML_CPP_TARGET yaml-cpp)
-endif()
+# Note: yaml-cpp and cereal are NOT exported - consuming projects must find them independently
+# This ensures cross-platform compatibility regardless of how yaml-cpp was installed
 
 set(_CEREAL_TARGET "")
 if(TARGET cereal AND NOT TARGET cereal::cereal)
@@ -112,7 +107,6 @@ install(TARGETS
     compress
     encrypt
     host_deps
-    ${_YAML_CPP_TARGET}
     ${_CEREAL_TARGET}
     EXPORT
     ${HSHM_EXPORTED_TARGETS}
