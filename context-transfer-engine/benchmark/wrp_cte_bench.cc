@@ -48,16 +48,17 @@ namespace {
 
 /**
  * Parse size string with k/K, m/M, g/G suffixes
+ * Supports decimal numbers (e.g., 0.5g, 1.5m, 2.5k)
  */
 chi::u64 ParseSize(const std::string &size_str) {
-  chi::u64 size = 0;
+  double size = 0.0;
   chi::u64 multiplier = 1;
 
   std::string num_str;
   char suffix = 0;
 
   for (char c : size_str) {
-    if (std::isdigit(c)) {
+    if (std::isdigit(c) || c == '.') {
       num_str += c;
     } else if (c == 'k' || c == 'K' || c == 'm' || c == 'M' || c == 'g' ||
                c == 'G') {
@@ -71,7 +72,7 @@ chi::u64 ParseSize(const std::string &size_str) {
     return 0;
   }
 
-  size = std::stoull(num_str);
+  size = std::stod(num_str);
 
   switch (suffix) {
   case 'k':
@@ -88,7 +89,7 @@ chi::u64 ParseSize(const std::string &size_str) {
     break;
   }
 
-  return size * multiplier;
+  return static_cast<chi::u64>(size * multiplier);
 }
 
 /**
