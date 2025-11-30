@@ -2,6 +2,8 @@
 
 # Red Black Tree Preallocated
 
+Instead of RBTree taking as input KeyT, I want it to take as input a NodeT. Assume that NodeT inherits from rb_node. Also assume that NodeT has comparison operators and NodeT::key variable.
+
 Create data structure in context-transport-primitives/include/hermes_shm/data_structures/ipc/rb_tree_pre.h
 
 This data structure does not perform allocations. It assumes the entries are pre-allocated.
