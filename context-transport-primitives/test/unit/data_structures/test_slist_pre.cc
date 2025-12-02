@@ -45,7 +45,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
   MallocBackend backend;
   size_t arena_size = 1024 * 1024;  // 1 MB
   auto *alloc = CreateTestAllocator<false>(backend, arena_size);
-  CtxAllocator<ArenaAllocator<false>> ctx_alloc(HSHM_MCTX, alloc);
+  
 
   SECTION("Initialization") {
     pre::slist<false> list;
@@ -61,7 +61,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
     list.Init();
 
     // Allocate a test node
-    auto node_ptr = ctx_alloc->Allocate<TestNode>(ctx_alloc.ctx_, sizeof(TestNode));
+    auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
     node_ptr.ptr_->value_ = 42;
 
     // Emplace the node (cast to slist_node*)
@@ -91,7 +91,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
     // Allocate and emplace 5 nodes
     const int NUM_NODES = 5;
     for (int i = 0; i < NUM_NODES; ++i) {
-      auto node_ptr = ctx_alloc->Allocate<TestNode>(ctx_alloc.ctx_, sizeof(TestNode));
+      auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
       node_ptr.ptr_->value_ = i;
 
       auto *link_node_ptr = reinterpret_cast<pre::slist_node*>(node_ptr.ptr_);
@@ -132,7 +132,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
     REQUIRE(peeked.IsNull());
 
     // Add a node
-    auto node_ptr = ctx_alloc->Allocate<TestNode>(ctx_alloc.ctx_, sizeof(TestNode));
+    auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
     node_ptr.ptr_->value_ = 100;
     auto *link_node_ptr = reinterpret_cast<pre::slist_node*>(node_ptr.ptr_);
       FullPtr<pre::slist_node> link_ptr(link_node_ptr, static_cast<ShmPtr<>>(node_ptr.shm_));
@@ -153,7 +153,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
 
     // Emplace 3 nodes
     for (int i = 0; i < 3; ++i) {
-      auto node_ptr = ctx_alloc->Allocate<TestNode>(ctx_alloc.ctx_, sizeof(TestNode));
+      auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
       node_ptr.ptr_->value_ = i;
       auto *link_node_ptr = reinterpret_cast<pre::slist_node*>(node_ptr.ptr_);
       FullPtr<pre::slist_node> link_ptr(link_node_ptr, static_cast<ShmPtr<>>(node_ptr.shm_));
@@ -168,7 +168,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
 
     // Emplace 2 more nodes
     for (int i = 10; i < 12; ++i) {
-      auto node_ptr = ctx_alloc->Allocate<TestNode>(ctx_alloc.ctx_, sizeof(TestNode));
+      auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
       node_ptr.ptr_->value_ = i;
       auto *link_node_ptr = reinterpret_cast<pre::slist_node*>(node_ptr.ptr_);
       FullPtr<pre::slist_node> link_ptr(link_node_ptr, static_cast<ShmPtr<>>(node_ptr.shm_));
@@ -194,7 +194,7 @@ TEST_CASE("slist_pre - Atomic Version", "[slist_pre][atomic]") {
   MallocBackend backend;
   size_t arena_size = 1024 * 1024;
   auto *alloc = CreateTestAllocator<true>(backend, arena_size);
-  CtxAllocator<ArenaAllocator<true>> ctx_alloc(HSHM_MCTX, alloc);
+  
 
   SECTION("Basic atomic operations") {
     pre::slist<true> list;
@@ -203,7 +203,7 @@ TEST_CASE("slist_pre - Atomic Version", "[slist_pre][atomic]") {
     // Allocate and emplace nodes
     const int NUM_NODES = 10;
     for (int i = 0; i < NUM_NODES; ++i) {
-      auto node_ptr = ctx_alloc->Allocate<TestNode>(ctx_alloc.ctx_, sizeof(TestNode));
+      auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
       node_ptr.ptr_->value_ = i;
       auto *link_node_ptr = reinterpret_cast<pre::slist_node*>(node_ptr.ptr_);
       FullPtr<pre::slist_node> link_ptr(link_node_ptr, static_cast<ShmPtr<>>(node_ptr.shm_));
@@ -231,14 +231,14 @@ TEST_CASE("slist_pre - Node Reuse", "[slist_pre]") {
   MallocBackend backend;
   size_t arena_size = 1024 * 1024;
   auto *alloc = CreateTestAllocator<false>(backend, arena_size);
-  CtxAllocator<ArenaAllocator<false>> ctx_alloc(HSHM_MCTX, alloc);
+  
 
   SECTION("Reuse popped nodes") {
     pre::slist<false> list;
     list.Init();
 
     // Allocate a node
-    auto node_ptr = ctx_alloc->Allocate<TestNode>(ctx_alloc.ctx_, sizeof(TestNode));
+    auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
     node_ptr.ptr_->value_ = 1;
 
     // Emplace, pop, modify, and re-emplace
@@ -271,7 +271,7 @@ TEST_CASE("slist_pre - Large List", "[slist_pre]") {
   MallocBackend backend;
   size_t arena_size = 10 * 1024 * 1024;  // 10 MB for large test
   auto *alloc = CreateTestAllocator<false>(backend, arena_size);
-  CtxAllocator<ArenaAllocator<false>> ctx_alloc(HSHM_MCTX, alloc);
+  
 
   SECTION("1000 elements") {
     pre::slist<false> list;
@@ -281,7 +281,7 @@ TEST_CASE("slist_pre - Large List", "[slist_pre]") {
 
     // Emplace many nodes
     for (int i = 0; i < NUM_NODES; ++i) {
-      auto node_ptr = ctx_alloc->Allocate<TestNode>(ctx_alloc.ctx_, sizeof(TestNode));
+      auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
       node_ptr.ptr_->value_ = i;
       auto *link_node_ptr = reinterpret_cast<pre::slist_node*>(node_ptr.ptr_);
       FullPtr<pre::slist_node> link_ptr(link_node_ptr, static_cast<ShmPtr<>>(node_ptr.shm_));

@@ -110,7 +110,7 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
   MallocBackend backend;
   size_t arena_size = 10 * 1024 * 1024;  // 10 MB
   auto *alloc = CreateTestAllocator<false>(backend, arena_size);
-  CtxAllocator<ArenaAllocator<false>> ctx_alloc(HSHM_MCTX, alloc);
+  
 
   SECTION("Initialization") {
     pre::rb_tree<TestRBNode<int>, false> tree;
@@ -126,7 +126,7 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
     tree.Init();
 
     // Allocate a test node
-    auto node_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+    auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
     node_ptr.ptr_->key = 42;
     node_ptr.ptr_->value_ = 100;
 
@@ -150,7 +150,7 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
 
     // Insert nodes in ascending order
     for (int i = 0; i < 10; ++i) {
-      auto node_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+      auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
       node_ptr.ptr_->key = i;
       node_ptr.ptr_->value_ = i * 10;
 
@@ -175,7 +175,7 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
 
     // Insert nodes in descending order
     for (int i = 9; i >= 0; --i) {
-      auto node_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+      auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
       node_ptr.ptr_->key = i;
       node_ptr.ptr_->value_ = i * 10;
 
@@ -194,7 +194,7 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
     std::vector<int> keys = {50, 25, 75, 10, 30, 60, 90, 5, 15, 27, 35, 55, 65, 85, 95};
 
     for (int key : keys) {
-      auto node_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+      auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
       node_ptr.ptr_->key = key;
       node_ptr.ptr_->value_ = key;
 
@@ -218,7 +218,7 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
     tree.Init();
 
     // Insert node with key 42
-    auto node1_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+    auto node1_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
     node1_ptr.ptr_->key = 42;
     node1_ptr.ptr_->value_ = 100;
 
@@ -228,7 +228,7 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
     REQUIRE(tree.size() == 1);
 
     // Try to insert another node with same key
-    auto node2_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+    auto node2_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
     node2_ptr.ptr_->key = 42;
     node2_ptr.ptr_->value_ = 200;
 
@@ -251,7 +251,7 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
   MallocBackend backend;
   size_t arena_size = 10 * 1024 * 1024;
   auto *alloc = CreateTestAllocator<false>(backend, arena_size);
-  CtxAllocator<ArenaAllocator<false>> ctx_alloc(HSHM_MCTX, alloc);
+  
 
   SECTION("Delete from empty tree") {
     pre::rb_tree<TestRBNode<int>, false> tree;
@@ -266,7 +266,7 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
     pre::rb_tree<TestRBNode<int>, false> tree;
     tree.Init();
 
-    auto node_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+    auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
     node_ptr.ptr_->key = 42;
     node_ptr.ptr_->value_ = 100;
 
@@ -289,7 +289,7 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
 
     // Insert a few nodes
     for (int i = 0; i < 5; ++i) {
-      auto node_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+      auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
       node_ptr.ptr_->key = i * 10;
       node_ptr.ptr_->value_ = i;
 
@@ -313,7 +313,7 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
 
     // Insert all
     for (int key : keys) {
-      auto node_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+      auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
       node_ptr.ptr_->key = key;
       node_ptr.ptr_->value_ = key;
 
@@ -346,7 +346,7 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
 
     // Insert 5 nodes
     for (int i = 0; i < 5; ++i) {
-      auto node_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+      auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
       node_ptr.ptr_->key = i;
       node_ptr.ptr_->value_ = i;
 
@@ -362,7 +362,7 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
 
     // Insert 3 more
     for (int i = 10; i < 13; ++i) {
-      auto node_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+      auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
       node_ptr.ptr_->key = i;
       node_ptr.ptr_->value_ = i;
 
@@ -392,7 +392,7 @@ TEST_CASE("rb_tree_pre - Large Tree", "[rb_tree_pre]") {
   MallocBackend backend;
   size_t arena_size = 50 * 1024 * 1024;  // 50 MB
   auto *alloc = CreateTestAllocator<false>(backend, arena_size);
-  CtxAllocator<ArenaAllocator<false>> ctx_alloc(HSHM_MCTX, alloc);
+  
 
   SECTION("1000 elements sequential") {
     pre::rb_tree<TestRBNode<int>, false> tree;
@@ -402,7 +402,7 @@ TEST_CASE("rb_tree_pre - Large Tree", "[rb_tree_pre]") {
 
     // Insert
     for (int i = 0; i < NUM_NODES; ++i) {
-      auto node_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+      auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
       node_ptr.ptr_->key = i;
       node_ptr.ptr_->value_ = i;
 
@@ -435,7 +435,7 @@ TEST_CASE("rb_tree_pre - Atomic Version", "[rb_tree_pre][atomic]") {
   MallocBackend backend;
   size_t arena_size = 10 * 1024 * 1024;
   auto *alloc = CreateTestAllocator<true>(backend, arena_size);
-  CtxAllocator<ArenaAllocator<true>> ctx_alloc(HSHM_MCTX, alloc);
+  
 
   SECTION("Basic atomic operations") {
     pre::rb_tree<TestRBNode<int>, true> tree;
@@ -443,7 +443,7 @@ TEST_CASE("rb_tree_pre - Atomic Version", "[rb_tree_pre][atomic]") {
 
     // Insert nodes
     for (int i = 0; i < 20; ++i) {
-      auto node_ptr = ctx_alloc->Allocate<TestRBNode<int>>(ctx_alloc.ctx_, sizeof(TestRBNode<int>));
+      auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
       node_ptr.ptr_->key = i;
       node_ptr.ptr_->value_ = i * 2;
 

@@ -13,53 +13,62 @@
 #include <catch2/catch_test_macros.hpp>
 #include "allocator_test.h"
 #include "hermes_shm/memory/backend/malloc_backend.h"
-#include "hermes_shm/memory/allocator/malloc_allocator.h"
+#include "hermes_shm/memory/allocator/arena_allocator.h"
 
 using hshm::testing::AllocatorTest;
 
 /**
- * Helper function to create a MallocBackend and MallocAllocator
+ * Helper function to create a MallocBackend and ArenaAllocator<false>
  * Returns the allocator pointer (caller must manage backend lifetime)
  */
-hipc::MallocAllocator* CreateMallocAllocator(hipc::MallocBackend &backend) {
-  // Initialize backend with 256 MB
-  size_t backend_size = 256 * 1024 * 1024;
-  backend.shm_init(hipc::MemoryBackendId(0, 0), backend_size);
+hipc::ArenaAllocator<false>* CreateArenaAllocator(hipc::MallocBackend &backend) {
+  // Initialize backend with space for allocator + heap
+  size_t heap_size = 256 * 1024 * 1024;  // 256 MB heap
+  size_t alloc_size = sizeof(hipc::ArenaAllocator<false>);
+  backend.shm_init(hipc::MemoryBackendId(0, 0), alloc_size + heap_size);
 
-  // Create allocator on top of backend
-  hipc::MallocAllocator *alloc = new hipc::MallocAllocator();
-  alloc->shm_init(hipc::AllocatorId(hipc::MemoryBackendId(0, 0), 0), 0, backend);
+  // Construct allocator at beginning of backend
+  auto *alloc = backend.Cast<hipc::ArenaAllocator<false>>();
+  new (alloc) hipc::ArenaAllocator<false>();
+
+  // Create heap backend view (starts after allocator object)
+  hipc::MemoryBackend heap_backend = backend;
+  heap_backend.data_offset_ = alloc_size;
+  heap_backend.data_size_ = heap_size;
+
+  // Initialize allocator with heap backend
+  alloc->shm_init(hipc::AllocatorId(hipc::MemoryBackendId(0, 0), 0), 0, heap_size, heap_backend);
 
   return alloc;
 }
 
 TEST_CASE("SubAllocator - Basic Creation and Destruction", "[SubAllocator]") {
   hipc::MallocBackend backend;
-  hipc::MallocAllocator *parent_alloc = CreateMallocAllocator(backend);
+  auto *parent_alloc = CreateArenaAllocator(backend);
 
   SECTION("Create and destroy a single sub-allocator") {
     // Create a sub-allocator with 64 MB
     size_t sub_alloc_size = 64 * 1024 * 1024;
-    hipc::MallocAllocator *sub_alloc = parent_alloc->CreateSubAllocator<hipc::_MallocAllocator>(
-        HSHM_MCTX, 1, sub_alloc_size, 0);
+    auto *sub_alloc = parent_alloc->CreateSubAllocator<hipc::_ArenaAllocator<false>>(
+        1, sub_alloc_size, 0, sub_alloc_size);
 
     REQUIRE(sub_alloc != nullptr);
     REQUIRE(sub_alloc->GetId().backend_id_ == parent_alloc->GetId().backend_id_);
     REQUIRE(sub_alloc->GetId().sub_id_ == 1);
 
     // Free the sub-allocator
-    parent_alloc->FreeSubAllocator(HSHM_MCTX, sub_alloc);
+    parent_alloc->FreeSubAllocator( sub_alloc);
   }
 
   SECTION("Create multiple sub-allocators with different IDs") {
     size_t sub_alloc_size = 32 * 1024 * 1024;
 
-    hipc::MallocAllocator *sub_alloc1 = parent_alloc->CreateSubAllocator<hipc::_MallocAllocator>(
-        HSHM_MCTX, 1, sub_alloc_size, 0);
-    hipc::MallocAllocator *sub_alloc2 = parent_alloc->CreateSubAllocator<hipc::_MallocAllocator>(
-        HSHM_MCTX, 2, sub_alloc_size, 0);
-    hipc::MallocAllocator *sub_alloc3 = parent_alloc->CreateSubAllocator<hipc::_MallocAllocator>(
-        HSHM_MCTX, 3, sub_alloc_size, 0);
+    auto *sub_alloc1 = parent_alloc->CreateSubAllocator<hipc::_ArenaAllocator<false>>(
+        1, sub_alloc_size, 0, sub_alloc_size);
+    auto *sub_alloc2 = parent_alloc->CreateSubAllocator<hipc::_ArenaAllocator<false>>(
+        2, sub_alloc_size, 0, sub_alloc_size);
+    auto *sub_alloc3 = parent_alloc->CreateSubAllocator<hipc::_ArenaAllocator<false>>(
+        3, sub_alloc_size, 0, sub_alloc_size);
 
     REQUIRE(sub_alloc1 != nullptr);
     REQUIRE(sub_alloc2 != nullptr);
@@ -70,73 +79,71 @@ TEST_CASE("SubAllocator - Basic Creation and Destruction", "[SubAllocator]") {
     REQUIRE(sub_alloc3->GetId().sub_id_ == 3);
 
     // Free all sub-allocators
-    parent_alloc->FreeSubAllocator(HSHM_MCTX, sub_alloc1);
-    parent_alloc->FreeSubAllocator(HSHM_MCTX, sub_alloc2);
-    parent_alloc->FreeSubAllocator(HSHM_MCTX, sub_alloc3);
+    parent_alloc->FreeSubAllocator( sub_alloc1);
+    parent_alloc->FreeSubAllocator( sub_alloc2);
+    parent_alloc->FreeSubAllocator( sub_alloc3);
   }
 
-  delete parent_alloc;
   backend.shm_destroy();
 }
 
 TEST_CASE("SubAllocator - Allocations within SubAllocator", "[SubAllocator]") {
   hipc::MallocBackend backend;
-  hipc::MallocAllocator *parent_alloc = CreateMallocAllocator(backend);
+  auto *parent_alloc = CreateArenaAllocator(backend);
 
   // Create a sub-allocator with 64 MB
   size_t sub_alloc_size = 64 * 1024 * 1024;
-  hipc::MallocAllocator *sub_alloc = parent_alloc->CreateSubAllocator<hipc::_MallocAllocator>(
-      HSHM_MCTX, 1, sub_alloc_size, 0);
+  auto *sub_alloc = parent_alloc->CreateSubAllocator<hipc::_ArenaAllocator<false>>(
+      1, sub_alloc_size, 0, sub_alloc_size);
 
   REQUIRE(sub_alloc != nullptr);
 
   SECTION("Allocate and free immediately") {
-    hipc::CtxAllocator<hipc::MallocAllocator> ctx_alloc(HSHM_MCTX, sub_alloc);
+    
 
     for (size_t i = 0; i < 1000; ++i) {
-      auto ptr = ctx_alloc->template AlignedAllocate<void>(ctx_alloc.ctx_, 1024, 64);
+      auto ptr = sub_alloc->template AlignedAllocate<void>( 1024, 64);
       REQUIRE_FALSE(ptr.IsNull());
-      ctx_alloc->Free(ctx_alloc.ctx_, ptr);
+      sub_alloc->Free( ptr);
     }
   }
 
   SECTION("Batch allocations") {
-    hipc::CtxAllocator<hipc::MallocAllocator> ctx_alloc(HSHM_MCTX, sub_alloc);
+    
     std::vector<hipc::FullPtr<void>> ptrs;
 
     // Allocate batch
     for (size_t i = 0; i < 100; ++i) {
-      auto ptr = ctx_alloc->template AlignedAllocate<void>(ctx_alloc.ctx_, 4096, 64);
+      auto ptr = sub_alloc->template AlignedAllocate<void>( 4096, 64);
       REQUIRE_FALSE(ptr.IsNull());
       ptrs.push_back(ptr);
     }
 
     // Free batch
     for (auto &ptr : ptrs) {
-      ctx_alloc->Free(ctx_alloc.ctx_, ptr);
+      sub_alloc->Free( ptr);
     }
   }
 
   // Free the sub-allocator
-  parent_alloc->FreeSubAllocator(HSHM_MCTX, sub_alloc);
+  parent_alloc->FreeSubAllocator( sub_alloc);
 
-  delete parent_alloc;
   backend.shm_destroy();
 }
 
 TEST_CASE("SubAllocator - Random Allocation Test", "[SubAllocator]") {
   hipc::MallocBackend backend;
-  hipc::MallocAllocator *parent_alloc = CreateMallocAllocator(backend);
+  auto *parent_alloc = CreateArenaAllocator(backend);
 
   // Create a sub-allocator with 64 MB
   size_t sub_alloc_size = 64 * 1024 * 1024;
-  hipc::MallocAllocator *sub_alloc = parent_alloc->CreateSubAllocator<hipc::_MallocAllocator>(
-      HSHM_MCTX, 1, sub_alloc_size, 0);
+  auto *sub_alloc = parent_alloc->CreateSubAllocator<hipc::_ArenaAllocator<false>>(
+      1, sub_alloc_size, 0, sub_alloc_size);
 
   REQUIRE(sub_alloc != nullptr);
 
   // Use the AllocatorTest framework to run random tests
-  AllocatorTest<hipc::MallocAllocator> tester(sub_alloc);
+  AllocatorTest<hipc::ArenaAllocator<false>> tester(sub_alloc);
 
   SECTION("16 iterations of random allocations") {
     REQUIRE_NOTHROW(tester.TestRandomAllocation(16));
@@ -147,33 +154,32 @@ TEST_CASE("SubAllocator - Random Allocation Test", "[SubAllocator]") {
   }
 
   // Free the sub-allocator
-  parent_alloc->FreeSubAllocator(HSHM_MCTX, sub_alloc);
+  parent_alloc->FreeSubAllocator( sub_alloc);
 
-  delete parent_alloc;
   backend.shm_destroy();
 }
 
 TEST_CASE("SubAllocator - Multiple SubAllocators with Random Tests", "[SubAllocator]") {
   hipc::MallocBackend backend;
-  hipc::MallocAllocator *parent_alloc = CreateMallocAllocator(backend);
+  auto *parent_alloc = CreateArenaAllocator(backend);
 
   // Create 3 sub-allocators, each with 32 MB
   size_t sub_alloc_size = 32 * 1024 * 1024;
-  hipc::MallocAllocator *sub_alloc1 = parent_alloc->CreateSubAllocator<hipc::_MallocAllocator>(
-      HSHM_MCTX, 1, sub_alloc_size, 0);
-  hipc::MallocAllocator *sub_alloc2 = parent_alloc->CreateSubAllocator<hipc::_MallocAllocator>(
-      HSHM_MCTX, 2, sub_alloc_size, 0);
-  hipc::MallocAllocator *sub_alloc3 = parent_alloc->CreateSubAllocator<hipc::_MallocAllocator>(
-      HSHM_MCTX, 3, sub_alloc_size, 0);
+  auto *sub_alloc1 = parent_alloc->CreateSubAllocator<hipc::_ArenaAllocator<false>>(
+      1, sub_alloc_size, 0, sub_alloc_size);
+  auto *sub_alloc2 = parent_alloc->CreateSubAllocator<hipc::_ArenaAllocator<false>>(
+      2, sub_alloc_size, 0, sub_alloc_size);
+  auto *sub_alloc3 = parent_alloc->CreateSubAllocator<hipc::_ArenaAllocator<false>>(
+      3, sub_alloc_size, 0, sub_alloc_size);
 
   REQUIRE(sub_alloc1 != nullptr);
   REQUIRE(sub_alloc2 != nullptr);
   REQUIRE(sub_alloc3 != nullptr);
 
   SECTION("Run random tests on all three sub-allocators") {
-    AllocatorTest<hipc::MallocAllocator> tester1(sub_alloc1);
-    AllocatorTest<hipc::MallocAllocator> tester2(sub_alloc2);
-    AllocatorTest<hipc::MallocAllocator> tester3(sub_alloc3);
+    AllocatorTest<hipc::ArenaAllocator<false>> tester1(sub_alloc1);
+    AllocatorTest<hipc::ArenaAllocator<false>> tester2(sub_alloc2);
+    AllocatorTest<hipc::ArenaAllocator<false>> tester3(sub_alloc3);
 
     REQUIRE_NOTHROW(tester1.TestRandomAllocation(8));
     REQUIRE_NOTHROW(tester2.TestRandomAllocation(8));
@@ -181,41 +187,39 @@ TEST_CASE("SubAllocator - Multiple SubAllocators with Random Tests", "[SubAlloca
   }
 
   // Free all sub-allocators
-  parent_alloc->FreeSubAllocator(HSHM_MCTX, sub_alloc1);
-  parent_alloc->FreeSubAllocator(HSHM_MCTX, sub_alloc2);
-  parent_alloc->FreeSubAllocator(HSHM_MCTX, sub_alloc3);
+  parent_alloc->FreeSubAllocator( sub_alloc1);
+  parent_alloc->FreeSubAllocator( sub_alloc2);
+  parent_alloc->FreeSubAllocator( sub_alloc3);
 
-  delete parent_alloc;
   backend.shm_destroy();
 }
 
 TEST_CASE("SubAllocator - Nested SubAllocators", "[SubAllocator][nested]") {
   hipc::MallocBackend backend;
-  hipc::MallocAllocator *parent_alloc = CreateMallocAllocator(backend);
+  auto *parent_alloc = CreateArenaAllocator(backend);
 
   // Create a sub-allocator from parent (64 MB)
   size_t sub_alloc1_size = 64 * 1024 * 1024;
-  hipc::MallocAllocator *sub_alloc1 = parent_alloc->CreateSubAllocator<hipc::_MallocAllocator>(
-      HSHM_MCTX, 1, sub_alloc1_size, 0);
+  auto *sub_alloc1 = parent_alloc->CreateSubAllocator<hipc::_ArenaAllocator<false>>(
+      1, sub_alloc1_size, 0, sub_alloc1_size);
 
   REQUIRE(sub_alloc1 != nullptr);
 
   // Create a nested sub-allocator from the first sub-allocator (16 MB)
   size_t sub_alloc2_size = 16 * 1024 * 1024;
-  hipc::MallocAllocator *sub_alloc2 = sub_alloc1->CreateSubAllocator<hipc::_MallocAllocator>(
-      HSHM_MCTX, 2, sub_alloc2_size, 0);
+  auto *sub_alloc2 = sub_alloc1->CreateSubAllocator<hipc::_ArenaAllocator<false>>(
+      2, sub_alloc2_size, 0, sub_alloc2_size);
 
   REQUIRE(sub_alloc2 != nullptr);
   REQUIRE(sub_alloc2->GetId().sub_id_ == 2);
 
   // Test allocations in the nested sub-allocator
-  AllocatorTest<hipc::MallocAllocator> tester(sub_alloc2);
+  AllocatorTest<hipc::ArenaAllocator<false>> tester(sub_alloc2);
   REQUIRE_NOTHROW(tester.TestRandomAllocation(8));
 
   // Free nested sub-allocator first, then parent sub-allocator
-  sub_alloc1->FreeSubAllocator(HSHM_MCTX, sub_alloc2);
-  parent_alloc->FreeSubAllocator(HSHM_MCTX, sub_alloc1);
+  sub_alloc1->FreeSubAllocator( sub_alloc2);
+  parent_alloc->FreeSubAllocator( sub_alloc1);
 
-  delete parent_alloc;
   backend.shm_destroy();
 }

@@ -58,15 +58,20 @@ struct _ArenaAllocatorHeader : public AllocatorHeader {
  */
 template<bool ATOMIC>
 class _ArenaAllocator : public Allocator {
+ public:
+  MemoryBackend backend_;  /**< Memory backend for allocator */
+
  private:
   _ArenaAllocatorHeader<ATOMIC> *header_;
+  int accel_id_;  /**< Accelerator ID */
+  char *custom_header_;  /**< Custom header pointer */
 
  public:
   /**
    * Allocator constructor
    */
   HSHM_CROSS_FUN
-  _ArenaAllocator() : header_(nullptr) {}
+  _ArenaAllocator() : header_(nullptr), accel_id_(-1), custom_header_(nullptr) {}
 
   /**
    * Initialize the allocator in shared memory
@@ -75,13 +80,21 @@ class _ArenaAllocator : public Allocator {
    * @param custom_header_size Size of custom header extension
    * @param arena_size Maximum size of the arena
    * @param backend Memory backend
+   * @param shift Offset shift indicating where the allocator is positioned in the memory segment (default: 0)
    */
   HSHM_CROSS_FUN
   void shm_init(AllocatorId id, size_t custom_header_size, size_t arena_size,
-                MemoryBackend backend) {
+                MemoryBackend backend, size_t shift = 0) {
     id_ = id;
-    backend_ = backend;
-    accel_id_ = backend_.data_id_;
+    SetBackend(backend);
+    accel_id_ = backend.data_id_;
+    alloc_header_size_ = sizeof(_ArenaAllocator<ATOMIC>);
+    custom_header_size_ = custom_header_size;
+
+    // Store shift in backend's data_offset (arena uses it for offset calculations)
+    MemoryBackend modified_backend = backend;
+    modified_backend.data_offset_ = shift;
+    SetBackend(modified_backend);
 
     // Allocate and construct header
     header_ = ConstructHeader<_ArenaAllocatorHeader<ATOMIC>>(
@@ -101,16 +114,15 @@ class _ArenaAllocator : public Allocator {
   /**
    * Allocate memory of specified size
    *
-   * @param ctx Memory context
    * @param size Size to allocate
    * @param alignment Optional alignment (default: 1)
    * @return Offset pointer to allocated memory
    */
   HSHM_CROSS_FUN
-  OffsetPtr<> AllocateOffset(const hipc::MemContext &ctx, size_t size, size_t alignment = 1) {
+  OffsetPtr<> AllocateOffset(size_t size, size_t alignment = 1) {
     size_t off = header_->heap_.Allocate(size, alignment);
     header_->AddSize(size);
-    return OffsetPtr<>(off);
+    return OffsetPtr<>(GetBackend().data_offset_ + off);
   }
 
   /**
@@ -119,8 +131,9 @@ class _ArenaAllocator : public Allocator {
    * Arena allocators do not support reallocation.
    */
   HSHM_CROSS_FUN
-  OffsetPtr<> ReallocateOffsetNoNullCheck(const hipc::MemContext &ctx,
-                                            OffsetPtr<> p, size_t new_size) {
+  OffsetPtr<> ReallocateOffsetNoNullCheck(OffsetPtr<> p, size_t new_size) {
+    (void)p;
+    (void)new_size;
     HSHM_THROW_ERROR(NOT_IMPLEMENTED,
                      "ArenaAllocator does not support reallocation");
     return OffsetPtr<>(0);
@@ -133,7 +146,8 @@ class _ArenaAllocator : public Allocator {
    * Memory is freed in bulk when the arena is reset or destroyed.
    */
   HSHM_CROSS_FUN
-  void FreeOffsetNoNullCheck(const hipc::MemContext &ctx, OffsetPtr<> p) {
+  void FreeOffsetNoNullCheck(OffsetPtr<> p) {
+    (void)p;
     // Arena allocator does not support individual frees
     // This is intentionally a no-op (not an error)
   }
@@ -154,7 +168,7 @@ class _ArenaAllocator : public Allocator {
    * Arena allocators do not require TLS.
    */
   HSHM_CROSS_FUN
-  void CreateTls(MemContext &ctx) {
+  void CreateTls() {
     // No TLS needed for arena allocator
   }
 
@@ -164,7 +178,7 @@ class _ArenaAllocator : public Allocator {
    * Arena allocators do not require TLS.
    */
   HSHM_CROSS_FUN
-  void FreeTls(const hipc::MemContext &ctx) {
+  void FreeTls() {
     // No TLS needed for arena allocator
   }
 
@@ -198,6 +212,16 @@ class _ArenaAllocator : public Allocator {
   HSHM_CROSS_FUN
   size_t GetRemainingSize() const {
     return header_->heap_.GetRemainingSize();
+  }
+
+  /**
+   * Get the custom header of the shared-memory allocator
+   *
+   * @return Custom header pointer
+   */
+  template <typename HEADER_T>
+  HSHM_INLINE_CROSS_FUN HEADER_T *GetCustomHeader() {
+    return reinterpret_cast<HEADER_T*>(custom_header_);
   }
 };
 

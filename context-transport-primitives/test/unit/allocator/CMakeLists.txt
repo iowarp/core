@@ -45,11 +45,11 @@ target_link_libraries(test_mp_allocator_multiprocess_exec
 #------------------------------------------------------------------------------
 
 add_test(NAME ctp_alloc_immediate COMMAND
-        ${CMAKE_BINARY_DIR}/bin/test_alloc_exec "[MallocAllocator]~[multithread]~[all]")
+        ${CMAKE_BINARY_DIR}/bin/test_alloc_exec "[BuddyAllocator]~[multithread]~[all]")
 add_test(NAME ctp_alloc_multithread COMMAND
-        ${CMAKE_BINARY_DIR}/bin/test_alloc_exec "[MallocAllocator][multithread]")
+        ${CMAKE_BINARY_DIR}/bin/test_alloc_exec "[BuddyAllocator][multithread]")
 add_test(NAME ctp_alloc_all COMMAND
-        ${CMAKE_BINARY_DIR}/bin/test_alloc_exec "[MallocAllocator][all]")
+        ${CMAKE_BINARY_DIR}/bin/test_alloc_exec "[BuddyAllocator][all]")
 
 add_test(NAME ctp_sub_alloc COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_sub_alloc_exec "[SubAllocator]~[nested]")

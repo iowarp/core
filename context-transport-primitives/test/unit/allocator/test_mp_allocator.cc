@@ -25,20 +25,34 @@ using namespace hshm::ipc;
 class MpAllocatorTest {
  public:
   PosixMmap backend_;
-  MultiProcessAllocator alloc_;
+  MultiProcessAllocator *alloc_;
   static constexpr size_t kAllocSize = 512ULL * 1024 * 1024;  // 512MB
 
   MpAllocatorTest() {
-    // Initialize memory backend
+    // Initialize memory backend (large enough for allocator + data)
     backend_.shm_init(MemoryBackendId(0, 0), kAllocSize);
+    std::cout << "Backend initialized at: " << (void*)backend_.data_ << std::endl;
 
-    // Initialize allocator
-    bool success = alloc_.shm_init(backend_, kAllocSize);
-    REQUIRE(success);
+    // Place allocator at the beginning of shared memory
+    std::cout << "sizeof(MultiProcessAllocator) = " << sizeof(MultiProcessAllocator) << std::endl;
+    std::cout << "sizeof(_MultiProcessAllocator) = " << sizeof(_MultiProcessAllocator) << std::endl;
+    alloc_ = backend_.Cast<MultiProcessAllocator>();
+    std::cout << "Allocator placed at: " << (void*)alloc_ << std::endl;
+    new (alloc_) MultiProcessAllocator();
+    std::cout << "Allocator constructed" << std::endl;
+    std::cout << "Accessing pid_count_: " << alloc_->pid_count_ << std::endl;
+
+    // Initialize allocator with AllocatorId
+    alloc_->shm_init(AllocatorId(MemoryBackendId(0, 0), 0), backend_, kAllocSize);
+    std::cout << "Allocator shm_init completed" << std::endl;
+    std::cout << "Allocator pointer: " << (void*)alloc_ << std::endl;
+    std::cout << "Allocator initialized successfully" << std::endl;
+    // TODO: Fix id_ access issue
+    // For now, skip verification of id_ fields to test the rest of functionality
   }
 
   ~MpAllocatorTest() {
-    alloc_.shm_detach();
+    alloc_->shm_detach();
     backend_.shm_destroy();
   }
 };
@@ -52,8 +66,8 @@ TEST_CASE("MpAllocator: Basic Initialization", "[mp_allocator][init]") {
   MpAllocatorTest test;
 
   // Verify allocator is initialized
-  REQUIRE(test.alloc_.GetId().backend_id_.major_ == 0);
-  REQUIRE(test.alloc_.GetId().backend_id_.minor_ == 0);
+  REQUIRE(test.alloc_->GetId().backend_id_.major_ == 0);
+  REQUIRE(test.alloc_->GetId().backend_id_.minor_ == 0);
 }
 
 /**
@@ -66,11 +80,11 @@ TEST_CASE("MpAllocator: Simple Single-Thread Allocation", "[mp_allocator][single
   MpAllocatorTest test;
 
   // Allocate small memory
-  OffsetPtr<> ptr1 = test.alloc_.AllocateOffset(64);
+  OffsetPtr<> ptr1 = test.alloc_->AllocateOffset(64);
   REQUIRE(!ptr1.IsNull());
   {
     // Use direct pointer arithmetic (MultiProcessAllocator uses sub-allocators)
-    char *data_ptr = test.alloc_.backend_.data_ + ptr1.load();
+    char *data_ptr = test.alloc_->alloc_.GetBackend().data_ + ptr1.load();
     REQUIRE(data_ptr != nullptr);
     memset(data_ptr, 0xAA, 64);
     for (size_t i = 0; i < 64; ++i) {
@@ -79,10 +93,10 @@ TEST_CASE("MpAllocator: Simple Single-Thread Allocation", "[mp_allocator][single
   }
 
   // Allocate medium memory
-  OffsetPtr<>ptr2 = test.alloc_.AllocateOffset(4096);
+  OffsetPtr<>ptr2 = test.alloc_->AllocateOffset(4096);
   REQUIRE(!ptr2.IsNull());
   {
-    char *data_ptr = test.alloc_.backend_.data_ + ptr2.load();
+    char *data_ptr = test.alloc_->alloc_.GetBackend().data_ + ptr2.load();
     REQUIRE(data_ptr != nullptr);
     memset(data_ptr, 0xBB, 4096);
     for (size_t i = 0; i < 4096; ++i) {
@@ -91,10 +105,10 @@ TEST_CASE("MpAllocator: Simple Single-Thread Allocation", "[mp_allocator][single
   }
 
   // Allocate large memory
-  OffsetPtr<>ptr3 = test.alloc_.AllocateOffset(1024 * 1024);
+  OffsetPtr<>ptr3 = test.alloc_->AllocateOffset(1024 * 1024);
   REQUIRE(!ptr3.IsNull());
   {
-    char *data_ptr = test.alloc_.backend_.data_ + ptr3.load();
+    char *data_ptr = test.alloc_->alloc_.GetBackend().data_ + ptr3.load();
     REQUIRE(data_ptr != nullptr);
     memset(data_ptr, 0xCC, 1024 * 1024);
     // Verify first and last pages
@@ -107,9 +121,9 @@ TEST_CASE("MpAllocator: Simple Single-Thread Allocation", "[mp_allocator][single
   }
 
   // Free memory
-  test.alloc_.FreeOffset(ptr1);
-  test.alloc_.FreeOffset(ptr2);
-  test.alloc_.FreeOffset(ptr3);
+  test.alloc_->FreeOffset(ptr1);
+  test.alloc_->FreeOffset(ptr2);
+  test.alloc_->FreeOffset(ptr3);
 }
 
 /**
@@ -126,11 +140,11 @@ TEST_CASE("MpAllocator: Multiple Allocations", "[mp_allocator][multiple]") {
   // Allocate 100 blocks of varying sizes and verify data writes
   for (size_t i = 0; i < 100; ++i) {
     size_t size = 32 * (i + 1);  // 32, 64, 96, ..., 3200 bytes
-    OffsetPtr<>ptr = test.alloc_.AllocateOffset(size);
+    OffsetPtr<>ptr = test.alloc_->AllocateOffset(size);
     REQUIRE(!ptr.IsNull());
 
     // Write unique pattern to each block
-    unsigned char *data_ptr = reinterpret_cast<unsigned char*>(test.alloc_.backend_.data_ + ptr.load());
+    unsigned char *data_ptr = reinterpret_cast<unsigned char*>(test.alloc_->alloc_.GetBackend().data_ + ptr.load());
     REQUIRE(data_ptr != nullptr);
     unsigned char pattern = static_cast<unsigned char>(i & 0xFF);
     memset(data_ptr, pattern, size);
@@ -145,17 +159,17 @@ TEST_CASE("MpAllocator: Multiple Allocations", "[mp_allocator][multiple]") {
 
   // Free all blocks
   for (auto &ptr : ptrs) {
-    test.alloc_.FreeOffset(ptr);
+    test.alloc_->FreeOffset(ptr);
   }
 
   // Allocate again to test reuse and verify data writes
   for (size_t i = 0; i < 100; ++i) {
     size_t size = 32 * (i + 1);
-    OffsetPtr<>ptr = test.alloc_.AllocateOffset(size);
+    OffsetPtr<>ptr = test.alloc_->AllocateOffset(size);
     REQUIRE(!ptr.IsNull());
 
     // Write different pattern and verify
-    unsigned char *data_ptr = reinterpret_cast<unsigned char*>(test.alloc_.backend_.data_ + ptr.load());
+    unsigned char *data_ptr = reinterpret_cast<unsigned char*>(test.alloc_->alloc_.GetBackend().data_ + ptr.load());
     REQUIRE(data_ptr != nullptr);
     unsigned char pattern = static_cast<unsigned char>((i + 100) & 0xFF);
     memset(data_ptr, pattern, size);
@@ -163,7 +177,7 @@ TEST_CASE("MpAllocator: Multiple Allocations", "[mp_allocator][multiple]") {
       REQUIRE(data_ptr[j] == pattern);
     }
 
-    test.alloc_.FreeOffset(ptr);
+    test.alloc_->FreeOffset(ptr);
   }
 }
 
@@ -177,10 +191,10 @@ TEST_CASE("MpAllocator: Reallocation", "[mp_allocator][realloc]") {
   MpAllocatorTest test;
 
   // Initial allocation with data
-  OffsetPtr<>ptr = test.alloc_.AllocateOffset(1024);
+  OffsetPtr<>ptr = test.alloc_->AllocateOffset(1024);
   REQUIRE(!ptr.IsNull());
   {
-    unsigned char *data_ptr = reinterpret_cast<unsigned char*>(test.alloc_.backend_.data_ + ptr.load());
+    unsigned char *data_ptr = reinterpret_cast<unsigned char*>(test.alloc_->alloc_.GetBackend().data_ + ptr.load());
     REQUIRE(data_ptr != nullptr);
     // Write pattern to initial allocation
     for (size_t i = 0; i < 1024; ++i) {
@@ -189,10 +203,10 @@ TEST_CASE("MpAllocator: Reallocation", "[mp_allocator][realloc]") {
   }
 
   // Reallocate to larger size - data should be preserved
-  OffsetPtr<>ptr2 = test.alloc_.ReallocateOffset(ptr, 4096);
+  OffsetPtr<>ptr2 = test.alloc_->ReallocateOffset(ptr, 4096);
   REQUIRE(!ptr2.IsNull());
   {
-    unsigned char *data_ptr = reinterpret_cast<unsigned char*>(test.alloc_.backend_.data_ + ptr2.load());
+    unsigned char *data_ptr = reinterpret_cast<unsigned char*>(test.alloc_->alloc_.GetBackend().data_ + ptr2.load());
     REQUIRE(data_ptr != nullptr);
     // Verify original data is preserved
     for (size_t i = 0; i < 1024; ++i) {
@@ -205,10 +219,10 @@ TEST_CASE("MpAllocator: Reallocation", "[mp_allocator][realloc]") {
   }
 
   // Reallocate to smaller size - partial data should be preserved
-  OffsetPtr<>ptr3 = test.alloc_.ReallocateOffset(ptr2, 512);
+  OffsetPtr<>ptr3 = test.alloc_->ReallocateOffset(ptr2, 512);
   REQUIRE(!ptr3.IsNull());
   {
-    unsigned char *data_ptr = reinterpret_cast<unsigned char*>(test.alloc_.backend_.data_ + ptr3.load());
+    unsigned char *data_ptr = reinterpret_cast<unsigned char*>(test.alloc_->alloc_.GetBackend().data_ + ptr3.load());
     REQUIRE(data_ptr != nullptr);
     // Verify first 512 bytes are still valid
     for (size_t i = 0; i < 512; ++i) {
@@ -217,7 +231,7 @@ TEST_CASE("MpAllocator: Reallocation", "[mp_allocator][realloc]") {
   }
 
   // Free final pointer
-  test.alloc_.FreeOffset(ptr3);
+  test.alloc_->FreeOffset(ptr3);
 }
 
 /**
@@ -242,10 +256,10 @@ TEST_CASE("MpAllocator: Multi-Threaded Allocations", "[mp_allocator][multithread
       // Each thread performs allocations and verifies data writes
       for (size_t i = 0; i < kAllocsPerThread; ++i) {
         size_t size = 64 + (i % 10) * 32;  // Varying sizes
-        OffsetPtr<>ptr = test.alloc_.AllocateOffset(size);
+        OffsetPtr<>ptr = test.alloc_->AllocateOffset(size);
         if (!ptr.IsNull()) {
           // Verify we can write and read data
-          unsigned char *data_ptr = reinterpret_cast<unsigned char*>(test.alloc_.backend_.data_ + ptr.load());
+          unsigned char *data_ptr = reinterpret_cast<unsigned char*>(test.alloc_->alloc_.GetBackend().data_ + ptr.load());
           if (data_ptr != nullptr) {
             unsigned char pattern = static_cast<unsigned char>((t * 100 + i) & 0xFF);
             memset(data_ptr, pattern, size);
@@ -253,17 +267,17 @@ TEST_CASE("MpAllocator: Multi-Threaded Allocations", "[mp_allocator][multithread
             if (data_ptr[0] == pattern && data_ptr[size - 1] == pattern) {
               local_ptrs.push_back(ptr);
             } else {
-              test.alloc_.FreeOffset(ptr);
+              test.alloc_->FreeOffset(ptr);
             }
           } else {
-            test.alloc_.FreeOffset(ptr);
+            test.alloc_->FreeOffset(ptr);
           }
         }
       }
 
       // Free all allocations
       for (auto &ptr : local_ptrs) {
-        test.alloc_.FreeOffset(ptr);
+        test.alloc_->FreeOffset(ptr);
       }
 
       success_count += local_ptrs.size();
@@ -298,7 +312,7 @@ TEST_CASE("MpAllocator: TLS Isolation", "[mp_allocator][tls]") {
     threads.emplace_back([&test, &thread_ptrs, t]() {
       for (size_t i = 0; i < 50; ++i) {
         size_t size = (t + 1) * 128;  // Each thread uses different size
-        OffsetPtr<>ptr = test.alloc_.AllocateOffset(size);
+        OffsetPtr<>ptr = test.alloc_->AllocateOffset(size);
         REQUIRE(!ptr.IsNull());
         thread_ptrs[t].push_back(ptr);
       }
@@ -318,7 +332,7 @@ TEST_CASE("MpAllocator: TLS Isolation", "[mp_allocator][tls]") {
   // Free all memory
   for (size_t t = 0; t < kNumThreads; ++t) {
     for (auto &ptr : thread_ptrs[t]) {
-      test.alloc_.FreeOffset(ptr);
+      test.alloc_->FreeOffset(ptr);
     }
   }
 }
@@ -345,12 +359,12 @@ TEST_CASE("MpAllocator: Stress Test", "[mp_allocator][stress]") {
         if (i % 3 == 0 && !ptrs.empty()) {
           // Free a random pointer
           size_t idx = i % ptrs.size();
-          test.alloc_.FreeOffset(ptrs[idx]);
+          test.alloc_->FreeOffset(ptrs[idx]);
           ptrs.erase(ptrs.begin() + idx);
         } else {
           // Allocate new memory
           size_t size = 32 + (i % 100) * 16;
-          OffsetPtr<>ptr = test.alloc_.AllocateOffset(size);
+          OffsetPtr<>ptr = test.alloc_->AllocateOffset(size);
           if (!ptr.IsNull()) {
             ptrs.push_back(ptr);
             total_ops++;
@@ -360,7 +374,7 @@ TEST_CASE("MpAllocator: Stress Test", "[mp_allocator][stress]") {
 
       // Free remaining pointers
       for (auto &ptr : ptrs) {
-        test.alloc_.FreeOffset(ptr);
+        test.alloc_->FreeOffset(ptr);
       }
     });
   }
@@ -388,14 +402,14 @@ TEST_CASE("MpAllocator: Large Allocations", "[mp_allocator][large]") {
   std::vector<OffsetPtr<>> ptrs;
 
   for (size_t i = 0; i < 5; ++i) {
-    OffsetPtr<>ptr = test.alloc_.AllocateOffset(kLargeSize);
+    OffsetPtr<>ptr = test.alloc_->AllocateOffset(kLargeSize);
     REQUIRE(!ptr.IsNull());
     ptrs.push_back(ptr);
   }
 
   // Free all large blocks
   for (auto &ptr : ptrs) {
-    test.alloc_.FreeOffset(ptr);
+    test.alloc_->FreeOffset(ptr);
   }
 }
 
@@ -408,17 +422,17 @@ TEST_CASE("MpAllocator: Edge Cases", "[mp_allocator][edge]") {
   MpAllocatorTest test;
 
   // Freeing null pointer should not crash
-  REQUIRE_NOTHROW(test.alloc_.FreeOffset(OffsetPtr<>::GetNull()));
+  REQUIRE_NOTHROW(test.alloc_->FreeOffset(OffsetPtr<>::GetNull()));
 
   // Allocate minimum size
-  OffsetPtr<>ptr1 = test.alloc_.AllocateOffset(1);
+  OffsetPtr<>ptr1 = test.alloc_->AllocateOffset(1);
   REQUIRE(!ptr1.IsNull());
-  test.alloc_.FreeOffset(ptr1);
+  test.alloc_->FreeOffset(ptr1);
 
   // Allocate exactly power of 2
-  OffsetPtr<>ptr2 = test.alloc_.AllocateOffset(4096);
+  OffsetPtr<>ptr2 = test.alloc_->AllocateOffset(4096);
   REQUIRE(!ptr2.IsNull());
-  test.alloc_.FreeOffset(ptr2);
+  test.alloc_->FreeOffset(ptr2);
 }
 
 /**
@@ -436,19 +450,19 @@ TEST_CASE("MpAllocator: Mixed Workload", "[mp_allocator][mixed]") {
       // Realloc
       size_t idx = i % ptrs.size();
       size_t new_size = 128 + (i % 20) * 64;
-      OffsetPtr<>new_ptr = test.alloc_.ReallocateOffset(ptrs[idx], new_size);
+      OffsetPtr<>new_ptr = test.alloc_->ReallocateOffset(ptrs[idx], new_size);
       if (!new_ptr.IsNull()) {
         ptrs[idx] = new_ptr;
       }
     } else if (i % 7 == 0 && !ptrs.empty()) {
       // Free
       size_t idx = i % ptrs.size();
-      test.alloc_.FreeOffset(ptrs[idx]);
+      test.alloc_->FreeOffset(ptrs[idx]);
       ptrs.erase(ptrs.begin() + idx);
     } else {
       // Allocate
       size_t size = 64 + (i % 30) * 32;
-      OffsetPtr<>ptr = test.alloc_.AllocateOffset(size);
+      OffsetPtr<>ptr = test.alloc_->AllocateOffset(size);
       if (!ptr.IsNull()) {
         ptrs.push_back(ptr);
       }
@@ -457,7 +471,7 @@ TEST_CASE("MpAllocator: Mixed Workload", "[mp_allocator][mixed]") {
 
   // Cleanup
   for (auto &ptr : ptrs) {
-    test.alloc_.FreeOffset(ptr);
+    test.alloc_->FreeOffset(ptr);
   }
 }
 
@@ -477,7 +491,7 @@ TEST_CASE("MpAllocator: ThreadBlock Expansion", "[mp_allocator][expansion]") {
   const size_t kNumAllocs = (16 * 1024 * 1024) / kSmallSize + 100;
 
   for (size_t i = 0; i < kNumAllocs; ++i) {
-    OffsetPtr<>ptr = test.alloc_.AllocateOffset(kSmallSize);
+    OffsetPtr<>ptr = test.alloc_->AllocateOffset(kSmallSize);
     if (!ptr.IsNull()) {
       ptrs.push_back(ptr);
     }
@@ -489,7 +503,7 @@ TEST_CASE("MpAllocator: ThreadBlock Expansion", "[mp_allocator][expansion]") {
 
   // Cleanup
   for (auto &ptr : ptrs) {
-    test.alloc_.FreeOffset(ptr);
+    test.alloc_->FreeOffset(ptr);
   }
 }
 
@@ -508,7 +522,7 @@ TEST_CASE("MpAllocator: Out of Memory", "[mp_allocator][oom]") {
   size_t total_allocated = 0;
 
   while (total_allocated < MpAllocatorTest::kAllocSize) {
-    OffsetPtr<>ptr = test.alloc_.AllocateOffset(kAllocSize);
+    OffsetPtr<>ptr = test.alloc_->AllocateOffset(kAllocSize);
     if (ptr.IsNull()) {
       break;  // Expected: out of memory
     }
@@ -520,11 +534,11 @@ TEST_CASE("MpAllocator: Out of Memory", "[mp_allocator][oom]") {
 
   // Cleanup
   for (auto &ptr : ptrs) {
-    test.alloc_.FreeOffset(ptr);
+    test.alloc_->FreeOffset(ptr);
   }
 
   // Should be able to allocate again after freeing
-  OffsetPtr<>ptr = test.alloc_.AllocateOffset(kAllocSize);
+  OffsetPtr<>ptr = test.alloc_->AllocateOffset(kAllocSize);
   REQUIRE(!ptr.IsNull());
-  test.alloc_.FreeOffset(ptr);
+  test.alloc_->FreeOffset(ptr);
 }

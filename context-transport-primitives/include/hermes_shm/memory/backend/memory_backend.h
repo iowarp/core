@@ -164,16 +164,19 @@ class MemoryBackend {
   const MemoryBackendId &GetId() const { return header_->id_; }
 
   /**
-   * Shift the data offset by an amount
-   * Updates data_size_ and data_offset_ fields
+   * Create a shifted copy of this memory backend
+   * Updates data_size_ and data_offset_ fields in the returned copy
    * DOES NOT modify data_ pointer - all sub-allocators share the same root data_ pointer
    *
    * @param offset The amount to shift the data offset
+   * @return A new MemoryBackend with shifted offset
    */
   HSHM_CROSS_FUN
-  void Shift(size_t offset) {
-    data_size_ -= offset;
-    data_offset_ += offset;
+  MemoryBackend Shift(size_t offset) const {
+    MemoryBackend shifted = *this;
+    shifted.data_size_ -= offset;
+    shifted.data_offset_ += offset;
+    return shifted;
   }
 
   /**
@@ -200,6 +203,29 @@ class MemoryBackend {
   HSHM_CROSS_FUN
   static constexpr size_t GetPrivateRegionSize() {
     return kBackendPrivate;
+  }
+
+  /**
+   * Cast data_ pointer to an Allocator type
+   *
+   * This allows treating the backend's data region as an allocator.
+   * The allocator should be initialized in-place at the start of data_.
+   *
+   * @return Pointer to allocator at the start of data_
+   */
+  template<typename AllocT>
+  HSHM_CROSS_FUN
+  AllocT* Cast() {
+    return reinterpret_cast<AllocT*>(data_);
+  }
+
+  /**
+   * Cast data_ pointer to an Allocator type (const version)
+   */
+  template<typename AllocT>
+  HSHM_CROSS_FUN
+  const AllocT* Cast() const {
+    return reinterpret_cast<const AllocT*>(data_);
   }
 
   HSHM_CROSS_FUN

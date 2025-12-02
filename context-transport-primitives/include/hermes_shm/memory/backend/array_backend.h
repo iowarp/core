@@ -73,7 +73,7 @@ class ArrayBackend : public MemoryBackend {
 
     // Data segment from region (caller ensures kBackendPrivate bytes exist before this pointer)
     data_size_ = size;
-    data_ = region;  // Points to SHARED region (after kBackendPrivate offset)
+    data_ = region + kBackendPrivate;  // Points to SHARED region (after kBackendPrivate offset)
     data_id_ = -1;
     data_offset_ = offset;
 

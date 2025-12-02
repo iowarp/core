@@ -22,12 +22,12 @@ namespace hshm::testing {
 
 /**
  * Templated allocator test class
- * Tests all CtxAllocator APIs for a given allocator type
+ * Tests all allocator APIs for a given allocator type
  */
 template<typename AllocT>
 class AllocatorTest {
  private:
-  hipc::CtxAllocator<AllocT> ctx_alloc_;
+  AllocT *alloc_;
   std::mt19937 rng_;
 
  public:
@@ -36,7 +36,7 @@ class AllocatorTest {
    * @param alloc The allocator to test
    */
   explicit AllocatorTest(AllocT *alloc)
-    : ctx_alloc_(HSHM_MCTX, alloc), rng_(std::random_device{}()) {}
+    : alloc_(alloc), rng_(std::random_device{}()) {}
 
   /**
    * Test 1: Allocate and free immediately in a loop
@@ -47,11 +47,11 @@ class AllocatorTest {
    */
   void TestAllocFreeImmediate(size_t iterations, size_t alloc_size) {
     for (size_t i = 0; i < iterations; ++i) {
-      auto ptr = ctx_alloc_->template AlignedAllocate<void>(ctx_alloc_.ctx_, alloc_size, 64);
+      auto ptr = alloc_->template AlignedAllocate<void>(alloc_size, 64);
       if (ptr.IsNull()) {
         throw std::runtime_error("Allocation failed in TestAllocFreeImmediate");
       }
-      ctx_alloc_->Free(ctx_alloc_.ctx_, ptr);
+      alloc_->Free(ptr);
     }
   }
 
@@ -70,11 +70,11 @@ class AllocatorTest {
     for (size_t iter = 0; iter < iterations; ++iter) {
       // Allocate batch
       for (size_t i = 0; i < batch_size; ++i) {
-        auto ptr = ctx_alloc_->template AlignedAllocate<void>(ctx_alloc_.ctx_, alloc_size, 64);
+        auto ptr = alloc_->template AlignedAllocate<void>(alloc_size, 64);
         if (ptr.IsNull()) {
           // Clean up already allocated pointers
           for (auto &p : ptrs) {
-            ctx_alloc_->Free(ctx_alloc_.ctx_, p);
+            alloc_->Free(p);
           }
           throw std::runtime_error("Allocation failed in TestAllocFreeBatch");
         }
@@ -83,7 +83,7 @@ class AllocatorTest {
 
       // Free batch
       for (auto &ptr : ptrs) {
-        ctx_alloc_->Free(ctx_alloc_.ctx_, ptr);
+        alloc_->Free(ptr);
       }
       ptrs.clear();
     }
@@ -118,7 +118,7 @@ class AllocatorTest {
           break;
         }
 
-        auto ptr = ctx_alloc_->template AlignedAllocate<void>(ctx_alloc_.ctx_, alloc_size, 64);
+        auto ptr = alloc_->template AlignedAllocate<void>(alloc_size, 64);
         if (ptr.IsNull()) {
           // Allocation failed - clean up and break
           break;
@@ -130,7 +130,7 @@ class AllocatorTest {
 
       // Free all allocations
       for (auto &ptr : ptrs) {
-        ctx_alloc_->Free(ctx_alloc_.ctx_, ptr);
+        alloc_->Free(ptr);
       }
       ptrs.clear();
     }

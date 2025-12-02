@@ -72,7 +72,7 @@ struct CoalesceBuddyPage : public pre::rb_node {
  *
  * Coalescing merges adjacent free pages to reduce fragmentation.
  */
-class BuddyAllocator {
+class _BuddyAllocator : public Allocator {
  private:
   static constexpr size_t kMinSize = 32;        /**< Minimum allocation size (2^5) */
   static constexpr size_t kSmallThreshold = 16384;  /**< 16KB threshold (2^14) */
@@ -93,42 +93,35 @@ class BuddyAllocator {
   pre::slist<false> *round_up_lists_;    /**< Free lists for sizes 32B - 16KB (round up) */
   pre::slist<false> *round_down_lists_;  /**< Free lists for sizes 16KB - 1MB (round down) */
 
-  // MultiProcessAllocator needs access to reconstruct pointers when attaching
-  friend class MultiProcessAllocator;
+  // _MultiProcessAllocator needs access to reconstruct pointers when attaching
+  friend class _MultiProcessAllocator;
 
  public:
-  MemoryBackend backend_;       /**< Memory backend for compatibility with FullPtr */
-
-  /**
-   * Get allocator ID (required for FullPtr construction)
-   * @return Null allocator ID for standalone allocator
-   */
-  AllocatorId GetId() const {
-    return AllocatorId();
-  }
-
   /**
    * Initialize the buddy allocator
    *
+   * @param id Allocator ID
    * @param backend Memory backend (may be a sub-allocator with data_offset_ > 0)
    * @return true on success, false on failure
    */
-  bool shm_init(const MemoryBackend &backend) {
-    // Store backend for FullPtr compatibility
-    backend_ = backend;
-    backend_.SetInitialized();
+  bool shm_init(AllocatorId id, const MemoryBackend &backend) {
+    // Store backend
+    SetBackend(backend);
+    id_ = id;
+    alloc_header_size_ = sizeof(_BuddyAllocator);
+    custom_header_size_ = 0;
 
     // Calculate space needed for free list metadata
     size_t metadata_size = kNumFreeLists * sizeof(pre::slist<false>);
     size_t aligned_metadata = ((metadata_size + 63) / 64) * 64;  // 64-byte align
 
-    if (backend_.data_size_ < aligned_metadata + kMinSize) {
+    if (backend.data_size_ < aligned_metadata + kMinSize) {
       return false;  // Not enough space
     }
 
     // Allocate free lists from beginning of this allocator's region
-    // Use backend_.data_ + backend_.data_offset_ for actual pointer
-    char *region_start = backend_.data_ + backend_.data_offset_;
+    // Use backend.data_ + backend.data_offset_ for actual pointer
+    char *region_start = backend.data_ + backend.data_offset_;
     round_up_lists_ = reinterpret_cast<pre::slist<false>*>(region_start);
     round_down_lists_ = round_up_lists_ + kNumRoundUpLists;
 
@@ -141,9 +134,9 @@ class BuddyAllocator {
     }
 
     // Set heap boundaries (offsets relative to root data_)
-    heap_begin_ = backend_.data_offset_ + aligned_metadata;
+    heap_begin_ = backend.data_offset_ + aligned_metadata;
     heap_current_ = heap_begin_;
-    heap_end_ = backend_.data_offset_ + backend_.data_size_;
+    heap_end_ = backend.data_offset_ + backend.data_size_;
 
     return true;
   }
@@ -181,7 +174,7 @@ class BuddyAllocator {
 
     // Get the actual page start and current size
     size_t page_offset = offset.load() - sizeof(BuddyPage);
-    BuddyPage *page = reinterpret_cast<BuddyPage*>(backend_.data_ + page_offset);
+    BuddyPage *page = reinterpret_cast<BuddyPage*>(GetBackendData() + page_offset);
     size_t old_usable_size = page->size_;  // Usable size without header
 
     // If the new size fits in the existing allocation, reuse it
@@ -196,8 +189,8 @@ class BuddyAllocator {
     }
 
     // Copy old data to new location
-    char *old_data = backend_.data_ + offset.load();
-    char *new_data = backend_.data_ + new_offset.load();
+    char *old_data = GetBackendData() + offset.load();
+    char *new_data = GetBackendData() + new_offset.load();
     memcpy(new_data, old_data, old_usable_size);
 
     // Free old allocation
@@ -218,7 +211,7 @@ class BuddyAllocator {
 
     // Get the actual page start (before BuddyPage header)
     size_t page_offset = offset.load() - sizeof(BuddyPage);
-    BuddyPage *page = reinterpret_cast<BuddyPage*>(backend_.data_ + page_offset);
+    BuddyPage *page = reinterpret_cast<BuddyPage*>(GetBackendData() + page_offset);
     size_t usable_size = page->size_;  // Usable size without header
     size_t total_page_size = usable_size + sizeof(BuddyPage);  // Total size for buddy system
 
@@ -266,7 +259,7 @@ class BuddyAllocator {
     for (size_t i = 0; i < kNumRoundDownLists; ++i) {
       if (!round_down_lists_[i].empty()) {
         auto node = round_down_lists_[i].pop(this);
-        FreeBuddyPage *free_page = reinterpret_cast<FreeBuddyPage*>(backend_.data_ + node.shm_.off_.load());
+        FreeBuddyPage *free_page = reinterpret_cast<FreeBuddyPage*>(GetBackendData() + node.shm_.off_.load());
         if (free_page->size_ >= alloc_size) {
           return SplitLargeAndAllocate(node.shm_.off_.load(), free_page->size_, alloc_size, list_idx);
         } else {
@@ -315,7 +308,7 @@ class BuddyAllocator {
     for (size_t i = list_idx + 1; i < kNumRoundDownLists; ++i) {
       if (!round_down_lists_[i].empty()) {
         auto node = round_down_lists_[i].pop(this);
-        FreeBuddyPage *free_page = reinterpret_cast<FreeBuddyPage*>(backend_.data_ + node.shm_.off_.load());
+        FreeBuddyPage *free_page = reinterpret_cast<FreeBuddyPage*>(GetBackendData() + node.shm_.off_.load());
         return SubsetAndAllocate(node.shm_.off_.load(), free_page->size_, total_size);
       }
     }
@@ -326,7 +319,7 @@ class BuddyAllocator {
     // Retry
     if (!round_down_lists_[list_idx].empty()) {
       auto node = round_down_lists_[list_idx].pop(this);
-      FreeBuddyPage *free_page = reinterpret_cast<FreeBuddyPage*>(backend_.data_ + node.shm_.off_.load());
+      FreeBuddyPage *free_page = reinterpret_cast<FreeBuddyPage*>(GetBackendData() + node.shm_.off_.load());
       if (free_page->size_ >= total_size) {
         return SubsetAndAllocate(node.shm_.off_.load(), free_page->size_, total_size);
       }
@@ -353,7 +346,7 @@ class BuddyAllocator {
 
       while (!list->empty()) {
         auto node = list->pop(this);
-        FreeBuddyPage *free_page = reinterpret_cast<FreeBuddyPage*>(backend_.data_ + node.shm_.off_.load());
+        FreeBuddyPage *free_page = reinterpret_cast<FreeBuddyPage*>(GetBackendData() + node.shm_.off_.load());
         size_t page_size = free_page->size_;
 
         // Convert to CoalesceBuddyPage
@@ -403,7 +396,7 @@ class BuddyAllocator {
       size_t buddy_offset = current_offset + current_size;
 
       // Add buddy to free list
-      FreeBuddyPage *buddy = reinterpret_cast<FreeBuddyPage*>(backend_.data_ + buddy_offset);
+      FreeBuddyPage *buddy = reinterpret_cast<FreeBuddyPage*>(GetBackendData() + buddy_offset);
       buddy->size_ = current_size;
 
       size_t buddy_list = GetFreeListIndex(current_size);
@@ -428,7 +421,7 @@ class BuddyAllocator {
     size_t remainder_offset = page_offset + alloc_size;
     size_t remainder_size = page_size - alloc_size;
 
-    FreeBuddyPage *remainder = reinterpret_cast<FreeBuddyPage*>(backend_.data_ + remainder_offset);
+    FreeBuddyPage *remainder = reinterpret_cast<FreeBuddyPage*>(GetBackendData() + remainder_offset);
     remainder->size_ = remainder_size;
 
     size_t remainder_list = GetFreeListIndex(remainder_size);
@@ -456,7 +449,7 @@ class BuddyAllocator {
     size_t remainder_offset = page_offset + alloc_size;
     size_t remainder_size = page_size - alloc_size;
 
-    FreeBuddyPage *remainder = reinterpret_cast<FreeBuddyPage*>(backend_.data_ + remainder_offset);
+    FreeBuddyPage *remainder = reinterpret_cast<FreeBuddyPage*>(GetBackendData() + remainder_offset);
     remainder->size_ = remainder_size;
 
     size_t remainder_list = GetFreeListIndex(remainder_size);
@@ -494,7 +487,7 @@ class BuddyAllocator {
    * @return Offset pointer to usable memory (after BuddyPage header)
    */
   OffsetPtr<> FinalizeAllocation(size_t page_offset, size_t total_page_size) {
-    BuddyPage *page = reinterpret_cast<BuddyPage*>(backend_.data_ + page_offset);
+    BuddyPage *page = reinterpret_cast<BuddyPage*>(GetBackendData() + page_offset);
     // Store usable size (excluding BuddyPage header)
     page->size_ = total_page_size - sizeof(BuddyPage);
 
@@ -543,7 +536,11 @@ class BuddyAllocator {
       return &round_down_lists_[idx - kNumRoundUpLists];
     }
   }
+
 };
+
+/** Typedef for the complete BuddyAllocator with BaseAllocator wrapper */
+using BuddyAllocator = BaseAllocator<_BuddyAllocator>;
 
 }  // namespace hshm::ipc
 

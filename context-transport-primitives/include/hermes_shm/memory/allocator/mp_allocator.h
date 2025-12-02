@@ -27,7 +27,12 @@ namespace hshm::ipc {
  * Forward declarations
  */
 class ProcessBlock;
-class MultiProcessAllocator;
+class _MultiProcessAllocator;
+
+/**
+ * Typedef for the complete MultiProcessAllocator with BaseAllocator wrapper
+ */
+typedef BaseAllocator<_MultiProcessAllocator> MultiProcessAllocator;
 
 /**
  * Per-thread allocator block providing lock-free fast-path allocation.
@@ -58,12 +63,12 @@ class ThreadBlock : public pre::slist_node {
     tid_ = tid;
 
     // Create a shifted backend that starts after the ThreadBlock header
-    MemoryBackend thread_backend = backend;
     size_t header_size = sizeof(ThreadBlock);
-    thread_backend.Shift(header_size);
+    MemoryBackend thread_backend = backend.Shift(header_size);
 
     // Initialize the buddy allocator with the shifted backend
-    return alloc_.shm_init(thread_backend);
+    alloc_.shm_init(AllocatorId(backend.GetId(), tid_), thread_backend);
+    return true;
   }
 
   /**
@@ -122,10 +127,29 @@ class ProcessBlock : public pre::slist_node {
   BuddyAllocator alloc_;       /**< Allocator for managing ThreadBlock regions */
   pre::slist<false> threads_;  /**< List of ThreadBlocks */
 
+  // Thread-local storage keys (process-local, not shared)
+  ThreadLocalKey tblock_key_;  /**< TLS key for ThreadBlock* */
+  ThreadLocalKey pblock_key_;  /**< TLS key for ProcessBlock* */
+
   /**
    * Default constructor
    */
   ProcessBlock() : pid_(-1), tid_count_(0) {}
+
+  /**
+   * Set up thread-local storage keys
+   * @return true on success, false on failure
+   */
+  bool SetupTls() {
+    void *null_ptr = nullptr;
+    if (!HSHM_THREAD_MODEL->CreateTls<void>(tblock_key_, null_ptr)) {
+      return false;
+    }
+    if (!HSHM_THREAD_MODEL->CreateTls<void>(pblock_key_, null_ptr)) {
+      return false;
+    }
+    return true;
+  }
 
   /**
    * Initialize the process block with a memory region
@@ -146,14 +170,14 @@ class ProcessBlock : public pre::slist_node {
     size_t header_size = sizeof(ProcessBlock);
 
     // Create a shifted backend for the buddy allocator
-    MemoryBackend process_backend = backend;
     // Calculate offset from root to this region, then shift past header
     size_t region_offset = region - backend.data_;
-    process_backend.Shift(region_offset + header_size);
+    MemoryBackend process_backend = backend.Shift(region_offset + header_size);
     process_backend.data_size_ = size - header_size;
 
     // Initialize buddy allocator for managing thread blocks
-    return alloc_.shm_init(process_backend);
+    alloc_.shm_init(AllocatorId(backend.GetId(), pid_), process_backend);
+    return true;
   }
 
   /**
@@ -175,7 +199,7 @@ class ProcessBlock : public pre::slist_node {
     }
 
     // Convert offset to pointer
-    char *thread_ptr = alloc_.backend_.data_ + thread_offset.load();
+    char *thread_ptr = alloc_.GetBackend().data_ + thread_offset.load();
     ThreadBlock *tblock = reinterpret_cast<ThreadBlock*>(thread_ptr);
 
     // Initialize ThreadBlock in-place
@@ -224,39 +248,12 @@ class ProcessBlock : public pre::slist_node {
 };
 
 /**
- * Global header for the MultiProcessAllocator
- *
- * This header is stored at the beginning of the shared memory region
- * and contains the process list and global state.
+ * Private header stored in backend's private region (process-local, not shared)
  */
-class MultiProcessAllocatorHeader {
- public:
-  int pid_count_;                /**< Number of processes */
-  pre::slist<false> alloc_procs_;/**< Active ProcessBlocks */
-  pre::slist<false> free_procs_; /**< Free ProcessBlocks (not currently used) */
-  hshm::Mutex lock_;             /**< Mutex protecting process lists */
+struct MultiProcessAllocatorPrivateHeader {
+  ProcessBlock *process_block_;  /**< Pointer to this process's ProcessBlock */
 
-  /**
-   * Default constructor
-   */
-  MultiProcessAllocatorHeader() : pid_count_(0) {}
-
-  /**
-   * Initialize the header
-   */
-  void Init() {
-    pid_count_ = 0;
-    lock_.Init();
-    alloc_procs_.Init();
-    free_procs_.Init();
-  }
-
-  /**
-   * Check if header is initialized (has at least one process)
-   */
-  bool IsInitialized() const {
-    return pid_count_ > 0;
-  }
+  MultiProcessAllocatorPrivateHeader() : process_block_(nullptr) {}
 };
 
 /**
@@ -274,50 +271,76 @@ class MultiProcessAllocatorHeader {
  *
  * This design minimizes contention and provides malloc-like performance
  * for the common case of thread-local allocations.
+ *
+ * Memory Layout:
+ * The allocator itself is placed at the beginning of shared memory.
+ * Header fields (pid_count_, lists, lock) are part of the allocator structure.
+ * The BuddyAllocator follows immediately after the allocator header.
  */
-class MultiProcessAllocator {
+class _MultiProcessAllocator : public Allocator {
  public:
-  MemoryBackend backend_;                    /**< Root memory backend (public for FullPtr) */
+  // Header fields (shared memory compatible)
+  int pid_count_;                /**< Number of processes */
+  pre::slist<false> alloc_procs_;/**< Active ProcessBlocks */
+  pre::slist<false> free_procs_; /**< Free ProcessBlocks */
+  hshm::Mutex lock_;             /**< Mutex protecting process lists */
+
+  // Allocator state (shared memory compatible)
+  BuddyAllocator alloc_;         /**< Global buddy allocator */
+  size_t process_unit_;          /**< Default ProcessBlock size (1GB) */
+  size_t thread_unit_;           /**< Default ThreadBlock size (16MB) */
 
  private:
-  MultiProcessAllocatorHeader *header_;      /**< Global header */
-  BuddyAllocator alloc_;                     /**< Global buddy allocator */
-  size_t process_unit_;                      /**< Default ProcessBlock size (1GB) */
-  size_t thread_unit_;                       /**< Default ThreadBlock size (16MB) */
-
-  // Thread-local storage keys
-  ThreadLocalKey tblock_key_;                /**< TLS key for ThreadBlock* */
-  ThreadLocalKey pblock_key_;                /**< TLS key for ProcessBlock* */
+  // Process-local storage (NOT in shared memory)
+  static thread_local ProcessBlock *process_block_;  /**< Thread-local process block pointer */
 
  public:
   /**
    * Default constructor
    */
-  MultiProcessAllocator() : header_(nullptr), process_unit_(0), thread_unit_(0) {}
+  _MultiProcessAllocator() : pid_count_(0), process_unit_(0), thread_unit_(0) {}
+
+  /**
+   * Set the process block for this process
+   */
+  void SetProcessBlock(ProcessBlock *pblock) {
+    process_block_ = pblock;
+  }
+
+  /**
+   * Get the process block for this process
+   */
+  ProcessBlock* GetProcessBlock() const {
+    return process_block_;
+  }
+
 
   /**
    * Initialize the allocator with a new memory region
    *
-   * @param backend Memory backend to use
+   * @param id Allocator ID
+   * @param backend Memory backend to use (allocator will be placed at backend.data_)
    * @param size Total size of the memory region
    * @return true on success, false on failure
    */
-  bool shm_init(const MemoryBackend &backend, size_t size) {
-    backend_ = backend;  // Store original backend for FullPtr construction
+  bool shm_init(AllocatorId id, const MemoryBackend &backend, size_t size) {
+    id_ = id;
+    SetBackend(backend);
+    alloc_header_size_ = sizeof(_MultiProcessAllocator);
+    custom_header_size_ = 0;  // No custom header for MultiProcessAllocator
 
-    // Place header at the beginning
-    header_ = reinterpret_cast<MultiProcessAllocatorHeader*>(backend_.data_);
-    new (header_) MultiProcessAllocatorHeader();
-    header_->Init();
+    // Initialize header fields directly (we are the header!)
+    pid_count_ = 0;
+    lock_.Init();
+    alloc_procs_.Init();
+    free_procs_.Init();
 
-    // Create a shifted backend for the global allocator (don't modify backend_!)
-    MemoryBackend alloc_backend = backend_;
-    alloc_backend.Shift(sizeof(MultiProcessAllocatorHeader));
+    // Create a shifted backend for the global allocator
+    // It starts after this allocator object
+    MemoryBackend alloc_backend = backend.Shift(sizeof(_MultiProcessAllocator));
 
     // Initialize global buddy allocator with shifted backend
-    if (!alloc_.shm_init(alloc_backend)) {
-      return false;
-    }
+    alloc_.shm_init(AllocatorId(backend.GetId(), 0), alloc_backend);
 
     // Set default sizes based on available memory
     // For testing with smaller memory regions, use smaller defaults
@@ -337,25 +360,33 @@ class MultiProcessAllocator {
     }
 
     // Initialize ProcessBlock
-    char *pblock_ptr = backend_.data_ + pblock_offset.load();
+    MemoryBackend root_backend = GetBackend();
+    char *pblock_ptr = root_backend.data_ + pblock_offset.load();
     ProcessBlock *pblock = reinterpret_cast<ProcessBlock*>(pblock_ptr);
     new (pblock) ProcessBlock();
 
-    // The pblock_offset is already relative to backend_.data_, so pblock_ptr is correct
-    if (!pblock->shm_init(backend_, pblock_ptr, process_unit_, getpid())) {
+    // The pblock_offset is already relative to root_backend.data_, so pblock_ptr is correct
+    if (!pblock->shm_init(root_backend, pblock_ptr, process_unit_, getpid())) {
       alloc_.FreeOffset(pblock_offset);
       return false;
     }
+
+    // Set up TLS for this process block
+    if (!pblock->SetupTls()) {
+      return false;
+    }
+
+    // Store process block pointer in private header
+    SetProcessBlock(pblock);
 
     // Add to process list
     ShmPtr<> pblock_shm;
     pblock_shm.off_ = pblock_offset;
     FullPtr<pre::slist_node> pblock_node(reinterpret_cast<pre::slist_node*>(pblock), pblock_shm);
-    header_->alloc_procs_.emplace(&alloc_, pblock_node);
-    header_->pid_count_++;
+    alloc_procs_.emplace(&alloc_, pblock_node);
+    pid_count_++;
 
-    // Set up TLS
-    return SetupTls();
+    return true;
   }
 
   /**
@@ -373,24 +404,18 @@ class MultiProcessAllocator {
   bool shm_attach(const MemoryBackend &backend,
                   size_t process_unit = 0,
                   size_t thread_unit = 0) {
-    backend_ = backend;
-
-    // Attach to existing header (don't reinitialize!)
-    header_ = reinterpret_cast<MultiProcessAllocatorHeader*>(backend_.data_);
-
-    // Verify header was initialized
-    if (!header_->IsInitialized()) {
+    // Verify allocator was initialized
+    if (pid_count_ == 0) {
       return false;
     }
 
     // Create a shifted backend for the global allocator
-    MemoryBackend alloc_backend = backend_;
-    alloc_backend.Shift(sizeof(MultiProcessAllocatorHeader));
+    MemoryBackend alloc_backend = backend.Shift(sizeof(_MultiProcessAllocator));
 
     // Attach to the buddy allocator (don't reinitialize!)
     // Reconstruct pointers to the free lists that are already in shared memory
-    alloc_.backend_ = alloc_backend;
-    alloc_.backend_.SetInitialized();
+    alloc_.GetBackend() = alloc_backend;
+    alloc_.GetBackend().SetInitialized();
 
     // Calculate aligned metadata size (must match what shm_init did)
     // Use the same constants as BuddyAllocator::shm_init
@@ -411,7 +436,7 @@ class MultiProcessAllocator {
     alloc_.heap_end_ = alloc_backend.data_offset_ + alloc_backend.data_size_;
 
     // Set default sizes from backend size if not specified
-    size_t size = backend_.data_size_;
+    size_t size = backend.data_size_;
     if (process_unit == 0) {
       if (size < 1ULL * 1024 * 1024 * 1024) {
         process_unit_ = size / 4;
@@ -439,14 +464,23 @@ class MultiProcessAllocator {
     }
 
     // Initialize ProcessBlock
-    char *pblock_ptr = backend_.data_ + pblock_offset.load();
+    MemoryBackend root_backend = GetBackend();
+    char *pblock_ptr = root_backend.data_ + pblock_offset.load();
     ProcessBlock *pblock = reinterpret_cast<ProcessBlock*>(pblock_ptr);
     new (pblock) ProcessBlock();
 
-    if (!pblock->shm_init(backend_, pblock_ptr, process_unit_, getpid())) {
+    if (!pblock->shm_init(root_backend, pblock_ptr, process_unit_, getpid())) {
       alloc_.FreeOffset(pblock_offset);
       return false;
     }
+
+    // Set up TLS for this process block
+    if (!pblock->SetupTls()) {
+      return false;
+    }
+
+    // Store process block pointer in private header
+    SetProcessBlock(pblock);
 
     // Add to process list (with locking since other processes may be modifying)
     ShmPtr<> pblock_shm;
@@ -454,13 +488,12 @@ class MultiProcessAllocator {
     FullPtr<pre::slist_node> pblock_node(reinterpret_cast<pre::slist_node*>(pblock), pblock_shm);
 
     // Lock while modifying shared header
-    header_->lock_.Lock(getpid());
-    header_->alloc_procs_.emplace(&alloc_, pblock_node);
-    header_->pid_count_++;
-    header_->lock_.Unlock();
+    lock_.Lock(getpid());
+    alloc_procs_.emplace(&alloc_, pblock_node);
+    pid_count_++;
+    lock_.Unlock();
 
-    // Set up TLS
-    return SetupTls();
+    return true;
   }
 
   /**
@@ -468,22 +501,6 @@ class MultiProcessAllocator {
    */
   void shm_detach() {
     // TLS cleanup is handled automatically by pthread_key_create destructor
-  }
-
- private:
-  /**
-   * Set up thread-local storage keys
-   * @return true on success, false on failure
-   */
-  bool SetupTls() {
-    void *null_ptr = nullptr;
-    if (!HSHM_THREAD_MODEL->CreateTls<void>(tblock_key_, null_ptr)) {
-      return false;
-    }
-    if (!HSHM_THREAD_MODEL->CreateTls<void>(pblock_key_, null_ptr)) {
-      return false;
-    }
-    return true;
   }
 
  public:
@@ -498,32 +515,31 @@ class MultiProcessAllocator {
    * @return Pointer to the thread's ThreadBlock, or nullptr on failure
    */
   ThreadBlock* EnsureTls() {
-    // Check if we already have a ThreadBlock in TLS
-    void *tblock_data = HSHM_THREAD_MODEL->GetTls<void>(tblock_key_);
-    if (tblock_data != nullptr) {
-      return reinterpret_cast<ThreadBlock*>(tblock_data);
-    }
-
-    // Get or create ProcessBlock
-    void *pblock_data = HSHM_THREAD_MODEL->GetTls<void>(pblock_key_);
-    ProcessBlock *pblock = reinterpret_cast<ProcessBlock*>(pblock_data);
+    // Get or create ProcessBlock from private header
+    ProcessBlock *pblock = GetProcessBlock();
     if (pblock == nullptr) {
-      // Find or allocate ProcessBlock for this process
+      // First time - allocate ProcessBlock
       pblock = AllocateProcessBlock();
       if (pblock == nullptr) {
         return nullptr;
       }
-      HSHM_THREAD_MODEL->SetTls<void>(pblock_key_, reinterpret_cast<void*>(pblock));
+      SetProcessBlock(pblock);
+    }
+
+    // Check if we already have a ThreadBlock in TLS
+    void *tblock_data = HSHM_THREAD_MODEL->GetTls<void>(pblock->tblock_key_);
+    if (tblock_data != nullptr) {
+      return reinterpret_cast<ThreadBlock*>(tblock_data);
     }
 
     // Allocate ThreadBlock from ProcessBlock
-    FullPtr<ThreadBlock> tblock_ptr = pblock->AllocateThreadBlock(backend_, thread_unit_);
+    FullPtr<ThreadBlock> tblock_ptr = pblock->AllocateThreadBlock(GetBackend(), thread_unit_);
     if (tblock_ptr.IsNull()) {
       // Try expanding ProcessBlock
       OffsetPtr<> expand_offset = alloc_.AllocateOffset(thread_unit_);
       if (!expand_offset.IsNull()) {
         pblock->Expand(expand_offset);
-        tblock_ptr = pblock->AllocateThreadBlock(backend_, thread_unit_);
+        tblock_ptr = pblock->AllocateThreadBlock(GetBackend(), thread_unit_);
       }
     }
 
@@ -533,7 +549,7 @@ class MultiProcessAllocator {
 
     // Store in TLS
     ThreadBlock *tblock = tblock_ptr.ptr_;
-    HSHM_THREAD_MODEL->SetTls<void>(tblock_key_, reinterpret_cast<void*>(tblock));
+    HSHM_THREAD_MODEL->SetTls<void>(pblock->tblock_key_, reinterpret_cast<void*>(tblock));
     return tblock;
   }
 
@@ -543,49 +559,55 @@ class MultiProcessAllocator {
    * @return Pointer to ProcessBlock, or nullptr on failure
    */
   ProcessBlock* AllocateProcessBlock() {
-    int pid = getpid();
-
     // Lock the global process list
-    header_->lock_.Lock(0);
+    lock_.Lock(0);
 
-    // Search for existing ProcessBlock for this PID
-    if (!header_->alloc_procs_.empty()) {
-      auto node = header_->alloc_procs_.peek(&alloc_);
+    ProcessBlock *pblock = nullptr;
+    OffsetPtr<> pblock_offset;
+    int pid;
+    bool reused = false;
+
+    // Try to pop from free_procs_ first
+    if (!free_procs_.empty()) {
+      auto node = free_procs_.pop(&alloc_);
       if (!node.IsNull()) {
-        ProcessBlock *pblock = reinterpret_cast<ProcessBlock*>(node.ptr_);
-        if (pblock->pid_ == pid) {
-          header_->lock_.Unlock();
-          return pblock;
-        }
+        pblock = reinterpret_cast<ProcessBlock*>(node.ptr_);
+        pblock_offset = OffsetPtr<>(node.shm_.off_.load());
+        pid = pblock->pid_;  // Reuse existing PID
+        reused = true;
       }
     }
 
-    // Allocate new ProcessBlock
-    OffsetPtr<> pblock_offset = alloc_.AllocateOffset(process_unit_);
-    if (pblock_offset.IsNull()) {
-      header_->lock_.Unlock();
-      return nullptr;
+    // If not reused, allocate new ProcessBlock
+    if (!reused) {
+      pblock_offset = alloc_.AllocateOffset(process_unit_);
+      if (pblock_offset.IsNull()) {
+        lock_.Unlock();
+        return nullptr;
+      }
+
+      // Initialize ProcessBlock
+      char *pblock_ptr = alloc_.GetBackend().data_ + pblock_offset.load();
+      pblock = reinterpret_cast<ProcessBlock*>(pblock_ptr);
+      new (pblock) ProcessBlock();
+
+      // Allocate new PID using pid_count_
+      pid = pid_count_++;
+
+      if (!pblock->shm_init(GetBackend(), pblock_ptr, process_unit_, pid)) {
+        alloc_.FreeOffset(pblock_offset);
+        lock_.Unlock();
+        return nullptr;
+      }
     }
 
-    // Initialize ProcessBlock
-    char *pblock_ptr = alloc_.backend_.data_ + pblock_offset.load();
-    ProcessBlock *pblock = reinterpret_cast<ProcessBlock*>(pblock_ptr);
-    new (pblock) ProcessBlock();
-
-    if (!pblock->shm_init(backend_, pblock_ptr, process_unit_, pid)) {
-      alloc_.FreeOffset(pblock_offset);
-      header_->lock_.Unlock();
-      return nullptr;
-    }
-
-    // Add to process list
+    // Add to allocated process list
     ShmPtr<> pblock_shm;
     pblock_shm.off_ = pblock_offset;
     FullPtr<pre::slist_node> pblock_node(reinterpret_cast<pre::slist_node*>(pblock), pblock_shm);
-    header_->alloc_procs_.emplace(&alloc_, pblock_node);
-    header_->pid_count_++;
+    alloc_procs_.emplace(&alloc_, pblock_node);
 
-    header_->lock_.Unlock();
+    lock_.Unlock();
     return pblock;
   }
 
@@ -606,8 +628,7 @@ class MultiProcessAllocator {
     }
 
     // Tier 2: Medium path - try expanding ThreadBlock from ProcessBlock
-    void *pblock_data = HSHM_THREAD_MODEL->GetTls<void>(pblock_key_);
-    ProcessBlock *pblock = reinterpret_cast<ProcessBlock*>(pblock_data);
+    ProcessBlock *pblock = GetProcessBlock();
     if (pblock != nullptr) {
       OffsetPtr<> expand_offset = alloc_.AllocateOffset(size);
       if (!expand_offset.IsNull()) {
@@ -622,9 +643,9 @@ class MultiProcessAllocator {
     }
 
     // Tier 3: Slow path - allocate directly from global allocator
-    header_->lock_.Lock(0);
+    lock_.Lock(0);
     OffsetPtr<> ptr = alloc_.AllocateOffset(size);
-    header_->lock_.Unlock();
+    lock_.Unlock();
     return ptr;
   }
 
@@ -650,8 +671,8 @@ class MultiProcessAllocator {
     // We need to determine the size of the old allocation
     // For now, copy up to new_size (assuming old is at least as large)
     // TODO: Store allocation sizes to copy exact old size
-    char *old_data = backend_.data_ + offset.load();
-    char *new_data = backend_.data_ + new_offset.load();
+    char *old_data = GetBackend().data_ + offset.load();
+    char *new_data = GetBackend().data_ + new_offset.load();
     memcpy(new_data, old_data, new_size);
 
     // Free old allocation
@@ -672,30 +693,39 @@ class MultiProcessAllocator {
 
     // Determine which allocator owns this memory
     // For simplicity, try thread-local first, then global
-    void *tblock_data = HSHM_THREAD_MODEL->GetTls<void>(tblock_key_);
-    ThreadBlock *tblock = reinterpret_cast<ThreadBlock*>(tblock_data);
-    if (tblock != nullptr) {
-      // Check if offset is within thread block range
-      // For now, just try to free it
-      tblock->Free(offset);
-      return;
+    ProcessBlock *pblock = GetProcessBlock();
+    if (pblock != nullptr) {
+      void *tblock_data = HSHM_THREAD_MODEL->GetTls<void>(pblock->tblock_key_);
+      ThreadBlock *tblock = reinterpret_cast<ThreadBlock*>(tblock_data);
+      if (tblock != nullptr) {
+        // Check if offset is within thread block range
+        // For now, just try to free it
+        tblock->Free(offset);
+        return;
+      }
     }
 
     // Fall back to global allocator
-    header_->lock_.Lock(0);
+    lock_.Lock(0);
     alloc_.FreeOffset(offset);
-    header_->lock_.Unlock();
+    lock_.Unlock();
   }
 
   /**
-   * Get the allocator ID (for compatibility with allocator interface)
+   * Get the custom header of the shared-memory allocator
    *
-   * @return Allocator ID
+   * MultiProcessAllocator does not support custom headers, so this returns nullptr.
+   *
+   * @return nullptr
    */
-  AllocatorId GetId() const {
-    return AllocatorId(backend_.GetId(), 0);
+  template <typename HEADER_T>
+  HSHM_INLINE_CROSS_FUN HEADER_T *GetCustomHeader() {
+    return nullptr;
   }
 };
+
+// Define static thread_local member
+thread_local ProcessBlock* _MultiProcessAllocator::process_block_ = nullptr;
 
 }  // namespace hshm::ipc
 
