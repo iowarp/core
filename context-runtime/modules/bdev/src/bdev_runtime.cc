@@ -301,6 +301,9 @@ void Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx) {
   // Store user-provided performance characteristics
   perf_metrics_ = params.perf_metrics_;
 
+  // Store maximum blocks per operation
+  max_blocks_per_operation_ = params.max_blocks_per_operation_;
+
   // Set success result
   task->return_code_ = 0;
 }
@@ -376,6 +379,19 @@ void Runtime::AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task,
       task->blocks_.clear();
       HELOG(kError, "Out of space: {} bytes requested", total_size);
       task->return_code_ = 1; // Out of space
+      return;
+    }
+
+    // Check if we would exceed max_blocks limit
+    if (local_blocks.size() >= max_blocks_per_operation_) {
+      // Return all allocated blocks to the GlobalBlockMap
+      for (Block &allocated_block : local_blocks) {
+        global_block_map_.FreeBlock(worker_id, allocated_block);
+      }
+      task->blocks_.clear();
+      HELOG(kError, "Operation requires {} blocks but max_blocks_per_operation is {}",
+            io_divisions.size(), max_blocks_per_operation_);
+      task->return_code_ = 2; // Too many blocks required
       return;
     }
 

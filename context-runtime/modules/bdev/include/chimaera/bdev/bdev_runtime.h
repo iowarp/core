@@ -148,7 +148,7 @@ class Runtime : public chi::Container {
   using CreateParams = chimaera::bdev::CreateParams;
   
   Runtime() : bdev_type_(BdevType::kFile), file_fd_(-1), file_size_(0), alignment_(4096),
-              io_depth_(32), ram_buffer_(nullptr), ram_size_(0),
+              io_depth_(32), max_blocks_per_operation_(64), ram_buffer_(nullptr), ram_size_(0),
               total_reads_(0), total_writes_(0),
               total_bytes_read_(0), total_bytes_written_(0) {
     start_time_ = std::chrono::high_resolution_clock::now();
@@ -254,7 +254,8 @@ class Runtime : public chi::Container {
   chi::u64 file_size_;                            // Total file size
   chi::u32 alignment_;                            // I/O alignment requirement
   chi::u32 io_depth_;                             // Max concurrent I/O operations
-  
+  chi::u32 max_blocks_per_operation_;             // Maximum blocks per I/O operation
+
   // RAM-based storage (kRam)
   char* ram_buffer_;                              // RAM storage buffer
   chi::u64 ram_size_;                            // Total RAM buffer size

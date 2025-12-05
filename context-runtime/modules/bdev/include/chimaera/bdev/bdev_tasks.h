@@ -175,6 +175,7 @@ struct CreateParams {
                         // required for kRam)
   chi::u32 io_depth_;   // libaio queue depth (ignored for kRam)
   chi::u32 alignment_;  // I/O alignment (default 4096)
+  chi::u32 max_blocks_per_operation_; // Maximum blocks per I/O operation (default 64)
 
   // Performance characteristics (user-defined instead of benchmarked)
   PerfMetrics perf_metrics_; // User-provided performance characteristics
@@ -186,7 +187,7 @@ struct CreateParams {
   // estimates)
   CreateParams()
       : bdev_type_(BdevType::kFile), total_size_(0), io_depth_(32),
-        alignment_(4096) {
+        alignment_(4096), max_blocks_per_operation_(64) {
     // Set conservative default performance characteristics
     perf_metrics_.read_bandwidth_mbps_ = 100.0; // 100 MB/s
     perf_metrics_.write_bandwidth_mbps_ = 80.0; // 80 MB/s
@@ -199,7 +200,7 @@ struct CreateParams {
   CreateParams(BdevType bdev_type, chi::u64 total_size = 0,
                chi::u32 io_depth = 32, chi::u32 alignment = 4096)
       : bdev_type_(bdev_type), total_size_(total_size), io_depth_(io_depth),
-        alignment_(alignment) {
+        alignment_(alignment), max_blocks_per_operation_(64) {
     // Set conservative default performance characteristics
     perf_metrics_.read_bandwidth_mbps_ = 100.0;
     perf_metrics_.write_bandwidth_mbps_ = 80.0;
@@ -219,7 +220,7 @@ struct CreateParams {
   CreateParams(BdevType bdev_type, chi::u64 total_size, chi::u32 io_depth,
                chi::u32 alignment, const PerfMetrics *perf_metrics = nullptr)
       : bdev_type_(bdev_type), total_size_(total_size), io_depth_(io_depth),
-        alignment_(alignment) {
+        alignment_(alignment), max_blocks_per_operation_(64) {
     // Set performance metrics (use provided metrics or defaults)
     if (perf_metrics != nullptr) {
       perf_metrics_ = *perf_metrics;
@@ -247,7 +248,7 @@ struct CreateParams {
 
   // Serialization support for cereal
   template <class Archive> void serialize(Archive &ar) {
-    ar(bdev_type_, total_size_, io_depth_, alignment_, perf_metrics_);
+    ar(bdev_type_, total_size_, io_depth_, alignment_, max_blocks_per_operation_, perf_metrics_);
   }
 
   /**
@@ -322,7 +323,7 @@ using CreateTask = chimaera::admin::GetOrCreatePoolTask<CreateParams>;
 struct AllocateBlocksTask : public chi::Task {
   // Task-specific data
   IN chi::u64 size_;                  // Requested total size
-  OUT ArrayVector<Block, 16> blocks_;  // Allocated blocks information (max 16 blocks)
+  OUT ArrayVector<Block, 128> blocks_;  // Allocated blocks information (configurable max, up to 128 blocks)
 
   /** SHM default constructor */
   explicit AllocateBlocksTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc)
@@ -367,7 +368,7 @@ struct AllocateBlocksTask : public chi::Task {
  */
 struct FreeBlocksTask : public chi::Task {
   // Task-specific data
-  IN ArrayVector<Block, 16> blocks_;  // Blocks to free (max 16 blocks)
+  IN ArrayVector<Block, 128> blocks_;  // Blocks to free (configurable max, up to 128 blocks)
 
   /** SHM default constructor */
   explicit FreeBlocksTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc)
@@ -420,7 +421,7 @@ struct FreeBlocksTask : public chi::Task {
  */
 struct WriteTask : public chi::Task {
   // Task-specific data
-  IN ArrayVector<Block, 16> blocks_; // Blocks to write to (max 16 blocks)
+  IN ArrayVector<Block, 128> blocks_; // Blocks to write to (configurable max, up to 128 blocks)
   IN hipc::Pointer data_;            // Data to write (pointer-based)
   IN size_t length_;                 // Size of data to write
   OUT chi::u64 bytes_written_;       // Number of bytes actually written
@@ -433,7 +434,7 @@ struct WriteTask : public chi::Task {
   explicit WriteTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
                      const chi::TaskId &task_node, const chi::PoolId &pool_id,
                      const chi::PoolQuery &pool_query,
-                     const ArrayVector<Block, 16> &blocks,
+                     const ArrayVector<Block, 128> &blocks,
                      hipc::Pointer data, size_t length)
       : chi::Task(alloc, task_node, pool_id, pool_query, 10), blocks_(blocks),
         data_(data), length_(length), bytes_written_(0) {
@@ -490,7 +491,7 @@ struct WriteTask : public chi::Task {
  */
 struct ReadTask : public chi::Task {
   // Task-specific data
-  IN ArrayVector<Block, 16> blocks_; // Blocks to read from (max 16 blocks)
+  IN ArrayVector<Block, 128> blocks_; // Blocks to read from (configurable max, up to 128 blocks)
   OUT hipc::Pointer data_;           // Read data (pointer-based)
   INOUT size_t
       length_; // Size of data buffer (IN: buffer size, OUT: actual size)
@@ -504,7 +505,7 @@ struct ReadTask : public chi::Task {
   explicit ReadTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
                     const chi::TaskId &task_node, const chi::PoolId &pool_id,
                     const chi::PoolQuery &pool_query,
-                    const ArrayVector<Block, 16> &blocks,
+                    const ArrayVector<Block, 128> &blocks,
                     hipc::Pointer data, size_t length)
       : chi::Task(alloc, task_node, pool_id, pool_query, 10), blocks_(blocks),
         data_(data), length_(length), bytes_read_(0) {

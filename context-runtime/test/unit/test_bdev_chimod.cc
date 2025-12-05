@@ -64,9 +64,9 @@ int g_test_counter = 0;
  * @param block Single block to wrap
  * @return ArrayVector containing the single block
  */
-inline chimaera::bdev::ArrayVector<chimaera::bdev::Block, 16> WrapBlock(
+inline chimaera::bdev::ArrayVector<chimaera::bdev::Block, 128> WrapBlock(
     const chimaera::bdev::Block& block) {
-  chimaera::bdev::ArrayVector<chimaera::bdev::Block, 16> blocks;
+  chimaera::bdev::ArrayVector<chimaera::bdev::Block, 128> blocks;
   blocks.push_back(block);
   return blocks;
 }
@@ -76,9 +76,9 @@ inline chimaera::bdev::ArrayVector<chimaera::bdev::Block, 16> WrapBlock(
  * @param blocks_vec std::vector of blocks
  * @return ArrayVector containing all blocks
  */
-inline chimaera::bdev::ArrayVector<chimaera::bdev::Block, 16> ConvertBlocks(
+inline chimaera::bdev::ArrayVector<chimaera::bdev::Block, 128> ConvertBlocks(
     const std::vector<chimaera::bdev::Block>& blocks_vec) {
-  chimaera::bdev::ArrayVector<chimaera::bdev::Block, 16> blocks;
+  chimaera::bdev::ArrayVector<chimaera::bdev::Block, 128> blocks;
   for (const auto& block : blocks_vec) {
     blocks.push_back(block);
   }

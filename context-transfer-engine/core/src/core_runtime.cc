@@ -1422,7 +1422,7 @@ chi::u32 Runtime::ModifyExistingData(const std::vector<BlobBlock> &blocks,
       hipc::Pointer data_ptr = data + data_buffer_offset;
 
       // Wrap single block in ArrayVector for AsyncWrite
-      chimaera::bdev::ArrayVector<chimaera::bdev::Block, 16> blocks;
+      chimaera::bdev::ArrayVector<chimaera::bdev::Block, 128> blocks;
       blocks.push_back(bdev_block);
 
       chimaera::bdev::Client cte_clientcopy = block.bdev_client_;
@@ -1535,7 +1535,7 @@ chi::u32 Runtime::ReadData(const std::vector<BlobBlock> &blocks,
       hipc::Pointer data_ptr = data + data_buffer_offset;
 
       // Wrap single block in ArrayVector for AsyncRead
-      chimaera::bdev::ArrayVector<chimaera::bdev::Block, 16> blocks;
+      chimaera::bdev::ArrayVector<chimaera::bdev::Block, 128> blocks;
       blocks.push_back(bdev_block);
 
       chimaera::bdev::Client cte_clientcopy = block.bdev_client_;

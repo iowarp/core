@@ -288,7 +288,7 @@ void IOWorkerThread(size_t thread_id, const BenchmarkConfig &config,
       write_ptr.off_ += bytes_written;
 
       // Create ArrayVector with single block for Write operation
-      chimaera::bdev::ArrayVector<chimaera::bdev::Block, 16> single_block;
+      chimaera::bdev::ArrayVector<chimaera::bdev::Block, 128> single_block;
       single_block.push_back(blocks[block_idx]);
 
       chi::u64 ret =
