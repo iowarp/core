@@ -156,10 +156,11 @@ class MemoryBackend {
   size_t data_capacity_; // Full size of backend (doesn't change with shift)
   int data_id_;     // Device ID for the data buffer (GPU ID, etc.)
   u64 data_offset_; // Offset from root backend (0 if this is root, non-zero for sub-allocators)
+  size_t priv_header_off_; // Offset from buffer start to private header (dynamic tracking)
 
  public:
   HSHM_CROSS_FUN
-  MemoryBackend() : header_(nullptr), md_(nullptr), md_size_(0), data_(nullptr), data_size_(0), data_capacity_(0), data_id_(-1), data_offset_(0) {}
+  MemoryBackend() : header_(nullptr), md_(nullptr), md_size_(0), data_(nullptr), data_size_(0), data_capacity_(0), data_id_(-1), data_offset_(0), priv_header_off_(0) {}
 
   ~MemoryBackend() = default;
 
@@ -253,6 +254,76 @@ class MemoryBackend {
   MemoryBackend ShiftTo(FullPtr<T, PointerT> ptr, size_t size) const;
 
   /**
+   * Get pointer to the private header given a data pointer.
+   * Uses the dynamic priv_header_off_ offset for correct calculation.
+   *
+   * @tparam T Type to cast the private header to (default: char)
+   * @param data The data pointer to calculate offset from
+   * @return Pointer to the kBackendHeaderSize-byte private header, or nullptr if data is null
+   */
+  template<typename T = char>
+  HSHM_CROSS_FUN
+  T *GetPrivateHeader(char *data) {
+    if (data == nullptr) {
+      return nullptr;
+    }
+    return reinterpret_cast<T*>(data - priv_header_off_);
+  }
+
+  /**
+   * Get pointer to the private header given a data pointer (const version).
+   * Uses the dynamic priv_header_off_ offset for correct calculation.
+   *
+   * @tparam T Type to cast the private header to (default: char)
+   * @param data The data pointer to calculate offset from
+   * @return Const pointer to the kBackendHeaderSize-byte private header, or nullptr if data is null
+   */
+  template<typename T = char>
+  HSHM_CROSS_FUN
+  const T *GetPrivateHeader(const char *data) const {
+    if (data == nullptr) {
+      return nullptr;
+    }
+    return reinterpret_cast<const T*>(data - priv_header_off_);
+  }
+
+  /**
+   * Get pointer to the shared header given a data pointer.
+   * Shared header is located kBackendHeaderSize bytes after the private header.
+   *
+   * @tparam T Type to cast the shared header to (default: char)
+   * @param data The data pointer to calculate offset from
+   * @return Pointer to the kBackendHeaderSize-byte shared header, or nullptr if data is null
+   */
+  template<typename T = char>
+  HSHM_CROSS_FUN
+  T *GetSharedHeader(char *data) {
+    if (data == nullptr) {
+      return nullptr;
+    }
+    char *priv = GetPrivateHeader<char>(data);
+    return reinterpret_cast<T*>(priv + kBackendHeaderSize);
+  }
+
+  /**
+   * Get pointer to the shared header given a data pointer (const version).
+   * Shared header is located kBackendHeaderSize bytes after the private header.
+   *
+   * @tparam T Type to cast the shared header to (default: char)
+   * @param data The data pointer to calculate offset from
+   * @return Const pointer to the kBackendHeaderSize-byte shared header, or nullptr if data is null
+   */
+  template<typename T = char>
+  HSHM_CROSS_FUN
+  const T *GetSharedHeader(const char *data) const {
+    if (data == nullptr) {
+      return nullptr;
+    }
+    const char *priv = GetPrivateHeader<char>(data);
+    return reinterpret_cast<const T*>(priv + kBackendHeaderSize);
+  }
+
+  /**
    * Get pointer to the shared header (4KB before data_, at data_ - kBackendHeaderSize)
    *
    * This region is shared between processes and typically used for
@@ -265,10 +336,7 @@ class MemoryBackend {
   template<typename T = char>
   HSHM_CROSS_FUN
   T *GetSharedHeader() {
-    if (data_ == nullptr) {
-      return nullptr;
-    }
-    return reinterpret_cast<T*>(data_ - kBackendHeaderSize);
+    return GetSharedHeader<T>(data_);
   }
 
   /**
@@ -280,14 +348,11 @@ class MemoryBackend {
   template<typename T = char>
   HSHM_CROSS_FUN
   const T *GetSharedHeader() const {
-    if (data_ == nullptr) {
-      return nullptr;
-    }
-    return reinterpret_cast<const T*>(data_ - kBackendHeaderSize);
+    return GetSharedHeader<T>(data_);
   }
 
   /**
-   * Get pointer to the private header (8KB before data_, at data_ - 2*kBackendHeaderSize)
+   * Get pointer to the private header (process-local storage)
    *
    * This region is process-local and not shared between processes.
    * Each process that attaches gets its own independent copy.
@@ -300,10 +365,7 @@ class MemoryBackend {
   template<typename T = char>
   HSHM_CROSS_FUN
   T *GetPrivateHeader() {
-    if (data_ == nullptr) {
-      return nullptr;
-    }
-    return reinterpret_cast<T*>(data_ - 2 * kBackendHeaderSize);
+    return GetPrivateHeader<T>(data_);
   }
 
   /**
@@ -315,10 +377,7 @@ class MemoryBackend {
   template<typename T = char>
   HSHM_CROSS_FUN
   const T *GetPrivateHeader() const {
-    if (data_ == nullptr) {
-      return nullptr;
-    }
-    return reinterpret_cast<const T*>(data_ - 2 * kBackendHeaderSize);
+    return GetPrivateHeader<T>(data_);
   }
 
   /**

@@ -114,8 +114,7 @@ class PosixShmMmap : public MemoryBackend, public UrlMemoryBackend {
 
     // ptr points to start of private header
     // ptr + kBackendHeaderSize points to start of shared region (which begins with shared header)
-    char *shared_region_start = ptr + kBackendHeaderSize;
-    char *shared_ptr = shared_region_start + kBackendHeaderSize;
+    char *shared_ptr = shared_region_start + 2 * kBackendHeaderSize;
 
     // Now we have: [kBackendHeaderSize private header | kBackendHeaderSize shared header | aligned_md_size | data]
     // The first kBackendHeaderSize is private (process-local), the second is shared
@@ -139,6 +138,11 @@ class PosixShmMmap : public MemoryBackend, public UrlMemoryBackend {
     data_capacity_ = size;  // Full capacity equals data size for root backend
     data_id_ = -1;
     data_offset_ = 0;
+
+    // Set priv_header_off_: distance from data_ back to start of private header
+    // private header is at ptr, data_ is at shared_ptr + aligned_md_size
+    // distance = (shared_ptr + aligned_md_size) - ptr
+    priv_header_off_ = static_cast<size_t>(data_ - ptr);
 
     return true;
   }
@@ -209,6 +213,11 @@ class PosixShmMmap : public MemoryBackend, public UrlMemoryBackend {
     data_capacity_ = data_size;  // Full capacity equals data size for root backend
     data_id_ = header_->data_id_;
     data_offset_ = 0;
+
+    // Set priv_header_off_: distance from data_ back to start of private header
+    // private header is at ptr, data_ is at shared_ptr + aligned_md_size
+    // distance = (shared_ptr + aligned_md_size) - ptr
+    priv_header_off_ = static_cast<size_t>(data_ - ptr);
 
     return true;
   }

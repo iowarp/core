@@ -105,6 +105,11 @@ class PosixMmap : public MemoryBackend {
     data_id_ = -1;
     data_offset_ = 0;
 
+    // Set priv_header_off_: distance from data_ back to start of private header
+    // private header is at ptr, data_ is at shared_ptr + aligned_md_size
+    // distance = (shared_ptr + aligned_md_size) - ptr
+    priv_header_off_ = static_cast<size_t>(data_ - ptr);
+
     return true;
   }
 

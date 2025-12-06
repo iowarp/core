@@ -123,14 +123,14 @@ class Allocator {
   }
 
   /**
-   * Get typed private header (process-local storage, 8KB before backend.data_)
-   * Located at (GetBackendData() - 2*kBackendHeaderSize)
+   * Get typed private header (process-local storage)
    * This region is kBackendHeaderSize bytes and is NOT shared between processes
+   * Uses GetBackend() to access the proper priv_header_off_ for correct calculation
    * @return Pointer to private header of type HEADER_T
    */
   template <typename HEADER_T>
   HSHM_INLINE_CROSS_FUN HEADER_T* GetPrivateHeader() const {
-    return reinterpret_cast<HEADER_T*>(GetBackendData() - 2 * kBackendHeaderSize);
+    return GetBackend().GetPrivateHeader<HEADER_T>(GetBackendData());
   }
 
   /**
@@ -161,22 +161,24 @@ class Allocator {
   /**
    * Get the shared header of the shared-memory allocator
    * The shared header is located in the backend's shared header region
+   * Uses GetBackendData() to access the proper offset for correct calculation
    *
    * @return Shared header pointer
    */
   template <typename HEADER_T>
   HSHM_INLINE_CROSS_FUN HEADER_T *GetSharedHeader() {
-    return GetBackend().GetSharedHeader<HEADER_T>();
+    return GetBackend().GetSharedHeader<HEADER_T>(GetBackendData());
   }
 
   /**
    * Get the shared header of the shared-memory allocator (const)
+   * Uses GetBackendData() to access the proper offset for correct calculation
    *
    * @return Shared header pointer
    */
   template <typename HEADER_T>
   HSHM_INLINE_CROSS_FUN const HEADER_T *GetSharedHeader() const {
-    return GetBackend().GetSharedHeader<HEADER_T>();
+    return GetBackend().GetSharedHeader<HEADER_T>(GetBackendData());
   }
 
 

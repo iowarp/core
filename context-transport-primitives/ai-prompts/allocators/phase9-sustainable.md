@@ -110,8 +110,8 @@ MpPrivateHeader* GetPrivate() {
 Let's remove CtxAllocator concept completely.
 We will pass allocator pointers around.
 
-@CLAUDE.md
 
+@CLAUDE.md 
 The current issue is that alloc_ must be the last entry of the shared memory in order to avoid corrupting class parameters. For pblock and tblock, this is an easy change.
 
 However, the main block is different due to the custom header. Simply placing alloc_ at the end there is problematic.
@@ -129,3 +129,30 @@ Remove all logic in the allocators for considering custom_header_size_. Remove c
 We should add a new class variable to allocator called data_start_ (this is not custom_header_size_). This represents the start of data relative to this_. Technically, this is just the size of the allocator class: data_start_ = sizeof(AllocT).
 
 GetAllocatorDataStart() should not depend on GetCustomHeader / GetSharedHeader anymore. Instead we should return (this) + data_start_
+
+@CLAUDE.md
+
+In the MemoryBackend, I want to add another variable called priv_header_off_.
+This will store the difference between data_ and the beginning of the shared segment in the MemoryBackend.
+In each MemoryBackend, we need to set this priv_header_off_. 
+
+For example, for PosixShmMmap, we do a mixed allocation.
+The very first kBackendHeaderSize bytes of the buffer returned is the private header
+the next kBackendHeaderSize bytes are the shared header.
+
+For PosixMmap,
+After md, the next kBackendHeader bytes are the private header and the next are the shared header.
+After this is what gets stored in data_. 
+
+In MemoryBackend:
+```
+GetPrivateHeader(): GetPrivateHeader(data_)
+GetSharedHeader(): GetSharedHeader(data_)
+GetPrivateHeader(char *data): (data - priv_header_off_)
+GetSharedHeader(char *data): GetPrivateHeader<char>(data) + kBackendHeaderSize
+```
+
+In Allocator:
+```
+GetPrivateHeader(): backend_.GetPrivateHeader();
+```
