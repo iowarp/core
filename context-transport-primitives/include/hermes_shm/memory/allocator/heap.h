@@ -88,9 +88,15 @@ class Heap {
     size_t end_off = aligned_off + size;
 
     // Check if allocation would exceed maximum offset
-    // Note: Once fetch_add completes, the space is consumed even if we fail
-    // This is acceptable as we've run out of memory anyway
     if (end_off > max_offset_) {
+      // Cap heap pointer at max_offset_ to prevent it from growing unbounded
+      // This ensures GetOffset() never returns a value > max_offset_
+      size_t current = heap_.load();
+      while (current > max_offset_) {
+        if (heap_.compare_exchange_weak(current, max_offset_)) {
+          break;
+        }
+      }
       return 0;  // Return 0 to indicate failure
     }
 

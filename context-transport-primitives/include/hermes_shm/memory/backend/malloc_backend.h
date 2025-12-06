@@ -50,14 +50,14 @@ class MallocBackend : public MemoryBackend {
     SetInitialized();
     Own();
 
-    // Calculate sizes: kBackendPrivate + header + md section + alignment + data section
+    // Calculate sizes: 2*kBackendHeaderSize (shared + private headers) + header + md section + alignment + data section
     constexpr size_t kAlignment = 4096;  // 4KB alignment
     size_t header_size = sizeof(MemoryBackendHeader);
     size_t md_size = header_size;  // md section stores the header
     size_t aligned_md_size = ((md_size + kAlignment - 1) / kAlignment) * kAlignment;
 
-    // Total layout: [kBackendPrivate private] [MemoryBackendHeader | padding to 4KB] [data]
-    total_size_ = kBackendPrivate + aligned_md_size + size;
+    // Total layout: [kBackendHeaderSize shared header] [kBackendHeaderSize private header] [MemoryBackendHeader | padding to 4KB] [data]
+    total_size_ = 2 * kBackendHeaderSize + aligned_md_size + size;
 
     // Allocate total memory
     char *ptr = (char *)malloc(total_size_);
@@ -66,10 +66,10 @@ class MallocBackend : public MemoryBackend {
     }
     alloc_ptr_ = ptr;  // Save allocation start for cleanup
 
-    // Skip past private region to shared region
-    char *shared_ptr = ptr + kBackendPrivate;
+    // Skip past shared and private headers to reach the shared region
+    char *shared_ptr = ptr + 2 * kBackendHeaderSize;
 
-    // Layout: [kBackendPrivate private] [MemoryBackendHeader | padding to 4KB] [data]
+    // Layout: [kBackendHeaderSize shared header] [kBackendHeaderSize private header] [MemoryBackendHeader | padding to 4KB] [data]
     header_ = reinterpret_cast<MemoryBackendHeader *>(shared_ptr);
     header_->id_ = backend_id;
     header_->md_size_ = md_size;
@@ -84,6 +84,7 @@ class MallocBackend : public MemoryBackend {
     // data_ starts at 4KB aligned boundary after md section (in shared region)
     data_ = shared_ptr + aligned_md_size;
     data_size_ = size;
+    data_capacity_ = size;
     data_id_ = -1;
     data_offset_ = 0;
 

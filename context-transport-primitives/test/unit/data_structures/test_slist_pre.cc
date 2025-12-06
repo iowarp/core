@@ -35,10 +35,8 @@ template<bool ATOMIC>
 ArenaAllocator<ATOMIC>* CreateTestAllocator(MallocBackend &backend, size_t arena_size) {
   backend.shm_init(MemoryBackendId(0, 0), arena_size);
 
-  ArenaAllocator<ATOMIC> *alloc = new ArenaAllocator<ATOMIC>();
-  alloc->shm_init(backend, 0);
-
-  return alloc;
+  // Use MakeAlloc to create the allocator properly
+  return backend.MakeAlloc<ArenaAllocator<ATOMIC>>();
 }
 
 TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
@@ -186,7 +184,6 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
     REQUIRE(reinterpret_cast<TestNode*>(n3.ptr_)->value_ == 0);
   }
 
-  delete alloc;
   backend.shm_destroy();
 }
 
@@ -223,7 +220,6 @@ TEST_CASE("slist_pre - Atomic Version", "[slist_pre][atomic]") {
     REQUIRE(list.empty());
   }
 
-  delete alloc;
   backend.shm_destroy();
 }
 
@@ -263,7 +259,6 @@ TEST_CASE("slist_pre - Node Reuse", "[slist_pre]") {
     REQUIRE(reinterpret_cast<TestNode*>(final.ptr_)->value_ == 999);
   }
 
-  delete alloc;
   backend.shm_destroy();
 }
 
@@ -302,6 +297,5 @@ TEST_CASE("slist_pre - Large List", "[slist_pre]") {
     REQUIRE(list.size() == 0);
   }
 
-  delete alloc;
   backend.shm_destroy();
 }

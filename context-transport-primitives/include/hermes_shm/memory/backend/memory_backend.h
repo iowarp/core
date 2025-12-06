@@ -140,10 +140,10 @@ struct MemoryBackendHeader {
 class UrlMemoryBackend {};
 
 /**
- * Global constant for private memory region size
- * Each backend allocates this amount of process-local memory before the shared data region
+ * Global constant for backend header sizes
+ * Each header (shared and private) is 4KB
  */
-static constexpr size_t kBackendPrivate = 16 * 1024;  // 16KB
+static constexpr size_t kBackendHeaderSize = 4 * 1024;  // 4KB per header (shared + private = 8KB total)
 
 class MemoryBackend {
  public:
@@ -153,12 +153,13 @@ class MemoryBackend {
   bitfield64_t flags_;
   char *data_;      // Data buffer for allocators (points to the SHARED part of the region)
   size_t data_size_;// Data buffer size for allocators (size of SHARED region only)
+  size_t data_capacity_; // Full size of backend (doesn't change with shift)
   int data_id_;     // Device ID for the data buffer (GPU ID, etc.)
   u64 data_offset_; // Offset from root backend (0 if this is root, non-zero for sub-allocators)
 
  public:
   HSHM_CROSS_FUN
-  MemoryBackend() : header_(nullptr), md_(nullptr), md_size_(0), data_(nullptr), data_size_(0), data_id_(-1), data_offset_(0) {}
+  MemoryBackend() : header_(nullptr), md_(nullptr), md_size_(0), data_(nullptr), data_size_(0), data_capacity_(0), data_id_(-1), data_offset_(0) {}
 
   ~MemoryBackend() = default;
 
@@ -252,29 +253,88 @@ class MemoryBackend {
   MemoryBackend ShiftTo(FullPtr<T, PointerT> ptr, size_t size) const;
 
   /**
-   * Get pointer to the private region (kBackendPrivate bytes before data_)
+   * Get pointer to the shared header (4KB before private header)
+   *
+   * This region is shared between processes and typically used for
+   * allocator-level shared metadata (e.g., custom allocator headers).
+   *
+   * @tparam T Type to cast the shared header to (default: char)
+   * @return Pointer to the kBackendHeaderSize-byte shared header, or nullptr if data_ is null
+   */
+  template<typename T = char>
+  HSHM_CROSS_FUN
+  T *GetSharedHeader() {
+    if (data_ == nullptr) {
+      return nullptr;
+    }
+    return reinterpret_cast<T*>(data_ - 2 * kBackendHeaderSize);
+  }
+
+  /**
+   * Get pointer to the shared header (const version)
+   *
+   * @tparam T Type to cast the shared header to (default: char)
+   * @return Const pointer to the kBackendHeaderSize-byte shared header, or nullptr if data_ is null
+   */
+  template<typename T = char>
+  HSHM_CROSS_FUN
+  const T *GetSharedHeader() const {
+    if (data_ == nullptr) {
+      return nullptr;
+    }
+    return reinterpret_cast<const T*>(data_ - 2 * kBackendHeaderSize);
+  }
+
+  /**
+   * Get pointer to the private header (4KB before data_)
    *
    * This region is process-local and not shared between processes.
    * Each process that attaches gets its own independent copy.
    * Useful for thread-local storage and process-specific metadata.
    *
-   * @return Pointer to the kBackendPrivate-byte private region, or nullptr if data_ is null
+   * @tparam T Type to cast the private header to (default: char)
+   * @return Pointer to the kBackendHeaderSize-byte private header, or nullptr if data_ is null
    */
+  template<typename T = char>
   HSHM_CROSS_FUN
-  char *GetPrivateRegion() {
+  T *GetPrivateHeader() {
     if (data_ == nullptr) {
       return nullptr;
     }
-    return data_ - kBackendPrivate;
+    return reinterpret_cast<T*>(data_ - kBackendHeaderSize);
   }
 
   /**
-   * Get size of the private region
-   * @return Size of private region (always kBackendPrivate = 16KB)
+   * Get pointer to the private header (const version)
+   *
+   * @tparam T Type to cast the private header to (default: char)
+   * @return Const pointer to the kBackendHeaderSize-byte private header, or nullptr if data_ is null
+   */
+  template<typename T = char>
+  HSHM_CROSS_FUN
+  const T *GetPrivateHeader() const {
+    if (data_ == nullptr) {
+      return nullptr;
+    }
+    return reinterpret_cast<const T*>(data_ - kBackendHeaderSize);
+  }
+
+  /**
+   * Get size of the private header
+   * @return Size of private header (always kBackendHeaderSize = 4KB)
    */
   HSHM_CROSS_FUN
-  static constexpr size_t GetPrivateRegionSize() {
-    return kBackendPrivate;
+  static constexpr size_t GetPrivateHeaderSize() {
+    return kBackendHeaderSize;
+  }
+
+  /**
+   * Get size of the shared header
+   * @return Size of shared header (always kBackendHeaderSize = 4KB)
+   */
+  HSHM_CROSS_FUN
+  static constexpr size_t GetSharedHeaderSize() {
+    return kBackendHeaderSize;
   }
 
   /**

@@ -16,6 +16,9 @@
 #include <random>
 #include <thread>
 #include <vector>
+#include <chrono>
+#include <atomic>
+#include <cstring>
 #include "hermes_shm/memory/allocator/allocator.h"
 
 namespace hshm::testing {
@@ -47,10 +50,12 @@ class AllocatorTest {
    */
   void TestAllocFreeImmediate(size_t iterations, size_t alloc_size) {
     for (size_t i = 0; i < iterations; ++i) {
-      auto ptr = alloc_->template Allocate<void>(alloc_size, 64);
+      auto ptr = alloc_->template Allocate<char>(alloc_size, 64);
       if (ptr.IsNull()) {
         throw std::runtime_error("Allocation failed in TestAllocFreeImmediate");
       }
+      // Verify allocator correctness by writing to all allocated memory
+      std::memset(ptr.ptr_, static_cast<unsigned char>(i & 0xFF), alloc_size);
       alloc_->Free(ptr);
     }
   }
@@ -64,13 +69,13 @@ class AllocatorTest {
    * @param alloc_size Size of each allocation
    */
   void TestAllocFreeBatch(size_t iterations, size_t batch_size, size_t alloc_size) {
-    std::vector<hipc::FullPtr<void>> ptrs;
+    std::vector<hipc::FullPtr<char>> ptrs;
     ptrs.reserve(batch_size);
 
     for (size_t iter = 0; iter < iterations; ++iter) {
       // Allocate batch
       for (size_t i = 0; i < batch_size; ++i) {
-        auto ptr = alloc_->template Allocate<void>(alloc_size, 64);
+        auto ptr = alloc_->template Allocate<char>(alloc_size, 64);
         if (ptr.IsNull()) {
           // Clean up already allocated pointers
           for (auto &p : ptrs) {
@@ -78,6 +83,8 @@ class AllocatorTest {
           }
           throw std::runtime_error("Allocation failed in TestAllocFreeBatch");
         }
+        // Verify allocator correctness by writing to all allocated memory
+        std::memset(ptr.ptr_, static_cast<unsigned char>((iter * 100 + i) & 0xFF), alloc_size);
         ptrs.push_back(ptr);
       }
 
@@ -103,7 +110,7 @@ class AllocatorTest {
     const size_t kMaxAllocations = 5000;
 
     std::uniform_int_distribution<size_t> size_dist(1, kMaxAllocSize);
-    std::vector<hipc::FullPtr<void>> ptrs;
+    std::vector<std::pair<hipc::FullPtr<char>, size_t>> ptrs;
     ptrs.reserve(kMaxAllocations);
 
     for (size_t iter = 0; iter < iterations; ++iter) {
@@ -118,27 +125,107 @@ class AllocatorTest {
           break;
         }
 
-        auto ptr = alloc_->template Allocate<void>(alloc_size, 64);
+        auto ptr = alloc_->template Allocate<char>(alloc_size, 64);
         if (ptr.IsNull()) {
           // Allocation failed - clean up and break
           break;
         }
 
-        ptrs.push_back(ptr);
+        // Verify allocator correctness by writing to all allocated memory
+        std::memset(ptr.ptr_, static_cast<unsigned char>((iter + ptrs.size()) & 0xFF), alloc_size);
+        ptrs.push_back({ptr, alloc_size});
         total_allocated += alloc_size;
       }
 
       // Free all allocations
-      for (auto &ptr : ptrs) {
-        alloc_->Free(ptr);
+      for (auto &p : ptrs) {
+        alloc_->Free(p.first);
       }
       ptrs.clear();
     }
   }
 
   /**
+   * Helper: Random allocation with explicit RNG and size constraints
+   * Same as TestRandomAllocation but uses provided RNG and allows specifying min/max sizes
+   *
+   * @param iterations Number of iterations
+   * @param rng Random number generator to use
+   * @param min_alloc_size Minimum allocation size (default: 1 byte)
+   * @param max_alloc_size Maximum allocation size (default: 1 MB)
+   */
+  void TestRandomAllocationWithRNG(size_t iterations, std::mt19937 &rng,
+                                   size_t min_alloc_size = 1,
+                                   size_t max_alloc_size = 1024 * 1024) {
+    const size_t kMaxTotalSize = 64 * 1024 * 1024;  // 64 MB
+    const size_t kMaxAllocations = 5000;
+
+    std::uniform_int_distribution<size_t> size_dist(min_alloc_size, max_alloc_size);
+    std::vector<std::pair<hipc::FullPtr<char>, size_t>> ptrs;
+    ptrs.reserve(kMaxAllocations);
+
+    for (size_t iter = 0; iter < iterations; ++iter) {
+      size_t total_allocated = 0;
+
+      // Random allocations
+      while (total_allocated < kMaxTotalSize && ptrs.size() < kMaxAllocations) {
+        size_t alloc_size = size_dist(rng);
+
+        // Stop if this allocation would exceed the limit
+        if (total_allocated + alloc_size > kMaxTotalSize) {
+          break;
+        }
+
+        auto ptr = alloc_->template Allocate<char>(alloc_size, 64);
+        if (ptr.IsNull()) {
+          // Allocation failed - clean up and break
+          break;
+        }
+
+        // Verify allocator correctness by writing to all allocated memory
+        std::memset(ptr.ptr_, static_cast<unsigned char>((iter + ptrs.size()) & 0xFF), alloc_size);
+        ptrs.push_back({ptr, alloc_size});
+        total_allocated += alloc_size;
+      }
+
+      // Free all allocations
+      for (auto &p : ptrs) {
+        alloc_->Free(p.first);
+      }
+      ptrs.clear();
+    }
+  }
+
+  /**
+   * Test: Timed random allocation
+   * Calls TestRandomAllocation(1) in a loop until time runs out
+   *
+   * @param duration_sec Duration to run in seconds
+   * @param min_alloc_size Minimum allocation size (default: 1 byte)
+   * @param max_alloc_size Maximum allocation size (default: 1 MB)
+   */
+  void TestRandomAllocationTimed(int duration_sec,
+                                 size_t min_alloc_size = 1,
+                                 size_t max_alloc_size = 1024 * 1024) {
+    // Create thread-local RNG
+    static thread_local std::mt19937 thread_rng(std::random_device{}());
+
+    auto start = std::chrono::steady_clock::now();
+    auto end = start + std::chrono::seconds(duration_sec);
+
+    while (std::chrono::steady_clock::now() < end) {
+      try {
+        TestRandomAllocationWithRNG(1, thread_rng, min_alloc_size, max_alloc_size);
+      } catch (const std::exception &e) {
+        // Continue on allocation failure
+        continue;
+      }
+    }
+  }
+
+  /**
    * Test 4: Multi-threaded random allocation test
-   * 8 threads calling the random allocation test
+   * Multiple threads calling the random allocation test
    *
    * @param num_threads Number of threads to spawn
    * @param iterations_per_thread Number of iterations per thread
@@ -151,6 +238,97 @@ class AllocatorTest {
     for (size_t i = 0; i < num_threads; ++i) {
       threads.emplace_back([this, iterations_per_thread]() {
         TestRandomAllocation(iterations_per_thread);
+      });
+    }
+
+    // Wait for all threads to complete
+    for (auto &thread : threads) {
+      thread.join();
+    }
+  }
+
+  /**
+   * Test 5: Large-then-small allocation pattern
+   * First allocate many large blocks, free them, then allocate many small blocks.
+   * This tests allocator behavior with different size classes and fragmentation.
+   *
+   * @param iterations Number of iterations
+   * @param num_large_allocs Number of large allocations per iteration
+   * @param large_size Size of each large allocation
+   * @param num_small_allocs Number of small allocations per iteration
+   * @param small_size Size of each small allocation
+   */
+  void TestLargeThenSmall(size_t iterations, size_t num_large_allocs, size_t large_size,
+                          size_t num_small_allocs, size_t small_size) {
+    std::vector<hipc::FullPtr<char>> large_ptrs;
+    std::vector<hipc::FullPtr<char>> small_ptrs;
+    large_ptrs.reserve(num_large_allocs);
+    small_ptrs.reserve(num_small_allocs);
+
+    for (size_t iter = 0; iter < iterations; ++iter) {
+      // Phase 1: Allocate large blocks
+      for (size_t i = 0; i < num_large_allocs; ++i) {
+        auto ptr = alloc_->template Allocate<char>(large_size, 64);
+        if (ptr.IsNull()) {
+          // Clean up and throw
+          for (auto &p : large_ptrs) {
+            alloc_->Free(p);
+          }
+          throw std::runtime_error("Large allocation failed in TestLargeThenSmall");
+        }
+        // Verify allocator correctness by writing to all allocated memory
+        std::memset(ptr.ptr_, static_cast<unsigned char>((iter + i) & 0xFF), large_size);
+        large_ptrs.push_back(ptr);
+      }
+
+      // Phase 2: Free all large blocks
+      for (auto &ptr : large_ptrs) {
+        alloc_->Free(ptr);
+      }
+      large_ptrs.clear();
+
+      // Phase 3: Allocate small blocks
+      for (size_t i = 0; i < num_small_allocs; ++i) {
+        auto ptr = alloc_->template Allocate<char>(small_size, 64);
+        if (ptr.IsNull()) {
+          // Clean up and throw
+          for (auto &p : small_ptrs) {
+            alloc_->Free(p);
+          }
+          throw std::runtime_error("Small allocation failed in TestLargeThenSmall");
+        }
+        // Verify allocator correctness by writing to all allocated memory
+        std::memset(ptr.ptr_, static_cast<unsigned char>((iter + i + 128) & 0xFF), small_size);
+        small_ptrs.push_back(ptr);
+      }
+
+      // Phase 4: Free all small blocks
+      for (auto &ptr : small_ptrs) {
+        alloc_->Free(ptr);
+      }
+      small_ptrs.clear();
+    }
+  }
+
+  /**
+   * Test 6: Timed multi-threaded random workload generator
+   * Each thread performs random allocations for a specified duration.
+   *
+   * @param num_threads Number of threads to spawn
+   * @param duration_sec Duration to run the test in seconds
+   * @param min_alloc_size Minimum allocation size (default: 1 byte)
+   * @param max_alloc_size Maximum allocation size (default: 1 MB)
+   */
+  void TestTimedMultiThreadedWorkload(size_t num_threads, int duration_sec,
+                                      size_t min_alloc_size = 1,
+                                      size_t max_alloc_size = 1024 * 1024) {
+    std::vector<std::thread> threads;
+    threads.reserve(num_threads);
+
+    // Launch threads that run timed random allocation
+    for (size_t i = 0; i < num_threads; ++i) {
+      threads.emplace_back([this, duration_sec, min_alloc_size, max_alloc_size]() {
+        TestRandomAllocationTimed(duration_sec, min_alloc_size, max_alloc_size);
       });
     }
 
@@ -175,6 +353,9 @@ class AllocatorTest {
 
     // Test 4: Multi-threaded
     TestMultiThreadedRandom(8, 2);
+
+    // Test 5: Large-then-small pattern
+    TestLargeThenSmall(10, 100, 1024 * 1024, 1000, 128);
   }
 };
 

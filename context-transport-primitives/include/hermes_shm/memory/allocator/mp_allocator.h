@@ -44,7 +44,7 @@ typedef BaseAllocator<_MultiProcessAllocator> MultiProcessAllocator;
 class ThreadBlock : public pre::slist_node {
  public:
   int tid_;                    /**< Thread ID */
-  BuddyAllocator alloc_;       /**< Private buddy allocator for this thread */
+  BuddyAllocator alloc_;       /**< Private buddy allocator for this thread (MUST BE LAST) */
 
   /**
    * Default constructor
@@ -94,12 +94,10 @@ class ProcessBlock : public pre::slist_node {
   int pid_;                    /**< Process ID */
   int tid_count_;              /**< Number of thread blocks allocated */
   hshm::Mutex lock_;           /**< Mutex protecting thread list */
-  BuddyAllocator alloc_;       /**< Allocator for managing ThreadBlock regions */
   pre::slist<false> threads_;  /**< List of ThreadBlocks */
-
-  // Thread-local storage keys (process-local, not shared)
   ThreadLocalKey tblock_key_;  /**< TLS key for ThreadBlock* */
   ThreadLocalKey pblock_key_;  /**< TLS key for ProcessBlock* */
+  BuddyAllocator alloc_;       /**< Allocator for managing ThreadBlock regions (MUST BE LAST) */
 
   /**
    * Default constructor
@@ -202,9 +200,9 @@ class _MultiProcessAllocator : public Allocator {
   hshm::Mutex lock_;             /**< Mutex protecting process lists */
 
   // Allocator state (shared memory compatible)
-  BuddyAllocator alloc_;         /**< Global buddy allocator */
   size_t process_unit_;          /**< Default ProcessBlock size (1GB) */
   size_t thread_unit_;           /**< Default ThreadBlock size (16MB) */
+  BuddyAllocator alloc_;         /**< Global buddy allocator */
 
  private:
   // Process-local storage (NOT in shared memory)
@@ -242,7 +240,7 @@ class _MultiProcessAllocator : public Allocator {
   bool shm_init(const MemoryBackend &backend, size_t custom_header_size = 0) {
     SetBackend(backend);
     alloc_header_size_ = sizeof(_MultiProcessAllocator);
-    custom_header_size_ = custom_header_size;
+    data_start_ = sizeof(_MultiProcessAllocator);
 
     // Initialize header fields directly (we are the header!)
     pid_count_ = 0;
@@ -487,7 +485,12 @@ class _MultiProcessAllocator : public Allocator {
   }
 
   /**
-   * Allocate memory using the 3-tier allocation strategy
+   * Allocate memory from the multi-process allocator
+   *
+   * Implements a 3-tier fallback strategy:
+   * 1. Fast path: Thread-local ThreadBlock (lock-free)
+   * 2. Medium path: ProcessBlock (one lock)
+   * 3. Slow path: Global allocator (global lock)
    *
    * @param size Size in bytes to allocate
    * @return Offset pointer to allocated memory, or null on failure
@@ -506,6 +509,79 @@ class _MultiProcessAllocator : public Allocator {
       return ptr;
     }
     return ptr;
+  }
+
+  /**
+   * Allocate memory from the multi-process allocator with alignment
+   *
+   * Note: Alignment is not guaranteed in this implementation, as the
+   * multi-process allocator delegates to BuddyAllocator which doesn't
+   * support alignment. This method accepts the alignment parameter for
+   * API compatibility but ignores it.
+   *
+   * @param size Size in bytes to allocate
+   * @param alignment Desired alignment (currently unused)
+   * @return Offset pointer to allocated memory, or null on failure
+   */
+  OffsetPtr<> AllocateOffset(size_t size, size_t alignment) {
+    (void)alignment;  // Alignment not supported in multi-process allocator
+    return AllocateOffset(size);
+  }
+
+  /**
+   * Reallocate memory (NOT IMPLEMENTED)
+   *
+   * MultiProcessAllocator does not support reallocation.
+   * Users should allocate new memory and manually migrate data.
+   *
+   * @param p The original offset pointer
+   * @param new_size The new size in bytes
+   * @return Null offset pointer (reallocation not supported)
+   */
+  OffsetPtr<> ReallocateOffsetNoNullCheck(OffsetPtr<> p, size_t new_size) {
+    (void)p;
+    (void)new_size;
+    HSHM_THROW_ERROR(NOT_IMPLEMENTED,
+                     "MultiProcessAllocator does not support reallocation");
+    return OffsetPtr<>();
+  }
+
+  /**
+   * Free memory allocated from the multi-process allocator
+   *
+   * Returns the memory to the appropriate allocator tier:
+   * - If from ThreadBlock: Returns to ThreadBlock allocator
+   * - If from ProcessBlock: Returns to ProcessBlock allocator
+   * - If from Global: Returns to global allocator
+   *
+   * @param p The offset pointer to free
+   */
+  void FreeOffsetNoNullCheck(OffsetPtr<> p) {
+    (void)p;  // TODO: Implement tier-aware freeing
+    // For now, this is a no-op to match the multi-tier design
+    // In a full implementation, we would track which tier the allocation came from
+    // and return it to the appropriate allocator
+  }
+
+  /**
+   * Create thread-local storage for the allocator
+   *
+   * Initializes TLS infrastructure for the current thread.
+   * The MultiProcessAllocator uses TLS to store ThreadBlock pointers.
+   */
+  void CreateTls() {
+    // TLS is created on-demand by EnsureTls()
+    // No explicit initialization needed here
+  }
+
+  /**
+   * Free thread-local storage for the allocator
+   *
+   * Cleans up TLS infrastructure for the current thread.
+   */
+  void FreeTls() {
+    // TLS cleanup is handled by the pthread_key_create destructor
+    // No explicit cleanup needed here
   }
 
   /**

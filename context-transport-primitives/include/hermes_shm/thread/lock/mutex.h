@@ -37,7 +37,10 @@ struct Mutex {
 
   /** Explicit initialization */
   HSHM_INLINE_CROSS_FUN
-  void Init() { lock_ = 0; }
+  void Init() {
+    lock_ = 0;
+    head_ = 0;
+  }
 
   /** Acquire lock */
   HSHM_INLINE_CROSS_FUN

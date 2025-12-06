@@ -58,14 +58,21 @@ class _ArenaAllocator : public Allocator {
    * Initialize the allocator in shared memory
    *
    * @param backend Memory backend (first parameter as per standard)
-   * @param custom_header_size Size of custom header (default: 0)
    */
   HSHM_CROSS_FUN
-  void shm_init(const MemoryBackend &backend, size_t custom_header_size = 0) {
+  void shm_init(const MemoryBackend &backend) {
     SetBackend(backend);
     alloc_header_size_ = sizeof(_ArenaAllocator<ATOMIC>);
-    custom_header_size_ = custom_header_size;
+
+    // Calculate data_start_ - where the allocator's managed region begins
+    // For ArenaAllocator, data starts immediately after the allocator object
+    data_start_ = sizeof(_ArenaAllocator<ATOMIC>);
+
     total_alloc_ = 0;
+
+    // Calculate and store the offset of this allocator object within the backend data
+    // This must be calculated BEFORE any GetBackendData() calls
+    this_ = reinterpret_cast<char*>(this) - reinterpret_cast<char*>(backend.data_);
 
     // Store initial heap parameters for reset using helper functions
     heap_begin_ = GetAllocatorDataOff();

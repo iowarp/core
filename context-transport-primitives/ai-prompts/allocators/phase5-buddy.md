@@ -1,35 +1,40 @@
 @CLAUDE.md
 
-# struct BuddyPage
+# BuddyAllocator
 
-This is the metadata stored after each AllocateOffset.
+Build this allocator and an associated unit test.
+This allocator is not thread-safe.
+
+## Base classes
+
 ```
+// This is the metadata stored after each AllocateOffset.
 struct BuddyPage {
     size_t size;
 }
 ```
 
-# struct FreeBuddyPage
-strut FreeBuddyPage : slist_node {
+struct FreeSmallBuddyPage : slist_node {
     size_t size;
 }
 
-# struct CoalesceBuddyPage
+struct FreeLargeBuddyPage : rb_node {
+    size_t size;
+}
 
-This is the metadata stored for coalescing.
-```
+// This is the metadata stored for coalescing.
 struct CoalesceBuddyPage : rb_node<OffsetPointer> {
     size_t size;
 }
+
+class _BuddyAllocator : public Allocator {
+    public:
+      Heap big_heap_;
+      Heap small_arena_;
+      slist<FreeSmallBuddyPage> round_up_[kMaxSmallPages];
+      rb_tree<FreeLargeBuddyPage> round_down_[kMaxLargePages];
+}
 ```
-
-# BuddyAllocator
-
-Build this allocator and an associated unit test.
-This allocator is not thread-safe. 
-Ensure that you build unit tests covering the both large and small allocations.
-Build a test that will trigger the coalescing.
-You can use MallocBackend for the backend.
 
 ## shm_init
 
@@ -44,23 +49,34 @@ round_up_list: Free list for every power of two between 32 bytes and 16KB should
 round_down_list: Free list for every power of two between 16KB and 1MB.
 
 ## AllocateOffset
-Takes as input size. HSHM_MCTX is ignored.
+Takes as input size. 
 
 Case 1: Size < 16KB
-1. Get the free list for this size. Identify the free list using a logarithm base 2 of request size. Round up.
+1. Get the free list for this size. Do not include BuddyPage in the calculation. Identify the free list using a logarithm base 2 of request size. Round up.
 2. Check if there is a page existing in the free lists. If so, return it.
-3. Check if a large page exists in the free lists, divide into smaller pages of this size. Return it.
-4. Run Coalesce for all smaller page sizes. Repeat 2 & 3.
-5. Try allocating from heap. Ensure the size is request size + sizeof(BuddyPage). If successful, return.
-6. Return OffsetPointer::GetNull().
+3. Try allocating from small_arena_ (include BuddyPage in this calculation). If successful, return it.
+4. Repopulate the small arena with more space:
+  1. Divide the remainder of small_arena_ into pages using a greedy algorithm.
+    1. Let's say we have 36KB of space left in the arena
+    2. First divide by ``16KB + sizeof(BuddyPage)`` (the largest size). The result is 2. So divide into 2 ``16KB + sizeof(BuddyPage)`` pages and place in free list. We have approximately 3.9KB left.
+    3. Then divide by 8KB (the next largest size). The result is 0. Continue.
+    4. Then divide by 4KB (the next largest size). The result is 0. Continue.
+    5. Then divide by 2KB (the next largest size). The result is 1. Divide into 1 ``2KB + sizeof(BuddyPage)`` page and place in free list. Continue.
+    6. So on and so forth until the entire set of round_up_ page sizes have been cached.
+  2. Try to allocate 64KB + 128*sizeof(BuddyPage) from either big heap or a round_down_ page
+    1. Search every round_down_ page larger than ``64KB + 128*sizeof(BuddyPage)``.
+    2. If there is one, then split the page into two. Store the remainder in the free list most matching its size. It can be in round_up_ or round_down_. Return the ``64KB + 128*sizeof(BuddyPage)``.
+    3. Otherwise, allocate from the big_heap_. Return that.
+  3. If non-null, update the small arena with the ``64KB + 128*sizeof(BuddyPage)`` chunk and reattempt (3).
+  4. If offset is non-null, then use FullPtr<BuddyPage>(this, offset) to convert to full pointer. Set the buddy page size to the data size, excluding the BuddyPage header.
+  5. Return offset
 
 Case 2: Size > 16KB
-1. Identify the free list using a logarithm base 2 of request size. Round down. Cap at 20 (2^20 = 1MB).
-2. Check each entry if there is a fit (i.e., the page size > requested size).
+1. Identify the free list using a logarithm base 2 of request size (no buddy page). Round down. Cap at 20 (2^20 = 1MB).
+2. Check each entry if there is a fit (i.e., the page size > requested size). Make a new helper method called FindFirstFit to find the first element matching. It should return null if there is none.
 3. If not, check if a larger page exists in any of the larger free lists. If yes, remove the first match and then subset the requested size. Move the remainder to the most appropriate free list. return.
-4. Run Coalesce for all smaller than or equal to page sizes. Repeat 2 & 3.
-5. Try allocating from heap. Ensure the size is request size + sizeof(BuddyPage).  If successful, return
-6. Return OffsetPointer::GetNull()
+4. Try allocating from heap. Ensure the size is request size + sizeof(BuddyPage).  If successful, return
+5. Return OffsetPointer::GetNull()
 
 When returning a valid page, ensure you return (page + sizeof(BuddyPage)). 
 Also ensure you set the page size before returning.
@@ -68,32 +84,9 @@ Also ensure you set the page size before returning.
 ## FreeOffset
 
 Add page to the free list matching its size.
-The input is the Page + sizeof(BuddyPage), so you will have to subtract sizeof(BuddyPage) first to get the page size.
-
-## Coalesce
-
-### Parameters
-
-1. list_id_min: The offset of the free list with the first content to check
-2. list_id_max: The offset of the free list with the last content to check
-
-### Implementation
-
-Build an RB-tree by popping every entry in list_id_min to list_id_max.
-1. Pop entry from a free list. The entry should initially be of type FreeBuddyPage. Get the size as a variable.
-2. Before adding the entry to the RB tree, cast it to CoalesceBuddyPage. Set the key to the OffsetPointer of the page. Set the size to be the size of the page.
-3. When traversed, the RB tree will be the ordered list of all offsets. 
-4. This way we can detect contiguity.
-5. Each page should have offset, size. If offset+size is equal to the key of the left or right page, then merge the two. Merge in a loop until unsuccessful.
-Then descend and continue merging. Eventually all nodes should be touched and the minimum set of contiguous blocks should be in the tree
-
-Rebuild the free list by iterating over the RB tree
-1. Pop the head of the tree and cache the page size. Cast to FreeBuddyPage and set size again. Add to the free list most appropriate for that size.
-2. Continue until rb tree is completely free.
-
-@CLAUDE.md 
-
-Update BuddyAllocator.
+The input is the offset + sizeof(BuddyPage), so you will have to subtract sizeof(BuddyPage) first to get the page size.
+Depending on the size of the page, it will need to be added to either round_up_ list or round_down_ list.
+It should be dependent on the size of the page excluding the BuddyPage header.
 
 ## ReallocateOffset
 

@@ -43,10 +43,8 @@ template<bool ATOMIC>
 ArenaAllocator<ATOMIC>* CreateTestAllocator(MallocBackend &backend, size_t arena_size) {
   backend.shm_init(MemoryBackendId(0, 0), arena_size);
 
-  ArenaAllocator<ATOMIC> *alloc = new ArenaAllocator<ATOMIC>();
-  alloc->shm_init(backend, 0);
-
-  return alloc;
+  // Use MakeAlloc to create the allocator properly
+  return backend.MakeAlloc<ArenaAllocator<ATOMIC>>();
 }
 
 /**
@@ -243,7 +241,6 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
     REQUIRE(found.ptr_->value_ == 100);
   }
 
-  delete alloc;
   backend.shm_destroy();
 }
 
@@ -384,7 +381,6 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
     REQUIRE_FALSE(tree.find(alloc, 12).IsNull());
   }
 
-  delete alloc;
   backend.shm_destroy();
 }
 
@@ -427,7 +423,6 @@ TEST_CASE("rb_tree_pre - Large Tree", "[rb_tree_pre]") {
     REQUIRE(VerifyRBProperties(alloc, tree));
   }
 
-  delete alloc;
   backend.shm_destroy();
 }
 
@@ -462,6 +457,5 @@ TEST_CASE("rb_tree_pre - Atomic Version", "[rb_tree_pre][atomic]") {
     REQUIRE(tree.size() == 13);
   }
 
-  delete alloc;
   backend.shm_destroy();
 }

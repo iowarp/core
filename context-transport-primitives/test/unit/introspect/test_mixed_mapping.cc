@@ -2,7 +2,7 @@
  * Unit test for SystemInfo::MapMixedMemory functionality
  *
  * Tests that:
- * 1. The first 16KB is private (process-local, not shared)
+ * 1. The first 4KB is private (process-local, not shared)
  * 2. The remaining region is shared (visible across processes)
  * 3. The regions are contiguous in virtual memory
  */
@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
 
   int rank = std::atoi(argv[1]);
   const char *shm_name = "/test_mixed_mapping";
-  constexpr size_t kPrivateSize = 16 * 1024;  // kBackendPrivate (16KB)
+  constexpr size_t kPrivateSize = 4 * 1024;  // kBackendHeaderSize (4KB)
   constexpr size_t kSharedSize = 1024 * 1024;  // 1MB shared region
   constexpr size_t kTotalSize = kPrivateSize + kSharedSize;
   constexpr uint8_t kTestValue = 5;
