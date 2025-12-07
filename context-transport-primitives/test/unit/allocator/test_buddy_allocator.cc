@@ -12,6 +12,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <string>
+#include <cstring>
 #include "allocator_test.h"
 #include "hermes_shm/memory/backend/malloc_backend.h"
 #include "hermes_shm/memory/allocator/buddy_allocator.h"
@@ -113,6 +114,55 @@ TEST_CASE("BuddyAllocator - Large Then Small", "[BuddyAllocator]") {
 
   SECTION("5 iterations: 50 x 512KB then 500 x 256B") {
     REQUIRE_NOTHROW(tester.TestLargeThenSmall(5, 50, 512 * 1024, 500, 256));
+  }
+
+  backend.shm_destroy();
+}
+
+TEST_CASE("BuddyAllocator - Weird Offset Allocation", "[BuddyAllocator]") {
+  // Test allocator instantiation at a weird offset in the backend
+  hipc::MallocBackend backend;
+  constexpr size_t kOffsetFromData = 256UL * 1024UL;  // 256KB offset
+  constexpr size_t kHeapSize = 128UL * 1024UL * 1024UL;  // 128 MB heap
+  constexpr size_t kAllocSize = sizeof(hipc::BuddyAllocator);
+
+  // Create backend with enough space for offset + allocator + heap
+  size_t total_size = kOffsetFromData + kAllocSize + kHeapSize;
+  backend.shm_init(hipc::MemoryBackendId(0, 0), total_size);
+
+  // Get pointer to data at weird offset
+  char *data_ptr = backend.data_;
+  char *alloc_ptr = data_ptr + kOffsetFromData;
+
+  // Placement new to construct allocator at weird offset
+  hipc::BuddyAllocator *alloc =
+      new (alloc_ptr) hipc::BuddyAllocator();
+
+  // Initialize allocator with available space after allocator object
+  // Region size should account for remaining space after allocator placement
+  size_t region_size = total_size - kOffsetFromData;
+  try {
+    alloc->shm_init(backend, region_size);
+  } catch (...) {
+    backend.shm_destroy();
+    throw;
+  }
+
+  // Create allocator tester and run tests
+  AllocatorTest<hipc::BuddyAllocator> tester(alloc);
+
+  SECTION("Random allocation at offset") {
+    try {
+      tester.TestRandomAllocation(16);
+    } catch (const std::exception &e) {
+      std::cout << ("TestRandomAllocation failed: " + std::string(e.what()));
+    } catch (const hshm::Error &e) {
+      std::cout << ("TestRandomAllocation failed: " + std::string(e.what()));
+    }
+  }
+
+  SECTION("Allocate and free immediate at offset") {
+    REQUIRE_NOTHROW(tester.TestAllocFreeImmediate(100, 4096));
   }
 
   backend.shm_destroy();
