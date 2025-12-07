@@ -57,12 +57,21 @@ class _ArenaAllocator : public Allocator {
   /**
    * Initialize the allocator in shared memory
    *
-   * @param backend Memory backend (first parameter as per standard)
+   * @param backend Memory backend
+   * @param region_size Size of the region in bytes. If 0, defaults to backend.data_capacity_
    */
   HSHM_CROSS_FUN
-  void shm_init(const MemoryBackend &backend) {
+  void shm_init(const MemoryBackend &backend, size_t region_size = 0) {
     SetBackend(backend);
     alloc_header_size_ = sizeof(_ArenaAllocator<ATOMIC>);
+
+    // Default region_size to data_capacity_ if not specified
+    if (region_size == 0) {
+      region_size = backend.data_capacity_;
+    }
+
+    // Store region_size for use in GetAllocatorDataSize()
+    region_size_ = region_size;
 
     // Calculate data_start_ - where the allocator's managed region begins
     // For ArenaAllocator, data starts immediately after the allocator object
@@ -76,11 +85,11 @@ class _ArenaAllocator : public Allocator {
 
     // Store initial heap parameters for reset using helper functions
     heap_begin_ = GetAllocatorDataOff();
-    heap_max_ = GetAllocatorDataOff() + GetAllocatorDataSize();
+    heap_max_ = GetAllocatorDataOff() + region_size - data_start_;
 
     // Initialize heap using helper functions
     // GetAllocatorDataOff() returns the offset where managed heap begins
-    // GetAllocatorDataSize() returns the size available for the managed heap
+    // heap_max_ is calculated from region_size
     heap_.Init(heap_begin_, heap_max_);
   }
 

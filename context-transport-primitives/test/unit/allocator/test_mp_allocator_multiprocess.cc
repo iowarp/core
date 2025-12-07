@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
       return 1;
     }
     // Memset backend.data_ to 11 before allocator construction
-    std::memset(backend.data_, 11, backend.data_size_);
+    std::memset(backend.data_, 11, backend.data_capacity_);
   } else {
     // Other ranks attach to existing shared memory
     std::cout << "Rank " << rank << ": Attaching to shared memory" << std::endl;
@@ -64,7 +64,6 @@ int main(int argc, char **argv) {
 
   if (rank == 0) {
     std::cout << "Rank 0: Initializing allocator" << std::endl;
-    std::cout << "  Backend data size: " << backend.data_size_ << std::endl;
     std::cout << "  Backend data capacity: " << backend.data_capacity_ << std::endl;
     allocator = backend.MakeAlloc<MultiProcessAllocator>();
     if (allocator == nullptr) {

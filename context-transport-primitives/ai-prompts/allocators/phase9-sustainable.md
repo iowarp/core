@@ -164,3 +164,106 @@ In Allocator:
 GetPrivateHeader(): backend_.GetPrivateHeader(GetBackendData());
 GetSharedHeader(): backend_.GetSharedHeader(GetBackendData());
 ```
+
+@CLAUDE.md
+Allocators should take as input MemoryBackend and size_t region_size.
+This is the size of the region the allocator is allowed to occupy, including the allocator header.
+
+Let's remove data_offset_  and data_size_ from the MemoryBackend structure. Remove ShiftTo* functions.
+For the allocator code that uses it, simply remove that code. Pass in the region_size to the allocator.
+By default, region_size should be set to 0, in which case we set region_size equal to MemoryBackend.data_capacity_.
+We should use region_size instead of backend.data_size_ in the shm_init code for all allocators.
+
+Store region_size_ in the class Allocator. Set it in shm_init. Also use that in GetAllocatorDataSize().
+Instead of GetBackendCapacity(), use region_size_
+
+@CLAUDE.md
+
+For PosixShmMmap, we do need two mmaps in both shm_init and shm_attach.
+
+shm_init:
+Use MapShared to map the first 4KB of the fd_
+This will be header_.
+Use MapMixed for the remaining.
+This will be for the private header, shared header, and data.
+
+It should look like this:
+[backend header]
+[private header] [shared header] [metadata] [data]
+
+shm_attach:
+First use MapShared to map the first 4KB of the fd_.
+This will be header_.
+Get the size of data from the data from the header and add 2*kBackendHeaderSize.
+Use MapMixed for the remaining.
+
+Add priv_header_off_ to 
+data_ - ptr is wrong. 
+
+@CLAUDE.md
+
+The layout should be like this
+header_: [backend header]
+region: [private header] [shared header] [metadata] [data]
+region is the return value of the mixed map.
+priv_header_off_ should be (data - region).
+
+private header is kBackendHeaderSize.
+shared header is kBackendHeaderSize.
+
+Add priv_header_off_ to the backend header.
+Do not recalculate in shm_attach.
+
+@CLAUDE.md
+
+# Memory backend layout
+
+MemoryBackendHeader needs to store the following:
+```
+  size_t md_size_;         // Aligned metadata size (4KB aligned)
+  MemoryBackendId id_;
+  bitfield64_t flags_;
+  size_t custom_header_size_;  // The size of the custom header
+  size_t backend_size_;    // Total size of region_
+  size_t data_size_;       // Remaining size of data_
+  int data_id_;            // Device ID for the data buffer (GPU ID, etc.)
+  size_t priv_header_off_; // Offset from data_ back to start of private header
+```
+
+MemoryBackend needs to store those, in addition to various pointers:
+```
+char *md_;
+char *region_;
+char *data_;
+```
+
+In fact, MemoryBackend should just inherit MemoryBackendHeader to make this easier.
+
+Every MemoryBackend has the following layout:
+md_: [backend header]
+region_: [private header (4KB)] [shared header (4KB)] [data]
+
+GetPrivateHeader:
+
+GetPrivateHeader(data): (data - priv_header_off_)
+GetSharedHeader(data): GetPrivateHeader(data) + kBackendHeaderSize
+GetCustomHeader(data): GetSharedHeader(data) + kBackendHeaderSize
+
+GetPrivateHeader(): GetPrivateHeader(data_)
+GetSharedHeader(): GetSharedHeader(data_)
+GetCustomHeader(): GetCustomHeader(data_)
+
+# PosixShmMmap
+
+shm_init(url, backend_size, custom_header_size):
+1. header_: Use MapShared to map the first 4KB of the fd_.
+2. region_: Use MapMixed for backend_size.
+3. Partition the region_ as described.
+4. Calaculate priv_header_off: (data_ - region_)
+5. Calculate data_size_: (backend_size_ - priv_header_off)
+
+shm_attach(url):
+1. header_: First use MapShared to map the first 4KB of the fd_.
+2. Get backend_size_ from the header
+3. region_: Use MapMixed for backend_size_.
+4. Partition the region_ as described. Each 

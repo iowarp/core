@@ -110,13 +110,22 @@ class _BuddyAllocator : public Allocator {
   /**
    * Initialize the buddy allocator
    *
-   * @param backend Memory backend (may be a sub-allocator with data_offset_ > 0)
+   * @param backend Memory backend
+   * @param region_size Size of the region in bytes. If 0, defaults to backend.data_capacity_
    * @return true on success, false on failure
    */
-  bool shm_init(const MemoryBackend &backend) {
+  bool shm_init(const MemoryBackend &backend, size_t region_size = 0) {
     // Store backend
     SetBackend(backend);
     alloc_header_size_ = sizeof(_BuddyAllocator);
+
+    // Default region_size to data_capacity_ if not specified
+    if (region_size == 0) {
+      region_size = backend.data_capacity_;
+    }
+
+    // Store region_size for use in GetAllocatorDataSize()
+    region_size_ = region_size;
 
     // Calculate data_start_ - where the allocator's managed region begins
     // For BuddyAllocator, data starts immediately after the allocator object
@@ -126,7 +135,7 @@ class _BuddyAllocator : public Allocator {
     // This must be calculated BEFORE any GetBackendData() calls
     this_ = reinterpret_cast<char*>(this) - reinterpret_cast<char*>(backend.data_);
 
-    if (backend.data_size_ < kMinSize) {
+    if (region_size < kMinSize) {
       return false;  // Not enough space
     }
 

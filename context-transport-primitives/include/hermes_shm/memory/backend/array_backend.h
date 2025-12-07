@@ -46,38 +46,32 @@ class ArrayBackend : public MemoryBackend {
    * Memory layout in the region:
    * - Bytes 0 to kBackendHeaderSize-1: Private header
    * - Bytes kBackendHeaderSize to 2*kBackendHeaderSize-1: Shared header
-   * - Bytes 2*kBackendHeaderSize onwards: Backend header (header_)
-   * - Then data_ follows after backend header
+   * - Bytes 2*kBackendHeaderSize onwards: Custom header and data
    */
   HSHM_CROSS_FUN
   bool shm_init(const MemoryBackendId &backend_id, size_t size, char *region, u64 offset = 0) {
-
     // Headers are at the beginning of the region
-    char *shared_header = region + kBackendHeaderSize;
-    char *backend_header_ptr = region + 2 * kBackendHeaderSize;
+    region_ = region;
+    char *shared_header_ptr = region + kBackendHeaderSize;
 
     // Store backend metadata header
-    header_ = reinterpret_cast<MemoryBackendHeader*>(backend_header_ptr);
-    md_ = backend_header_ptr;
-    md_size_ = sizeof(MemoryBackendHeader);
+    header_ = reinterpret_cast<MemoryBackendHeader*>(shared_header_ptr);
+    md_ = shared_header_ptr;
+    md_size_ = kBackendHeaderSize;
 
     // Initialize header
     header_->id_ = backend_id;
-    header_->md_size_ = md_size_;
-    header_->data_size_ = size - 2 * kBackendHeaderSize - sizeof(MemoryBackendHeader);
+    header_->md_size_ = kBackendHeaderSize;
+    header_->backend_size_ = size;
+    header_->data_size_ = size - 2 * kBackendHeaderSize;
     header_->data_id_ = -1;
+    header_->priv_header_off_ = static_cast<size_t>(shared_header_ptr + kBackendHeaderSize - region);
     header_->flags_.Clear();
 
-    // data_ points to start of data region (after backend header)
-    data_ = backend_header_ptr + sizeof(MemoryBackendHeader);
-    data_size_ = size - 2 * kBackendHeaderSize - sizeof(MemoryBackendHeader);
-    data_capacity_ = size - 2 * kBackendHeaderSize - sizeof(MemoryBackendHeader);
+    // data_ points to start of data region (after shared header)
+    data_ = shared_header_ptr + kBackendHeaderSize;
+    data_capacity_ = size - 2 * kBackendHeaderSize;
     data_id_ = -1;
-    data_offset_ = offset;
-
-    // Set priv_header_off_: distance from data_ back to region start
-    // priv_header_off_ = data_ - region
-    priv_header_off_ = static_cast<size_t>(data_ - region);
 
     return true;
   }

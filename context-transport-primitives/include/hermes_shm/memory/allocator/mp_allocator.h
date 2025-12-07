@@ -62,13 +62,10 @@ class ThreadBlock : public pre::slist_node {
   bool shm_init(const MemoryBackend &backend, size_t region_size, int tid) {
     tid_ = tid;
 
-    // Create shifted backend positioned at the allocator object address
-    // ShiftTo takes &alloc_ as input and updates data_offset_ to (ptr - data_)
-    MemoryBackend thread_backend = backend.ShiftTo(
-        reinterpret_cast<char*>(&alloc_), region_size);
-
-    // Initialize the buddy allocator with the shifted backend
-    alloc_.shm_init(thread_backend);
+    // Initialize the buddy allocator with the region_size
+    // region_size is the total size available for this ThreadBlock
+    size_t alloc_region_size = region_size - sizeof(ThreadBlock);
+    alloc_.shm_init(backend, alloc_region_size);
     return true;
   }
 
@@ -134,13 +131,10 @@ class ProcessBlock : public pre::slist_node {
     lock_.Init();
     threads_.Init();
 
-    // Create shifted backend positioned at the allocator object address
-    // ShiftTo takes &alloc_ as input and updates data_offset_ to (ptr - data_)
-    MemoryBackend process_backend = backend.ShiftTo(
-        reinterpret_cast<char*>(&alloc_), region_size);
-
-    // Initialize buddy allocator for managing thread blocks
-    alloc_.shm_init(process_backend);
+    // Initialize buddy allocator with the region_size
+    // region_size is the total size available for this ProcessBlock
+    size_t alloc_region_size = region_size - sizeof(ProcessBlock);
+    alloc_.shm_init(backend, alloc_region_size);
 
     // Set up TLS for this process block
     if (!SetupTls()) {
@@ -247,14 +241,21 @@ class _MultiProcessAllocator : public Allocator {
    * Initialize the allocator with a new memory region
    *
    * @param backend Memory backend to use (allocator will be placed at backend.data_)
-   * @param custom_header_size Size of custom header (default: 0)
-   * @param size Total size of the memory region (optional, defaults to backend.data_size_)
+   * @param region_size Size of the region in bytes. If 0, defaults to backend.data_capacity_
    * @return true on success, false on failure
    */
-  bool shm_init(const MemoryBackend &backend, size_t custom_header_size = 0) {
+  bool shm_init(const MemoryBackend &backend, size_t region_size = 0) {
+    // Default region_size to data_capacity_ if not specified
+    if (region_size == 0) {
+      region_size = backend.data_capacity_;
+    }
+
     SetBackend(backend);
     alloc_header_size_ = sizeof(_MultiProcessAllocator);
     data_start_ = sizeof(_MultiProcessAllocator);
+
+    // Store region_size for use in GetAllocatorDataSize()
+    region_size_ = region_size;
 
     // Initialize header fields directly (we are the header!)
     pid_count_ = 0;
@@ -262,16 +263,13 @@ class _MultiProcessAllocator : public Allocator {
     alloc_procs_.Init();
     free_procs_.Init();
 
-    // Create a shifted backend for the global allocator
-    // It starts after this allocator object
-    MemoryBackend alloc_backend = backend.ShiftTo(GetAllocatorDataOff());
-
-    // Initialize global buddy allocator with shifted backend
-    alloc_.shm_init(alloc_backend);
+    // Initialize global buddy allocator with the available region size
+    // The allocator region is: region_size - size of allocator header
+    size_t available_size = region_size - sizeof(_MultiProcessAllocator);
+    alloc_.shm_init(backend, available_size);
 
     // Set default sizes based on available memory
     // For testing with smaller memory regions, use smaller defaults
-    size_t available_size = backend.data_size_;
     if (available_size < 1ULL * 1024 * 1024 * 1024) {
       // For regions < 1GB, use smaller units
       process_unit_ = available_size / 4;        // Use 1/4 of available space

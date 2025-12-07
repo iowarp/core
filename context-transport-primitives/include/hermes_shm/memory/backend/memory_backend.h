@@ -119,15 +119,17 @@ class MemoryBackendId {
 typedef MemoryBackendId memory_backend_id_t;
 
 struct MemoryBackendHeader {
-  size_t md_size_;    // Metadata size for process connection
+  size_t md_size_;           // Aligned metadata size (4KB aligned)
   MemoryBackendId id_;
   bitfield64_t flags_;
-  size_t data_size_;  // Actual data buffer size for allocators
-  int data_id_;       // Device ID for the data buffer (GPU ID, etc.)
+  size_t backend_size_;      // Total size of region_
+  size_t data_size_;         // Remaining size of data_
+  int data_id_;              // Device ID for the data buffer (GPU ID, etc.)
+  size_t priv_header_off_;   // Offset from data_ back to start of private header
 
   HSHM_CROSS_FUN void Print() const {
-    printf("(%s) MemoryBackendHeader: id: (%u, %u), md_size: %lu, data_size: %lu\n",
-           kCurrentDevice, id_.major_, id_.minor_, (long unsigned)md_size_, (long unsigned)data_size_);
+    printf("(%s) MemoryBackendHeader: id: (%u, %u), md_size: %lu, backend_size: %lu, data_size: %lu, priv_header_off: %lu\n",
+           kCurrentDevice, id_.major_, id_.minor_, (long unsigned)md_size_, (long unsigned)backend_size_, (long unsigned)data_size_, (long unsigned)priv_header_off_);
   }
 };
 
@@ -148,19 +150,16 @@ static constexpr size_t kBackendHeaderSize = 4 * 1024;  // 4KB per header (share
 class MemoryBackend {
  public:
   MemoryBackendHeader *header_;
-  char *md_;       // Metadata for how processes (on CPU) connect to this backend. Not required for allocators.
-  size_t md_size_; // Metadata size. Not required for allocators.
-  bitfield64_t flags_;
-  char *data_;      // Data buffer for allocators (points to the SHARED part of the region)
-  size_t data_size_;// Data buffer size for allocators (size of SHARED region only)
-  size_t data_capacity_; // Full size of backend (doesn't change with shift)
+  char *region_;    // The entire region: [private header] [shared header] [custom header] [data]
+  char *md_;        // Metadata for how processes (on CPU) connect to this backend. Not required for allocators.
+  size_t md_size_;  // Metadata size. Not required for allocators.
+  char *data_;      // Data buffer for allocators (points to start of data section)
+  size_t data_capacity_; // Full size of backend (total capacity available)
   int data_id_;     // Device ID for the data buffer (GPU ID, etc.)
-  u64 data_offset_; // Offset from root backend (0 if this is root, non-zero for sub-allocators)
-  size_t priv_header_off_; // Offset from buffer start to private header (dynamic tracking)
 
  public:
   HSHM_CROSS_FUN
-  MemoryBackend() : header_(nullptr), md_(nullptr), md_size_(0), data_(nullptr), data_size_(0), data_capacity_(0), data_id_(-1), data_offset_(0), priv_header_off_(0) {}
+  MemoryBackend() : header_(nullptr), region_(nullptr), md_(nullptr), md_size_(0), data_(nullptr), data_capacity_(0), data_id_(-1) {}
 
   ~MemoryBackend() = default;
 
@@ -172,72 +171,10 @@ class MemoryBackend {
   HSHM_CROSS_FUN
   const MemoryBackendId &GetId() const { return header_->id_; }
 
-  /**
-   * Create a shifted copy of this memory backend
-   * Updates data_, data_size_, and data_offset_ fields in the returned copy
-   *
-   * @param offset The amount to shift the data pointer
-   * @return A new MemoryBackend with shifted data pointer and updated offset
-   */
-  HSHM_CROSS_FUN
-  MemoryBackend Shift(size_t offset) const {
-    MemoryBackend shifted = *this;
-    shifted.data_ = data_ + offset;
-    shifted.data_size_ -= offset;
-    shifted.data_offset_ += offset;
-    return shifted;
-  }
-
-  /**
-   * Create a shifted backend positioned at a specific offset
-   *
-   * @param off The offset to shift to
-   * @return A new MemoryBackend positioned at the offset
-   */
-  HSHM_CROSS_FUN
-  MemoryBackend ShiftTo(size_t off) const {
-    MemoryBackend shifted = *this;
-    size_t shift_amount = off - data_offset_;
-    shifted.data_size_ -= shift_amount;
-    shifted.data_offset_ = off;
-    return shifted;
-  }
-
-  /**
-   * Create a shifted backend positioned at a raw pointer location
-   *
-   * Updates only the data_offset to track where in the root backend this pointer is located.
-   * data_ remains unchanged (still points to root data). The data_offset is calculated as
-   * the distance from the root data_ to the given pointer.
-   *
-   * @param ptr Raw pointer to position the backend at
-   * @param region_size Total size of the managed region
-   * @return A new MemoryBackend with updated data_offset
-   */
-  HSHM_CROSS_FUN
-  MemoryBackend ShiftTo(char *ptr, size_t region_size) const {
-    MemoryBackend shifted = *this;
-    shifted.data_offset_ = static_cast<size_t>(ptr - data_);
-    shifted.data_size_ = region_size;
-    return shifted;
-  }
-
-  /**
-   * Create a shifted backend positioned at a specific FullPtr location
-   *
-   * @tparam T The type pointed to by the FullPtr
-   * @tparam PointerT The pointer type used in FullPtr
-   * @param ptr The FullPtr indicating where to position the backend
-   * @param size The size of the new backend region
-   * @return A new MemoryBackend positioned at ptr's offset with the given size
-   */
-  template<typename T, typename PointerT>
-  HSHM_CROSS_FUN
-  MemoryBackend ShiftTo(FullPtr<T, PointerT> ptr, size_t size) const;
 
   /**
    * Get pointer to the private header given a data pointer.
-   * Uses the dynamic priv_header_off_ offset for correct calculation.
+   * Private header is kBackendHeaderSize bytes before the custom header.
    *
    * @tparam T Type to cast the private header to (default: char)
    * @param data The data pointer to calculate offset from
@@ -249,12 +186,11 @@ class MemoryBackend {
     if (data == nullptr) {
       return nullptr;
     }
-    return reinterpret_cast<T*>(data - priv_header_off_);
+    return reinterpret_cast<T*>(data - header_->priv_header_off_);
   }
 
   /**
    * Get pointer to the private header given a data pointer (const version).
-   * Uses the dynamic priv_header_off_ offset for correct calculation.
    *
    * @tparam T Type to cast the private header to (default: char)
    * @param data The data pointer to calculate offset from
@@ -266,7 +202,7 @@ class MemoryBackend {
     if (data == nullptr) {
       return nullptr;
     }
-    return reinterpret_cast<const T*>(data - priv_header_off_);
+    return reinterpret_cast<const T*>(data - header_->priv_header_off_);
   }
 
   /**
@@ -303,6 +239,42 @@ class MemoryBackend {
     }
     const char *priv = GetPrivateHeader<char>(data);
     return reinterpret_cast<const T*>(priv + kBackendHeaderSize);
+  }
+
+  /**
+   * Get pointer to the custom header given a data pointer.
+   * Custom header is located kBackendHeaderSize bytes after the shared header.
+   *
+   * @tparam T Type to cast the custom header to (default: char)
+   * @param data The data pointer to calculate offset from
+   * @return Pointer to the custom header, or nullptr if data is null
+   */
+  template<typename T = char>
+  HSHM_CROSS_FUN
+  T *GetCustomHeader(char *data) {
+    if (data == nullptr) {
+      return nullptr;
+    }
+    char *shared = GetSharedHeader<char>(data);
+    return reinterpret_cast<T*>(shared + kBackendHeaderSize);
+  }
+
+  /**
+   * Get pointer to the custom header given a data pointer (const version).
+   * Custom header is located kBackendHeaderSize bytes after the shared header.
+   *
+   * @tparam T Type to cast the custom header to (default: char)
+   * @param data The data pointer to calculate offset from
+   * @return Const pointer to the custom header, or nullptr if data is null
+   */
+  template<typename T = char>
+  HSHM_CROSS_FUN
+  const T *GetCustomHeader(const char *data) const {
+    if (data == nullptr) {
+      return nullptr;
+    }
+    const char *shared = GetSharedHeader<char>(data);
+    return reinterpret_cast<const T*>(shared + kBackendHeaderSize);
   }
 
   /**
@@ -360,6 +332,30 @@ class MemoryBackend {
   HSHM_CROSS_FUN
   const T *GetPrivateHeader() const {
     return GetPrivateHeader<T>(data_);
+  }
+
+  /**
+   * Get pointer to the custom header
+   *
+   * @tparam T Type to cast the custom header to (default: char)
+   * @return Pointer to the custom header, or nullptr if data_ is null
+   */
+  template<typename T = char>
+  HSHM_CROSS_FUN
+  T *GetCustomHeader() {
+    return GetCustomHeader<T>(data_);
+  }
+
+  /**
+   * Get pointer to the custom header (const version)
+   *
+   * @tparam T Type to cast the custom header to (default: char)
+   * @return Const pointer to the custom header, or nullptr if data_ is null
+   */
+  template<typename T = char>
+  HSHM_CROSS_FUN
+  const T *GetCustomHeader() const {
+    return GetCustomHeader<T>(data_);
   }
 
   /**
@@ -446,8 +442,8 @@ class MemoryBackend {
   HSHM_CROSS_FUN
   void Print() const {
     header_->Print();
-    printf("(%s) MemoryBackend: md: %p, md_size: %lu, data: %p, data_size: %lu, data_offset: %lu\n",
-           kCurrentDevice, md_, (long unsigned)md_size_, data_, (long unsigned)data_size_, (long unsigned)data_offset_);
+    printf("(%s) MemoryBackend: region: %p, md: %p, md_size: %lu, data: %p, data_capacity: %lu\n",
+           kCurrentDevice, region_, md_, (long unsigned)md_size_, data_, (long unsigned)data_capacity_);
   }
 
   /// Each allocator must define its own shm_init.
@@ -457,17 +453,6 @@ class MemoryBackend {
   // virtual void shm_destroy() = 0;
 };
 
-// Implementation of ShiftTo template method (defined after FullPtr is fully declared in allocator.h)
-template<typename T, typename PointerT>
-HSHM_CROSS_FUN
-MemoryBackend MemoryBackend::ShiftTo(FullPtr<T, PointerT> ptr, size_t size) const {
-  MemoryBackend shifted = *this;
-  shifted.data_offset_ = ptr.shm_.off_.load();
-  shifted.data_size_ = size;
-  // NOTE: Do NOT update data_ - it must remain pointing to the root backend data
-  // The allocator may be located at a different address than data_ + data_offset_
-  return shifted;
-}
 
 }  // namespace hshm::ipc
 

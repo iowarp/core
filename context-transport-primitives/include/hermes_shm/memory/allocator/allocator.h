@@ -88,6 +88,7 @@ class Allocator {
   size_t alloc_header_size_;  /**< Size of the allocator object (sizeof derived class) */
   size_t data_start_;         /**< Offset of allocator's managed data region (relative to this) */
   size_t this_;               /**< Offset of this allocator object within backend data (this - backend.data_) */
+  size_t region_size_;        /**< Size of the region this allocator manages */
 
  private:
   MemoryBackend backend_;  /**< Memory backend (not fully compatible with shared memory) */
@@ -95,7 +96,7 @@ class Allocator {
  public:
   /** Default constructor */
   HSHM_INLINE_CROSS_FUN
-  Allocator() : alloc_header_size_(0), data_start_(0), this_(0) {}
+  Allocator() : alloc_header_size_(0), data_start_(0), this_(0), region_size_(0) {}
 
   /** Get the allocator identifier from backend */
   HSHM_INLINE_CROSS_FUN
@@ -111,15 +112,6 @@ class Allocator {
   HSHM_INLINE_CROSS_FUN
   char* GetBackendData() const {
     return reinterpret_cast<char*>(const_cast<Allocator*>(this)) - this_;
-  }
-
-  /**
-   * Get backend shift (data_offset_)
-   * @return The offset from backend data pointer to the allocator's region
-   */
-  HSHM_INLINE_CROSS_FUN
-  size_t GetBackendShift() const {
-    return backend_.data_offset_;
   }
 
   /**
@@ -141,20 +133,6 @@ class Allocator {
   MemoryBackend GetBackend() const {
     MemoryBackend backend = backend_;
     backend.data_ = GetBackendData();
-    return backend;
-  }
-
-  /**
-   * Get a shifted backend where data_ points to data_ + data_offset_
-   * This is useful for sub-allocators that need to operate on a region
-   * within the parent allocator's space.
-   *
-   * @return Backend with data_ = GetBackendData() + data_offset_
-   */
-  HSHM_INLINE_CROSS_FUN
-  MemoryBackend GetShiftedBackend() const {
-    MemoryBackend backend = backend_;
-    backend.data_ = GetBackendData() + backend_.data_offset_;
     return backend;
   }
 
@@ -183,22 +161,13 @@ class Allocator {
 
 
   /**
-   * Construct custom header
-   */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN HEADER_T *ConstructHeader(void *buffer) {
-    new ((HEADER_T *)buffer) HEADER_T();
-    return reinterpret_cast<HEADER_T *>(buffer);
-  }
-
-  /**
    * Get the size of the backend data region
    * This is the total size available to the allocator
    *
    * @return Size of backend data region in bytes
    */
   HSHM_INLINE_CROSS_FUN
-  size_t GetBackendDataSize() const { return backend_.data_size_; }
+  size_t GetBackendDataSize() const { return backend_.data_capacity_; }
 
   /**
    * Get the size of the backend data capacity
@@ -228,7 +197,7 @@ class Allocator {
    */
   HSHM_INLINE_CROSS_FUN
   size_t GetAllocatorDataOff() const {
-    return GetAllocatorDataStart() - GetBackendData();
+    return this_ + data_start_;
   }
 
   /**
@@ -239,7 +208,7 @@ class Allocator {
    */
   HSHM_INLINE_CROSS_FUN
   size_t GetAllocatorDataSize() const {
-    return GetBackendDataSize() - (GetAllocatorDataStart() - reinterpret_cast<const char*>(this));
+    return region_size_ - data_start_;
   }
 
   /**
@@ -280,7 +249,7 @@ class Allocator {
     MemoryBackend backend = GetBackend();
     printf("(%s) Allocator: id: (%u,%u), size: %lu\n",
            kCurrentDevice, GetId().major_,
-           GetId().minor_, (unsigned long)backend.data_size_);
+           GetId().minor_, (unsigned long)backend.data_capacity_);
   }
 
  protected:
@@ -1373,11 +1342,12 @@ class BaseAllocator : public CoreAllocT {
     MemoryBackendId backend_id = core_this->GetId();
 
     // Create ArrayBackend for the sub-allocator
-    // The ArrayBackend points to: [kBackendHeaderSize shared][kBackendHeaderSize private][SubAllocCoreT object][managed region]
+    // The ArrayBackend points to: [kBackendHeaderSize private][kBackendHeaderSize shared][SubAllocCoreT object][managed region]
     hipc::ArrayBackend backend;
-    char *shared_ptr = region.ptr_ + 2 * hipc::kBackendHeaderSize;
-    u64 shared_offset = region.shm_.off_.load() + 2 * hipc::kBackendHeaderSize;
-    backend.shm_init(backend_id, alloc_size + size, shared_ptr, shared_offset);
+    char *region_ptr = region.ptr_;
+    u64 region_offset = region.shm_.off_.load();
+    size_t total_region_size = 2 * hipc::kBackendHeaderSize + alloc_size + size;
+    backend.shm_init(backend_id, total_region_size, region_ptr, region_offset);
 
     // Use MakeAlloc to construct and initialize the sub-allocator
     // MakeAlloc automatically passes backend as first parameter to shm_init

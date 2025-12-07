@@ -31,13 +31,8 @@ hipc::ArenaAllocator<false>* CreateArenaAllocator(hipc::MallocBackend &backend) 
   auto *alloc = backend.Cast<hipc::ArenaAllocator<false>>();
   new (alloc) hipc::ArenaAllocator<false>();
 
-  // Create heap backend view (starts after allocator object)
-  hipc::MemoryBackend heap_backend = backend;
-  heap_backend.data_offset_ = alloc_size;
-  heap_backend.data_size_ = heap_size;
-
-  // Initialize allocator with heap backend
-  alloc->shm_init(heap_backend);
+  // Initialize allocator with backend and region_size
+  alloc->shm_init(backend, heap_size);
 
   return alloc;
 }
