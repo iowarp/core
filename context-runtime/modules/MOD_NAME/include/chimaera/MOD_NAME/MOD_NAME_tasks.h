@@ -30,7 +30,7 @@ struct CreateParams {
   CreateParams() : worker_count_(1) {}
   
   // Constructor with allocator and parameters
-  CreateParams(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc, 
+  CreateParams(const AllocT* &alloc, 
                const std::string& config_data = "", 
                chi::u32 worker_count = 1)
       : config_data_(config_data), worker_count_(worker_count) {
@@ -61,13 +61,13 @@ struct CustomTask : public chi::Task {
   IN chi::u32 operation_id_;
 
   /** SHM default constructor */
-  explicit CustomTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc) 
+  explicit CustomTask(const AllocT* &alloc) 
       : chi::Task(alloc), 
         data_(alloc), operation_id_(0) {}
 
   /** Emplace constructor */
   explicit CustomTask(
-      const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+      const AllocT* &alloc,
       const chi::TaskId &task_node,
       const chi::PoolId &pool_id, 
       const chi::PoolQuery &pool_query,
@@ -121,12 +121,12 @@ struct CoMutexTestTask : public chi::Task {
   IN chi::u32 hold_duration_ms_; // How long to hold the mutex
 
   /** SHM default constructor */
-  explicit CoMutexTestTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc) 
+  explicit CoMutexTestTask(const AllocT* &alloc) 
       : chi::Task(alloc), test_id_(0), hold_duration_ms_(0) {}
 
   /** Emplace constructor */
   explicit CoMutexTestTask(
-      const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+      const AllocT* &alloc,
       const chi::TaskId &task_node,
       const chi::PoolId &pool_id, 
       const chi::PoolQuery &pool_query,
@@ -173,12 +173,12 @@ struct CoRwLockTestTask : public chi::Task {
   IN chi::u32 hold_duration_ms_; // How long to hold the lock
 
   /** SHM default constructor */
-  explicit CoRwLockTestTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc) 
+  explicit CoRwLockTestTask(const AllocT* &alloc) 
       : chi::Task(alloc), test_id_(0), is_writer_(false), hold_duration_ms_(0) {}
 
   /** Emplace constructor */
   explicit CoRwLockTestTask(
-      const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+      const AllocT* &alloc,
       const chi::TaskId &task_node,
       const chi::PoolId &pool_id, 
       const chi::PoolQuery &pool_query,
@@ -228,12 +228,12 @@ struct WaitTestTask : public chi::Task {
   INOUT chi::u32 current_depth_;   // Current recursion level (starts at 0)
 
   /** SHM default constructor */
-  explicit WaitTestTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc) 
+  explicit WaitTestTask(const AllocT* &alloc) 
       : chi::Task(alloc), depth_(0), test_id_(0), current_depth_(0) {}
 
   /** Emplace constructor */
   explicit WaitTestTask(
-      const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+      const AllocT* &alloc,
       const chi::TaskId &task_node,
       const chi::PoolId &pool_id, 
       const chi::PoolQuery &pool_query,

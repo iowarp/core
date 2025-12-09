@@ -90,7 +90,7 @@ TEST_CASE("CHI_IPC AllocateBuffer return type verification",
   auto* ipc_manager = CHI_IPC;
   REQUIRE(ipc_manager != nullptr);
 
-  SECTION("Return type is FullPtr<char>, not hipc::Pointer") {
+  SECTION("Return type is FullPtr<char>, not hipc::ShmPtr<>") {
     // Compile-time type checking - now always returns FullPtr<char>
     auto buffer1 = ipc_manager->AllocateBuffer(1024);
     static_assert(std::is_same_v<decltype(buffer1), hipc::FullPtr<char>>,
@@ -263,7 +263,7 @@ TEST_CASE("CHI_IPC AllocateBuffer documentation examples",
     REQUIRE(ipc_manager != nullptr);
 
     // Allocate a buffer in shared memory (returns FullPtr<T>, not
-    // hipc::Pointer)
+    // hipc::ShmPtr<>)
     size_t buffer_size = 1024;
     hipc::FullPtr<char> buffer_ptr =
         ipc_manager->AllocateBuffer(buffer_size);

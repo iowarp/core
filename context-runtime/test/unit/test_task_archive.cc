@@ -39,8 +39,8 @@ constexpr chi::u32 kTestWriteFlag = 0x1;  // BULK_XFER
 constexpr chi::u32 kTestExposeFlag = 0x2; // BULK_EXPOSE
 
 // Helper allocator for tests
-hipc::CtxAllocator<CHI_MAIN_ALLOC_T> GetTestAllocator() {
-  return HSHM_MEMORY_MANAGER->GetDefaultAllocator<CHI_MAIN_ALLOC_T>();
+AllocT* GetTestAllocator() {
+  return CHI_IPC->GetMainAllocator();
 }
 
 // Helper to create test task with sample data
@@ -187,7 +187,7 @@ TEST_CASE("Bulk Transfer Recording", "[task_archive][bulk_transfer]") {
     std::string test_data = "test";
     chi::TaskLoadInArchive archive(test_data);
 
-    hipc::Pointer test_ptr = hipc::Pointer::GetNull();
+    hipc::ShmPtr<> test_ptr = hipc::ShmPtr<>::GetNull();
     size_t test_size = 1024;
     uint32_t test_flags = kTestWriteFlag | kTestExposeFlag;
 
@@ -202,7 +202,7 @@ TEST_CASE("Bulk Transfer Recording", "[task_archive][bulk_transfer]") {
   SECTION("TaskSaveInArchive bulk transfer recording") {
     chi::TaskSaveInArchive archive(1);
 
-    hipc::Pointer test_ptr = hipc::Pointer::GetNull();
+    hipc::ShmPtr<> test_ptr = hipc::ShmPtr<>::GetNull();
     size_t test_size = 2048;
     uint32_t test_flags = kTestWriteFlag;
 
@@ -218,9 +218,9 @@ TEST_CASE("Bulk Transfer Recording", "[task_archive][bulk_transfer]") {
     chi::TaskSaveInArchive archive(1);
 
     // Add multiple bulk transfers
-    archive.bulk(hipc::Pointer::GetNull(), 100, kTestWriteFlag);
-    archive.bulk(hipc::Pointer::GetNull(), 200, kTestExposeFlag);
-    archive.bulk(hipc::Pointer::GetNull(), 300, kTestWriteFlag | kTestExposeFlag);
+    archive.bulk(hipc::ShmPtr<>::GetNull(), 100, kTestWriteFlag);
+    archive.bulk(hipc::ShmPtr<>::GetNull(), 200, kTestExposeFlag);
+    archive.bulk(hipc::ShmPtr<>::GetNull(), 300, kTestWriteFlag | kTestExposeFlag);
 
     auto data_transfers = archive.GetDataTransfers();
     REQUIRE(data_transfers.size() == 3);
@@ -618,7 +618,7 @@ TEST_CASE("Error Handling and Edge Cases", "[task_archive][error_handling]") {
 
   SECTION("Bulk transfer with null pointer") {
     chi::TaskSaveInArchive archive(1);
-    hipc::Pointer null_ptr = hipc::Pointer::GetNull();
+    hipc::ShmPtr<> null_ptr = hipc::ShmPtr<>::GetNull();
 
     REQUIRE_NOTHROW(archive.bulk(null_ptr, 0, 0));
 

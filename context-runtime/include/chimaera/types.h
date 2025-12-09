@@ -269,9 +269,9 @@ constexpr PoolId kAdminPoolId =
     UniqueId(1, 0); // Admin ChiMod pool ID (reserved)
 
 // Allocator type aliases using HSHM conventions
-#define CHI_MAIN_ALLOC_T hipc::MallocAllocator
-#define CHI_CDATA_ALLOC_T hipc::MallocAllocator
-#define CHI_RDATA_ALLOC_T hipc::MallocAllocator
+#define CHI_MAIN_ALLOC_T hipc::MultiProcessAllocator
+#define CHI_CDATA_ALLOC_T hipc::MultiProcessAllocator
+#define CHI_RDATA_ALLOC_T CHI_CDATA_ALLOC_T  // Runtime data uses same allocator as client data
 
 // Memory segment identifiers
 enum MemorySegment {

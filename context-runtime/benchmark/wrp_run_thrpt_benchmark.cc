@@ -284,7 +284,7 @@ void IOWorkerThread(size_t thread_id, const BenchmarkConfig &config,
       size_t bytes_to_write = std::min(bytes_remaining, size_t(4096));
 
       // Create pointer offset into write buffer
-      hipc::Pointer write_ptr = write_buffer.shm_;
+      hipc::ShmPtr<> write_ptr = write_buffer.shm_;
       write_ptr.off_ += bytes_written;
 
       // Create ArrayVector with single block for Write operation

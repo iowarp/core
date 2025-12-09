@@ -6,14 +6,14 @@
 
 namespace chi {
 
-TaskQueue::TaskQueue(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T>& alloc,
+TaskQueue::TaskQueue(const AllocT*& alloc,
                      u32 num_lanes, u32 num_prios, u32 depth_per_lane)
     : queue_(alloc, num_lanes, num_prios, depth_per_lane) {
   // Headers are now managed automatically by the multi_mpsc_queue per lane
 }
 
 
-/*static*/ bool TaskQueue::EmplaceTask(hipc::FullPtr<TaskLane>& lane_ptr, hipc::TypedPointer<Task> task_ptr) {
+/*static*/ bool TaskQueue::EmplaceTask(hipc::FullPtr<TaskLane>& lane_ptr, hipc::ShmPtr<Task> task_ptr) {
   if (lane_ptr.IsNull() || task_ptr.IsNull()) {
     return false;
   }
@@ -24,7 +24,7 @@ TaskQueue::TaskQueue(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T>& alloc,
   return true;
 }
 
-/*static*/ bool TaskQueue::PopTask(hipc::FullPtr<TaskLane>& lane_ptr, hipc::TypedPointer<Task>& task_ptr) {
+/*static*/ bool TaskQueue::PopTask(hipc::FullPtr<TaskLane>& lane_ptr, hipc::ShmPtr<Task>& task_ptr) {
   if (lane_ptr.IsNull()) {
     return false;
   }

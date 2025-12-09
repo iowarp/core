@@ -572,7 +572,7 @@ chi::u32 Runtime::PerformAsyncIO(bool is_write, chi::u64 offset, void *buffer,
 
 // Backend-specific write operations
 void Runtime::WriteToFile(hipc::FullPtr<WriteTask> task) {
-  // Convert hipc::Pointer to hipc::FullPtr<char> for data access
+  // Convert hipc::ShmPtr<> to hipc::FullPtr<char> for data access
   hipc::FullPtr<char> data_ptr(task->data_);
 
   chi::u64 total_bytes_written = 0;
@@ -657,7 +657,7 @@ void Runtime::WriteToFile(hipc::FullPtr<WriteTask> task) {
 }
 
 void Runtime::WriteToRam(hipc::FullPtr<WriteTask> task) {
-  // Convert hipc::Pointer to hipc::FullPtr<char> for data access
+  // Convert hipc::ShmPtr<> to hipc::FullPtr<char> for data access
   hipc::FullPtr<char> data_ptr(task->data_);
 
   chi::u64 total_bytes_written = 0;
@@ -704,7 +704,7 @@ void Runtime::WriteToRam(hipc::FullPtr<WriteTask> task) {
 
 // Backend-specific read operations
 void Runtime::ReadFromFile(hipc::FullPtr<ReadTask> task) {
-  // Convert hipc::Pointer to hipc::FullPtr<char> for data access
+  // Convert hipc::ShmPtr<> to hipc::FullPtr<char> for data access
   hipc::FullPtr<char> data_ptr(task->data_);
 
   chi::u64 total_bytes_read = 0;
@@ -787,7 +787,7 @@ void Runtime::ReadFromFile(hipc::FullPtr<ReadTask> task) {
 }
 
 void Runtime::ReadFromRam(hipc::FullPtr<ReadTask> task) {
-  // Convert hipc::Pointer to hipc::FullPtr<char> for data access
+  // Convert hipc::ShmPtr<> to hipc::FullPtr<char> for data access
   hipc::FullPtr<char> data_ptr(task->data_);
 
   chi::u64 total_bytes_read = 0;

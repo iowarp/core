@@ -162,8 +162,8 @@ class Container {
   /**
    * Get the allocator for this container
    */
-  hipc::CtxAllocator<CHI_MAIN_ALLOC_T> GetAllocator() const {
-    return HSHM_MEMORY_MANAGER->GetDefaultAllocator<CHI_MAIN_ALLOC_T>();
+  AllocT* GetAllocator() const {
+    return CHI_IPC->GetMainAllocator();
   }
 
   /**

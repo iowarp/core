@@ -64,7 +64,7 @@ public:
   /**
    * SHM default constructor
    */
-  explicit Task(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc)
+  explicit Task(const AllocT* &alloc)
       : hipc::ShmContainer() {
     SetNull();
   }
@@ -72,7 +72,7 @@ public:
   /**
    * Emplace constructor with task initialization
    */
-  explicit Task(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+  explicit Task(const AllocT* &alloc,
                 const TaskId &task_id, const PoolId &pool_id,
                 const PoolQuery &pool_query, const MethodId &method)
       : hipc::ShmContainer() {
@@ -140,13 +140,13 @@ public:
    */
   HSHM_CROSS_FUN Task(Task &&other) {
     shm_move_op<false>(
-        HSHM_MEMORY_MANAGER->GetDefaultAllocator<CHI_MAIN_ALLOC_T>(),
+        CHI_IPC->GetMainAllocator(),
         std::move(other));
   }
 
   template <bool IS_ASSIGN>
   HSHM_CROSS_FUN void
-  shm_move_op(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+  shm_move_op(const AllocT* &alloc,
               Task &&other) noexcept {
     // For simplified Task class, just copy the data
     shm_strong_copy_main(other);
@@ -272,22 +272,22 @@ public:
   /**
    * Get shared memory pointer representation
    */
-  HSHM_CROSS_FUN hipc::Pointer GetShmPointer() const {
-    return hipc::Pointer::GetNull();
+  HSHM_CROSS_FUN hipc::ShmPtr<> GetShmPointer() const {
+    return hipc::ShmPtr<>::GetNull();
   }
 
   /**
    * Get the allocator (stub implementation for compatibility)
    */
-  HSHM_CROSS_FUN hipc::CtxAllocator<CHI_MAIN_ALLOC_T> GetAllocator() const {
-    return HSHM_MEMORY_MANAGER->GetDefaultAllocator<CHI_MAIN_ALLOC_T>();
+  HSHM_CROSS_FUN AllocT* GetAllocator() const {
+    return CHI_IPC->GetMainAllocator();
   }
 
   /**
    * Get context allocator (stub implementation for compatibility)
    */
-  HSHM_CROSS_FUN hipc::CtxAllocator<CHI_MAIN_ALLOC_T> GetCtxAllocator() const {
-    return HSHM_MEMORY_MANAGER->GetDefaultAllocator<CHI_MAIN_ALLOC_T>();
+  HSHM_CROSS_FUN AllocT* GetCtxAllocator() const {
+    return CHI_IPC->GetMainAllocator();
   }
 
   /**
@@ -297,7 +297,7 @@ public:
    * @param args The arguments to serialize
    */
   template <typename... Args>
-  static void Serialize(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+  static void Serialize(const AllocT* &alloc,
                         hipc::string &output_str, const Args &...args) {
     std::ostringstream os;
     cereal::BinaryOutputArchive archive(os);

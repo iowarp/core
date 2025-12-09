@@ -515,18 +515,6 @@ class vector : public ShmContainer<AllocT> {
 
  public:
   /**
-   * Default constructor
-   *
-   * Creates an empty vector with no allocated storage.
-   */
-  HSHM_CROSS_FUN
-  vector()
-      : ShmContainer<AllocT>(nullptr),
-        size_(0),
-        capacity_(0),
-        data_(OffsetPtr<T>::GetNull()) {}
-
-  /**
    * Constructor with allocator
    *
    * Creates an empty vector associated with an allocator.
@@ -541,48 +529,32 @@ class vector : public ShmContainer<AllocT> {
         data_(OffsetPtr<T>::GetNull()) {}
 
   /**
-   * Constructor with explicit size and default initialization
+   * Constructor with explicit size and variable arguments
    *
-   * Creates a vector with the specified size, with elements default-initialized.
-   *
-   * @param alloc The allocator to use
-   * @param size The initial size of the vector
-   */
-  HSHM_CROSS_FUN
-  vector(AllocT *alloc, size_t size);
-
-  /**
-   * Constructor with explicit size and fill value
-   *
-   * Creates a vector with the specified size, with all elements initialized
-   * to the provided value.
+   * Creates a vector with the specified size, with elements initialized
+   * using the provided variable arguments passed to the constructor.
    *
    * @param alloc The allocator to use
    * @param size The initial size of the vector
-   * @param value The value to fill with
+   * @param args Variable arguments passed to element constructor
    */
+  template<typename... Args>
   HSHM_CROSS_FUN
-  vector(AllocT *alloc, size_t size, const T &value);
+  vector(AllocT *alloc, size_t size, Args&&... args);
 
   /**
-   * Copy constructor
+   * Copy constructor (deleted)
    *
-   * Creates a new vector as a copy of an existing vector.
-   *
-   * @param other The vector to copy from
+   * IPC data structures must be allocated via allocator, not copied on stack.
    */
-  HSHM_CROSS_FUN
-  vector(const vector &other);
+  vector(const vector &other) = delete;
 
   /**
-   * Move constructor
+   * Move constructor (deleted)
    *
-   * Creates a new vector by moving from an existing vector.
-   *
-   * @param other The vector to move from
+   * IPC data structures must be allocated via allocator, not moved on stack.
    */
-  HSHM_CROSS_FUN
-  vector(vector &&other) noexcept;
+  vector(vector &&other) noexcept = delete;
 
   /**
    * Range constructor from iterators
@@ -1025,106 +997,67 @@ class vector : public ShmContainer<AllocT> {
 };
 
 /**
- * Constructor with explicit size and default initialization
+ * Constructor with explicit size and variable arguments
  *
- * Creates a vector with the specified size, with elements default-initialized.
+ * Creates a vector with the specified size, with elements initialized
+ * using the provided variable arguments passed to the constructor.
  *
  * @tparam T Element type
  * @tparam AllocT Allocator type
+ * @tparam Args Variable argument types
  * @param alloc The allocator to use
  * @param size The initial size of the vector
+ * @param args Variable arguments passed to element constructor
  */
 template<typename T, typename AllocT>
-HSHM_CROSS_FUN vector<T, AllocT>::vector(AllocT *alloc, size_t size)
+template<typename... Args>
+HSHM_CROSS_FUN vector<T, AllocT>::vector(AllocT *alloc, size_t size, Args&&... args)
     : ShmContainer<AllocT>(alloc),
       size_(0),
       capacity_(0),
       data_(OffsetPtr<T>::GetNull()) {
   if (size > 0) {
     AllocateStorage(size);
-    // Default-initialize elements
+    // Initialize elements with provided arguments
     auto fp = FullPtr(this->GetAllocator(), data_);
     if (fp.ptr_) {
       for (size_t i = 0; i < size; ++i) {
-        new (fp.ptr_ + i) T();
+        if constexpr (IS_SHM_CONTAINER(T)) {
+          new (fp.ptr_ + i) T(alloc, std::forward<Args>(args)...);
+        } else {
+          new (fp.ptr_ + i) T(std::forward<Args>(args)...);
+        }
       }
       size_ = size;
     }
   }
 }
 
-/**
- * Constructor with explicit size and fill value
- *
- * Creates a vector with the specified size, with all elements initialized
- * to the provided value.
- *
- * @tparam T Element type
- * @tparam AllocT Allocator type
- * @param alloc The allocator to use
- * @param size The initial size of the vector
- * @param value The value to fill with
- */
-template<typename T, typename AllocT>
-HSHM_CROSS_FUN vector<T, AllocT>::vector(AllocT *alloc, size_t size, const T &value)
-    : ShmContainer<AllocT>(alloc),
-      size_(0),
-      capacity_(0),
-      data_(OffsetPtr<T>::GetNull()) {
-  if (size > 0) {
-    AllocateStorage(size);
-    // Fill with value
-    auto fp = FullPtr(this->GetAllocator(), data_);
-    if (fp.ptr_) {
-      for (size_t i = 0; i < size; ++i) {
-        new (fp.ptr_ + i) T(value);
-      }
-      size_ = size;
-    }
-  }
-}
+// Copy constructor implementation removed - declared as deleted
+// template<typename T, typename AllocT>
+// HSHM_CROSS_FUN vector<T, AllocT>::vector(const vector &other)
+//     : ShmContainer<AllocT>(other.GetAllocator()),
+//       size_(0),
+//       capacity_(0),
+//       data_(OffsetPtr<T>::GetNull()) {
+//   if (other.size_ > 0) {
+//     AllocateStorage(other.size_);
+//     CopyElements(other.data(), other.size_);
+//   }
+// }
 
-/**
- * Copy constructor
- *
- * Creates a new vector as a copy of an existing vector.
- *
- * @tparam T Element type
- * @tparam AllocT Allocator type
- * @param other The vector to copy from
- */
-template<typename T, typename AllocT>
-HSHM_CROSS_FUN vector<T, AllocT>::vector(const vector &other)
-    : ShmContainer<AllocT>(other.GetAllocator()),
-      size_(0),
-      capacity_(0),
-      data_(OffsetPtr<T>::GetNull()) {
-  if (other.size_ > 0) {
-    AllocateStorage(other.size_);
-    CopyElements(other.data(), other.size_);
-  }
-}
-
-/**
- * Move constructor
- *
- * Creates a new vector by moving from an existing vector.
- *
- * @tparam T Element type
- * @tparam AllocT Allocator type
- * @param other The vector to move from
- */
-template<typename T, typename AllocT>
-HSHM_CROSS_FUN vector<T, AllocT>::vector(vector &&other) noexcept
-    : ShmContainer<AllocT>(other.GetAllocator()),
-      size_(other.size_),
-      capacity_(other.capacity_),
-      data_(other.data_) {
-  // Clear other vector
-  other.size_ = 0;
-  other.capacity_ = 0;
-  other.data_ = OffsetPtr<T>::GetNull();
-}
+// Move constructor implementation removed - declared as deleted
+// template<typename T, typename AllocT>
+// HSHM_CROSS_FUN vector<T, AllocT>::vector(vector &&other) noexcept
+//     : ShmContainer<AllocT>(other.GetAllocator()),
+//       size_(other.size_),
+//       capacity_(other.capacity_),
+//       data_(other.data_) {
+//   // Clear other vector
+//   other.size_ = 0;
+//   other.capacity_ = 0;
+//   other.data_ = OffsetPtr<T>::GetNull();
+// }
 
 /**
  * Range constructor from iterators
@@ -1759,7 +1692,11 @@ HSHM_CROSS_FUN void vector<T, AllocT>::resize(size_t new_size) {
     auto fp = FullPtr(alloc, data_);
     if (fp.ptr_) {
       for (size_t i = size_; i < new_size; ++i) {
-        new (fp.ptr_ + i) T();
+        if constexpr (IS_SHM_CONTAINER(T)) {
+          new (fp.ptr_ + i) T(alloc);
+        } else {
+          new (fp.ptr_ + i) T();
+        }
       }
     }
     size_ = new_size;

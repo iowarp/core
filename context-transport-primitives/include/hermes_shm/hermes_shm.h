@@ -78,62 +78,36 @@
 #include "thread/thread_model_manager.h"
 
 // Memory management
+// Allocators (memory allocation strategies)
 #include "memory/allocator/allocator.h"
-// Following allocator includes deleted during hard refactoring:
-// #include "memory/allocator/allocator_factory.h"
-// #include "memory/allocator/allocator_factory_.h"
-// #include "memory/allocator/gpu_stack_allocator.h"
-// #include "memory/allocator/heap.h"
-// #include "memory/allocator/malloc_allocator.h"
-// #include "memory/allocator/mp_page.h"
-// #include "memory/allocator/page_allocator.h"
-// #include "memory/allocator/scalable_page_allocator.h"
-// #include "memory/allocator/stack_allocator.h"
-// #include "memory/allocator/test_allocator.h"
-// #include "memory/allocator/thread_local_allocator.h"
+#include "memory/allocator/arena_allocator.h"
+#include "memory/allocator/buddy_allocator.h"
+#include "memory/allocator/heap.h"
+#include "memory/allocator/mp_allocator.h"
+
+// Memory backends (low-level memory management implementations)
 #include "memory/backend/array_backend.h"
 #include "memory/backend/gpu_malloc.h"
 #include "memory/backend/gpu_shm_mmap.h"
 #include "memory/backend/malloc_backend.h"
 #include "memory/backend/memory_backend.h"
-// #include "memory/backend/memory_backend_factory.h"
 #include "memory/backend/posix_mmap.h"
 #include "memory/backend/posix_shm_mmap.h"
-// #include "memory/memory.h"  // Merged into allocator.h
 
-// Data structures (internal templates first, then containers)
-// #include "data_structures/all.h"  // Deleted during hard refactoring
-// Following internal includes deleted during hard refactoring:
-// #include "data_structures/internal/shm_archive.h"
-// #include "data_structures/internal/shm_container.h"
-// #include "data_structures/internal/shm_internal.h"
-// #include "data_structures/internal/shm_macros.h"
+// Data structures
+// IPC data structures (inter-process communication containers)
 #include "data_structures/ipc/algorithm.h"
-// Following includes deleted during hard refactoring:
-// #include "data_structures/ipc/chararr.h"
-// #include "data_structures/ipc/charwrap.h"
-// #include "data_structures/ipc/dynamic_queue.h"
-// #include "data_structures/ipc/functional.h"
-// #include "data_structures/ipc/hash.h"
-// #include "data_structures/ipc/key_set.h"
-// #include "data_structures/ipc/lifo_list_queue.h"
-// #include "data_structures/ipc/list.h"
-// #include "data_structures/ipc/mpsc_lifo_list_queue.h"
-// #include "data_structures/ipc/multi_ring_buffer.h"
-// #include "data_structures/ipc/pair.h"
-// #include "data_structures/ipc/ring_ptr_queue.h"
-// #include "data_structures/ipc/ring_queue.h"
-// #include "data_structures/ipc/ring_queue_flags.h"
-// #include "data_structures/ipc/slist.h"
-// #include "data_structures/ipc/split_ticket_queue.h"
-// #include "data_structures/ipc/spsc_fifo_list_queue.h"
-// #include "data_structures/ipc/string.h"
-// #include "data_structures/ipc/string_common.h"
-// #include "data_structures/ipc/stringstream.h"
-// #include "data_structures/ipc/ticket_queue.h"
-// #include "data_structures/ipc/tuple_base.h"
-// #include "data_structures/ipc/unordered_map.h"
-// #include "data_structures/ipc/vector.h"
+#include "data_structures/ipc/rb_tree_pre.h"
+#include "data_structures/ipc/ring_buffer.h"
+#include "data_structures/ipc/shm_container.h"
+#include "data_structures/ipc/slist_pre.h"
+#include "data_structures/ipc/vector.h"
+
+// Private data structures (single-process containers)
+#include "data_structures/priv/string.h"
+#include "data_structures/priv/vector.h"
+
+// Serialization support
 #include "data_structures/serialization/local_serialize.h"
 #include "data_structures/serialization/serialize_common.h"
 

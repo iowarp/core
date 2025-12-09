@@ -152,7 +152,8 @@ void IpcManager::ServerFinalize() {
     return;
   }
 
-  auto mem_manager = HSHM_MEMORY_MANAGER;
+  // TODO: Remove HSHM_MEMORY_MANAGER usage
+  // auto mem_manager = HSHM_MEMORY_MANAGER;
 
   // Cleanup servers
   local_server_.reset();
@@ -169,13 +170,13 @@ void IpcManager::ServerFinalize() {
 
   // Cleanup allocators
   if (!main_allocator_id_.IsNull()) {
-    mem_manager->UnregisterAllocator(main_allocator_id_);
+    // mem_manager->UnregisterAllocator(main_allocator_id_);
   }
   if (!client_data_allocator_id_.IsNull()) {
-    mem_manager->UnregisterAllocator(client_data_allocator_id_);
+    // mem_manager->UnregisterAllocator(client_data_allocator_id_);
   }
   if (!runtime_data_allocator_id_.IsNull()) {
-    mem_manager->UnregisterAllocator(runtime_data_allocator_id_);
+    // mem_manager->UnregisterAllocator(runtime_data_allocator_id_);
   }
 
   // Cleanup memory backends (always try to destroy if they were created)
@@ -201,7 +202,7 @@ bool IpcManager::InitializeWorkerQueues(u32 num_workers) {
   }
 
   try {
-    hipc::CtxAllocator<CHI_MAIN_ALLOC_T> ctx_alloc(HSHM_MCTX, main_allocator_);
+    AllocT* ctx_alloc(HSHM_MCTX, main_allocator_);
 
     // Initialize worker queues vector in shared header using delay_ar
     // Single call to initialize vector with num_workers queues, each with depth
@@ -245,7 +246,8 @@ u32 IpcManager::GetWorkerCount() {
 }
 
 bool IpcManager::ServerInitShm() {
-  auto mem_manager = HSHM_MEMORY_MANAGER;
+  // TODO: Remove HSHM_MEMORY_MANAGER usage
+  // auto mem_manager = HSHM_MEMORY_MANAGER;
   ConfigManager *config = CHI_CONFIG_MANAGER;
 
   try {
@@ -309,7 +311,8 @@ bool IpcManager::ServerInitShm() {
 }
 
 bool IpcManager::ClientInitShm() {
-  auto mem_manager = HSHM_MEMORY_MANAGER;
+  // TODO: Remove HSHM_MEMORY_MANAGER usage
+  // auto mem_manager = HSHM_MEMORY_MANAGER;
   ConfigManager *config = CHI_CONFIG_MANAGER;
 
   try {
@@ -367,7 +370,7 @@ bool IpcManager::ServerInitQueues() {
     shared_header_->node_id = 0; // Will be set after host identification
 
     // Server creates the TaskQueue using delay_ar
-    hipc::CtxAllocator<CHI_MAIN_ALLOC_T> ctx_alloc(HSHM_MCTX, main_allocator_);
+    AllocT* ctx_alloc(HSHM_MCTX, main_allocator_);
 
     // Get number of sched workers from ConfigManager
     // Number of lanes equals number of sched workers for optimal distribution
@@ -854,20 +857,16 @@ void IpcManager::FreeBuffer(FullPtr<char> buffer_ptr) {
     return;
   }
 
-  auto *chimaera_manager = CHI_CHIMAERA_MANAGER;
-  auto *mem_manager = HSHM_MEMORY_MANAGER;
-
-  auto *allocator =
-      mem_manager->GetAllocator<CHI_RDATA_ALLOC_T>(buffer_ptr.shm_.alloc_id_);
-  allocator->Free(HSHM_MCTX, buffer_ptr);
-
-  //   if (buffer_ptr.shm_.GetAllocatorId() == runtime_data_allocator_id_) {
-  //     // Runtime uses rdata segment
-  //     runtime_data_allocator_->Free(HSHM_MCTX, buffer_ptr);
-  //   } else {
-  //     // Client uses cdata segment
-  //     client_data_allocator_->Free(HSHM_MCTX, buffer_ptr);
-  //   }
+  // Try runtime data allocator first, then client data allocator
+  auto *rdata_alloc = CHI_IPC->GetRdataAlloc();
+  if (rdata_alloc && buffer_ptr.shm_.alloc_id_ == runtime_data_allocator_id_) {
+    rdata_alloc->Free(HSHM_MCTX, buffer_ptr);
+  } else {
+    auto *cdata_alloc = CHI_IPC->GetDataAlloc();
+    if (cdata_alloc) {
+      cdata_alloc->Free(HSHM_MCTX, buffer_ptr);
+    }
+  }
 }
 
 } // namespace chi

@@ -216,19 +216,27 @@ class ring_buffer : public ShmContainer<AllocT> {
    * @param depth The initial capacity (number of entries)
    */
   HSHM_CROSS_FUN
-  explicit ring_buffer(AllocT *alloc, size_t depth = 1024) {
-    this->this_ = OffsetPtr<void>(reinterpret_cast<size_t>(alloc));
+  explicit ring_buffer(AllocT *alloc, size_t depth = 1024)
+      : ShmContainer<AllocT>(alloc),
+        queue_(alloc, depth + 1),
+        head_(0),
+        tail_(0) {
     // Allocate depth + 1 to account for the one reserved slot
-    queue_ = entry_vector(alloc, depth + 1);
-    head_ = 0;
-    tail_ = 0;
   }
 
   /**
-   * Default constructor
+   * Copy constructor (deleted)
+   *
+   * IPC data structures must be allocated via allocator, not copied on stack.
    */
-  HSHM_CROSS_FUN
-  ring_buffer() : queue_(), head_(0), tail_(0) {}
+  ring_buffer(const ring_buffer &other) = delete;
+
+  /**
+   * Move constructor (deleted)
+   *
+   * IPC data structures must be allocated via allocator, not moved on stack.
+   */
+  ring_buffer(ring_buffer &&other) noexcept = delete;
 
   /**
    * Destructor

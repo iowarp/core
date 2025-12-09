@@ -28,7 +28,7 @@ struct TaskQueueHeader {
 };
 
 // Type alias for individual lanes with per-lane headers (moved outside TaskQueue class)
-using TaskLane = chi::ipc::multi_mpsc_queue<hipc::TypedPointer<Task>, TaskQueueHeader>::queue_t;
+using TaskLane = chi::ipc::multi_mpsc_queue<hipc::ShmPtr<Task>, TaskQueueHeader>::queue_t;
 
 /**
  * Simple wrapper around hipc::multi_mpsc_queue
@@ -45,7 +45,7 @@ public:
    * @param num_prios Number of priorities
    * @param depth_per_lane Depth per lane
    */
-  TaskQueue(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T>& alloc,
+  TaskQueue(const AllocT*& alloc,
             u32 num_lanes, u32 num_prios, u32 depth_per_lane);
 
   /**
@@ -87,7 +87,7 @@ public:
    * @param task_ptr TypedPointer to the task to emplace
    * @return true if emplace successful
    */
-  static bool EmplaceTask(hipc::FullPtr<TaskLane>& lane_ptr, hipc::TypedPointer<Task> task_ptr);
+  static bool EmplaceTask(hipc::FullPtr<TaskLane>& lane_ptr, hipc::ShmPtr<Task> task_ptr);
 
 
   /**
@@ -96,10 +96,10 @@ public:
    * @param task_ptr Output TypedPointer to the popped task
    * @return true if pop successful
    */
-  static bool PopTask(hipc::FullPtr<TaskLane>& lane_ptr, hipc::TypedPointer<Task>& task_ptr);
+  static bool PopTask(hipc::FullPtr<TaskLane>& lane_ptr, hipc::ShmPtr<Task>& task_ptr);
 
 private:
-  chi::ipc::multi_mpsc_queue<hipc::TypedPointer<Task>, TaskQueueHeader> queue_; // Underlying queue
+  chi::ipc::multi_mpsc_queue<hipc::ShmPtr<Task>, TaskQueueHeader> queue_; // Underlying queue
 
 };
 

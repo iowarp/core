@@ -73,14 +73,14 @@ struct BaseCreateTask : public chi::Task {
   volatile bool do_compose_;
 
   /** SHM default constructor */
-  explicit BaseCreateTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc)
+  explicit BaseCreateTask(const AllocT* &alloc)
       : chi::Task(alloc), chimod_name_(alloc), pool_name_(alloc),
         chimod_params_(alloc), new_pool_id_(chi::PoolId::GetNull()),
         error_message_(alloc), is_admin_(IS_ADMIN), do_compose_(DO_COMPOSE) {}
 
   /** Emplace constructor with CreateParams arguments */
   template <typename... CreateParamsArgs>
-  explicit BaseCreateTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+  explicit BaseCreateTask(const AllocT* &alloc,
                           const chi::TaskId &task_node,
                           const chi::PoolId &task_pool_id,
                           const chi::PoolQuery &pool_query,
@@ -109,7 +109,7 @@ struct BaseCreateTask : public chi::Task {
   }
 
   /** Compose constructor - takes PoolConfig directly */
-  explicit BaseCreateTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+  explicit BaseCreateTask(const AllocT* &alloc,
                           const chi::TaskId &task_node,
                           const chi::PoolId &task_pool_id,
                           const chi::PoolQuery &pool_query,
@@ -134,7 +134,7 @@ struct BaseCreateTask : public chi::Task {
    * Does nothing if do_compose_ is true (compose mode)
    */
   template <typename... Args>
-  void SetParams(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+  void SetParams(const AllocT* &alloc,
                  Args &&...args) {
     if (do_compose_) {
       return; // Skip SetParams in compose mode
@@ -149,7 +149,7 @@ struct BaseCreateTask : public chi::Task {
    * LoadConfig
    */
   CreateParamsT
-  GetParams(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc) const {
+  GetParams(const AllocT* &alloc) const {
     if (do_compose_) {
       // Compose mode: deserialize PoolConfig and load into CreateParams
       chi::PoolConfig pool_config =
@@ -234,12 +234,12 @@ struct DestroyPoolTask : public chi::Task {
   OUT hipc::string error_message_; ///< Error description if destruction failed
 
   /** SHM default constructor */
-  explicit DestroyPoolTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc)
+  explicit DestroyPoolTask(const AllocT* &alloc)
       : chi::Task(alloc), target_pool_id_(), destruction_flags_(0),
         error_message_(alloc) {}
 
   /** Emplace constructor */
-  explicit DestroyPoolTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+  explicit DestroyPoolTask(const AllocT* &alloc,
                            const chi::TaskId &task_node,
                            const chi::PoolId &pool_id,
                            const chi::PoolQuery &pool_query,
@@ -298,12 +298,12 @@ struct StopRuntimeTask : public chi::Task {
   OUT hipc::string error_message_; ///< Error description if shutdown failed
 
   /** SHM default constructor */
-  explicit StopRuntimeTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc)
+  explicit StopRuntimeTask(const AllocT* &alloc)
       : chi::Task(alloc), shutdown_flags_(0), grace_period_ms_(5000),
         error_message_(alloc) {}
 
   /** Emplace constructor */
-  explicit StopRuntimeTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+  explicit StopRuntimeTask(const AllocT* &alloc,
                            const chi::TaskId &task_node,
                            const chi::PoolId &pool_id,
                            const chi::PoolQuery &pool_query,
@@ -360,11 +360,11 @@ struct FlushTask : public chi::Task {
                                  ///< containers
 
   /** SHM default constructor */
-  explicit FlushTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc)
+  explicit FlushTask(const AllocT* &alloc)
       : chi::Task(alloc), total_work_done_(0) {}
 
   /** Emplace constructor */
-  explicit FlushTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+  explicit FlushTask(const AllocT* &alloc,
                      const chi::TaskId &task_node, const chi::PoolId &pool_id,
                      const chi::PoolQuery &pool_query)
       : chi::Task(alloc, task_node, pool_id, pool_query, 10),
@@ -432,13 +432,13 @@ struct SendTask : public chi::Task {
   OUT hipc::string error_message_; ///< Error description if transfer failed
 
   /** SHM default constructor */
-  explicit SendTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc)
+  explicit SendTask(const AllocT* &alloc)
       : chi::Task(alloc), msg_type_(chi::MsgType::kSerializeIn),
         origin_task_(hipc::FullPtr<chi::Task>()), pool_queries_(),
         transfer_flags_(0), error_message_(alloc) {}
 
   /** Emplace constructor */
-  explicit SendTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+  explicit SendTask(const AllocT* &alloc,
                     const chi::TaskId &task_node, const chi::PoolId &pool_id,
                     const chi::PoolQuery &pool_query, chi::MsgType msg_type,
                     hipc::FullPtr<chi::Task> subtask,
@@ -498,11 +498,11 @@ struct RecvTask : public chi::Task {
   OUT hipc::string error_message_; ///< Error description if transfer failed
 
   /** SHM default constructor */
-  explicit RecvTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc)
+  explicit RecvTask(const AllocT* &alloc)
       : chi::Task(alloc), transfer_flags_(0), error_message_(alloc) {}
 
   /** Emplace constructor */
-  explicit RecvTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+  explicit RecvTask(const AllocT* &alloc,
                     const chi::TaskId &task_node, const chi::PoolId &pool_id,
                     const chi::PoolQuery &pool_query,
                     chi::u32 transfer_flags = 0)

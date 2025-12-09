@@ -19,7 +19,7 @@ namespace chi {
 /**
  * Typedef for worker queue type to simplify usage
  */
-using WorkQueue = chi::ipc::mpsc_queue<hipc::TypedPointer<TaskLane>>;
+using WorkQueue = chi::ipc::mpsc_queue<hipc::ShmPtr<TaskLane>>;
 
 /**
  * Custom header structure for shared memory allocator
@@ -109,8 +109,7 @@ public:
       return FullPtr<TaskT>();
     }
 
-    hipc::CtxAllocator<CHI_MAIN_ALLOC_T> ctx_alloc(HSHM_MCTX, main_allocator_);
-    return main_allocator_->template NewObj<TaskT>(HSHM_MCTX, ctx_alloc,
+    return main_allocator_->template NewObj<TaskT>(HSHM_MCTX, main_allocator_,
                                                    std::forward<Args>(args)...);
   }
 
@@ -142,15 +141,15 @@ public:
   void FreeBuffer(FullPtr<char> buffer_ptr);
 
   /**
-   * Free buffer from appropriate memory segment (hipc::Pointer overload)
-   * Converts hipc::Pointer to FullPtr<char> and calls the main FreeBuffer
-   * @param buffer_ptr hipc::Pointer to buffer to free
+   * Free buffer from appropriate memory segment (hipc::ShmPtr<> overload)
+   * Converts hipc::ShmPtr<> to FullPtr<char> and calls the main FreeBuffer
+   * @param buffer_ptr hipc::ShmPtr<> to buffer to free
    */
-  void FreeBuffer(hipc::Pointer buffer_ptr) {
+  void FreeBuffer(hipc::ShmPtr<> buffer_ptr) {
     if (buffer_ptr.IsNull()) {
       return;
     }
-    // Convert hipc::Pointer to FullPtr<char> and call main FreeBuffer
+    // Convert hipc::ShmPtr<> to FullPtr<char> and call main FreeBuffer
     hipc::FullPtr<char> full_ptr(buffer_ptr);
     FreeBuffer(full_ptr);
   }
@@ -162,8 +161,8 @@ public:
    */
   template <typename TaskT> void Enqueue(FullPtr<TaskT> &task_ptr) {
     if (!external_queue_.IsNull() && external_queue_.ptr_) {
-      // Create TypedPointer from the task FullPtr
-      hipc::TypedPointer<Task> typed_ptr(task_ptr.shm_);
+      // Create ShmPtr from the task FullPtr
+      hipc::ShmPtr<Task> typed_ptr(task_ptr.shm_);
 
       u32 num_lanes = external_queue_->GetNumLanes();
       if (num_lanes == 0)
@@ -197,6 +196,24 @@ public:
    * @return Pointer to main allocator or nullptr if not available
    */
   CHI_MAIN_ALLOC_T *GetMainAllocator() { return main_allocator_; }
+
+  /**
+   * Get main allocator (alias for GetMainAllocator)
+   * @return Pointer to main allocator or nullptr if not available
+   */
+  CHI_MAIN_ALLOC_T *GetMainAlloc() { return main_allocator_; }
+
+  /**
+   * Get client data allocator
+   * @return Pointer to client data allocator or nullptr if not available
+   */
+  CHI_CDATA_ALLOC_T *GetDataAlloc() { return client_data_allocator_; }
+
+  /**
+   * Get runtime data allocator (same as client data allocator)
+   * @return Pointer to runtime data allocator or nullptr if not available
+   */
+  CHI_RDATA_ALLOC_T *GetRdataAlloc() { return runtime_data_allocator_; }
 
   /**
    * Initialize worker queues in shared memory

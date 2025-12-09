@@ -67,13 +67,33 @@ class ShmContainer {
 };
 
 /**
+ * Helper template to detect if a type has allocator_type member using SFINAE
+ *
+ * This template uses SFINAE to safely detect at compile-time if a type
+ * has an allocator_type member.
+ */
+namespace {
+  template<typename T, typename = void>
+  struct HasAllocatorType : std::false_type {};
+
+  template<typename T>
+  struct HasAllocatorType<T, std::void_t<typename T::allocator_type>> : std::true_type {};
+
+  template<typename T, typename = void>
+  struct IsShmContainerHelper : std::false_type {};
+
+  template<typename T>
+  struct IsShmContainerHelper<T, std::enable_if_t<HasAllocatorType<T>::value &&
+    std::is_base_of_v<ShmContainer<typename T::allocator_type>, T>>> : std::true_type {};
+}
+
+/**
  * Macro to detect if a type inherits from ShmContainer
  *
- * This macro uses std::is_base_of to detect at compile-time if a type
- * is derived from ShmContainer.
+ * This macro uses SFINAE to safely detect at compile-time if a type
+ * is derived from ShmContainer, avoiding compile errors on primitive types.
  */
-#define IS_SHM_CONTAINER(T) \
-  std::is_base_of<ShmContainer<typename T::allocator_type>, T>::value
+#define IS_SHM_CONTAINER(T) (IsShmContainerHelper<T>::value)
 
 }  // namespace hshm::ipc
 

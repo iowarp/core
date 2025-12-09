@@ -41,8 +41,8 @@ using namespace chi;
 
 namespace {
 // Helper allocator for tests
-hipc::CtxAllocator<CHI_MAIN_ALLOC_T> GetTestAllocator() {
-  return HSHM_MEMORY_MANAGER->GetDefaultAllocator<CHI_MAIN_ALLOC_T>();
+AllocT* GetTestAllocator() {
+  return CHI_IPC->GetMainAllocator();
 }
 
 // Initialize Chimaera runtime for tests

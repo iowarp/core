@@ -166,14 +166,14 @@ u32 Worker::ProcessNewTasks() {
   u32 tasks_processed = 0;
 
   while (tasks_processed < MAX_TASKS_PER_ITERATION) {
-    hipc::TypedPointer<Task> task_typed_ptr;
+    hipc::ShmPtr<Task> task_typed_ptr;
 
     // Pop task from assigned lane
     hipc::FullPtr<TaskLane> lane_full_ptr(assigned_lane_);
     if (::chi::TaskQueue::PopTask(lane_full_ptr, task_typed_ptr)) {
       tasks_processed++;
       // Convert TypedPointer to FullPtr for consistent API usage
-      hipc::FullPtr<Task> task_full_ptr(task_typed_ptr);
+      hipc::FullPtr<Task> task_full_ptr(CHI_IPC->GetMainAllocator(), task_typed_ptr);
 
       if (!task_full_ptr.IsNull()) {
         // Get container for routing

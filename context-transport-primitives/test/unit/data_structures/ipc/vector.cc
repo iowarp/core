@@ -82,56 +82,13 @@ TEST_CASE("Vector: constructor with fill value", "[vector]") {
   backend.shm_destroy();
 }
 
-TEST_CASE("Vector: copy constructor", "[vector]") {
-  MallocBackend backend;
-  auto *alloc = CreateTestAllocator(backend, 1024 * 1024);
+// Copy constructor test removed - copy constructor is intentionally deleted
+// for IPC data structures since they must be allocated via allocator,
+// not copied on the stack
 
-  vector<int, ArenaAllocator<false>> vec1(alloc);
-  vec1.push_back(1);
-  vec1.push_back(2);
-  vec1.push_back(3);
-
-  vector<int, ArenaAllocator<false>> vec2(vec1);
-
-  REQUIRE(vec2.size() == 3);
-  REQUIRE(vec2[0] == 1);
-  REQUIRE(vec2[1] == 2);
-  REQUIRE(vec2[2] == 3);
-
-  // Verify it's a deep copy - modifying vec2 doesn't affect vec1
-  vec2[0] = 100;
-  REQUIRE(vec1[0] == 1);
-  REQUIRE(vec2[0] == 100);
-
-  backend.shm_destroy();
-}
-
-TEST_CASE("Vector: move constructor", "[vector]") {
-  MallocBackend backend;
-  auto *alloc = CreateTestAllocator(backend, 1024 * 1024);
-
-  vector<int, ArenaAllocator<false>> vec1(alloc);
-  vec1.push_back(1);
-  vec1.push_back(2);
-  vec1.push_back(3);
-
-  size_t original_capacity = vec1.capacity();
-
-  vector<int, ArenaAllocator<false>> vec2(std::move(vec1));
-
-  REQUIRE(vec2.size() == 3);
-  REQUIRE(vec2.capacity() == original_capacity);
-  REQUIRE(vec2[0] == 1);
-  REQUIRE(vec2[1] == 2);
-  REQUIRE(vec2[2] == 3);
-
-  // Verify source is cleared
-  REQUIRE(vec1.size() == 0);
-  REQUIRE(vec1.capacity() == 0);
-  REQUIRE(vec1.empty());
-
-  backend.shm_destroy();
-}
+// Move constructor test removed - move constructor is intentionally deleted
+// for IPC data structures since they must be allocated via allocator,
+// not moved on the stack
 
 TEST_CASE("Vector: range constructor", "[vector]") {
   MallocBackend backend;
@@ -971,20 +928,9 @@ TEST_CASE("Vector: pod push_back", "[vector][pod]") {
   backend.shm_destroy();
 }
 
-TEST_CASE("Vector: pod copy constructor", "[vector][pod]") {
-  MallocBackend backend;
-  auto *alloc = CreateTestAllocator(backend, 1024 * 1024);
-
-  vector<double, ArenaAllocator<false>> vec1(alloc, {1.1, 2.2, 3.3});
-  vector<double, ArenaAllocator<false>> vec2(vec1);
-
-  REQUIRE(vec2.size() == 3);
-  REQUIRE(vec2[0] == 1.1);
-  REQUIRE(vec2[1] == 2.2);
-  REQUIRE(vec2[2] == 3.3);
-
-  backend.shm_destroy();
-}
+// Pod copy constructor test removed - copy constructor is intentionally deleted
+// for IPC data structures since they must be allocated via allocator,
+// not copied on the stack
 
 TEST_CASE("Vector: pod insert", "[vector][pod]") {
   MallocBackend backend;
@@ -1069,40 +1015,9 @@ TEST_CASE("Vector: non-pod construction", "[vector][non-pod]") {
   backend.shm_destroy();
 }
 
-TEST_CASE("Vector: non-pod copy", "[vector][non-pod]") {
-  MallocBackend backend;
-  auto *alloc = CreateTestAllocator(backend, 1024 * 1024);
-
-  vector<NonPodType, ArenaAllocator<false>> vec1(alloc);
-  vec1.emplace_back(1, "first");
-  vec1.emplace_back(2, "second");
-
-  vector<NonPodType, ArenaAllocator<false>> vec2(vec1);
-
-  REQUIRE(vec2.size() == 2);
-  REQUIRE(vec2[0].value == 1);
-  REQUIRE(vec2[0].str == "first");
-
-  backend.shm_destroy();
-}
-
-TEST_CASE("Vector: non-pod move", "[vector][non-pod]") {
-  MallocBackend backend;
-  auto *alloc = CreateTestAllocator(backend, 1024 * 1024);
-
-  vector<NonPodType, ArenaAllocator<false>> vec1(alloc);
-  vec1.emplace_back(1, "first");
-  vec1.emplace_back(2, "second");
-
-  vector<NonPodType, ArenaAllocator<false>> vec2(std::move(vec1));
-
-  REQUIRE(vec2.size() == 2);
-  REQUIRE(vec2[0].value == 1);
-  REQUIRE(vec2[0].str == "first");
-  REQUIRE(vec1.size() == 0);
-
-  backend.shm_destroy();
-}
+// Non-pod copy and move tests removed - copy/move constructors are
+// intentionally deleted for IPC data structures since they must be
+// allocated via allocator, not copied/moved on the stack
 
 // ============================================================================
 // Edge Cases & Stress Tests

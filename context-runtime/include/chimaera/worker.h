@@ -19,7 +19,7 @@
 namespace chi {
 
 // Forward declaration to avoid circular dependency
-using WorkQueue = chi::ipc::mpsc_queue<hipc::TypedPointer<TaskLane>>;
+using WorkQueue = hshm::ipc::mpsc_ring_buffer<hipc::ShmPtr<TaskLane>, CHI_MAIN_ALLOC_T>;
 
 // Forward declarations
 class Task;

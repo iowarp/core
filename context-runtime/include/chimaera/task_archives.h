@@ -35,7 +35,7 @@ struct DataTransfer {
   DataTransfer() : size(0), flags(0) {}
   DataTransfer(const hipc::FullPtr<char> &d, size_t s, uint32_t f)
       : data(d), size(s), flags(f) {}
-  DataTransfer(hipc::Pointer ptr, size_t s, uint32_t f)
+  DataTransfer(hipc::ShmPtr<> ptr, size_t s, uint32_t f)
       : data(hipc::FullPtr<char>(ptr)), size(s), flags(f) {}
 
   // Serialization support for cereal
@@ -51,12 +51,12 @@ struct DataTransfer {
  * TaskSaveInArchive/TaskLoadInArchive/TaskSaveOutArchive/TaskLoadOutArchive
  */
 struct BulkTransferInfo {
-  hipc::Pointer ptr; /**< Pointer to bulk data */
+  hipc::ShmPtr<> ptr; /**< Pointer to bulk data */
   size_t size;       /**< Size of bulk data */
   uint32_t flags;    /**< Transfer flags (BULK_XFER, BULK_EXPOSE) */
 
   BulkTransferInfo() : size(0), flags(0) {}
-  BulkTransferInfo(hipc::Pointer p, size_t s, uint32_t f)
+  BulkTransferInfo(hipc::ShmPtr<> p, size_t s, uint32_t f)
       : ptr(p), size(s), flags(f) {}
 };
 
@@ -133,7 +133,7 @@ public:
   }
 
   /** Bulk transfer support - records transfer for later allocation */
-  void bulk(hipc::Pointer &ptr, size_t size, uint32_t flags) {
+  void bulk(hipc::ShmPtr<> &ptr, size_t size, uint32_t flags) {
     // For input archives, just record the transfer info
     // The actual buffer allocation will be done by the caller after
     // LoadFromMessage using CHI_IPC->AllocateBuffer(size) and the
@@ -231,7 +231,7 @@ public:
   }
 
   /** Bulk transfer support */
-  void bulk(hipc::Pointer ptr, size_t size, uint32_t flags) {
+  void bulk(hipc::ShmPtr<> ptr, size_t size, uint32_t flags) {
     // Create DataTransfer object and append to data_transfers_ vector
     DataTransfer transfer(ptr, size, flags);
     data_transfers_.push_back(transfer);
@@ -348,7 +348,7 @@ public:
   }
 
   /** Bulk transfer support */
-  void bulk(hipc::Pointer ptr, size_t size, uint32_t flags) {
+  void bulk(hipc::ShmPtr<> ptr, size_t size, uint32_t flags) {
     bulk_transfers_.emplace_back(ptr, size, flags);
   }
 
@@ -430,7 +430,7 @@ public:
   }
 
   /** Bulk transfer support */
-  void bulk(hipc::Pointer ptr, size_t size, uint32_t flags) {
+  void bulk(hipc::ShmPtr<> ptr, size_t size, uint32_t flags) {
     bulk_transfers_.emplace_back(ptr, size, flags);
     // For output archives with BULK_XFER, we record the bulk transfer
     // The actual data transfer would be handled by the networking layer
@@ -577,7 +577,7 @@ private:
 public:
   /** Bulk transfer support - uses Lightbeam's send vector and automatically
    * calls Expose */
-  void bulk(hipc::Pointer ptr, size_t size, uint32_t flags) {
+  void bulk(hipc::ShmPtr<> ptr, size_t size, uint32_t flags) {
     hipc::FullPtr<char> full_ptr(ptr);
     hshm::lbm::Bulk bulk;
     bulk.data = full_ptr;
@@ -749,7 +749,7 @@ private:
 
 public:
   /** Bulk transfer support - handles both input and output modes */
-  void bulk(hipc::Pointer &ptr, size_t size, uint32_t flags) {
+  void bulk(hipc::ShmPtr<> &ptr, size_t size, uint32_t flags) {
     if (msg_type_ == MsgType::kSerializeIn) {
       // SerializeIn mode (input) - Get pointer from recv vector at current index
       // The task itself doesn't have a valid pointer during deserialization,
@@ -759,7 +759,7 @@ public:
         current_bulk_index_++;
       } else {
         // Error: not enough bulk transfers in recv vector
-        ptr = hipc::Pointer::GetNull();
+        ptr = hipc::ShmPtr<>::GetNull();
       }
     } else if (msg_type_ == MsgType::kSerializeOut) {
       // SerializeOut mode (output) - Expose the existing pointer using lbm_server
@@ -770,7 +770,7 @@ public:
         recv.push_back(bulk);
       } else {
         // Error: lbm_server not set for output mode
-        ptr = hipc::Pointer::GetNull();
+        ptr = hipc::ShmPtr<>::GetNull();
       }
     }
     // kHeartbeat has no bulk transfers
