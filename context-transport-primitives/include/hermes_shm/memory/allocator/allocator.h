@@ -1220,7 +1220,7 @@ class BaseAllocator : public CoreAllocT {
   template <typename T, typename... Args>
   HSHM_INLINE_CROSS_FUN FullPtr<T> NewObjs(size_t count,
                                    Args &&...args) {
-    auto alloc_result = AllocateObjs<T, ShmPtr>(count);
+    auto alloc_result = AllocateObjs<T>(count);
     ConstructObjs<T>(alloc_result.ptr_, 0, count, std::forward<Args>(args)...);
     return alloc_result;
   }
@@ -1242,9 +1242,10 @@ class BaseAllocator : public CoreAllocT {
   template <typename T>
   HSHM_INLINE_CROSS_FUN FullPtr<T> ReallocateObjs(FullPtr<T> &p,
                                                              size_t new_count) {
-    FullPtr<void> old_full_ptr(reinterpret_cast<void*>(p.ptr_), p.shm_);
+    auto *alloc = this;
+    FullPtr<void> old_full_ptr(alloc, reinterpret_cast<void*>(p.ptr_));
     auto new_full_ptr = Reallocate<void>(old_full_ptr, new_count * sizeof(T));
-    p = FullPtr<T>(reinterpret_cast<T*>(new_full_ptr.ptr_), new_full_ptr.shm_);
+    p = FullPtr<T>(alloc, reinterpret_cast<T*>(new_full_ptr.ptr_));
     return p;
   }
 
@@ -1262,7 +1263,8 @@ class BaseAllocator : public CoreAllocT {
   HSHM_INLINE_CROSS_FUN void DelObjs(FullPtr<T> &p,
                                      size_t count) {
     DestructObjs<T>(p.ptr_, count);
-    FullPtr<void> void_ptr(reinterpret_cast<void*>(p.ptr_), p.shm_);
+    auto *alloc = this;
+    FullPtr<void> void_ptr(alloc, reinterpret_cast<void*>(p.ptr_));
     Free<void>(void_ptr);
   }
 

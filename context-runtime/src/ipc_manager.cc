@@ -152,9 +152,6 @@ void IpcManager::ServerFinalize() {
     return;
   }
 
-  // TODO: Remove HSHM_MEMORY_MANAGER usage
-  // auto mem_manager = HSHM_MEMORY_MANAGER;
-
   // Cleanup servers
   local_server_.reset();
   main_server_.reset();
@@ -167,24 +164,6 @@ void IpcManager::ServerFinalize() {
   main_allocator_ = nullptr;
   client_data_allocator_ = nullptr;
   runtime_data_allocator_ = nullptr;
-
-  // Cleanup allocators
-  if (!main_allocator_id_.IsNull()) {
-    // mem_manager->UnregisterAllocator(main_allocator_id_);
-  }
-  if (!client_data_allocator_id_.IsNull()) {
-    // mem_manager->UnregisterAllocator(client_data_allocator_id_);
-  }
-  if (!runtime_data_allocator_id_.IsNull()) {
-    // mem_manager->UnregisterAllocator(runtime_data_allocator_id_);
-  }
-
-  // Cleanup memory backends (always try to destroy if they were created)
-  if (is_initialized_) {
-    mem_manager->DestroyBackend(main_backend_id_);
-    mem_manager->DestroyBackend(client_data_backend_id_);
-    mem_manager->DestroyBackend(runtime_data_backend_id_);
-  }
 
   is_initialized_ = false;
 }
@@ -202,12 +181,12 @@ bool IpcManager::InitializeWorkerQueues(u32 num_workers) {
   }
 
   try {
-    AllocT* ctx_alloc(main_allocator_);
+    // Initialize worker queues vector in shared header
+    // Construct the vector with the allocator
+    new (&shared_header_->worker_queues) chi::ipc::vector<WorkQueue>(main_allocator_);
 
-    // Initialize worker queues vector in shared header using delay_ar
-    // Single call to initialize vector with num_workers queues, each with depth
-    // 1024
-    shared_header_->worker_queues.shm_init(ctx_alloc, num_workers, 1024);
+    // Resize to num_workers (default-initializes each WorkQueue)
+    shared_header_->worker_queues.resize(num_workers);
 
     // Store worker count
     shared_header_->num_workers = num_workers;
@@ -230,12 +209,12 @@ hipc::FullPtr<WorkQueue> IpcManager::GetWorkerQueue(u32 worker_id) {
   // Get the vector of worker queues from delay_ar
   auto &worker_queues_vector = shared_header_->worker_queues;
 
-  if (worker_id >= worker_queues_vector->size()) {
+  if (worker_id >= worker_queues_vector.size()) {
     return hipc::FullPtr<WorkQueue>::GetNull();
   }
 
   // Return FullPtr reference to the specific worker's queue in the vector
-  return hipc::FullPtr<WorkQueue>(&(*worker_queues_vector)[worker_id]);
+  return ToFullPtr<WorkQueue>(&worker_queues_vector[worker_id]);
 }
 
 u32 IpcManager::GetWorkerCount() {
@@ -246,21 +225,15 @@ u32 IpcManager::GetWorkerCount() {
 }
 
 bool IpcManager::ServerInitShm() {
-  // TODO: Remove HSHM_MEMORY_MANAGER usage
-  // auto mem_manager = HSHM_MEMORY_MANAGER;
   ConfigManager *config = CHI_CONFIG_MANAGER;
 
   try {
-    // Set backend and allocator IDs
-    main_backend_id_ = hipc::MemoryBackendId::Get(0);
-    client_data_backend_id_ = hipc::MemoryBackendId::Get(1);
-    runtime_data_backend_id_ = hipc::MemoryBackendId::Get(2);
+    // Set allocator IDs for each segment
+    main_allocator_id_ = hipc::AllocatorId::Get(1, 0);
+    client_data_allocator_id_ = hipc::AllocatorId::Get(2, 0);
+    runtime_data_allocator_id_ = hipc::AllocatorId::Get(3, 0);
 
-    main_allocator_id_ = hipc::AllocatorId(1, 0);
-    client_data_allocator_id_ = hipc::AllocatorId(2, 0);
-    runtime_data_allocator_id_ = hipc::AllocatorId(3, 0);
-
-    // Create memory backends using configurable segment names
+    // Get configurable segment names
     std::string main_segment_name =
         config->GetSharedMemorySegmentName(kMainSegment);
     std::string client_data_segment_name =
@@ -268,59 +241,60 @@ bool IpcManager::ServerInitShm() {
     std::string runtime_data_segment_name =
         config->GetSharedMemorySegmentName(kRuntimeDataSegment);
 
-    mem_manager->CreateBackend<hipc::PosixShmMmap>(
-        main_backend_id_,
-        hshm::Unit<size_t>::Bytes(config->GetMemorySegmentSize(kMainSegment)),
-        main_segment_name);
-
-    mem_manager->CreateBackend<hipc::PosixShmMmap>(
-        client_data_backend_id_,
-        hshm::Unit<size_t>::Bytes(
-            config->GetMemorySegmentSize(kClientDataSegment)),
-        client_data_segment_name);
-
-    mem_manager->CreateBackend<hipc::PosixShmMmap>(
-        runtime_data_backend_id_,
-        hshm::Unit<size_t>::Bytes(
-            config->GetMemorySegmentSize(kRuntimeDataSegment)),
-        runtime_data_segment_name);
-
-    // Create allocators with custom header for main allocator
+    // Initialize main backend with custom header size
     size_t custom_header_size = sizeof(IpcSharedHeader);
-    mem_manager->CreateAllocator<CHI_MAIN_ALLOC_T>(
-        main_backend_id_, main_allocator_id_, custom_header_size);
+    if (!main_backend_.shm_init(
+            main_allocator_id_,
+            hshm::Unit<size_t>::Bytes(config->GetMemorySegmentSize(kMainSegment)),
+            main_segment_name)) {
+      return false;
+    }
 
-    mem_manager->CreateAllocator<CHI_CDATA_ALLOC_T>(
-        client_data_backend_id_, client_data_allocator_id_, 0);
+    // Initialize client data backend
+    if (!client_data_backend_.shm_init(
+            client_data_allocator_id_,
+            hshm::Unit<size_t>::Bytes(
+                config->GetMemorySegmentSize(kClientDataSegment)),
+            client_data_segment_name)) {
+      return false;
+    }
 
-    mem_manager->CreateAllocator<CHI_RDATA_ALLOC_T>(
-        runtime_data_backend_id_, runtime_data_allocator_id_, 0);
+    // Initialize runtime data backend
+    if (!runtime_data_backend_.shm_init(
+            runtime_data_allocator_id_,
+            hshm::Unit<size_t>::Bytes(
+                config->GetMemorySegmentSize(kRuntimeDataSegment)),
+            runtime_data_segment_name)) {
+      return false;
+    }
 
-    // Cache allocator pointers
-    main_allocator_ =
-        mem_manager->GetAllocator<CHI_MAIN_ALLOC_T>(main_allocator_id_);
-    client_data_allocator_ =
-        mem_manager->GetAllocator<CHI_CDATA_ALLOC_T>(client_data_allocator_id_);
-    runtime_data_allocator_ = mem_manager->GetAllocator<CHI_RDATA_ALLOC_T>(
-        runtime_data_allocator_id_);
+    // Create allocators using backend's MakeAlloc method
+    main_allocator_ = main_backend_.MakeAlloc<CHI_MAIN_ALLOC_T>(custom_header_size);
+    if (!main_allocator_) {
+      return false;
+    }
 
-    return main_allocator_ && client_data_allocator_ && runtime_data_allocator_;
+    client_data_allocator_ = client_data_backend_.MakeAlloc<CHI_CDATA_ALLOC_T>(0);
+    if (!client_data_allocator_) {
+      return false;
+    }
+
+    runtime_data_allocator_ = runtime_data_backend_.MakeAlloc<CHI_RDATA_ALLOC_T>(0);
+    if (!runtime_data_allocator_) {
+      return false;
+    }
+
+    return true;
   } catch (const std::exception &e) {
     return false;
   }
 }
 
 bool IpcManager::ClientInitShm() {
-  // TODO: Remove HSHM_MEMORY_MANAGER usage
-  // auto mem_manager = HSHM_MEMORY_MANAGER;
   ConfigManager *config = CHI_CONFIG_MANAGER;
 
   try {
-    // Set backend and allocator IDs (must match server)
-    main_backend_id_ = hipc::MemoryBackendId::Get(0);
-    client_data_backend_id_ = hipc::MemoryBackendId::Get(1);
-    runtime_data_backend_id_ = hipc::MemoryBackendId::Get(2);
-
+    // Set allocator IDs (must match server)
     main_allocator_id_ = hipc::AllocatorId(1, 0);
     client_data_allocator_id_ = hipc::AllocatorId(2, 0);
     runtime_data_allocator_id_ = hipc::AllocatorId(3, 0);
@@ -334,22 +308,35 @@ bool IpcManager::ClientInitShm() {
         config->GetSharedMemorySegmentName(kRuntimeDataSegment);
 
     // Attach to existing shared memory segments created by server
-    mem_manager->AttachBackend(hipc::MemoryBackendType::kPosixShmMmap,
-                               main_segment_name);
-    mem_manager->AttachBackend(hipc::MemoryBackendType::kPosixShmMmap,
-                               client_data_segment_name);
-    mem_manager->AttachBackend(hipc::MemoryBackendType::kPosixShmMmap,
-                               runtime_data_segment_name);
+    if (!main_backend_.shm_attach(main_segment_name)) {
+      return false;
+    }
 
-    // Cache allocator pointers
-    main_allocator_ =
-        mem_manager->GetAllocator<CHI_MAIN_ALLOC_T>(main_allocator_id_);
-    client_data_allocator_ =
-        mem_manager->GetAllocator<CHI_CDATA_ALLOC_T>(client_data_allocator_id_);
-    runtime_data_allocator_ = mem_manager->GetAllocator<CHI_RDATA_ALLOC_T>(
-        runtime_data_allocator_id_);
+    if (!client_data_backend_.shm_attach(client_data_segment_name)) {
+      return false;
+    }
 
-    return main_allocator_ && client_data_allocator_ && runtime_data_allocator_;
+    if (!runtime_data_backend_.shm_attach(runtime_data_segment_name)) {
+      return false;
+    }
+
+    // Attach to allocators using backend's AttachAlloc method
+    main_allocator_ = main_backend_.AttachAlloc<CHI_MAIN_ALLOC_T>();
+    if (!main_allocator_) {
+      return false;
+    }
+
+    client_data_allocator_ = client_data_backend_.AttachAlloc<CHI_CDATA_ALLOC_T>();
+    if (!client_data_allocator_) {
+      return false;
+    }
+
+    runtime_data_allocator_ = runtime_data_backend_.AttachAlloc<CHI_RDATA_ALLOC_T>();
+    if (!runtime_data_allocator_) {
+      return false;
+    }
+
+    return true;
   } catch (const std::exception &e) {
     return false;
   }
@@ -361,16 +348,17 @@ bool IpcManager::ServerInitQueues() {
   }
 
   try {
-    // Get the custom header from allocator
+    // Get the custom header from the backend
     shared_header_ =
-        main_allocator_->template GetCustomHeader<IpcSharedHeader>();
+        main_backend_.template GetCustomHeader<IpcSharedHeader>();
+
+    if (!shared_header_) {
+      return false;
+    }
 
     // Initialize shared header
     shared_header_->num_workers = 0;
     shared_header_->node_id = 0; // Will be set after host identification
-
-    // Server creates the TaskQueue using delay_ar
-    AllocT* ctx_alloc(main_allocator_);
 
     // Get number of sched workers from ConfigManager
     // Number of lanes equals number of sched workers for optimal distribution
@@ -378,18 +366,15 @@ bool IpcManager::ServerInitQueues() {
     u32 num_lanes = config->GetWorkerThreadCount(kSchedWorker);
 
     // Initialize TaskQueue in shared header
-    shared_header_->external_queue.shm_init(
-        ctx_alloc, ctx_alloc,
+    new (&shared_header_->external_queue) TaskQueue(
+        main_allocator_,
         num_lanes, // num_lanes equals sched worker count
         2,         // num_priorities (2 priorities: 0=normal, 1=resumed tasks)
         1024);     // depth_per_queue
 
     // Create FullPtr reference to the shared TaskQueue
-    external_queue_ =
-        hipc::FullPtr<TaskQueue>(&shared_header_->external_queue.get_ref());
-
-    // Note: WorkOrchestrator scheduling is handled by WorkOrchestrator itself,
-    // not here
+    external_queue_ = hipc::FullPtr<TaskQueue>(main_allocator_,
+                                               &shared_header_->external_queue);
 
     return !external_queue_.IsNull();
   } catch (const std::exception &e) {
@@ -403,14 +388,18 @@ bool IpcManager::ClientInitQueues() {
   }
 
   try {
-    // Get the custom header from allocator
+    // Get the custom header from the backend
     shared_header_ =
-        main_allocator_->template GetCustomHeader<IpcSharedHeader>();
+        main_backend_.template GetCustomHeader<IpcSharedHeader>();
 
-    // Client accesses the server's shared TaskQueue via delay_ar
+    if (!shared_header_) {
+      return false;
+    }
+
+    // Client accesses the server's shared TaskQueue
     // Create FullPtr reference to the shared TaskQueue
-    external_queue_ =
-        hipc::FullPtr<TaskQueue>(shared_header_->external_queue.get());
+    external_queue_ = hipc::FullPtr<TaskQueue>(main_allocator_,
+                                               &shared_header_->external_queue);
 
     return !external_queue_.IsNull();
   } catch (const std::exception &e) {
@@ -876,17 +865,17 @@ hipc::FullPtr<T> IpcManager::ToFullPtr(const hipc::ShmPtr<T> &shm_ptr) {
   }
 
   // Check main allocator
-  if (shm_ptr.shm_.alloc_id_ == main_allocator_id_) {
+  if (shm_ptr.alloc_id_ == main_allocator_id_) {
     return hipc::FullPtr<T>(main_allocator_, shm_ptr);
   }
 
   // Check client data allocator
-  if (shm_ptr.shm_.alloc_id_ == client_data_allocator_id_) {
+  if (shm_ptr.alloc_id_ == client_data_allocator_id_) {
     return hipc::FullPtr<T>(client_data_allocator_, shm_ptr);
   }
 
   // Check runtime data allocator
-  if (shm_ptr.shm_.alloc_id_ == runtime_data_allocator_id_) {
+  if (shm_ptr.alloc_id_ == runtime_data_allocator_id_) {
     return hipc::FullPtr<T>(runtime_data_allocator_, shm_ptr);
   }
 

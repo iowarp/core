@@ -6,6 +6,7 @@
 #include "chimaera/task_queue.h"
 #include "chimaera/types.h"
 #include "chimaera/worker.h"
+#include "hermes_shm/memory/backend/posix_shm_mmap.h"
 #include <atomic>
 #include <iostream>
 #include <memory>
@@ -423,10 +424,10 @@ private:
 
   bool is_initialized_ = false;
 
-  // Memory backends
-  hipc::MemoryBackendId main_backend_id_;
-  hipc::MemoryBackendId client_data_backend_id_;
-  hipc::MemoryBackendId runtime_data_backend_id_;
+  // Shared memory backends for the three segments
+  hipc::PosixShmMmap main_backend_;
+  hipc::PosixShmMmap client_data_backend_;
+  hipc::PosixShmMmap runtime_data_backend_;
 
   // Allocator IDs for each segment
   hipc::AllocatorId main_allocator_id_;

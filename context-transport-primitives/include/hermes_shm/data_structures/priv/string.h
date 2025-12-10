@@ -803,6 +803,32 @@ class basic_string {
   }
 
   /**
+   * Constructor from std::basic_string.
+   * Creates a string by copying the contents of a std::basic_string.
+   * Parameters are ordered (allocator, string) to match common initialization patterns.
+   *
+   * @param alloc Pointer to allocator instance
+   * @param str The std::basic_string to copy from
+   */
+  template<typename U>
+  basic_string(AllocT* alloc, const std::basic_string<T, U>& str)
+    : size_(0), using_sso_(true), alloc_(alloc) {
+    size_type len = str.size();
+    if (len < SSOSize - 1) {
+      std::memcpy(storage_.buffer_, str.data(), len * sizeof(T));
+      storage_.buffer_[len] = T();
+      size_ = len;
+    } else {
+      storage_.vec_ = new vector<T, AllocT>(alloc_);
+      for (size_type i = 0; i < len; ++i) {
+        storage_.vec_->push_back(str[i]);
+      }
+      size_ = len;
+      using_sso_ = false;
+    }
+  }
+
+  /**
    * Copy assignment operator.
    * Replaces this string's contents with a copy of other's contents.
    *
