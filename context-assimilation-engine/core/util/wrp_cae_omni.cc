@@ -73,6 +73,31 @@ std::vector<wrp_cae::core::AssimilationCtx> LoadOmni(const std::string& omni_pat
       ctx.dst_token = hshm::ConfigParse::ExpandPath(raw_token);
     }
 
+    // Parse dataset_filter for HDF5 and other hierarchical formats
+    if (transfer["dataset_filter"]) {
+      const YAML::Node& filter = transfer["dataset_filter"];
+
+      // Parse include_patterns
+      if (filter["include_patterns"]) {
+        const YAML::Node& include_node = filter["include_patterns"];
+        if (include_node.IsSequence()) {
+          for (size_t j = 0; j < include_node.size(); ++j) {
+            ctx.include_patterns.push_back(include_node[j].as<std::string>());
+          }
+        }
+      }
+
+      // Parse exclude_patterns
+      if (filter["exclude_patterns"]) {
+        const YAML::Node& exclude_node = filter["exclude_patterns"];
+        if (exclude_node.IsSequence()) {
+          for (size_t j = 0; j < exclude_node.size(); ++j) {
+            ctx.exclude_patterns.push_back(exclude_node[j].as<std::string>());
+          }
+        }
+      }
+    }
+
     contexts.push_back(ctx);
 
     std::cout << "  Loaded transfer " << (i + 1) << "/" << transfers.size() << ":" << std::endl;
@@ -84,6 +109,22 @@ std::vector<wrp_cae::core::AssimilationCtx> LoadOmni(const std::string& omni_pat
     }
     if (!ctx.dst_token.empty()) {
       std::cout << "    dst_token: <set>" << std::endl;
+    }
+    if (!ctx.include_patterns.empty()) {
+      std::cout << "    dataset_filter.include_patterns: [";
+      for (size_t j = 0; j < ctx.include_patterns.size(); ++j) {
+        if (j > 0) std::cout << ", ";
+        std::cout << "\"" << ctx.include_patterns[j] << "\"";
+      }
+      std::cout << "]" << std::endl;
+    }
+    if (!ctx.exclude_patterns.empty()) {
+      std::cout << "    dataset_filter.exclude_patterns: [";
+      for (size_t j = 0; j < ctx.exclude_patterns.size(); ++j) {
+        if (j > 0) std::cout << ", ";
+        std::cout << "\"" << ctx.exclude_patterns[j] << "\"";
+      }
+      std::cout << "]" << std::endl;
     }
   }
 
@@ -125,10 +166,15 @@ int main(int argc, char* argv[]) {
     wrp_cae::core::Client client(wrp_cae::core::kCaePoolId);
 
     std::cout << "Calling ParseOmni..." << std::endl;
+    std::cout.flush();
 
     // Call ParseOmni with vector of contexts
     chi::u32 num_tasks_scheduled = 0;
+    std::cout << "  Invoking client.ParseOmni()..." << std::endl;
+    std::cout.flush();
     chi::u32 result = client.ParseOmni(HSHM_MCTX, contexts, num_tasks_scheduled);
+    std::cout << "  ParseOmni returned with result: " << result << std::endl;
+    std::cout.flush();
 
     if (result != 0) {
       std::cerr << "Error: ParseOmni failed with result code " << result << std::endl;
