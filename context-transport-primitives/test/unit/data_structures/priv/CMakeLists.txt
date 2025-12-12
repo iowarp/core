@@ -34,6 +34,8 @@ add_test(NAME ctp_priv_vector_stress COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_priv_vector_exec "[priv_vector][stress]")
 add_test(NAME ctp_priv_vector_serialization COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_priv_vector_exec "[priv_vector][serialization]")
+add_test(NAME ctp_priv_vector_local_serialize COMMAND
+        ${CMAKE_BINARY_DIR}/bin/test_priv_vector_exec "[priv_vector][local_serialize]")
 
 add_test(NAME ctp_priv_string COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_priv_string_exec "[priv_string]")
@@ -45,6 +47,8 @@ add_test(NAME ctp_priv_string_edge COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_priv_string_exec "[priv_string][edge]")
 add_test(NAME ctp_priv_string_serialization COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_priv_string_exec "[priv_string][serialization]")
+add_test(NAME ctp_priv_string_local_serialize COMMAND
+        ${CMAKE_BINARY_DIR}/bin/test_priv_string_exec "[priv_string][local_serialize]")
 
 #------------------------------------------------------------------------------
 # Install Targets

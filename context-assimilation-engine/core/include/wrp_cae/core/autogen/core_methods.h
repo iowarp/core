@@ -20,4 +20,4 @@ GLOBAL_CONST chi::u32 kParseOmni = 10;
 
 }  // namespace wrp_cae::core
 
-#endif  // WRP_CAE_CORE_AUTOGEN_METHODS_H_
+#endif  // CORE_AUTOGEN_METHODS_H_

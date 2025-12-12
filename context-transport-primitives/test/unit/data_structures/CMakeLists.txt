@@ -6,3 +6,4 @@ project(hermes_shm)
 
 add_subdirectory(ipc)
 add_subdirectory(priv)
+add_subdirectory(serialization)

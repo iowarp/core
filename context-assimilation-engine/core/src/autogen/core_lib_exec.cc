@@ -50,7 +50,7 @@ void Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunCo
 void Runtime::Del(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
   // Use IPC manager to deallocate task from shared memory
   auto* ipc_manager = CHI_IPC;
-
+  
   switch (method) {
     case Method::kCreate: {
       ipc_manager->DelTask(task_ptr.Cast<CreateTask>());
@@ -70,12 +70,6 @@ void Runtime::Del(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
       break;
     }
   }
-}
-
-chi::u64 Runtime::GetWorkRemaining() const {
-  // Return 0 indicating no pending work for this container
-  // This can be enhanced in the future to track actual pending tasks
-  return 0;
 }
 
 void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive, 

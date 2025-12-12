@@ -6,8 +6,14 @@
 #define HSHM_SHM_INCLUDE_HSHM_SHM_DATA_STRUCTURES_SERIALIZATION_LOCAL_SERIALIZE_H_
 
 #include "hermes_shm/constants/macros.h"
+#include "hermes_shm/types/argpack.h"
 // #include "hermes_shm/data_structures/all.h"  // Deleted during hard refactoring
 #include "serialize_common.h"
+#include <vector>
+#include <list>
+#include <unordered_map>
+#include <string>
+#include <cstring>
 
 namespace hshm::ipc {
 

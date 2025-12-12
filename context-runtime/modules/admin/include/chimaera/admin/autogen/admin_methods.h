@@ -1,5 +1,5 @@
-#ifndef ADMIN_AUTOGEN_METHODS_H_
-#define ADMIN_AUTOGEN_METHODS_H_
+#ifndef CHIMAERA_ADMIN_AUTOGEN_METHODS_H_
+#define CHIMAERA_ADMIN_AUTOGEN_METHODS_H_
 
 #include <chimaera/chimaera.h>
 

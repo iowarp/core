@@ -144,9 +144,17 @@ class ChiModGenerator {
     std::transform(chimod_name.begin(), chimod_name.end(), std::back_inserter(chimod_upper),
                    [](unsigned char c) { return std::toupper(c); });
 
-    // Build the header content
-    oss << "#ifndef " << chimod_upper << "_AUTOGEN_METHODS_H_\n";
-    oss << "#define " << chimod_upper << "_AUTOGEN_METHODS_H_\n";
+    // Build namespace_upper for unique include guard
+    std::string namespace_upper;
+    std::transform(namespace_name.begin(), namespace_name.end(), std::back_inserter(namespace_upper),
+                   [](unsigned char c) {
+                     if (c == ':') return '_';
+                     return (char)std::toupper(c);
+                   });
+
+    // Build the header content with unique include guard using namespace
+    oss << "#ifndef " << namespace_upper << "_" << chimod_upper << "_AUTOGEN_METHODS_H_\n";
+    oss << "#define " << namespace_upper << "_" << chimod_upper << "_AUTOGEN_METHODS_H_\n";
     oss << "\n";
     oss << "#include <chimaera/chimaera.h>\n";
     oss << "\n";

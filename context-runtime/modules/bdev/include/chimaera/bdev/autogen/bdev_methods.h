@@ -1,5 +1,5 @@
-#ifndef BDEV_AUTOGEN_METHODS_H_
-#define BDEV_AUTOGEN_METHODS_H_
+#ifndef CHIMAERA_BDEV_AUTOGEN_METHODS_H_
+#define CHIMAERA_BDEV_AUTOGEN_METHODS_H_
 
 #include <chimaera/chimaera.h>
 

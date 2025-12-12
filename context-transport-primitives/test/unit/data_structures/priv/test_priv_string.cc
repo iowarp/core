@@ -737,4 +737,112 @@ TEST_CASE("String: serialize exactly SSO size boundary", "[priv_string][serializ
 
 #endif  // HSHM_ENABLE_CEREAL
 
+// ============================================================================
+// LocalSerialize Tests
+// ============================================================================
+
+#include "hermes_shm/data_structures/serialization/local_serialize.h"
+
+TEST_CASE("String: LocalSerialize small SSO string", "[priv_string][local_serialize]") {
+  basic_string<char, SimpleHeapAllocator> original("hello", &g_allocator);
+
+  // Serialize
+  std::vector<char> buffer;
+  hshm::ipc::LocalSerialize<> serializer(buffer);
+  serializer << original;
+
+  // Deserialize
+  basic_string<char, SimpleHeapAllocator> restored(&g_allocator);
+  hshm::ipc::LocalDeserialize<> deserializer(buffer);
+  deserializer >> restored;
+
+  // Verify
+  REQUIRE(restored.size() == original.size());
+  REQUIRE(std::string(restored) == std::string(original));
+  REQUIRE(restored == "hello");
+}
+
+TEST_CASE("String: LocalSerialize large string exceeding SSO", "[priv_string][local_serialize]") {
+  std::string large_str;
+  for (int i = 0; i < 100; ++i) {
+    large_str += "This is a long string that exceeds SSO buffer size. ";
+  }
+
+  basic_string<char, SimpleHeapAllocator> original(large_str.c_str(), &g_allocator);
+
+  // Serialize
+  std::vector<char> buffer;
+  hshm::ipc::LocalSerialize<> serializer(buffer);
+  serializer << original;
+
+  // Deserialize
+  basic_string<char, SimpleHeapAllocator> restored(&g_allocator);
+  hshm::ipc::LocalDeserialize<> deserializer(buffer);
+  deserializer >> restored;
+
+  // Verify
+  REQUIRE(restored.size() == original.size());
+  REQUIRE(std::string(restored) == std::string(original));
+  REQUIRE(restored.size() == large_str.size());
+}
+
+TEST_CASE("String: LocalSerialize empty string", "[priv_string][local_serialize]") {
+  basic_string<char, SimpleHeapAllocator> original(&g_allocator);
+
+  // Serialize
+  std::vector<char> buffer;
+  hshm::ipc::LocalSerialize<> serializer(buffer);
+  serializer << original;
+
+  // Deserialize
+  basic_string<char, SimpleHeapAllocator> restored(&g_allocator);
+  hshm::ipc::LocalDeserialize<> deserializer(buffer);
+  deserializer >> restored;
+
+  // Verify
+  REQUIRE(restored.size() == 0);
+  REQUIRE(restored.empty());
+  REQUIRE(std::string(restored) == "");
+}
+
+TEST_CASE("String: LocalSerialize multiple strings", "[priv_string][local_serialize]") {
+  basic_string<char, SimpleHeapAllocator> str1("hello", &g_allocator);
+  basic_string<char, SimpleHeapAllocator> str2("world", &g_allocator);
+  basic_string<char, SimpleHeapAllocator> str3("test", &g_allocator);
+
+  // Serialize multiple strings
+  std::vector<char> buffer;
+  hshm::ipc::LocalSerialize<> serializer(buffer);
+  serializer << str1 << str2 << str3;
+
+  // Deserialize multiple strings
+  basic_string<char, SimpleHeapAllocator> restored1(&g_allocator);
+  basic_string<char, SimpleHeapAllocator> restored2(&g_allocator);
+  basic_string<char, SimpleHeapAllocator> restored3(&g_allocator);
+  hshm::ipc::LocalDeserialize<> deserializer(buffer);
+  deserializer >> restored1 >> restored2 >> restored3;
+
+  // Verify
+  REQUIRE(std::string(restored1) == "hello");
+  REQUIRE(std::string(restored2) == "world");
+  REQUIRE(std::string(restored3) == "test");
+}
+
+TEST_CASE("String: LocalSerialize with operator() syntax", "[priv_string][local_serialize]") {
+  basic_string<char, SimpleHeapAllocator> original("test", &g_allocator);
+
+  // Serialize using operator()
+  std::vector<char> buffer;
+  hshm::ipc::LocalSerialize<> serializer(buffer);
+  serializer(original);
+
+  // Deserialize using operator()
+  basic_string<char, SimpleHeapAllocator> restored(&g_allocator);
+  hshm::ipc::LocalDeserialize<> deserializer(buffer);
+  deserializer(restored);
+
+  // Verify
+  REQUIRE(std::string(restored) == "test");
+}
+
 SIMPLE_TEST_MAIN()

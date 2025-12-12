@@ -10,7 +10,6 @@
 #include "chimaera/admin/admin_runtime.h"
 #include "chimaera/admin/autogen/admin_methods.h"
 #include <chimaera/chimaera.h>
-#include <chimaera/work_orchestrator.h>
 
 namespace chimaera::admin {
 
@@ -25,12 +24,6 @@ void Runtime::Init(const chi::PoolId &pool_id, const std::string &pool_name,
 
   // Initialize the client for this ChiMod
   client_ = Client(pool_id);
-
-  // Initialize CoMutex locks for send_map_ and recv_map_ (one per worker thread)
-  auto *work_orchestrator = CHI_WORK_ORCHESTRATOR;
-  size_t num_workers = work_orchestrator->GetWorkerCount();
-  send_map_locks_.resize(num_workers);
-  recv_map_locks_.resize(num_workers);
 }
 
 void Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) {

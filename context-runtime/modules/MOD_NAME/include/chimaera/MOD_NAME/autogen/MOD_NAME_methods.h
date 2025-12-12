@@ -1,5 +1,5 @@
-#ifndef MOD_NAME_AUTOGEN_METHODS_H_
-#define MOD_NAME_AUTOGEN_METHODS_H_
+#ifndef CHIMAERA_MOD_NAME_AUTOGEN_METHODS_H_
+#define CHIMAERA_MOD_NAME_AUTOGEN_METHODS_H_
 
 #include <chimaera/chimaera.h>
 

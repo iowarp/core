@@ -903,4 +903,133 @@ TEST_CASE("Vector: serialize struct type", "[priv_vector][serialization]") {
 
 #endif  // HSHM_ENABLE_CEREAL
 
+// ============================================================================
+// LocalSerialize Tests
+// ============================================================================
+
+#include "hermes_shm/data_structures/serialization/local_serialize.h"
+
+TEST_CASE("Vector: LocalSerialize integer vector", "[priv_vector][local_serialize]") {
+  vector<int, SimpleHeapAllocator> original(&g_allocator);
+  original.push_back(1);
+  original.push_back(2);
+  original.push_back(3);
+  original.push_back(4);
+  original.push_back(5);
+
+  // Serialize
+  std::vector<char> buffer;
+  hshm::ipc::LocalSerialize<> serializer(buffer);
+  serializer << original;
+
+  // Deserialize
+  vector<int, SimpleHeapAllocator> restored(&g_allocator);
+  hshm::ipc::LocalDeserialize<> deserializer(buffer);
+  deserializer >> restored;
+
+  // Verify
+  REQUIRE(restored.size() == original.size());
+  for (size_t i = 0; i < original.size(); ++i) {
+    REQUIRE(restored[i] == original[i]);
+  }
+}
+
+TEST_CASE("Vector: LocalSerialize empty vector", "[priv_vector][local_serialize]") {
+  vector<int, SimpleHeapAllocator> original(&g_allocator);
+
+  // Serialize
+  std::vector<char> buffer;
+  hshm::ipc::LocalSerialize<> serializer(buffer);
+  serializer << original;
+
+  // Deserialize
+  vector<int, SimpleHeapAllocator> restored(&g_allocator);
+  hshm::ipc::LocalDeserialize<> deserializer(buffer);
+  deserializer >> restored;
+
+  // Verify
+  REQUIRE(restored.size() == 0);
+  REQUIRE(restored.empty());
+}
+
+TEST_CASE("Vector: LocalSerialize large vector", "[priv_vector][local_serialize]") {
+  vector<int, SimpleHeapAllocator> original(&g_allocator);
+  for (int i = 0; i < 1000; ++i) {
+    original.push_back(i);
+  }
+
+  // Serialize
+  std::vector<char> buffer;
+  hshm::ipc::LocalSerialize<> serializer(buffer);
+  serializer << original;
+
+  // Deserialize
+  vector<int, SimpleHeapAllocator> restored(&g_allocator);
+  hshm::ipc::LocalDeserialize<> deserializer(buffer);
+  deserializer >> restored;
+
+  // Verify
+  REQUIRE(restored.size() == 1000);
+  for (int i = 0; i < 1000; ++i) {
+    REQUIRE(restored[i] == i);
+  }
+}
+
+TEST_CASE("Vector: LocalSerialize multiple vectors", "[priv_vector][local_serialize]") {
+  vector<int, SimpleHeapAllocator> vec1(&g_allocator);
+  vector<int, SimpleHeapAllocator> vec2(&g_allocator);
+  vector<int, SimpleHeapAllocator> vec3(&g_allocator);
+
+  vec1.push_back(10);
+  vec1.push_back(20);
+  vec2.push_back(30);
+  vec2.push_back(40);
+  vec2.push_back(50);
+  vec3.push_back(60);
+
+  // Serialize multiple vectors
+  std::vector<char> buffer;
+  hshm::ipc::LocalSerialize<> serializer(buffer);
+  serializer << vec1 << vec2 << vec3;
+
+  // Deserialize multiple vectors
+  vector<int, SimpleHeapAllocator> restored1(&g_allocator);
+  vector<int, SimpleHeapAllocator> restored2(&g_allocator);
+  vector<int, SimpleHeapAllocator> restored3(&g_allocator);
+  hshm::ipc::LocalDeserialize<> deserializer(buffer);
+  deserializer >> restored1 >> restored2 >> restored3;
+
+  // Verify
+  REQUIRE(restored1.size() == 2);
+  REQUIRE(restored1[0] == 10);
+  REQUIRE(restored1[1] == 20);
+  REQUIRE(restored2.size() == 3);
+  REQUIRE(restored2[0] == 30);
+  REQUIRE(restored2[1] == 40);
+  REQUIRE(restored2[2] == 50);
+  REQUIRE(restored3.size() == 1);
+  REQUIRE(restored3[0] == 60);
+}
+
+TEST_CASE("Vector: LocalSerialize with operator() syntax", "[priv_vector][local_serialize]") {
+  vector<int, SimpleHeapAllocator> original(&g_allocator);
+  original.push_back(100);
+  original.push_back(200);
+
+  // Serialize using operator()
+  std::vector<char> buffer;
+  hshm::ipc::LocalSerialize<> serializer(buffer);
+  serializer(original);
+
+  // Deserialize using operator()
+  vector<int, SimpleHeapAllocator> restored(&g_allocator);
+  hshm::ipc::LocalDeserialize<> deserializer(buffer);
+  deserializer(restored);
+
+  // Verify
+  REQUIRE(restored.size() == 2);
+  REQUIRE(restored[0] == 100);
+  REQUIRE(restored[1] == 200);
+}
+
 SIMPLE_TEST_MAIN()
