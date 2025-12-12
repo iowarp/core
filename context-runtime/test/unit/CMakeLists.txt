@@ -87,6 +87,12 @@ set(COMPOSE_TEST_SOURCES
   test_compose.cc
 )
 
+# Local Task Archive test executable (test for LocalTaskArchive serialization)
+set(LOCAL_TASK_ARCHIVE_TEST_TARGET chimaera_local_task_archive_tests)
+set(LOCAL_TASK_ARCHIVE_TEST_SOURCES
+  test_local_task_archive.cc
+)
+
 add_executable(${COMPOSE_TEST_TARGET} ${COMPOSE_TEST_SOURCES})
 
 # Include directories for compose tests
@@ -446,6 +452,38 @@ set_target_properties(${SAVE_LOAD_TASK_TEST_TARGET} PROPERTIES
 
 # Copy SaveTask/LoadTask test executable to bin directory
 set_target_properties(${SAVE_LOAD_TASK_TEST_TARGET} PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+# Create Local Task Archive test executable
+add_executable(${LOCAL_TASK_ARCHIVE_TEST_TARGET} ${LOCAL_TASK_ARCHIVE_TEST_SOURCES})
+
+# Include directories for Local Task Archive tests
+target_include_directories(${LOCAL_TASK_ARCHIVE_TEST_TARGET} PRIVATE
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/admin/include  # For admin tasks
+  ${CHIMAERA_ROOT}/modules/bdev/include   # For bdev tasks
+)
+
+# Link against required libraries for Local Task Archive tests
+target_link_libraries(${LOCAL_TASK_ARCHIVE_TEST_TARGET}
+  chimaera_admin_runtime          # Admin module runtime
+  chimaera_admin_client           # Admin module client
+  chimaera_bdev_runtime           # Bdev module runtime
+  chimaera_bdev_client            # Bdev module client
+  hshm::cxx                       # HermesShm library
+  ${CMAKE_THREAD_LIBS_INIT}       # Threading support
+)
+
+# Set C++ standard for Local Task Archive tests
+set_target_properties(${LOCAL_TASK_ARCHIVE_TEST_TARGET} PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+)
+
+# Copy Local Task Archive test executable to bin directory
+set_target_properties(${LOCAL_TASK_ARCHIVE_TEST_TARGET} PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
@@ -1302,7 +1340,7 @@ add_custom_target(test_all_unit
 )
 
 # Install test executables (optional)
-install(TARGETS ${TEST_TARGET} ${TASK_ARCHIVE_TEST_TARGET} ${FLUSH_TEST_TARGET} ${BDEV_TEST_TARGET} ${FIBER_TEST_TARGET} ${WORKER_FIBER_TEST_TARGET} ${SEGFAULT_DEBUG_TEST_TARGET} ${COMUTEX_TEST_TARGET} ${WAIT_FUNCTIONALITY_TEST_TARGET} ${IPC_ALLOCATE_BUFFER_TEST_TARGET} ${UNORDERED_MAP_LL_TEST_TARGET} ${SAVE_LOAD_TASK_TEST_TARGET} ${COMPOSE_TEST_TARGET}
+install(TARGETS ${TEST_TARGET} ${TASK_ARCHIVE_TEST_TARGET} ${FLUSH_TEST_TARGET} ${BDEV_TEST_TARGET} ${FIBER_TEST_TARGET} ${WORKER_FIBER_TEST_TARGET} ${SEGFAULT_DEBUG_TEST_TARGET} ${COMUTEX_TEST_TARGET} ${WAIT_FUNCTIONALITY_TEST_TARGET} ${IPC_ALLOCATE_BUFFER_TEST_TARGET} ${UNORDERED_MAP_LL_TEST_TARGET} ${SAVE_LOAD_TASK_TEST_TARGET} ${COMPOSE_TEST_TARGET} ${LOCAL_TASK_ARCHIVE_TEST_TARGET}
   RUNTIME DESTINATION bin
 )
 

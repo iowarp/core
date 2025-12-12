@@ -22,7 +22,7 @@ context-runtime/include/chimaera/task_archives.h provides a serialization using 
 
 We want to have something similar, but for local. We should create a new set of classes analagous to those.
 Also make a new file called: context-runtime/include/chimaera/local_task_archives.h.
-This will use hshm::LocalSerialize instead of cereal. These tasks are only in the node, not outside.
+This will use hshm::LocalSerialize instead of cereal.
 
 For local, bulk is handled differently. If the object is a ShmPtr, just serialize the ShmPtr value.
 If the object is a FullPtr, just serialize the shm_ part of it. If it is a raw pointer, just
