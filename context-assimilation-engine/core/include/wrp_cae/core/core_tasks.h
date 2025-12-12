@@ -24,10 +24,10 @@ struct CreateParams {
   CreateParams() {}
 
   // Constructor with allocator
-  CreateParams(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc) {}
+  CreateParams(CHI_MAIN_ALLOC_T *alloc) {}
 
   // Copy constructor with allocator (for BaseCreateTask)
-  CreateParams(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+  CreateParams(CHI_MAIN_ALLOC_T *alloc,
                const CreateParams& other) {}
 
   // Serialization support for cereal
@@ -53,13 +53,13 @@ using DestroyTask = chi::Task;  // Simple task for destruction
  */
 struct ParseOmniTask : public chi::Task {
   // Task-specific data using HSHM macros
-  IN hshm::priv::string serialized_ctx_;   // Input: Serialized AssimilationCtx (internal use)
+  IN chi::priv::string serialized_ctx_;   // Input: Serialized AssimilationCtx (internal use)
   OUT chi::u32 num_tasks_scheduled_; // Output: Number of assimilation tasks scheduled
   OUT chi::u32 result_code_;         // Output: Result code (0 = success)
-  OUT hshm::priv::string error_message_;   // Output: Error message if failed
+  OUT chi::priv::string error_message_;   // Output: Error message if failed
 
   // SHM constructor
-  explicit ParseOmniTask(const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc)
+  explicit ParseOmniTask(CHI_MAIN_ALLOC_T *alloc)
       : chi::Task(alloc),
         serialized_ctx_(alloc),
         num_tasks_scheduled_(0),
@@ -68,7 +68,7 @@ struct ParseOmniTask : public chi::Task {
 
   // Emplace constructor - accepts vector of AssimilationCtx and serializes internally
   explicit ParseOmniTask(
-      const hipc::CtxAllocator<CHI_MAIN_ALLOC_T> &alloc,
+      CHI_MAIN_ALLOC_T *alloc,
       const chi::TaskId &task_node,
       const chi::PoolId &pool_id,
       const chi::PoolQuery &pool_query,
@@ -89,7 +89,7 @@ struct ParseOmniTask : public chi::Task {
       cereal::BinaryOutputArchive ar(ss);
       ar(contexts);
     }
-    serialized_ctx_ = hshm::priv::string(alloc, ss.str());
+    serialized_ctx_ = chi::priv::string(alloc, ss.str());
   }
 
   // Copy method for distributed execution (optional)

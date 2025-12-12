@@ -567,7 +567,7 @@ void Runtime::GetOrCreatePool(
   } catch (const std::exception &e) {
     task->return_code_ = 99;
     task->error_message_ = chi::priv::string(
-        task->GetCtxAllocator(),
+        CHI_IPC->GetMainAlloc(),
         std::string("Exception during pool creation: ") + e.what());
     HELOG(kError, "Admin: Pool creation failed with exception: {}", e.what());
   }

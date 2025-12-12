@@ -40,7 +40,7 @@ void Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task, chi::RunContext& ctx)
   } catch (const std::exception& e) {
     HELOG(kError, "ParseOmni: Failed to deserialize AssimilationCtx vector: {}", e.what());
     task->result_code_ = -1;
-    task->error_message_ = hshm::priv::string(task->GetCtxAllocator(), e.what());
+    task->error_message_ = e.what();
     task->num_tasks_scheduled_ = 0;
     return;
   }
@@ -64,8 +64,7 @@ void Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task, chi::RunContext& ctx)
     if (!assimilator) {
       HELOG(kError, "ParseOmni: No assimilator found for source: {}", assimilation_ctx.src);
       task->result_code_ = -2;
-      task->error_message_ = hshm::priv::string(task->GetCtxAllocator(),
-                                          "No assimilator found for source: " + assimilation_ctx.src);
+      task->error_message_ = "No assimilator found for source: " + assimilation_ctx.src;
       task->num_tasks_scheduled_ = tasks_scheduled;
       return;
     }
@@ -76,7 +75,7 @@ void Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task, chi::RunContext& ctx)
       HELOG(kError, "ParseOmni: Assimilator failed for context {}/{} with error code: {}",
             i + 1, assimilation_contexts.size(), result);
       task->result_code_ = result;
-      task->error_message_ = hshm::priv::string(task->GetCtxAllocator(), "Assimilator failed");
+      task->error_message_ = hshm::priv::string(CHI_IPC->GetMainAlloc(), "Assimilator failed");
       task->num_tasks_scheduled_ = tasks_scheduled;
       return;
     }
@@ -86,7 +85,7 @@ void Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task, chi::RunContext& ctx)
 
   // Success
   task->result_code_ = 0;
-  task->error_message_ = hshm::priv::string(task->GetCtxAllocator(), "");
+  task->error_message_ = "";
   task->num_tasks_scheduled_ = tasks_scheduled;
 
   HILOG(kInfo, "ParseOmni: Successfully scheduled {} assimilations", tasks_scheduled);

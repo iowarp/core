@@ -88,9 +88,9 @@ void Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx) {
   auto *ipc_manager = CHI_IPC;
   auto *main_allocator = ipc_manager->GetMainAlloc();
 
-  // Initialize telemetry ring buffer
-  telemetry_log_ = hipc::circular_mpsc_ring_buffer<CteTelemetry>(main_allocator,
-                                                           kTelemetryRingSize);
+  // Initialize telemetry ring buffer using unique_ptr
+  telemetry_log_ = std::make_unique<hipc::circular_mpsc_ring_buffer<CteTelemetry, CHI_MAIN_ALLOC_T>>(
+      main_allocator, kTelemetryRingSize);
 
   // Initialize atomic counters
   next_tag_id_minor_ = 1;
@@ -165,7 +165,7 @@ void Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx) {
               client_.pool_id_, target_path, device.bdev_type_, capacity_bytes,
               container_hash, bdev_id.major_, bdev_id.minor_);
         chi::u32 result =
-            client_.RegisterTarget(hipc::MemContext(), target_path, bdev_type,
+            client_.RegisterTarget(target_path, bdev_type,
                                    capacity_bytes, target_query, bdev_id);
 
         if (result == 0) {
@@ -250,7 +250,7 @@ void Runtime::RegisterTarget(hipc::FullPtr<RegisterTargetTask> task,
 
     // Create the bdev container using the client
     chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
-    bdev_client.Create(hipc::MemContext(), pool_query, target_name,
+    bdev_client.Create(pool_query, target_name,
                        bdev_pool_id, bdev_type, total_size);
 
     // Check if creation was successful
@@ -277,7 +277,7 @@ void Runtime::RegisterTarget(hipc::FullPtr<RegisterTargetTask> task,
     // Get actual statistics from bdev using GetStats method
     chi::u64 remaining_size;
     chimaera::bdev::PerfMetrics perf_metrics =
-        bdev_client.GetStats(hipc::MemContext(), remaining_size);
+        bdev_client.GetStats(remaining_size);
 
     // Create target info with bdev client and performance stats
     auto *ipc_manager = CHI_IPC;
@@ -399,7 +399,7 @@ void Runtime::ListTargets(hipc::FullPtr<ListTargetsTask> task,
     task->target_names_.reserve(registered_targets_.size());
     registered_targets_.for_each(
         [&task](const chi::PoolId &target_id, const TargetInfo &target_info) {
-          task->target_names_.emplace_back(target_info.target_name_.c_str());
+          task->target_names_.push_back(target_info.target_name_);
         });
 
     task->return_code_.store(0); // Success
@@ -796,8 +796,8 @@ void Runtime::ReorganizeBlob(hipc::FullPtr<ReorganizeBlobTask> task,
 
     // Step 6: Get blob data
     auto get_task =
-        client_.AsyncGetBlob(hipc::MemContext(), tag_id, blob_name, 0,
-                             blob_size, 0, blob_data_buffer.shm_);
+        client_.AsyncGetBlob(tag_id, blob_name, 0,
+                             blob_size, 0, blob_data_buffer.shm_.template Cast<void>());
     get_task->Wait();
 
     if (get_task->return_code_.load() != 0) {
@@ -813,8 +813,8 @@ void Runtime::ReorganizeBlob(hipc::FullPtr<ReorganizeBlobTask> task,
           "ReorganizeBlob calling AsyncPutBlob for blob={}, new_score={}",
           blob_name, new_score);
     auto put_task =
-        client_.AsyncPutBlob(hipc::MemContext(), tag_id, blob_name, 0,
-                             blob_size, blob_data_buffer.shm_, new_score, 0);
+        client_.AsyncPutBlob(tag_id, blob_name, 0,
+                             blob_size, blob_data_buffer.shm_.template Cast<void>(), new_score, 0);
     put_task->Wait();
 
     if (put_task->return_code_.load() != 0) {
@@ -966,7 +966,7 @@ void Runtime::DelTag(hipc::FullPtr<DelTagTask> task, chi::RunContext &ctx) {
 
         // Call AsyncDelBlob from client
         auto async_task =
-            client_.AsyncDelBlob(hipc::MemContext(), tag_id, blob_name);
+            client_.AsyncDelBlob(tag_id, blob_name);
         async_tasks.push_back(async_task);
       }
 
@@ -1074,7 +1074,7 @@ void Runtime::UpdateTargetStats(const chi::PoolId &target_id,
   // Get actual statistics from bdev using the GetStats method
   chi::u64 remaining_size;
   chimaera::bdev::PerfMetrics perf_metrics =
-      target_info.bdev_client_.GetStats(hipc::MemContext(), remaining_size);
+      target_info.bdev_client_.GetStats(remaining_size);
 
   // Update target info with real performance metrics from bdev
   target_info.perf_metrics_ = perf_metrics;
@@ -1427,7 +1427,7 @@ chi::u32 Runtime::ModifyExistingData(const std::vector<BlobBlock> &blocks,
 
       chimaera::bdev::Client cte_clientcopy = block.bdev_client_;
       auto write_task =
-          cte_clientcopy.AsyncWrite(hipc::MemContext(), block.target_query_,
+          cte_clientcopy.AsyncWrite(block.target_query_,
                                     blocks, data_ptr, write_size);
 
       write_tasks.push_back(write_task);
@@ -1540,7 +1540,7 @@ chi::u32 Runtime::ReadData(const std::vector<BlobBlock> &blocks,
 
       chimaera::bdev::Client cte_clientcopy = block.bdev_client_;
       auto read_task =
-          cte_clientcopy.AsyncRead(hipc::MemContext(), block.target_query_,
+          cte_clientcopy.AsyncRead(block.target_query_,
                                    blocks, data_ptr, read_size);
 
       read_tasks.push_back(read_task);
@@ -1570,27 +1570,6 @@ chi::u32 Runtime::ReadData(const std::vector<BlobBlock> &blocks,
         task_idx, task->bytes_read_, expected_size,
         (task->bytes_read_ == expected_size ? "SUCCESS" : "FAILED"));
 
-    // Log first few bytes of data that was read for debugging
-    if (task->bytes_read_ > 0) {
-      hipc::ShmPtr<> read_data_ptr =
-          data + (task_idx > 0 ? expected_read_sizes[task_idx - 1] : 0);
-      char *read_data =
-          CHI_IPC->GetMainAlloc()->Convert<char>(read_data_ptr);
-      std::string data_preview = "data=[";
-      for (size_t i = 0; i < std::min(static_cast<size_t>(task->bytes_read_),
-                                      static_cast<size_t>(16));
-           ++i) {
-        if (i > 0)
-          data_preview += ",";
-        data_preview +=
-            std::to_string(static_cast<unsigned char>(read_data[i]));
-      }
-      if (task->bytes_read_ > 16)
-        data_preview += ",...";
-      data_preview += "]";
-      HILOG(kDebug, "ReadData: task[{}] - {}", task_idx, data_preview);
-    }
-
     if (task->bytes_read_ != expected_size) {
       CHI_IPC->DelTask(task);
       HILOG(kError,
@@ -1619,7 +1598,7 @@ bool Runtime::AllocateFromTarget(TargetInfo &target_info, chi::u64 size,
     // Use bdev client AllocateBlocks method to get actual offset
     std::vector<chimaera::bdev::Block> allocated_blocks =
         target_info.bdev_client_.AllocateBlocks(
-            hipc::MemContext(), target_info.target_query_, size);
+            target_info.target_query_, size);
 
     // Check if we got any blocks
     if (allocated_blocks.empty()) {
@@ -1674,7 +1653,7 @@ chi::u32 Runtime::FreeAllBlobBlocks(BlobInfo &blob_info) {
     // Get bdev client for this pool from first blob block
     chimaera::bdev::Client bdev_client(pool_id);
     chi::u32 free_result =
-        bdev_client.FreeBlocks(hipc::MemContext(), target_query, blocks);
+        bdev_client.FreeBlocks(target_query, blocks);
     if (free_result != 0) {
       HILOG(kWarning, "Failed to free blocks from pool {}", pool_id.major_);
     }
@@ -1696,15 +1675,15 @@ void Runtime::LogTelemetry(CteOp op, size_t off, size_t size,
                                logical_time);
 
   // Circular queue automatically overwrites oldest entries when full
-  telemetry_log_.push(telemetry_entry);
+  telemetry_log_->Push(telemetry_entry);
 }
 
-size_t Runtime::GetTelemetryQueueSize() { return telemetry_log_.GetSize(); }
+size_t Runtime::GetTelemetryQueueSize() { return telemetry_log_->Size(); }
 
 size_t Runtime::GetTelemetryEntries(std::vector<CteTelemetry> &entries,
                                     size_t max_entries) {
   entries.clear();
-  size_t queue_size = telemetry_log_.GetSize();
+  size_t queue_size = telemetry_log_->Size();
   size_t entries_to_read = std::min(max_entries, queue_size);
 
   entries.reserve(entries_to_read);
@@ -1717,8 +1696,8 @@ size_t Runtime::GetTelemetryEntries(std::vector<CteTelemetry> &entries,
   // Pop entries temporarily
   for (size_t i = 0; i < entries_to_read; ++i) {
     CteTelemetry entry;
-    auto token = telemetry_log_.pop(entry);
-    if (!token.IsNull()) {
+    bool success = telemetry_log_->Pop(entry);
+    if (success) {
       temp_entries.push_back(entry);
     } else {
       break; // Queue is empty
@@ -1727,7 +1706,7 @@ size_t Runtime::GetTelemetryEntries(std::vector<CteTelemetry> &entries,
 
   // Re-push entries back to queue (in reverse order to maintain order)
   for (auto it = temp_entries.rbegin(); it != temp_entries.rend(); ++it) {
-    telemetry_log_.push(*it);
+    telemetry_log_->Push(*it);
   }
 
   // Copy to output vector
@@ -1750,7 +1729,7 @@ void Runtime::PollTelemetryLog(hipc::FullPtr<PollTelemetryLogTask> task,
 
     for (const auto &entry : all_entries) {
       if (entry.logical_time_ >= minimum_logical_time) {
-        task->entries_.emplace_back(entry);
+        task->entries_.push_back(entry);
         max_logical_time = std::max(max_logical_time, entry.logical_time_);
       }
     }
@@ -1898,7 +1877,7 @@ void Runtime::GetContainedBlobs(hipc::FullPtr<GetContainedBlobsTask> task,
           if (composite_key.rfind(prefix, 0) == 0) {
             // Extract blob name (everything after the prefix)
             std::string blob_name = composite_key.substr(prefix.length());
-            task->blob_names_.emplace_back(blob_name.c_str());
+            task->blob_names_.push_back(blob_name);
           }
         });
 
@@ -1952,7 +1931,7 @@ void Runtime::TagQuery(hipc::FullPtr<TagQueryTask> task, chi::RunContext &ctx) {
         break;
       }
       const std::string &tag_name = tn.first;
-      task->results_.emplace_back(tag_name.c_str());
+      task->results_.push_back(tag_name);
     }
 
     // Success
@@ -1994,7 +1973,8 @@ void Runtime::BlobQuery(hipc::FullPtr<BlobQueryTask> task,
 
     // Build results: pairs of (tag_name, blob_name) for matching blobs.
     // Also compute total_blobs_matched_.
-    task->results_.clear();
+    task->tag_names_.clear();
+    task->blob_names_.clear();
     task->total_blobs_matched_ = 0;
 
     for (const auto &tn : matching_tags) {
@@ -2016,11 +1996,10 @@ void Runtime::BlobQuery(hipc::FullPtr<BlobQueryTask> task,
                 // Increase total matched counter (counts all matches)
                 task->total_blobs_matched_++;
                 // Respect max_blobs_ if set
-                if (task->max_blobs_ == 0 || 
-                    task->results_.size() < static_cast<size_t>(task->max_blobs_)) {
-                  hipc::pair<hshm::priv::string, hshm::priv::string> pair(
-                      task->results_.GetAllocator(), tag_name.c_str(), blob_name.c_str());
-                  task->results_.emplace_back(std::move(pair));
+                if (task->max_blobs_ == 0 ||
+                    task->tag_names_.size() < static_cast<size_t>(task->max_blobs_)) {
+                  task->tag_names_.push_back(tag_name);
+                  task->blob_names_.push_back(blob_name);
                 }
               }
             }

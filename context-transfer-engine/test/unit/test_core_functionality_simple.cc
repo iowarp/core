@@ -58,8 +58,7 @@ public:
   std::unique_ptr<wrp_cte::core::Client> core_client_;
   std::string test_storage_path_;
   chi::PoolId core_pool_id_;
-  hipc::MemContext mctx_;  // Memory context for HSHM operations
-  
+
   CTECoreTestFixture() {
     INFO("=== Initializing CTE Core Test Environment ===");
 

@@ -128,7 +128,7 @@ int main(int argc, char* argv[]) {
 
     // Call ParseOmni with vector of contexts
     chi::u32 num_tasks_scheduled = 0;
-    chi::u32 result = client.ParseOmni(HSHM_MCTX, contexts, num_tasks_scheduled);
+    chi::u32 result = client.ParseOmni(contexts, num_tasks_scheduled);
 
     if (result != 0) {
       std::cerr << "Error: ParseOmni failed with result code " << result << std::endl;

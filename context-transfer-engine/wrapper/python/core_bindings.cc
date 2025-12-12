@@ -56,10 +56,6 @@ NB_MODULE(wrp_cte_core_ext, m) {
   // Note: Timestamp (chrono time_point) is automatically handled by
   // nanobind/stl/chrono.h
 
-  // Bind MemContext for method calls
-  nb::class_<hipc::MemContext>(m, "MemContext")
-      .def(nb::init<>());
-
   // Bind PoolQuery for routing queries
   nb::class_<chi::PoolQuery>(m, "PoolQuery")
       .def(nb::init<>())
@@ -95,49 +91,49 @@ NB_MODULE(wrp_cte_core_ext, m) {
       .def(nb::init<>())
       .def(nb::init<const chi::PoolId &>())
       .def("PollTelemetryLog", &wrp_cte::core::Client::PollTelemetryLog,
-           "mctx"_a, "minimum_logical_time"_a,
+           "minimum_logical_time"_a,
            "Poll telemetry log with minimum logical time filter")
       .def("ReorganizeBlob", &wrp_cte::core::Client::ReorganizeBlob,
-           "mctx"_a, "tag_id"_a, "blob_name"_a, "new_score"_a,
+           "tag_id"_a, "blob_name"_a, "new_score"_a,
            "Reorganize single blob with new score for data placement optimization")
      .def("TagQuery",
-         [](wrp_cte::core::Client &self, const hipc::MemContext &mctx,
+         [](wrp_cte::core::Client &self,
             const std::string &tag_regex, uint32_t max_tags, const chi::PoolQuery &pool_query) {
-           return self.TagQuery(mctx, tag_regex, max_tags, pool_query);
+           return self.TagQuery(tag_regex, max_tags, pool_query);
          },
-         "mctx"_a, "tag_regex"_a, "max_tags"_a = 0, "pool_query"_a,
+         "tag_regex"_a, "max_tags"_a = 0, "pool_query"_a,
          "Query tags by regex pattern, returns vector of tag names")
      .def("BlobQuery",
-         [](wrp_cte::core::Client &self, const hipc::MemContext &mctx,
+         [](wrp_cte::core::Client &self,
             const std::string &tag_regex, const std::string &blob_regex,
             uint32_t max_blobs, const chi::PoolQuery &pool_query) {
-           return self.BlobQuery(mctx, tag_regex, blob_regex, max_blobs, pool_query);
+           return self.BlobQuery(tag_regex, blob_regex, max_blobs, pool_query);
          },
-         "mctx"_a, "tag_regex"_a, "blob_regex"_a, "max_blobs"_a = 0, "pool_query"_a,
+         "tag_regex"_a, "blob_regex"_a, "max_blobs"_a = 0, "pool_query"_a,
          "Query blobs by tag and blob regex patterns, returns vector of (tag_name, blob_name) pairs")
      .def("RegisterTarget",
-         [](wrp_cte::core::Client &self, const hipc::MemContext &mctx,
+         [](wrp_cte::core::Client &self,
             const std::string &target_name, chimaera::bdev::BdevType bdev_type,
             uint64_t total_size, const chi::PoolQuery &target_query, const chi::PoolId &bdev_id) {
-           return self.RegisterTarget(mctx, target_name, bdev_type, total_size, target_query, bdev_id);
+           return self.RegisterTarget(target_name, bdev_type, total_size, target_query, bdev_id);
          },
-         "mctx"_a, "target_name"_a, "bdev_type"_a, "total_size"_a, 
+         "target_name"_a, "bdev_type"_a, "total_size"_a,
          "target_query"_a, "bdev_id"_a,
          "Register a storage target. Returns 0 on success, non-zero on failure")
      .def("RegisterTarget",
-         [](wrp_cte::core::Client &self, const hipc::MemContext &mctx,
+         [](wrp_cte::core::Client &self,
             const std::string &target_name, chimaera::bdev::BdevType bdev_type,
             uint64_t total_size) {
-           return self.RegisterTarget(mctx, target_name, bdev_type, total_size);
+           return self.RegisterTarget(target_name, bdev_type, total_size);
          },
-         "mctx"_a, "target_name"_a, "bdev_type"_a, "total_size"_a,
+         "target_name"_a, "bdev_type"_a, "total_size"_a,
          "Register a storage target with default query and pool ID. Returns 0 on success, non-zero on failure")
      .def("DelBlob",
-         [](wrp_cte::core::Client &self, const hipc::MemContext &mctx,
+         [](wrp_cte::core::Client &self,
             const wrp_cte::core::TagId &tag_id, const std::string &blob_name) {
-           return self.DelBlob(mctx, tag_id, blob_name);
+           return self.DelBlob(tag_id, blob_name);
          },
-         "mctx"_a, "tag_id"_a, "blob_name"_a,
+         "tag_id"_a, "blob_name"_a,
          "Delete a blob from a tag. Returns True on success, False otherwise");
 
   // Bind Tag wrapper class - provides convenient API for tag operations

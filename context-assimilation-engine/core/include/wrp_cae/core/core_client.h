@@ -14,12 +14,11 @@ class Client : public chi::ContainerClient {
   /**
    * Synchronous Create - waits for completion
    */
-  void Create(const hipc::MemContext& mctx,
-              const chi::PoolQuery& pool_query,
+  void Create(const chi::PoolQuery& pool_query,
               const std::string& pool_name,
               const chi::PoolId& custom_pool_id,
               const CreateParams& params = CreateParams()) {
-    auto task = AsyncCreate(mctx, pool_query, pool_name, custom_pool_id, params);
+    auto task = AsyncCreate(pool_query, pool_name, custom_pool_id, params);
     task->Wait();
 
     // CRITICAL: Update client pool_id_ with the actual pool ID from the task
@@ -32,7 +31,6 @@ class Client : public chi::ContainerClient {
    * Asynchronous Create - returns immediately
    */
   hipc::FullPtr<CreateTask> AsyncCreate(
-      const hipc::MemContext& mctx,
       const chi::PoolQuery& pool_query,
       const std::string& pool_name,
       const chi::PoolId& custom_pool_id,
@@ -58,10 +56,9 @@ class Client : public chi::ContainerClient {
    * Synchronous ParseOmni - Parse OMNI YAML file and schedule assimilation tasks
    * Accepts vector of AssimilationCtx and serializes it transparently
    */
-  chi::u32 ParseOmni(const hipc::MemContext& mctx,
-                     const std::vector<AssimilationCtx>& contexts,
+  chi::u32 ParseOmni(       const std::vector<AssimilationCtx>& contexts,
                      chi::u32& num_tasks_scheduled) {
-    auto task = AsyncParseOmni(mctx, contexts);
+    auto task = AsyncParseOmni(contexts);
     task->Wait();
 
     num_tasks_scheduled = task->num_tasks_scheduled_;
@@ -76,7 +73,6 @@ class Client : public chi::ContainerClient {
    * Accepts vector of AssimilationCtx and serializes it transparently in the task constructor
    */
   hipc::FullPtr<ParseOmniTask> AsyncParseOmni(
-      const hipc::MemContext& mctx,
       const std::vector<AssimilationCtx>& contexts) {
     auto* ipc_manager = CHI_IPC;
 

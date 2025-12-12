@@ -146,19 +146,18 @@
     */
    void setupTestData() {
      auto *cte_client = WRP_CTE_CLIENT;
-     hipc::MemContext mctx;
 
      // Create test storage target using bdev client
      chi::PoolId bdev_pool_id(200, 0);  // Custom pool ID for bdev
      chimaera::bdev::Client bdev_client(bdev_pool_id);
-     bdev_client.Create(mctx, chi::PoolQuery::Dynamic(), test_storage_path_,
+     bdev_client.Create(chi::PoolQuery::Dynamic(), test_storage_path_,
                         bdev_pool_id, chimaera::bdev::BdevType::kFile);
 
      // Wait for storage target creation
      std::this_thread::sleep_for(100ms);
 
      // Register the storage target with CTE
-     cte_client->RegisterTarget(mctx, test_storage_path_,
+     cte_client->RegisterTarget(test_storage_path_,
                                 chimaera::bdev::BdevType::kFile,
                                 kTestTargetSize, chi::PoolQuery::Local(), bdev_pool_id);
      std::this_thread::sleep_for(100ms);
@@ -216,7 +215,7 @@
   (void)fixture; // Suppress unused variable warning
 
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->TagQuery(HSHM_MCTX, "user_data", 0, chi::PoolQuery::Broadcast());
+   auto results = cte_client->TagQuery("user_data", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " tags");
    REQUIRE(results.size() >= 1);
@@ -241,7 +240,7 @@
 
    // Query for all tags starting with "user_"
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->TagQuery(HSHM_MCTX, "user_.*", 0, chi::PoolQuery::Broadcast());
+   auto results = cte_client->TagQuery("user_.*", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " tags");
    REQUIRE(results.size() >= 2); // Should match user_data and user_logs
@@ -272,7 +271,7 @@
 
    // Query for tags matching either "system_config" or "system_cache"
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->TagQuery(HSHM_MCTX, "system_(config|cache)", 0, chi::PoolQuery::Broadcast());
+   auto results = cte_client->TagQuery("system_(config|cache)", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " tags");
    REQUIRE(results.size() >= 2);
@@ -303,7 +302,7 @@
 
    // Query for all tags
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->TagQuery(HSHM_MCTX, ".*", 0, chi::PoolQuery::Broadcast());
+   auto results = cte_client->TagQuery(".*", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " tags");
    REQUIRE(results.size() >= fixture->test_tags_.size());
@@ -334,7 +333,7 @@
 
    // Query for non-existent tag pattern
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->TagQuery(HSHM_MCTX, "nonexistent_tag_pattern_xyz", 0, chi::PoolQuery::Broadcast());
+   auto results = cte_client->TagQuery("nonexistent_tag_pattern_xyz", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " tags");
    REQUIRE(results.empty());
@@ -350,7 +349,7 @@
 
    // Query for specific blob in specific tag
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->BlobQuery(HSHM_MCTX, "user_data", "blob_001\\.dat", 0, chi::PoolQuery::Broadcast());
+   auto results = cte_client->BlobQuery("user_data", "blob_001\\.dat", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " blob pairs");
    REQUIRE(results.size() > 0);
@@ -376,7 +375,7 @@
 
    // Query for all .dat blobs in user_data tag
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->BlobQuery(HSHM_MCTX, "user_data", "blob_.*\\.dat", 0, chi::PoolQuery::Broadcast());
+   auto results = cte_client->BlobQuery("user_data", "blob_.*\\.dat", 0, chi::PoolQuery::Broadcast());
 
    INFO("Total blobs matched: " << results.size());
    REQUIRE(results.size() >= 2); // Should match blob_001.dat and blob_002.dat
@@ -403,7 +402,7 @@
 
    // Query for all .txt files in any "user_" tag
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->BlobQuery(HSHM_MCTX, "user_.*", "file_.*\\.txt", 0, chi::PoolQuery::Broadcast());
+   auto results = cte_client->BlobQuery("user_.*", "file_.*\\.txt", 0, chi::PoolQuery::Broadcast());
 
    INFO("Total blobs matched: " << results.size());
    REQUIRE(results.size() >= 4); // user_data and user_logs each have 2 .txt files
@@ -428,7 +427,7 @@
 
    // Query for all blobs in all tags
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->BlobQuery(HSHM_MCTX, ".*", ".*", 0, chi::PoolQuery::Broadcast());
+   auto results = cte_client->BlobQuery(".*", ".*", 0, chi::PoolQuery::Broadcast());
 
    INFO("Total blobs matched: " << results.size());
    REQUIRE(results.size() >= fixture->test_blobs_.size());
@@ -444,7 +443,7 @@
 
    // Query for non-existent blob pattern in existing tag
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->BlobQuery(HSHM_MCTX, "user_data", "nonexistent_blob_xyz", 0, chi::PoolQuery::Broadcast());
+   auto results = cte_client->BlobQuery("user_data", "nonexistent_blob_xyz", 0, chi::PoolQuery::Broadcast());
 
    INFO("Total blobs matched: " << results.size());
    REQUIRE(results.size() == 0);
@@ -460,7 +459,7 @@
 
    // Query for non-existent tag pattern
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->BlobQuery(HSHM_MCTX, "nonexistent_tag_xyz", ".*", 0, chi::PoolQuery::Broadcast());
+   auto results = cte_client->BlobQuery("nonexistent_tag_xyz", ".*", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " blob pairs");
    REQUIRE(results.empty());
@@ -477,14 +476,14 @@
    auto *cte_client = WRP_CTE_CLIENT;
 
    // TagQuery with Local should work but only return local results
-   auto tag_results = cte_client->TagQuery(HSHM_MCTX, "user_.*", 0, chi::PoolQuery::Local());
+   auto tag_results = cte_client->TagQuery("user_.*", 0, chi::PoolQuery::Local());
 
    INFO("TagQuery with Local returned " << tag_results.size() << " tags");
    // Should get results since tags were created locally
    REQUIRE(!tag_results.empty());
 
    // BlobQuery with Local should also work
-   auto blob_results = cte_client->BlobQuery(HSHM_MCTX, "user_.*", "blob_.*", 0, chi::PoolQuery::Local());
+   auto blob_results = cte_client->BlobQuery("user_.*", "blob_.*", 0, chi::PoolQuery::Local());
 
    INFO("BlobQuery with Local returned " << blob_results.size() << " blob pairs");
    REQUIRE(blob_results.size() > 0);

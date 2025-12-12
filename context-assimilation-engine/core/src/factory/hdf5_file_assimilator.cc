@@ -259,9 +259,8 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
   HILOG(kInfo, "ProcessDataset: Creating tag: '{}'", tag_name);
 
   // Get or create the tag in CTE
-  hipc::MemContext mctx;
-  HILOG(kInfo, "ProcessDataset: Calling GetOrCreateTag for '{}'...", tag_name);
-  wrp_cte::core::TagId tag_id = cte_client_->GetOrCreateTag(mctx, tag_name);
+    HILOG(kInfo, "ProcessDataset: Calling GetOrCreateTag for '{}'...", tag_name);
+  wrp_cte::core::TagId tag_id = cte_client_->GetOrCreateTag(tag_name);
   if (tag_id.IsNull()) {
     HELOG(kError, "Hdf5FileAssimilator: Failed to get or create tag '{}'", tag_name);
     H5Tclose(datatype_id);
@@ -280,7 +279,7 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
 
   HILOG(kInfo, "ProcessDataset: Submitting description blob (size: {} bytes)...", desc_size);
   auto desc_task = cte_client_->AsyncPutBlob(
-      mctx, tag_id, "description", 0, desc_size, desc_buffer.shm_, 1.0f, 0);
+      tag_id, "description", 0, desc_size, desc_buffer.shm_, 1.0f, 0);
   HILOG(kInfo, "ProcessDataset: Waiting for description blob task...");
   desc_task->Wait();
 
@@ -428,7 +427,7 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
       // Submit PutBlob task asynchronously
       HILOG(kInfo, "ProcessDataset: Submitting AsyncPutBlob for chunk {}...", chunk_idx);
       auto task = cte_client_->AsyncPutBlob(
-          mctx, tag_id, blob_name, 0, current_chunk_size,
+          tag_id, blob_name, 0, current_chunk_size,
           chunk_buffer.shm_, 1.0f, 0);
 
       active_tasks.push_back(task);

@@ -69,7 +69,7 @@ void Runtime::Destroy(hipc::FullPtr<DestroyTask> task, chi::RunContext &rctx) {
 
   } catch (const std::exception &e) {
     task->return_code_ = 99;
-    auto alloc = task->GetCtxAllocator();
+    auto alloc = CHI_IPC->GetMainAlloc();
     task->error_message_ = chi::priv::string(
         alloc,
         std::string("Exception during simple_mod destruction: ") + e.what());

@@ -39,7 +39,7 @@ bool ContentTransferEngine::ClientInit(const chi::PoolQuery &pool_query) {
   CreateParams params;
 
   // Create CTE Core container using constants from core_tasks.h and specified pool_query
-  cte_client->Create(hipc::MemContext(), pool_query,
+  cte_client->Create(pool_query,
                      wrp_cte::core::kCtePoolName, wrp_cte::core::kCtePoolId, params);
 
   // Suppress unused variable warnings
@@ -57,7 +57,7 @@ std::vector<std::string> ContentTransferEngine::TagQuery(
     chi::u32 max_tags,
     const chi::PoolQuery &pool_query) {
   auto *cte_client = WRP_CTE_CLIENT;
-  return cte_client->TagQuery(hipc::MemContext(), tag_re, max_tags, pool_query);
+  return cte_client->TagQuery(tag_re, max_tags, pool_query);
 }
 
 std::vector<std::pair<std::string, std::string>> ContentTransferEngine::BlobQuery(
@@ -66,7 +66,7 @@ std::vector<std::pair<std::string, std::string>> ContentTransferEngine::BlobQuer
     chi::u32 max_blobs,
     const chi::PoolQuery &pool_query) {
   auto *cte_client = WRP_CTE_CLIENT;
-  return cte_client->BlobQuery(hipc::MemContext(), tag_re, blob_re, max_blobs, pool_query);
+  return cte_client->BlobQuery(tag_re, blob_re, max_blobs, pool_query);
 }
 
 } // namespace wrp_cte::core

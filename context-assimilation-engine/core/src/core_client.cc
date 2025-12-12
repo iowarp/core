@@ -38,7 +38,6 @@ bool WRP_CAE_CLIENT_INIT(const std::string &config_path,
   // Create the CAE pool
   wrp_cae::core::CreateParams params;
   cae_client->Create(
-      hipc::MemContext(),
       pool_query,
       "cae_client_pool",
       wrp_cae::core::kCaePoolId,

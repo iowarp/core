@@ -187,7 +187,7 @@ private:
     // Allocate shared memory buffer for async operations
     auto shm_buffer = CHI_IPC->AllocateBuffer(io_size_);
     std::memcpy(shm_buffer.ptr_, data.data(), io_size_);
-    hipc::ShmPtr<> shm_ptr = shm_buffer.shm_;
+    hipc::ShmPtr<> shm_ptr = shm_buffer.shm_.template Cast<void>();
 
     auto start_time = high_resolution_clock::now();
 
@@ -326,7 +326,7 @@ private:
     // Allocate shared memory buffer for async Put
     auto shm_buffer = CHI_IPC->AllocateBuffer(io_size_);
     std::memcpy(shm_buffer.ptr_, put_data.data(), io_size_);
-    hipc::ShmPtr<> shm_ptr = shm_buffer.shm_;
+    hipc::ShmPtr<> shm_ptr = shm_buffer.shm_.template Cast<void>();
 
     auto start_time = high_resolution_clock::now();
 

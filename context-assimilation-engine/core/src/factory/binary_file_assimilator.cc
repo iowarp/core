@@ -40,8 +40,7 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
 
   // Get or create the tag in CTE
   HILOG(kInfo, "BinaryFileAssimilator: Getting or creating tag '{}'", tag_name);
-  hipc::MemContext mctx;
-  wrp_cte::core::TagId tag_id = cte_client_->GetOrCreateTag(mctx, tag_name);
+    wrp_cte::core::TagId tag_id = cte_client_->GetOrCreateTag(tag_name);
   if (tag_id.IsNull()) {
     HELOG(kError, "BinaryFileAssimilator: Failed to get or create tag '{}'", tag_name);
     return -3;
@@ -111,7 +110,7 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
 
   HILOG(kInfo, "BinaryFileAssimilator: Storing description blob: '{}'", description);
   auto desc_task = cte_client_->AsyncPutBlob(
-      mctx, tag_id, "description", 0, desc_size, desc_buffer.shm_, 1.0f, 0);
+      tag_id, "description", 0, desc_size, desc_buffer.shm_, 1.0f, 0);
   desc_task->Wait();
 
   if (desc_task->return_code_.load() != 0) {
@@ -204,7 +203,7 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
       // Submit PutBlob task asynchronously
       HILOG(kInfo, "BinaryFileAssimilator: About to call AsyncPutBlob for chunk {}", chunk_idx);
       auto task = cte_client_->AsyncPutBlob(
-          mctx, tag_id, blob_name, 0,
+          tag_id, blob_name, 0,
           current_chunk_size, buffer_ptr.shm_, 1.0f, 0);
 
       active_tasks.push_back(task);
