@@ -12,6 +12,7 @@
 #include "chimaera/pool_query.h"
 #include "chimaera/task.h"
 #include "chimaera/task_archives.h"
+#include "chimaera/local_task_archives.h"
 #include "chimaera/task_queue.h"
 #include "chimaera/types.h"
 
@@ -136,6 +137,28 @@ class Container {
    */
   virtual void LoadTask(u32 method, LoadTaskArchive& archive,
                         hipc::FullPtr<Task>& task_ptr) = 0;
+
+  /**
+   * Serialize task input parameters using LocalSerialize (for local transfers)
+   * Must be implemented by derived classes
+   * Uses switch-case structure based on method ID to dispatch to appropriate serialization
+   * @param method The method ID to serialize
+   * @param archive LocalLoadTaskArchive for deserializing inputs
+   * @param task_ptr Pointer to the task to load inputs into
+   */
+  virtual void LocalLoadIn(u32 method, LocalLoadTaskArchive& archive,
+                           hipc::FullPtr<Task>& task_ptr) = 0;
+
+  /**
+   * Serialize task output parameters using LocalSerialize (for local transfers)
+   * Must be implemented by derived classes
+   * Uses switch-case structure based on method ID to dispatch to appropriate serialization
+   * @param method The method ID to serialize
+   * @param archive LocalSaveTaskArchive for serializing outputs
+   * @param task_ptr Pointer to the task to save outputs from
+   */
+  virtual void LocalSaveOut(u32 method, LocalSaveTaskArchive& archive,
+                            hipc::FullPtr<Task> task_ptr) = 0;
 
   /**
    * Create a new copy of a task (deep copy for distributed execution) - must be

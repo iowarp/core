@@ -136,6 +136,82 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
   }
 }
 
+void Runtime::LocalLoadIn(chi::u32 method, chi::LocalLoadTaskArchive& archive, 
+                           hipc::FullPtr<chi::Task>& task_ptr) {
+  auto* ipc_manager = CHI_IPC;
+  
+  switch (method) {
+    case Method::kCreate: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<CreateTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<CreateTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kDestroy: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<DestroyTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<DestroyTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kParseOmni: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<ParseOmniTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<ParseOmniTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    default: {
+      // Unknown method - do nothing
+      break;
+    }
+  }
+}
+
+void Runtime::LocalSaveOut(chi::u32 method, chi::LocalSaveTaskArchive& archive, 
+                            hipc::FullPtr<chi::Task> task_ptr) {
+  switch (method) {
+    case Method::kCreate: {
+      auto typed_task = task_ptr.Cast<CreateTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kDestroy: {
+      auto typed_task = task_ptr.Cast<DestroyTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kParseOmni: {
+      auto typed_task = task_ptr.Cast<ParseOmniTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    default: {
+      // Unknown method - do nothing
+      break;
+    }
+  }
+}
+
 void Runtime::NewCopy(chi::u32 method, const hipc::FullPtr<chi::Task>& orig_task,
                        hipc::FullPtr<chi::Task>& dup_task, bool deep) {
   auto* ipc_manager = CHI_IPC;

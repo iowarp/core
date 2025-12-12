@@ -542,6 +542,22 @@ public:
     (void)orig_task;
     (void)dup_task;
   }
+
+  void LocalLoadIn(chi::u32 method, chi::LocalLoadTaskArchive &archive,
+                   hipc::FullPtr<chi::Task> &task_ptr) override {
+    // Test implementation - do nothing
+    (void)method;
+    (void)archive;
+    (void)task_ptr;
+  }
+
+  void LocalSaveOut(chi::u32 method, chi::LocalSaveTaskArchive &archive,
+                    hipc::FullPtr<chi::Task> task_ptr) override {
+    // Test implementation - do nothing
+    (void)method;
+    (void)archive;
+    (void)task_ptr;
+  }
 };
 
 TEST_CASE("Container Serialization Methods", "[task_archive][container]") {

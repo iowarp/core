@@ -83,6 +83,9 @@ void load(Ar &ar, std::unordered_map<KeyT, T> &data) {
 template <typename DataT = std::vector<char>>
 class LocalSerialize {
  public:
+  using is_loading = std::false_type;
+  using is_saving = std::true_type;
+
   DataT &data_;
 
  public:
@@ -117,6 +120,11 @@ class LocalSerialize {
                   "Cannot serialize object", void);
     if constexpr (std::is_arithmetic<T>::value) {
       write_binary(reinterpret_cast<const char *>(&obj), sizeof(T));
+    } else if constexpr (std::is_enum<T>::value) {
+      // Serialize enums as their underlying type
+      using UnderlyingType = std::underlying_type_t<T>;
+      UnderlyingType value = static_cast<UnderlyingType>(obj);
+      write_binary(reinterpret_cast<const char *>(&value), sizeof(UnderlyingType));
     } else if constexpr (has_serialize_fun_v<LocalSerialize, T>) {
       serialize(*this, const_cast<T &>(obj));
     } else if constexpr (has_load_save_fun_v<LocalSerialize, T>) {
@@ -143,6 +151,9 @@ class LocalSerialize {
 template <typename DataT = std::vector<char>>
 class LocalDeserialize {
  public:
+  using is_loading = std::true_type;
+  using is_saving = std::false_type;
+
   const DataT &data_;
   size_t cur_off_ = 0;
 
@@ -157,7 +168,7 @@ class LocalDeserialize {
 
   /** & operator */
   template <typename T>
-  HSHM_INLINE LocalDeserialize &operator&(const T &obj) {
+  HSHM_INLINE LocalDeserialize &operator&(T &obj) {
     return base(obj);
   }
 
@@ -177,6 +188,12 @@ class LocalDeserialize {
                   "Cannot serialize object", void);
     if constexpr (std::is_arithmetic<T>::value) {
       read_binary(reinterpret_cast<char *>(&obj), sizeof(T));
+    } else if constexpr (std::is_enum<T>::value) {
+      // Deserialize enums from their underlying type
+      using UnderlyingType = std::underlying_type_t<T>;
+      UnderlyingType value;
+      read_binary(reinterpret_cast<char *>(&value), sizeof(UnderlyingType));
+      obj = static_cast<T>(value);
     } else if constexpr (has_serialize_fun_v<LocalDeserialize, T>) {
       serialize(*this, obj);
     } else if constexpr (has_load_save_fun_v<LocalDeserialize, T>) {

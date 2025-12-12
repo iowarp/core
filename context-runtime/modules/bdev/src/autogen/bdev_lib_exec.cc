@@ -224,6 +224,154 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
   }
 }
 
+void Runtime::LocalLoadIn(chi::u32 method, chi::LocalLoadTaskArchive& archive, 
+                           hipc::FullPtr<chi::Task>& task_ptr) {
+  auto* ipc_manager = CHI_IPC;
+  
+  switch (method) {
+    case Method::kCreate: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<CreateTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<CreateTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kDestroy: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<DestroyTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<DestroyTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kAllocateBlocks: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<AllocateBlocksTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<AllocateBlocksTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kFreeBlocks: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<FreeBlocksTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<FreeBlocksTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kWrite: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<WriteTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<WriteTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kRead: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<ReadTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<ReadTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kGetStats: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<GetStatsTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<GetStatsTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    default: {
+      // Unknown method - do nothing
+      break;
+    }
+  }
+}
+
+void Runtime::LocalSaveOut(chi::u32 method, chi::LocalSaveTaskArchive& archive, 
+                            hipc::FullPtr<chi::Task> task_ptr) {
+  switch (method) {
+    case Method::kCreate: {
+      auto typed_task = task_ptr.Cast<CreateTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kDestroy: {
+      auto typed_task = task_ptr.Cast<DestroyTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kAllocateBlocks: {
+      auto typed_task = task_ptr.Cast<AllocateBlocksTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kFreeBlocks: {
+      auto typed_task = task_ptr.Cast<FreeBlocksTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kWrite: {
+      auto typed_task = task_ptr.Cast<WriteTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kRead: {
+      auto typed_task = task_ptr.Cast<ReadTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kGetStats: {
+      auto typed_task = task_ptr.Cast<GetStatsTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    default: {
+      // Unknown method - do nothing
+      break;
+    }
+  }
+}
+
 void Runtime::NewCopy(chi::u32 method, const hipc::FullPtr<chi::Task>& orig_task,
                        hipc::FullPtr<chi::Task>& dup_task, bool deep) {
   auto* ipc_manager = CHI_IPC;

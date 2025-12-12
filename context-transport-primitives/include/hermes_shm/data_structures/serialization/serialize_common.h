@@ -102,7 +102,7 @@ template <typename Ar, typename T>
 inline constexpr bool is_serializeable_v =
     has_serialize_fun_v<Ar, T> || has_load_save_fun_v<Ar, T> ||
     has_serialize_cls_v<Ar, T> || has_load_save_cls_v<Ar, T> ||
-    std::is_arithmetic_v<T>;
+    std::is_arithmetic_v<T> || std::is_enum<T>::value;
 
 template <typename Ar, typename T>
 HSHM_CROSS_FUN void write_binary(Ar &ar, const T *data, size_t size) {

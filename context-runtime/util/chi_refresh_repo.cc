@@ -348,6 +348,58 @@ class ChiModGenerator {
     oss << "  }\n";
     oss << "}\n";
     oss << "\n";
+    oss << "void Runtime::LocalLoadIn(chi::u32 method, chi::LocalLoadTaskArchive& archive, \n";
+    oss << "                           hipc::FullPtr<chi::Task>& task_ptr) {\n";
+    oss << "  auto* ipc_manager = CHI_IPC;\n";
+    oss << "  \n";
+    oss << "  switch (method) {\n";
+
+    // Add LocalLoadIn switch cases
+    for (const auto& method : methods) {
+      std::string task_type = GetTaskTypeName(method.method_name, chimod_name);
+      oss << "    case Method::" << method.constant_name << ": {\n";
+      oss << "      // Allocate task using typed NewTask if not already allocated\n";
+      oss << "      if (task_ptr.IsNull()) {\n";
+      oss << "        task_ptr = ipc_manager->NewTask<" << task_type << ">().template Cast<chi::Task>();\n";
+      oss << "      }\n";
+      oss << "      auto typed_task = task_ptr.Cast<" << task_type << ">();\n";
+      oss << "      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive\n";
+      oss << "      typed_task->BaseSerializeIn(archive);\n";
+      oss << "      typed_task->SerializeIn(archive);\n";
+      oss << "      break;\n";
+      oss << "    }\n";
+    }
+
+    oss << "    default: {\n";
+    oss << "      // Unknown method - do nothing\n";
+    oss << "      break;\n";
+    oss << "    }\n";
+    oss << "  }\n";
+    oss << "}\n";
+    oss << "\n";
+    oss << "void Runtime::LocalSaveOut(chi::u32 method, chi::LocalSaveTaskArchive& archive, \n";
+    oss << "                            hipc::FullPtr<chi::Task> task_ptr) {\n";
+    oss << "  switch (method) {\n";
+
+    // Add LocalSaveOut switch cases
+    for (const auto& method : methods) {
+      std::string task_type = GetTaskTypeName(method.method_name, chimod_name);
+      oss << "    case Method::" << method.constant_name << ": {\n";
+      oss << "      auto typed_task = task_ptr.Cast<" << task_type << ">();\n";
+      oss << "      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive\n";
+      oss << "      typed_task->BaseSerializeOut(archive);\n";
+      oss << "      typed_task->SerializeOut(archive);\n";
+      oss << "      break;\n";
+      oss << "    }\n";
+    }
+
+    oss << "    default: {\n";
+    oss << "      // Unknown method - do nothing\n";
+    oss << "      break;\n";
+    oss << "    }\n";
+    oss << "  }\n";
+    oss << "}\n";
+    oss << "\n";
     oss << "void Runtime::NewCopy(chi::u32 method, const hipc::FullPtr<chi::Task>& orig_task,\n";
     oss << "                       hipc::FullPtr<chi::Task>& dup_task, bool deep) {\n";
     oss << "  auto* ipc_manager = CHI_IPC;\n";

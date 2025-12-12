@@ -27,6 +27,8 @@ class Runtime : public chi::Container {
   chi::u64 GetWorkRemaining() const override;
   void SaveTask(chi::u32 method, chi::SaveTaskArchive& archive, hipc::FullPtr<chi::Task> task_ptr) override;
   void LoadTask(chi::u32 method, chi::LoadTaskArchive& archive, hipc::FullPtr<chi::Task>& task_ptr) override;
+  void LocalLoadIn(chi::u32 method, chi::LocalLoadTaskArchive& archive, hipc::FullPtr<chi::Task>& task_ptr) override;
+  void LocalSaveOut(chi::u32 method, chi::LocalSaveTaskArchive& archive, hipc::FullPtr<chi::Task> task_ptr) override;
   void NewCopy(chi::u32 method, const hipc::FullPtr<chi::Task>& orig_task, hipc::FullPtr<chi::Task>& dup_task, bool deep) override;
   void Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> origin_task, hipc::FullPtr<chi::Task> replica_task) override;
 

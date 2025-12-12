@@ -120,6 +120,18 @@ public:
   void LoadTask(chi::u32 method, chi::LoadTaskArchive& archive, hipc::FullPtr<chi::Task>& task_ptr) override;
 
   /**
+   * Deserialize task input parameters using LocalSerialize (for local transfers)
+   */
+  void LocalLoadIn(chi::u32 method, chi::LocalLoadTaskArchive& archive,
+                   hipc::FullPtr<chi::Task>& task_ptr) override;
+
+  /**
+   * Serialize task output parameters using LocalSerialize (for local transfers)
+   */
+  void LocalSaveOut(chi::u32 method, chi::LocalSaveTaskArchive& archive,
+                    hipc::FullPtr<chi::Task> task_ptr) override;
+
+  /**
    * Create a new copy of a task (deep copy for distributed execution)
    */
   void NewCopy(chi::u32 method,

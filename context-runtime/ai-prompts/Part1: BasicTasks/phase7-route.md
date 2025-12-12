@@ -32,23 +32,28 @@ Write a unit test to verify that the new methods created can correctly serialize
 
 @CLUADE.md
 
-ipc_manager currently has a function called Enqueue to place a task in the worker queues from clients or locally.
-I want to change this design paradigm to be a little more flexible.
-Instead, we should implement Send and Recv.
-Here is how this change will need to be applied.
-
 # Container & chi_refresh_repo
 
 We will need to update Container to include methods for
 serializing the task output using LocalSerialize.
 
 We should add the methods:
-1. LocalSaveIn
-2. LocalLoadIn
-3. LocalSaveOut
-4. LocalLoadOut
+1. LocalLoadIn
+2. LocalSaveOut
 
-These are effectively the same as their counterparts Saven
+These are effectively the same as their counterparts LoadIn and SaveOut.
+Update chi_refresh_repo to do this. 
+Use chi_refresh_repo on '/workspace/context-runtime/modules' , '/workspace/context-assimilation-engine', and '/workspace/context-transfer-engine afterwards.
+Then ensure things compile.
+If things fail to compile, then fix chi_refresh_repo and rerun.
+
+@CLUADE.md
+
+ipc_manager currently has a function called Enqueue to place a task in the worker queues from clients or locally.
+I want to change this design paradigm to be a little more flexible.
+Instead, we should implement Send and Recv.
+Here is how this change will need to be applied.
+
 
 # Task futures
 
@@ -56,15 +61,22 @@ Async* operations will need to return a ``Future<Task>`` object instead of Task*
 
 Future will store:
 1. A raw pointer to the Task (e.g., CreateTask*)
-2. A FullPtr to a FutreShm object, which contains a hipc::vector representing the serialized task and an atomic is_complete_ bool.
+2. A FullPtr to a FutreShm object, which contains a hipc::vector representing the serialized task and an atomic is_complete_ bool. We should remove is_complete_ in the task as well.
 
 Two constructors:
 1. With AllocT* as input. It will allocate the FutureShm object. The FutureShm should inherit from ShmContainer.
 2. With AllocT* and ShmPtr<FutureShm> as input.
 
+For the async methods, please update chi_refresh_repo to make all Async* method return a Future<TaskT> instead of a TaskT*.
+We will need to fix all compilation errors that arise afterwards.
+
 # IpcManager Send & Recv
 
 We will need to replace ipc_manager->Enqueue with Send / Recv
+
+## Worker Queues
+
+Update the worker_queue to store Future<TaskT> instead of ShmPtr<TaskT>.
 
 ## Send(TaskT *task)
 
@@ -74,10 +86,18 @@ We will need to replace ipc_manager->Enqueue with Send / Recv
 4. Enqueue the Future in the worker queue.
 5. Return: Future<TaskT>
 
+## Recv(const Future<Task> &task)
+
+1. Poll for the completion of the atomic is_complete bool in FutureShm
+2. Deserialize the TaskT using LoadTaskOutArchive into Future's raw pointer.
+3. Return nothing
+
 # Worker 
 
 ## Run
-1. Pop will pop a future 
+1. Pop will pop a future from the stack.
+2. Set the FullPtr<FutureShm<Task>> to
 
 ## EndTask
-
+1. 
+1. Delete the task

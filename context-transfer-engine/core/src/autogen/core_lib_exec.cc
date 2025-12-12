@@ -488,6 +488,370 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
   }
 }
 
+void Runtime::LocalLoadIn(chi::u32 method, chi::LocalLoadTaskArchive& archive, 
+                           hipc::FullPtr<chi::Task>& task_ptr) {
+  auto* ipc_manager = CHI_IPC;
+  
+  switch (method) {
+    case Method::kCreate: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<CreateTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<CreateTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kDestroy: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<DestroyTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<DestroyTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kRegisterTarget: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<RegisterTargetTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<RegisterTargetTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kUnregisterTarget: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<UnregisterTargetTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<UnregisterTargetTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kListTargets: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<ListTargetsTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<ListTargetsTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kStatTargets: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<StatTargetsTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<StatTargetsTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kGetOrCreateTag: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<core::GetOrCreateTagTask<core::CreateParams>>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<core::GetOrCreateTagTask<core::CreateParams>>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kPutBlob: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<PutBlobTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<PutBlobTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kGetBlob: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<GetBlobTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<GetBlobTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kReorganizeBlob: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<ReorganizeBlobTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<ReorganizeBlobTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kDelBlob: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<DelBlobTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<DelBlobTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kDelTag: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<DelTagTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<DelTagTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kGetTagSize: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<GetTagSizeTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<GetTagSizeTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kPollTelemetryLog: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<PollTelemetryLogTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<PollTelemetryLogTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kGetBlobScore: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<GetBlobScoreTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<GetBlobScoreTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kGetBlobSize: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<GetBlobSizeTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<GetBlobSizeTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kGetContainedBlobs: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<GetContainedBlobsTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<GetContainedBlobsTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kTagQuery: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<TagQueryTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<TagQueryTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    case Method::kBlobQuery: {
+      // Allocate task using typed NewTask if not already allocated
+      if (task_ptr.IsNull()) {
+        task_ptr = ipc_manager->NewTask<BlobQueryTask>().template Cast<chi::Task>();
+      }
+      auto typed_task = task_ptr.Cast<BlobQueryTask>();
+      // Call BaseSerializeIn and SerializeIn using LocalLoadTaskArchive
+      typed_task->BaseSerializeIn(archive);
+      typed_task->SerializeIn(archive);
+      break;
+    }
+    default: {
+      // Unknown method - do nothing
+      break;
+    }
+  }
+}
+
+void Runtime::LocalSaveOut(chi::u32 method, chi::LocalSaveTaskArchive& archive, 
+                            hipc::FullPtr<chi::Task> task_ptr) {
+  switch (method) {
+    case Method::kCreate: {
+      auto typed_task = task_ptr.Cast<CreateTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kDestroy: {
+      auto typed_task = task_ptr.Cast<DestroyTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kRegisterTarget: {
+      auto typed_task = task_ptr.Cast<RegisterTargetTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kUnregisterTarget: {
+      auto typed_task = task_ptr.Cast<UnregisterTargetTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kListTargets: {
+      auto typed_task = task_ptr.Cast<ListTargetsTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kStatTargets: {
+      auto typed_task = task_ptr.Cast<StatTargetsTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kGetOrCreateTag: {
+      auto typed_task = task_ptr.Cast<core::GetOrCreateTagTask<core::CreateParams>>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kPutBlob: {
+      auto typed_task = task_ptr.Cast<PutBlobTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kGetBlob: {
+      auto typed_task = task_ptr.Cast<GetBlobTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kReorganizeBlob: {
+      auto typed_task = task_ptr.Cast<ReorganizeBlobTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kDelBlob: {
+      auto typed_task = task_ptr.Cast<DelBlobTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kDelTag: {
+      auto typed_task = task_ptr.Cast<DelTagTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kGetTagSize: {
+      auto typed_task = task_ptr.Cast<GetTagSizeTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kPollTelemetryLog: {
+      auto typed_task = task_ptr.Cast<PollTelemetryLogTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kGetBlobScore: {
+      auto typed_task = task_ptr.Cast<GetBlobScoreTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kGetBlobSize: {
+      auto typed_task = task_ptr.Cast<GetBlobSizeTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kGetContainedBlobs: {
+      auto typed_task = task_ptr.Cast<GetContainedBlobsTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kTagQuery: {
+      auto typed_task = task_ptr.Cast<TagQueryTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    case Method::kBlobQuery: {
+      auto typed_task = task_ptr.Cast<BlobQueryTask>();
+      // Call BaseSerializeOut and SerializeOut using LocalSaveTaskArchive
+      typed_task->BaseSerializeOut(archive);
+      typed_task->SerializeOut(archive);
+      break;
+    }
+    default: {
+      // Unknown method - do nothing
+      break;
+    }
+  }
+}
+
 void Runtime::NewCopy(chi::u32 method, const hipc::FullPtr<chi::Task>& orig_task,
                        hipc::FullPtr<chi::Task>& dup_task, bool deep) {
   auto* ipc_manager = CHI_IPC;
