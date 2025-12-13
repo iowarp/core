@@ -197,7 +197,7 @@ private:
       }
 
       int batch_size = std::min(depth_, io_count_ - i);
-      std::vector<hipc::FullPtr<wrp_cte::core::PutBlobTask>> tasks;
+      std::vector<chi::Future<wrp_cte::core::PutBlobTask>> tasks;
       tasks.reserve(batch_size);
 
       // Generate async Put operations
@@ -213,8 +213,8 @@ private:
 
       // Wait for all async operations to complete
       for (auto &task : tasks) {
-        task->Wait();
-        CHI_IPC->DelTask(task);
+        task.Wait();
+        CHI_IPC->DelTask(task.GetTaskPtr());
       }
     }
 
@@ -336,7 +336,7 @@ private:
       }
 
       int batch_size = std::min(depth_, io_count_ - i);
-      std::vector<hipc::FullPtr<wrp_cte::core::PutBlobTask>> put_tasks;
+      std::vector<chi::Future<wrp_cte::core::PutBlobTask>> put_tasks;
       put_tasks.reserve(batch_size);
 
       // Generate async Put operations
@@ -352,8 +352,8 @@ private:
 
       // Wait for Put operations
       for (auto &task : put_tasks) {
-        task->Wait();
-        CHI_IPC->DelTask(task);
+        task.Wait();
+        CHI_IPC->DelTask(task.GetTaskPtr());
       }
 
       // Perform Get operations synchronously

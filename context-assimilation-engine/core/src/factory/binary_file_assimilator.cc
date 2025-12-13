@@ -111,15 +111,15 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
   HILOG(kInfo, "BinaryFileAssimilator: Storing description blob: '{}'", description);
   auto desc_task = cte_client_->AsyncPutBlob(
       tag_id, "description", 0, desc_size, desc_buffer.shm_.template Cast<void>(), 1.0f, 0);
-  desc_task->Wait();
+  desc_task.Wait();
 
   if (desc_task->return_code_.load() != 0) {
     HELOG(kError, "BinaryFileAssimilator: Failed to store description for tag '{}', return_code: {}",
           tag_name, desc_task->return_code_.load());
-    CHI_IPC->DelTask(desc_task);
+    CHI_IPC->DelTask(desc_task.GetTaskPtr());
     return -9;
   }
-  CHI_IPC->DelTask(desc_task);
+  CHI_IPC->DelTask(desc_task.GetTaskPtr());
   HILOG(kInfo, "BinaryFileAssimilator: Description blob stored successfully");
 
   // Define chunking parameters
@@ -152,7 +152,7 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
   HILOG(kInfo, "BinaryFileAssimilator: Starting chunk processing");
   size_t chunk_idx = 0;
   size_t bytes_processed = 0;
-  std::vector<hipc::FullPtr<wrp_cte::core::PutBlobTask>> active_tasks;
+  std::vector<chi::Future<wrp_cte::core::PutBlobTask>> active_tasks;
 
   while (bytes_processed < total_size) {
     // Submit tasks up to the parallel limit
@@ -216,20 +216,20 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
     if (!active_tasks.empty()) {
       // Wait for the first task to complete
       auto& first_task = active_tasks.front();
-      first_task->Wait();
+      first_task.Wait();
 
       if (first_task->return_code_.load() != 0) {
         HELOG(kError, "BinaryFileAssimilator: PutBlob task failed with code {}",
               first_task->return_code_.load());
         // Free the buffer before deleting the task
         CHI_IPC->FreeBuffer(first_task->blob_data_.template Cast<char>());
-        CHI_IPC->DelTask(first_task);
+        CHI_IPC->DelTask(first_task.GetTaskPtr());
         return -10;
       }
 
       // Free the buffer before deleting the task
       CHI_IPC->FreeBuffer(first_task->blob_data_.template Cast<char>());
-      CHI_IPC->DelTask(first_task);
+      CHI_IPC->DelTask(first_task.GetTaskPtr());
       active_tasks.erase(active_tasks.begin());
     }
   }
@@ -237,18 +237,18 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
   // Wait for all remaining tasks to complete
   HILOG(kInfo, "BinaryFileAssimilator: Waiting for {} remaining tasks to complete", active_tasks.size());
   for (auto& task : active_tasks) {
-    task->Wait();
+    task.Wait();
     if (task->return_code_.load() != 0) {
       HELOG(kError, "BinaryFileAssimilator: PutBlob task failed with code {}",
             task->return_code_.load());
       // Free the buffer before deleting the task
       CHI_IPC->FreeBuffer(task->blob_data_.template Cast<char>());
-      CHI_IPC->DelTask(task);
+      CHI_IPC->DelTask(task.GetTaskPtr());
       return -10;
     }
     // Free the buffer before deleting the task
     CHI_IPC->FreeBuffer(task->blob_data_.template Cast<char>());
-    CHI_IPC->DelTask(task);
+    CHI_IPC->DelTask(task.GetTaskPtr());
   }
 
   file.close();

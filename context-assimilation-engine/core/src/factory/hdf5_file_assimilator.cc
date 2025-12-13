@@ -281,18 +281,18 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
   auto desc_task = cte_client_->AsyncPutBlob(
       tag_id, "description", 0, desc_size, desc_buffer.shm_.template Cast<void>(), 1.0f, 0);
   HILOG(kInfo, "ProcessDataset: Waiting for description blob task...");
-  desc_task->Wait();
+  desc_task.Wait();
 
   if (desc_task->return_code_.load() != 0) {
     HELOG(kError, "Hdf5FileAssimilator: Failed to store description for dataset '{}', return_code: {}",
           dataset_path, desc_task->return_code_.load());
-    CHI_IPC->DelTask(desc_task);
+    CHI_IPC->DelTask(desc_task.GetTaskPtr());
     H5Tclose(datatype_id);
     H5Sclose(dataspace_id);
     H5Dclose(dataset_id);
     return -6;
   }
-  CHI_IPC->DelTask(desc_task);
+  CHI_IPC->DelTask(desc_task.GetTaskPtr());
   HILOG(kInfo, "ProcessDataset: Description blob stored successfully");
 
   HILOG(kInfo, "Hdf5FileAssimilator: Stored description for '{}': {}", tag_name, description);
@@ -315,7 +315,7 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
   // Process chunks in batches
   size_t chunk_idx = 0;
   size_t bytes_processed = 0;
-  std::vector<hipc::FullPtr<wrp_cte::core::PutBlobTask>> active_tasks;
+  std::vector<chi::Future<wrp_cte::core::PutBlobTask>> active_tasks;
 
   HILOG(kInfo, "ProcessDataset: Starting chunk processing loop...");
   while (bytes_processed < total_bytes) {
@@ -448,14 +448,14 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
     if (!active_tasks.empty()) {
       HILOG(kInfo, "ProcessDataset: Waiting for first task to complete...");
       auto& first_task = active_tasks.front();
-      first_task->Wait();
+      first_task.Wait();
 
       if (first_task->return_code_.load() != 0) {
         HELOG(kError, "Hdf5FileAssimilator: PutBlob task failed with code {}",
               first_task->return_code_.load());
         // Free the buffer before deleting the task
         CHI_IPC->FreeBuffer(first_task->blob_data_.template Cast<char>());
-        CHI_IPC->DelTask(first_task);
+        CHI_IPC->DelTask(first_task.GetTaskPtr());
         CHI_IPC->FreeBuffer(read_buffer);
         H5Tclose(datatype_id);
         H5Sclose(dataspace_id);
@@ -466,7 +466,7 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
       HILOG(kInfo, "ProcessDataset: First task completed successfully");
       // Free the buffer before deleting the task
       CHI_IPC->FreeBuffer(first_task->blob_data_.template Cast<char>());
-      CHI_IPC->DelTask(first_task);
+      CHI_IPC->DelTask(first_task.GetTaskPtr());
       active_tasks.erase(active_tasks.begin());
     }
   }
@@ -475,13 +475,13 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
   HILOG(kInfo, "ProcessDataset: Waiting for {} remaining tasks to complete...",
         active_tasks.size());
   for (auto& task : active_tasks) {
-    task->Wait();
+    task.Wait();
     if (task->return_code_.load() != 0) {
       HELOG(kError, "Hdf5FileAssimilator: PutBlob task failed with code {}",
             task->return_code_.load());
       // Free the buffer before deleting the task
       CHI_IPC->FreeBuffer(task->blob_data_.template Cast<char>());
-      CHI_IPC->DelTask(task);
+      CHI_IPC->DelTask(task.GetTaskPtr());
       CHI_IPC->FreeBuffer(read_buffer);
       H5Tclose(datatype_id);
       H5Sclose(dataspace_id);
@@ -490,7 +490,7 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
     }
     // Free the buffer before deleting the task
     CHI_IPC->FreeBuffer(task->blob_data_.template Cast<char>());
-    CHI_IPC->DelTask(task);
+    CHI_IPC->DelTask(task.GetTaskPtr());
   }
 
   HILOG(kInfo, "ProcessDataset: All tasks completed, cleaning up resources...");

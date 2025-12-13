@@ -51,7 +51,7 @@ void Tag::PutBlob(const std::string &blob_name, const hipc::ShmPtr<> &data, size
 // 3. Calling: AsyncPutBlob(blob_name, shm_ptr.shm_, data_size, off, score);
 // 4. Keeping shm_ptr alive until task completes
 
-hipc::FullPtr<PutBlobTask> Tag::AsyncPutBlob(const std::string &blob_name, const hipc::ShmPtr<> &data,
+chi::Future<PutBlobTask> Tag::AsyncPutBlob(const std::string &blob_name, const hipc::ShmPtr<> &data,
                                              size_t data_size, size_t off, float score) {
   auto *cte_client = WRP_CTE_CLIENT;
   return cte_client->AsyncPutBlob(tag_id_, blob_name,

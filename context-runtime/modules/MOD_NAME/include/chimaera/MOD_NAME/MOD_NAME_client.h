@@ -37,7 +37,7 @@ class Client : public chi::ContainerClient {
   bool Create(const chi::PoolQuery& pool_query,
               const std::string& pool_name, const chi::PoolId& custom_pool_id) {
     auto task = AsyncCreate(pool_query, pool_name, custom_pool_id);
-    task->Wait();
+    task.Wait();
 
     // CRITICAL: Update client pool_id_ with the actual pool ID from the task
     pool_id_ = task->new_pool_id_;
@@ -47,7 +47,7 @@ class Client : public chi::ContainerClient {
 
     // Clean up task
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
 
     // Return true for success (return_code_ == 0), false for failure
     return return_code_ == 0;
@@ -59,7 +59,7 @@ class Client : public chi::ContainerClient {
    * @param pool_name Unique name for the pool (user-provided)
    * @param custom_pool_id Explicit pool ID for the pool being created
    */
-  hipc::FullPtr<CreateTask> AsyncCreate(const chi::PoolQuery& pool_query,
+  chi::Future<CreateTask> AsyncCreate(const chi::PoolQuery& pool_query,
                                         const std::string& pool_name,
                                         const chi::PoolId& custom_pool_id) {
     auto* ipc_manager = CHI_IPC;
@@ -77,9 +77,8 @@ class Client : public chi::ContainerClient {
     );
 
     // Submit to runtime
-    ipc_manager->Enqueue(task);
+    return ipc_manager->Send(task);
 
-    return task;
   }
 
   /**
@@ -89,7 +88,7 @@ class Client : public chi::ContainerClient {
                   const std::string& input_data, chi::u32 operation_id,
                   std::string& output_data) {
     auto task = AsyncCustom(pool_query, input_data, operation_id);
-    task->Wait();
+    task.Wait();
 
     // Get results
     output_data = task->data_.str();
@@ -97,7 +96,7 @@ class Client : public chi::ContainerClient {
 
     // Clean up task
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
 
     return result_code;
   }
@@ -105,7 +104,7 @@ class Client : public chi::ContainerClient {
   /**
    * Execute custom operation (asynchronous)
    */
-  hipc::FullPtr<CustomTask> AsyncCustom(const chi::PoolQuery& pool_query,
+  chi::Future<CustomTask> AsyncCustom(const chi::PoolQuery& pool_query,
                                         const std::string& input_data,
                                         chi::u32 operation_id) {
     auto* ipc_manager = CHI_IPC;
@@ -115,9 +114,8 @@ class Client : public chi::ContainerClient {
         chi::CreateTaskId(), pool_id_, pool_query, input_data, operation_id);
 
     // Submit to runtime
-    ipc_manager->Enqueue(task);
+    return ipc_manager->Send(task);
 
-    return task;
   }
 
   /**
@@ -126,14 +124,14 @@ class Client : public chi::ContainerClient {
   chi::u32 CoMutexTest(const chi::PoolQuery& pool_query, chi::u32 test_id,
                        chi::u32 hold_duration_ms) {
     auto task = AsyncCoMutexTest(pool_query, test_id, hold_duration_ms);
-    task->Wait();
+    task.Wait();
 
     // Get result
     chi::u32 result = task->return_code_;
 
     // Clean up task
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
 
     return result;
   }
@@ -141,7 +139,7 @@ class Client : public chi::ContainerClient {
   /**
    * Execute CoMutex test (asynchronous)
    */
-  hipc::FullPtr<CoMutexTestTask> AsyncCoMutexTest(
+  chi::Future<CoMutexTestTask> AsyncCoMutexTest(
       const chi::PoolQuery& pool_query,
       chi::u32 test_id, chi::u32 hold_duration_ms) {
     auto* ipc_manager = CHI_IPC;
@@ -151,9 +149,8 @@ class Client : public chi::ContainerClient {
         chi::CreateTaskId(), pool_id_, pool_query, test_id, hold_duration_ms);
 
     // Submit to runtime
-    ipc_manager->Enqueue(task);
+    return ipc_manager->Send(task);
 
-    return task;
   }
 
   /**
@@ -163,14 +160,14 @@ class Client : public chi::ContainerClient {
                         bool is_writer, chi::u32 hold_duration_ms) {
     auto task = AsyncCoRwLockTest(pool_query, test_id, is_writer,
                                   hold_duration_ms);
-    task->Wait();
+    task.Wait();
 
     // Get result
     chi::u32 result = task->return_code_;
 
     // Clean up task
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
 
     return result;
   }
@@ -178,7 +175,7 @@ class Client : public chi::ContainerClient {
   /**
    * Execute CoRwLock test (asynchronous)
    */
-  hipc::FullPtr<CoRwLockTestTask> AsyncCoRwLockTest(
+  chi::Future<CoRwLockTestTask> AsyncCoRwLockTest(
       const chi::PoolQuery& pool_query,
       chi::u32 test_id, bool is_writer, chi::u32 hold_duration_ms) {
     auto* ipc_manager = CHI_IPC;
@@ -189,20 +186,19 @@ class Client : public chi::ContainerClient {
         hold_duration_ms);
 
     // Submit to runtime
-    ipc_manager->Enqueue(task);
+    return ipc_manager->Send(task);
 
-    return task;
   }
 
   /**
    * Submit Wait test task (asynchronous)
-   * Tests recursive task->Wait() functionality with specified depth
+   * Tests recursive task.Wait() functionality with specified depth
    * @param pool_query Pool routing information
    * @param depth Number of recursive calls to make
    * @param test_id Test identifier for tracking
    * @return Task handle for waiting and result retrieval
    */
-  hipc::FullPtr<WaitTestTask> AsyncWaitTest(const chi::PoolQuery& pool_query,
+  chi::Future<WaitTestTask> AsyncWaitTest(const chi::PoolQuery& pool_query,
                                            chi::u32 depth,
                                            chi::u32 test_id) {
     auto* ipc_manager = CHI_IPC;
@@ -211,13 +207,12 @@ class Client : public chi::ContainerClient {
         chi::CreateTaskId(), pool_id_, pool_query, depth, test_id);
 
     // Submit to runtime
-    ipc_manager->Enqueue(task);
-    return task;
+    return ipc_manager->Send(task);
   }
 
   /**
    * Submit Wait test task (synchronous)
-   * Tests recursive task->Wait() functionality with specified depth
+   * Tests recursive task.Wait() functionality with specified depth
    * @param pool_query Pool routing information
    * @param depth Number of recursive calls to make
    * @param test_id Test identifier for tracking
@@ -227,11 +222,11 @@ class Client : public chi::ContainerClient {
                    chi::u32 depth,
                    chi::u32 test_id) {
     auto task = AsyncWaitTest(pool_query, depth, test_id);
-    task->Wait();
+    task.Wait();
     
     chi::u32 final_depth = task->current_depth_;
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
     
     return final_depth;
   }

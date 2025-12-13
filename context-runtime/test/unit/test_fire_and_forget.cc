@@ -225,7 +225,7 @@ TEST_CASE("fire_and_forget_task_flag_detection", "[fire_and_forget][flag_detecti
     INFO("Fire-and-forget task correctly has TASK_FIRE_AND_FORGET flag set");
     
     // Clean up the task
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
   }
   
   SECTION("Verify regular task does not have fire-and-forget flag") {
@@ -245,7 +245,7 @@ TEST_CASE("fire_and_forget_task_flag_detection", "[fire_and_forget][flag_detecti
     INFO("Regular task correctly does NOT have TASK_FIRE_AND_FORGET flag");
     
     // Clean up the task
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
   }
 }
 
@@ -547,13 +547,13 @@ TEST_CASE("fire_and_forget_vs_regular_task_behavior", "[fire_and_forget][compari
                                   "async_test", fixture.generateTestId());
     
     // Wait for completion
-    task->Wait();
+    task.Wait();
     
     // Verify task completed
     REQUIRE(task->return_code_ == 0);
     
     // Manual cleanup is required for regular tasks
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
     
     INFO("Async regular task required manual cleanup via DelTask");
   }

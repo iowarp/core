@@ -39,7 +39,7 @@ class Client : public chi::ContainerClient {
   bool Create(const chi::PoolQuery& pool_query,
               const std::string& pool_name, const chi::PoolId& custom_pool_id) {
     auto task = AsyncCreate(pool_query, pool_name, custom_pool_id);
-    task->Wait();
+    task.Wait();
 
     // CRITICAL: Update client pool_id_ with the actual pool ID from the task
     pool_id_ = task->new_pool_id_;
@@ -49,7 +49,7 @@ class Client : public chi::ContainerClient {
 
     // Clean up task
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
 
     // Return true for success (return_code_ == 0), false for failure
     return return_code_ == 0;
@@ -61,9 +61,9 @@ class Client : public chi::ContainerClient {
    * @param pool_name Unique name for the admin pool (user-provided)
    * @param custom_pool_id Explicit pool ID for the pool being created
    */
-  hipc::FullPtr<CreateTask> AsyncCreate(const chi::PoolQuery& pool_query,
-                                        const std::string& pool_name,
-                                        const chi::PoolId& custom_pool_id) {
+  chi::Future<CreateTask> AsyncCreate(const chi::PoolQuery& pool_query,
+                                       const std::string& pool_name,
+                                       const chi::PoolId& custom_pool_id) {
     auto* ipc_manager = CHI_IPC;
 
     // Allocate CreateTask for admin container creation
@@ -72,10 +72,8 @@ class Client : public chi::ContainerClient {
     auto task = ipc_manager->NewTask<CreateTask>(chi::CreateTaskId(),
                                                  chi::kAdminPoolId, pool_query, "", pool_name, custom_pool_id);
 
-    // Submit to runtime
-    ipc_manager->Enqueue(task);
-
-    return task;
+    // Submit to runtime and return Future
+    return ipc_manager->Send(task);
   }
 
   /**
@@ -85,25 +83,25 @@ class Client : public chi::ContainerClient {
                    chi::u32 destruction_flags = 0) {
     auto task =
         AsyncDestroyPool(pool_query, target_pool_id, destruction_flags);
-    task->Wait();
+    task.Wait();
 
     // Check for errors
     if (task->return_code_ != 0) {
       std::string error = task->error_message_.str();
       auto* ipc_manager = CHI_IPC;
-      ipc_manager->DelTask(task);
+      ipc_manager->DelTask(task.GetTaskPtr());
       throw std::runtime_error("Pool destruction failed: " + error);
     }
 
     // Clean up task
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
   }
 
   /**
    * Destroy an existing ChiPool (asynchronous)
    */
-  hipc::FullPtr<DestroyPoolTask> AsyncDestroyPool(const chi::PoolQuery& pool_query,
+  chi::Future<DestroyPoolTask> AsyncDestroyPool(const chi::PoolQuery& pool_query,
       chi::PoolId target_pool_id, chi::u32 destruction_flags = 0) {
     auto* ipc_manager = CHI_IPC;
 
@@ -112,10 +110,8 @@ class Client : public chi::ContainerClient {
         chi::CreateTaskId(), pool_id_, pool_query, target_pool_id,
         destruction_flags);
 
-    // Submit to runtime
-    ipc_manager->Enqueue(task);
-
-    return task;
+    // Submit to runtime and return Future
+    return ipc_manager->Send(task);
   }
 
   /**
@@ -128,19 +124,19 @@ class Client : public chi::ContainerClient {
             const std::vector<chi::PoolQuery>& pool_queries,
             chi::u32 transfer_flags = 0) {
     auto task = AsyncSend(msg_type, subtask, pool_queries, transfer_flags);
-    task->Wait();
+    task.Wait();
 
     // Check for errors
     if (task->GetReturnCode() != 0) {
       std::string error = task->error_message_.str();
       auto* ipc_manager = CHI_IPC;
-      ipc_manager->DelTask(task);
+      ipc_manager->DelTask(task.GetTaskPtr());
       throw std::runtime_error("Send failed: " + error);
     }
 
     // Clean up task
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
   }
 
   /**
@@ -148,7 +144,7 @@ class Client : public chi::ContainerClient {
    * Can be used for SerializeIn (sending inputs), SerializeOut (sending outputs), or Heartbeat
    */
   template <typename TaskType>
-  hipc::FullPtr<SendTask> AsyncSend(chi::MsgType msg_type,
+  chi::Future<SendTask> AsyncSend(chi::MsgType msg_type,
       const hipc::FullPtr<TaskType>& subtask,
       const std::vector<chi::PoolQuery>& pool_queries,
       chi::u32 transfer_flags = 0) {
@@ -165,10 +161,8 @@ class Client : public chi::ContainerClient {
         chi::CreateTaskId(), pool_id_, local_pool_query,
         msg_type, base_subtask, pool_queries, transfer_flags);
 
-    // Submit to runtime
-    ipc_manager->Enqueue(task);
-
-    return task;
+    // Submit to runtime and return Future
+    return ipc_manager->Send(task);
   }
 
   /**
@@ -178,26 +172,26 @@ class Client : public chi::ContainerClient {
   void Recv(const chi::PoolQuery& pool_query,
             chi::u32 transfer_flags = 0) {
     auto task = AsyncRecv(pool_query, transfer_flags);
-    task->Wait();
+    task.Wait();
 
     // Check for errors
     if (task->GetReturnCode() != 0) {
       std::string error = task->error_message_.str();
       auto* ipc_manager = CHI_IPC;
-      ipc_manager->DelTask(task);
+      ipc_manager->DelTask(task.GetTaskPtr());
       throw std::runtime_error("Recv failed: " + error);
     }
 
     // Clean up task
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
   }
 
   /**
    * Receive tasks from network (asynchronous)
    * Can be used for both SerializeIn (receiving inputs) and SerializeOut (receiving outputs)
    */
-  hipc::FullPtr<RecvTask> AsyncRecv(const chi::PoolQuery& pool_query,
+  chi::Future<RecvTask> AsyncRecv(const chi::PoolQuery& pool_query,
       chi::u32 transfer_flags = 0,
       double period_us = 25) {
     auto* ipc_manager = CHI_IPC;
@@ -212,10 +206,8 @@ class Client : public chi::ContainerClient {
       task->SetFlags(TASK_PERIODIC);
     }
 
-    // Submit to runtime
-    ipc_manager->Enqueue(task);
-
-    return task;
+    // Submit to runtime and return Future
+    return ipc_manager->Send(task);
   }
 
   /**
@@ -223,41 +215,39 @@ class Client : public chi::ContainerClient {
    */
   void Flush(const chi::PoolQuery& pool_query) {
     auto task = AsyncFlush(pool_query);
-    task->Wait();
+    task.Wait();
 
     // Check for errors
     if (task->return_code_ != 0) {
       auto* ipc_manager = CHI_IPC;
-      ipc_manager->DelTask(task);
+      ipc_manager->DelTask(task.GetTaskPtr());
       throw std::runtime_error("Flush failed with result code: " +
                                std::to_string(task->return_code_));
     }
 
     // Clean up task
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
   }
 
   /**
    * Flush administrative operations (asynchronous)
    */
-  hipc::FullPtr<FlushTask> AsyncFlush(const chi::PoolQuery& pool_query) {
+  chi::Future<FlushTask> AsyncFlush(const chi::PoolQuery& pool_query) {
     auto* ipc_manager = CHI_IPC;
 
     // Allocate FlushTask
     auto task = ipc_manager->NewTask<FlushTask>(chi::CreateTaskId(), pool_id_,
                                                 pool_query);
 
-    // Submit to runtime
-    ipc_manager->Enqueue(task);
-
-    return task;
+    // Submit to runtime and return Future
+    return ipc_manager->Send(task);
   }
 
   /**
    * Stop the entire Chimaera runtime (asynchronous)
    */
-  hipc::FullPtr<StopRuntimeTask> AsyncStopRuntime(const chi::PoolQuery& pool_query,
+  chi::Future<StopRuntimeTask> AsyncStopRuntime(const chi::PoolQuery& pool_query,
       chi::u32 shutdown_flags = 0, chi::u32 grace_period_ms = 5000) {
     auto* ipc_manager = CHI_IPC;
 
@@ -266,10 +256,8 @@ class Client : public chi::ContainerClient {
         chi::CreateTaskId(), pool_id_, pool_query, shutdown_flags,
         grace_period_ms);
 
-    // Submit to runtime
-    ipc_manager->Enqueue(task);
-
-    return task;
+    // Submit to runtime and return Future
+    return ipc_manager->Send(task);
   }
 
   /**
@@ -287,7 +275,7 @@ class Client : public chi::ContainerClient {
             pool_config.pool_name_, pool_config.mod_name_);
 
       // Create ComposeTask with PoolConfig passed directly to constructor
-      auto task = ipc_manager->NewTask<chimaera::admin::ComposeTask<chi::PoolConfig>>(
+      auto task_ptr = ipc_manager->NewTask<chimaera::admin::ComposeTask<chi::PoolConfig>>(
           chi::CreateTaskId(),
           chi::kAdminPoolId,
           pool_config.pool_query_,
@@ -295,15 +283,15 @@ class Client : public chi::ContainerClient {
       );
 
       // Submit and wait for completion
-      ipc_manager->Enqueue(task);
-      task->Wait();
+      auto task = ipc_manager->Send(task_ptr);
+      task.Wait();
 
       // Check return code
       chi::u32 return_code = task->GetReturnCode();
       if (return_code != 0) {
         HELOG(kError, "Compose: Failed to create pool {} (module: {}), return code: {}",
               pool_config.pool_name_, pool_config.mod_name_, return_code);
-        ipc_manager->DelTask(task);
+        ipc_manager->DelTask(task.GetTaskPtr());
         return false;
       }
 
@@ -311,7 +299,7 @@ class Client : public chi::ContainerClient {
             pool_config.pool_name_, pool_config.mod_name_);
 
       // Cleanup task
-      ipc_manager->DelTask(task);
+      ipc_manager->DelTask(task.GetTaskPtr());
     }
 
     HILOG(kInfo, "Compose: All {} pools created successfully", compose_config.pools_.size());

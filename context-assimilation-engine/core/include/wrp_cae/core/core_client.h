@@ -19,18 +19,18 @@ class Client : public chi::ContainerClient {
               const chi::PoolId& custom_pool_id,
               const CreateParams& params = CreateParams()) {
     auto task = AsyncCreate(pool_query, pool_name, custom_pool_id, params);
-    task->Wait();
+    task.Wait();
 
     // CRITICAL: Update client pool_id_ with the actual pool ID from the task
     pool_id_ = task->new_pool_id_;
 
-    CHI_IPC->DelTask(task);
+    CHI_IPC->DelTask(task.GetTaskPtr());
   }
 
   /**
    * Asynchronous Create - returns immediately
    */
-  hipc::FullPtr<CreateTask> AsyncCreate(
+  chi::Future<CreateTask> AsyncCreate(
       const chi::PoolQuery& pool_query,
       const std::string& pool_name,
       const chi::PoolId& custom_pool_id,
@@ -48,8 +48,7 @@ class Client : public chi::ContainerClient {
         params);                         // CreateParams with configuration
 
     // Submit to runtime
-    ipc_manager->Enqueue(task);
-    return task;
+    return ipc_manager->Send(task);
   }
 
   /**
@@ -59,12 +58,12 @@ class Client : public chi::ContainerClient {
   chi::u32 ParseOmni(       const std::vector<AssimilationCtx>& contexts,
                      chi::u32& num_tasks_scheduled) {
     auto task = AsyncParseOmni(contexts);
-    task->Wait();
+    task.Wait();
 
     num_tasks_scheduled = task->num_tasks_scheduled_;
     chi::u32 result = task->result_code_;
 
-    CHI_IPC->DelTask(task);
+    CHI_IPC->DelTask(task.GetTaskPtr());
     return result;
   }
 
@@ -72,7 +71,7 @@ class Client : public chi::ContainerClient {
    * Asynchronous ParseOmni - returns immediately
    * Accepts vector of AssimilationCtx and serializes it transparently in the task constructor
    */
-  hipc::FullPtr<ParseOmniTask> AsyncParseOmni(
+  chi::Future<ParseOmniTask> AsyncParseOmni(
       const std::vector<AssimilationCtx>& contexts) {
     auto* ipc_manager = CHI_IPC;
 
@@ -82,8 +81,7 @@ class Client : public chi::ContainerClient {
         chi::PoolQuery::Local(),
         contexts);
 
-    ipc_manager->Enqueue(task);
-    return task;
+    return ipc_manager->Send(task);
   }
 
 };

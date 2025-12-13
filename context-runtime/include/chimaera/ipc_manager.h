@@ -178,7 +178,9 @@ public:
     const std::vector<char>& serialized = archive.GetData();
     auto& future_shm = future.GetFutureShm();
     future_shm->serialized_task_.reserve(serialized.size());
-    future_shm->serialized_task_.assign(serialized.begin(), serialized.end());
+    for (char c : serialized) {
+      future_shm->serialized_task_.push_back(c);
+    }
 
     // 5. Map task to lane using configured policy
     u32 num_lanes = shared_header_->num_sched_queues;
@@ -188,7 +190,7 @@ public:
     // 6. Enqueue the FutureShm's ShmPtr to the worker queue
     LaneId lane_id = MapTaskToLane(num_lanes);
     auto& lane_ref = worker_queues_->GetLane(lane_id, 0);
-    lane_ref.Push(future_shm->shm_);
+    lane_ref.Push(future_shm.shm_);
 
     // 7. Return the Future
     return future;
@@ -222,40 +224,6 @@ public:
     archive >> (*task_ptr);
   }
 
-  /**
-   * Enqueue task to process queue (priority 0 - normal tasks)
-   * Uses the configured lane mapping policy to select the target lane
-   * Backward compatibility method - now uses Future-based infrastructure
-   * @param task_ptr Task to enqueue
-   */
-  template <typename TaskT> void Enqueue(hipc::FullPtr<TaskT> &task_ptr) {
-    if (!worker_queues_.IsNull() && worker_queues_.ptr_ && shared_header_) {
-      // Use Send infrastructure which creates Future and serializes
-      auto *alloc = GetMainAlloc();
-      Future<TaskT> future(alloc, task_ptr);
-
-      // Serialize task using LocalSaveTaskArchive with kSerializeIn mode
-      LocalSaveTaskArchive archive(LocalMsgType::kSerializeIn);
-      archive << (*task_ptr.ptr_);
-
-      // Get serialized data and copy to FutureShm's hipc::vector
-      const std::vector<char>& serialized = archive.GetData();
-      auto& future_shm = future.GetFutureShm();
-      future_shm->serialized_task_.reserve(serialized.size());
-      for (char c : serialized) {
-        future_shm->serialized_task_.push_back(c);
-      }
-
-      // Map task to lane using configured policy
-      u32 num_lanes = shared_header_->num_sched_queues;
-      if (num_lanes == 0)
-        return; // Avoid division by zero
-
-      LaneId lane_id = MapTaskToLane(num_lanes);
-      auto& lane_ref = worker_queues_->GetLane(lane_id, 0);
-      lane_ref.Push(future_shm.shm_);
-    }
-  }
 
   /**
    * Get TaskQueue for task processing

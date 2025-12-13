@@ -127,7 +127,7 @@ public:
    */
   template <typename TaskT>
   int waitForMultipleTaskCompletion(
-      const std::vector<hipc::FullPtr<TaskT>> &tasks,
+      const std::vector<chi::Future<TaskT>> &tasks,
       chi::u32 timeout_ms = kTestTimeoutMs) {
     auto start_time = std::chrono::steady_clock::now();
     auto timeout_duration = std::chrono::duration<int, std::milli>(timeout_ms);
@@ -298,7 +298,7 @@ TEST_CASE("CoMutex Concurrent Access", "[comutex][concurrent]") {
     // Tasks with same pid/tid/major but different minor should proceed together
     chi::PoolQuery pool_query = chi::PoolQuery::Local();
     const int kNumConcurrentTasks = 4;
-    std::vector<hipc::FullPtr<chimaera::MOD_NAME::CoMutexTestTask>> tasks;
+    std::vector<chi::Future<chimaera::MOD_NAME::CoMutexTestTask>> tasks;
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -333,7 +333,7 @@ TEST_CASE("CoMutex Concurrent Access", "[comutex][concurrent]") {
 
     // Clean up tasks
     for (auto &task : tasks) {
-      CHI_IPC->DelTask(task);
+      CHI_IPC->DelTask(task.GetTaskPtr());
     }
 
     // If tasks with same TaskId run concurrently, total time should be close to
@@ -356,7 +356,7 @@ TEST_CASE("CoMutex Concurrent Access", "[comutex][concurrent]") {
     // characteristics For now, we'll test that tasks do serialize when expected
     chi::PoolQuery pool_query = chi::PoolQuery::Local();
     const int kNumSerialTasks = 3;
-    std::vector<hipc::FullPtr<chimaera::MOD_NAME::CoMutexTestTask>> tasks;
+    std::vector<chi::Future<chimaera::MOD_NAME::CoMutexTestTask>> tasks;
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -379,7 +379,7 @@ TEST_CASE("CoMutex Concurrent Access", "[comutex][concurrent]") {
 
     // Clean up tasks
     for (auto &task : tasks) {
-      CHI_IPC->DelTask(task);
+      CHI_IPC->DelTask(task.GetTaskPtr());
     }
   }
 }
@@ -485,7 +485,7 @@ TEST_CASE("CoRwLock Multiple Readers", "[corwlock][readers]") {
     // Submit multiple async reader tasks
     chi::PoolQuery pool_query = chi::PoolQuery::Local();
     const int kNumReaders = 5;
-    std::vector<hipc::FullPtr<chimaera::MOD_NAME::CoRwLockTestTask>> tasks;
+    std::vector<chi::Future<chimaera::MOD_NAME::CoRwLockTestTask>> tasks;
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -520,7 +520,7 @@ TEST_CASE("CoRwLock Multiple Readers", "[corwlock][readers]") {
 
     // Clean up tasks
     for (auto &task : tasks) {
-      CHI_IPC->DelTask(task);
+      CHI_IPC->DelTask(task.GetTaskPtr());
     }
 
     // Multiple readers should be able to proceed concurrently
@@ -546,7 +546,7 @@ TEST_CASE("CoRwLock Writer Exclusivity", "[corwlock][writers]") {
     // Submit multiple async writer tasks
     chi::PoolQuery pool_query = chi::PoolQuery::Local();
     const int kNumWriters = 3;
-    std::vector<hipc::FullPtr<chimaera::MOD_NAME::CoRwLockTestTask>> tasks;
+    std::vector<chi::Future<chimaera::MOD_NAME::CoRwLockTestTask>> tasks;
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -578,7 +578,7 @@ TEST_CASE("CoRwLock Writer Exclusivity", "[corwlock][writers]") {
 
     // Clean up tasks
     for (auto &task : tasks) {
-      CHI_IPC->DelTask(task);
+      CHI_IPC->DelTask(task.GetTaskPtr());
     }
 
     // Writers should execute exclusively, so total time should be close to sum
@@ -605,7 +605,7 @@ TEST_CASE("CoRwLock Reader-Writer Interaction", "[corwlock][interaction]") {
 
     // Submit mixed reader-writer tasks
     chi::PoolQuery pool_query = chi::PoolQuery::Local();
-    std::vector<hipc::FullPtr<chimaera::MOD_NAME::CoRwLockTestTask>> tasks;
+    std::vector<chi::Future<chimaera::MOD_NAME::CoRwLockTestTask>> tasks;
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -633,7 +633,7 @@ TEST_CASE("CoRwLock Reader-Writer Interaction", "[corwlock][interaction]") {
 
     // Clean up tasks
     for (auto &task : tasks) {
-      CHI_IPC->DelTask(task);
+      CHI_IPC->DelTask(task.GetTaskPtr());
     }
   }
 }
@@ -659,7 +659,7 @@ TEST_CASE("TaskId Grouping", "[tasknode][grouping]") {
     // Tasks with same pid/tid/major but different minor should proceed together
     chi::PoolQuery pool_query = chi::PoolQuery::Local();
     const int kNumGroupedTasks = 3;
-    std::vector<hipc::FullPtr<chimaera::MOD_NAME::CoMutexTestTask>> tasks;
+    std::vector<chi::Future<chimaera::MOD_NAME::CoMutexTestTask>> tasks;
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -686,7 +686,7 @@ TEST_CASE("TaskId Grouping", "[tasknode][grouping]") {
 
     // Clean up tasks
     for (auto &task : tasks) {
-      CHI_IPC->DelTask(task);
+      CHI_IPC->DelTask(task.GetTaskPtr());
     }
   }
 
@@ -703,7 +703,7 @@ TEST_CASE("TaskId Grouping", "[tasknode][grouping]") {
     // Test TaskId grouping for readers
     chi::PoolQuery pool_query = chi::PoolQuery::Local();
     const int kNumGroupedReaders = 4;
-    std::vector<hipc::FullPtr<chimaera::MOD_NAME::CoRwLockTestTask>> tasks;
+    std::vector<chi::Future<chimaera::MOD_NAME::CoRwLockTestTask>> tasks;
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -728,7 +728,7 @@ TEST_CASE("TaskId Grouping", "[tasknode][grouping]") {
 
     // Clean up tasks
     for (auto &task : tasks) {
-      CHI_IPC->DelTask(task);
+      CHI_IPC->DelTask(task.GetTaskPtr());
     }
   }
 }
@@ -773,7 +773,7 @@ TEST_CASE("CoMutex Error Handling", "[comutex][error]") {
     // Stress test with many concurrent tasks
     chi::PoolQuery pool_query = chi::PoolQuery::Local();
     const int kManyTasks = 10;
-    std::vector<hipc::FullPtr<chimaera::MOD_NAME::CoMutexTestTask>> tasks;
+    std::vector<chi::Future<chimaera::MOD_NAME::CoMutexTestTask>> tasks;
 
     for (int i = 0; i < kManyTasks; ++i) {
       auto task = mod_name_client.AsyncCoMutexTest(pool_query,
@@ -792,7 +792,7 @@ TEST_CASE("CoMutex Error Handling", "[comutex][error]") {
     // Clean up tasks
     for (auto &task : tasks) {
       if (!task.IsNull()) {
-        CHI_IPC->DelTask(task);
+        CHI_IPC->DelTask(task.GetTaskPtr());
       }
     }
   }

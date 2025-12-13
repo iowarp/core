@@ -1,5 +1,5 @@
 /**
- * Comprehensive unit tests for task->Wait() functionality
+ * Comprehensive unit tests for task.Wait() functionality
  * 
  * This test suite validates the recursive Wait() implementation:
  * - Basic Wait() functionality with single tasks
@@ -285,7 +285,7 @@ TEST_CASE("wait_test_async_functionality", "[wait_test][async]") {
     auto task = client.AsyncWaitTest(chi::PoolQuery::Local(), depth, test_id);
     
     // Manually call Wait() - this tests the recursive Wait functionality
-    task->Wait();
+    task.Wait();
     
     auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start_time).count();
@@ -298,7 +298,7 @@ TEST_CASE("wait_test_async_functionality", "[wait_test][async]") {
     
     // Clean up
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
   }
   
   SECTION("Multiple concurrent async WaitTest tasks") {
@@ -307,7 +307,7 @@ TEST_CASE("wait_test_async_functionality", "[wait_test][async]") {
     
     const int num_tasks = 3;
     std::vector<chi::u32> depths = {2, 3, 4};
-    std::vector<hipc::FullPtr<chimaera::MOD_NAME::WaitTestTask>> tasks;
+    std::vector<chi::Future<chimaera::MOD_NAME::WaitTestTask>> tasks;
     
     auto start_time = std::chrono::steady_clock::now();
     
@@ -333,7 +333,7 @@ TEST_CASE("wait_test_async_functionality", "[wait_test][async]") {
     // Clean up all tasks
     auto* ipc_manager = CHI_IPC;
     for (auto& task : tasks) {
-      ipc_manager->DelTask(task);
+      ipc_manager->DelTask(task.GetTaskPtr());
     }
   }
 }

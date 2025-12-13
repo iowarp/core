@@ -42,7 +42,7 @@ void Runtime::Del(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
   switch (method) {
     default: {
       // For unknown methods, still try to delete from main segment
-      ipc_manager->DelTask(task_ptr);
+      ipc_manager->DelTask(task_ptr.GetTaskPtr());
       break;
     }
   }

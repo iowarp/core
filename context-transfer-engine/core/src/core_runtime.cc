@@ -798,15 +798,15 @@ void Runtime::ReorganizeBlob(hipc::FullPtr<ReorganizeBlobTask> task,
     auto get_task =
         client_.AsyncGetBlob(tag_id, blob_name, 0,
                              blob_size, 0, blob_data_buffer.shm_.template Cast<void>());
-    get_task->Wait();
+    get_task.Wait();
 
     if (get_task->return_code_.load() != 0) {
       HILOG(kWarning, "Failed to get blob data during reorganization");
-      CHI_IPC->DelTask(get_task);
+      CHI_IPC->DelTask(get_task.GetTaskPtr());
       task->return_code_.store(6); // Get blob failed
       return;
     }
-    CHI_IPC->DelTask(get_task);
+    CHI_IPC->DelTask(get_task.GetTaskPtr());
 
     // Step 7: Put blob with new score (data reorganization)
     HILOG(kDebug,
@@ -815,15 +815,15 @@ void Runtime::ReorganizeBlob(hipc::FullPtr<ReorganizeBlobTask> task,
     auto put_task =
         client_.AsyncPutBlob(tag_id, blob_name, 0,
                              blob_size, blob_data_buffer.shm_.template Cast<void>(), new_score, 0);
-    put_task->Wait();
+    put_task.Wait();
 
     if (put_task->return_code_.load() != 0) {
       HILOG(kWarning, "Failed to put blob during reorganization");
-      CHI_IPC->DelTask(put_task);
+      CHI_IPC->DelTask(put_task.GetTaskPtr());
       task->return_code_.store(7); // Put blob failed
       return;
     }
-    CHI_IPC->DelTask(put_task);
+    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // Success
     task->return_code_.store(0);
@@ -951,7 +951,7 @@ void Runtime::DelTag(hipc::FullPtr<DelTagTask> task, chi::RunContext &ctx) {
 
     // Process blobs in batches to limit concurrent async tasks
     constexpr size_t kMaxConcurrentDelBlobTasks = 32;
-    std::vector<hipc::FullPtr<DelBlobTask>> async_tasks;
+    std::vector<chi::Future<DelBlobTask>> async_tasks;
     size_t processed_blobs = 0;
 
     for (size_t i = 0; i < blob_names_to_delete.size();
@@ -972,7 +972,7 @@ void Runtime::DelTag(hipc::FullPtr<DelTagTask> task, chi::RunContext &ctx) {
 
       // Wait for all async DelBlob operations in this batch to complete
       for (auto task : async_tasks) {
-        task->Wait();
+        task.Wait();
 
         // Check if DelBlob succeeded
         if (task->return_code_.load() != 0) {
@@ -982,7 +982,7 @@ void Runtime::DelTag(hipc::FullPtr<DelTagTask> task, chi::RunContext &ctx) {
         }
 
         // Clean up the task
-        CHI_IPC->DelTask(task);
+        CHI_IPC->DelTask(task.GetTaskPtr());
         ++processed_blobs;
       }
     }
@@ -1369,7 +1369,7 @@ chi::u32 Runtime::ModifyExistingData(const std::vector<BlobBlock> &blocks,
   size_t remaining_size = data_size;
 
   // Vector to store async write tasks for later waiting
-  std::vector<hipc::FullPtr<chimaera::bdev::WriteTask>> write_tasks;
+  std::vector<chi::Future<chimaera::bdev::WriteTask>> write_tasks;
   std::vector<size_t> expected_write_sizes;
 
   // Step 2: Store the offset of the block in the blob. The first block is
@@ -1450,7 +1450,7 @@ chi::u32 Runtime::ModifyExistingData(const std::vector<BlobBlock> &blocks,
     auto task = write_tasks[task_idx];
     size_t expected_size = expected_write_sizes[task_idx];
 
-    task->Wait();
+    task.Wait();
 
     HILOG(kDebug,
           "ModifyExistingData: task[{}] completed - bytes_written={}, "
@@ -1459,7 +1459,7 @@ chi::u32 Runtime::ModifyExistingData(const std::vector<BlobBlock> &blocks,
           (task->bytes_written_ == expected_size ? "SUCCESS" : "FAILED"));
 
     if (task->bytes_written_ != expected_size) {
-      CHI_IPC->DelTask(task);
+      CHI_IPC->DelTask(task.GetTaskPtr());
       HILOG(kError,
             "ModifyExistingData: WRITE FAILED - task[{}] wrote {} bytes, "
             "expected {}",
@@ -1467,7 +1467,7 @@ chi::u32 Runtime::ModifyExistingData(const std::vector<BlobBlock> &blocks,
       return 1;
     }
 
-    CHI_IPC->DelTask(task);
+    CHI_IPC->DelTask(task.GetTaskPtr());
   }
 
   HILOG(kDebug, "ModifyExistingData: All write tasks completed successfully");
@@ -1484,7 +1484,7 @@ chi::u32 Runtime::ReadData(const std::vector<BlobBlock> &blocks,
   size_t remaining_size = data_size;
 
   // Vector to store async read tasks for later waiting
-  std::vector<hipc::FullPtr<chimaera::bdev::ReadTask>> read_tasks;
+  std::vector<chi::Future<chimaera::bdev::ReadTask>> read_tasks;
   std::vector<size_t> expected_read_sizes;
 
   // Step 2: Store the offset of the block in the blob. The first block is
@@ -1562,7 +1562,7 @@ chi::u32 Runtime::ReadData(const std::vector<BlobBlock> &blocks,
     auto task = read_tasks[task_idx];
     size_t expected_size = expected_read_sizes[task_idx];
 
-    task->Wait();
+    task.Wait();
 
     HILOG(
         kDebug,
@@ -1571,14 +1571,14 @@ chi::u32 Runtime::ReadData(const std::vector<BlobBlock> &blocks,
         (task->bytes_read_ == expected_size ? "SUCCESS" : "FAILED"));
 
     if (task->bytes_read_ != expected_size) {
-      CHI_IPC->DelTask(task);
+      CHI_IPC->DelTask(task.GetTaskPtr());
       HILOG(kError,
             "ReadData: READ FAILED - task[{}] read {} bytes, expected {}",
             task_idx, task->bytes_read_, expected_size);
       return 1;
     }
 
-    CHI_IPC->DelTask(task);
+    CHI_IPC->DelTask(task.GetTaskPtr());
   }
 
   HILOG(kDebug, "ReadData: All read tasks completed successfully");

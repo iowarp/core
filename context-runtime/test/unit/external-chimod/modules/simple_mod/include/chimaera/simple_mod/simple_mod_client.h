@@ -31,25 +31,25 @@ class Client : public chi::ContainerClient {
    */
   void Create(const hipc::MemContext& mctx, const chi::PoolQuery& pool_query) {
     auto task = AsyncCreate(mctx, pool_query);
-    task->Wait();
+    task.Wait();
 
     // Check for errors
     if (task->return_code_ != 0) {
       std::string error = task->error_message_.str();
       auto* ipc_manager = CHI_IPC;
-      ipc_manager->DelTask(task);
+      ipc_manager->DelTask(task.GetTaskPtr());
       throw std::runtime_error("Simple mod creation failed: " + error);
     }
 
     // Clean up task
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
   }
 
   /**
    * Create the Simple Mod container (asynchronous)
    */
-  hipc::FullPtr<CreateTask> AsyncCreate(const hipc::MemContext& mctx,
+  chi::Future<CreateTask> AsyncCreate(const hipc::MemContext& mctx,
                                         const chi::PoolQuery& pool_query) {
     auto* ipc_manager = CHI_IPC;
 
@@ -59,9 +59,8 @@ class Client : public chi::ContainerClient {
         "external_test_simple_mod", "simple_mod_pool", pool_id_);
 
     // Submit to runtime
-    ipc_manager->Enqueue(task);
+    return ipc_manager->Send(task);
 
-    return task;
   }
 
   /**
@@ -69,25 +68,25 @@ class Client : public chi::ContainerClient {
    */
   void Destroy(const hipc::MemContext& mctx, const chi::PoolQuery& pool_query) {
     auto task = AsyncDestroy(mctx, pool_query);
-    task->Wait();
+    task.Wait();
 
     // Check for errors
     if (task->return_code_ != 0) {
       std::string error = task->error_message_.str();
       auto* ipc_manager = CHI_IPC;
-      ipc_manager->DelTask(task);
+      ipc_manager->DelTask(task.GetTaskPtr());
       throw std::runtime_error("Simple mod destruction failed: " + error);
     }
 
     // Clean up task
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
   }
 
   /**
    * Destroy the Simple Mod container (asynchronous)
    */
-  hipc::FullPtr<DestroyTask> AsyncDestroy(const hipc::MemContext& mctx,
+  chi::Future<DestroyTask> AsyncDestroy(const hipc::MemContext& mctx,
                                           const chi::PoolQuery& pool_query) {
     auto* ipc_manager = CHI_IPC;
 
@@ -96,9 +95,8 @@ class Client : public chi::ContainerClient {
                                                   pool_query, pool_id_, 0);
 
     // Submit to runtime
-    ipc_manager->Enqueue(task);
+    return ipc_manager->Send(task);
 
-    return task;
   }
 
   /**
@@ -106,25 +104,25 @@ class Client : public chi::ContainerClient {
    */
   void Flush(const hipc::MemContext& mctx, const chi::PoolQuery& pool_query) {
     auto task = AsyncFlush(mctx, pool_query);
-    task->Wait();
+    task.Wait();
 
     // Check for errors
     if (task->return_code_ != 0) {
       auto* ipc_manager = CHI_IPC;
-      ipc_manager->DelTask(task);
+      ipc_manager->DelTask(task.GetTaskPtr());
       throw std::runtime_error("Flush failed with result code: " +
                                std::to_string(task->return_code_));
     }
 
     // Clean up task
     auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task);
+    ipc_manager->DelTask(task.GetTaskPtr());
   }
 
   /**
    * Flush simple mod operations (asynchronous)
    */
-  hipc::FullPtr<FlushTask> AsyncFlush(const hipc::MemContext& mctx,
+  chi::Future<FlushTask> AsyncFlush(const hipc::MemContext& mctx,
                                       const chi::PoolQuery& pool_query) {
     auto* ipc_manager = CHI_IPC;
 
@@ -133,9 +131,8 @@ class Client : public chi::ContainerClient {
                                                 pool_query);
 
     // Submit to runtime
-    ipc_manager->Enqueue(task);
+    return ipc_manager->Send(task);
 
-    return task;
   }
 };
 

@@ -97,12 +97,12 @@ void TaskExecutionFunction(bctx::transfer_t t) {
     // Simulate first subtask requiring Wait()
     g_task_step = 1;
     std::cout << "Task: Starting step 1, calling Wait()" << std::endl;
-    TaskYieldBase();  // This simulates task->Wait() -> YieldBase()
+    TaskYieldBase();  // This simulates task.Wait() -> YieldBase()
     
     // Simulate second subtask requiring Wait()  
     g_task_step = 2;
     std::cout << "Task: Starting step 2, calling Wait()" << std::endl;
-    TaskYieldBase();  // This simulates another task->Wait() -> YieldBase()
+    TaskYieldBase();  // This simulates another task.Wait() -> YieldBase()
     
     // Task completion
     g_task_step = 3;

@@ -77,7 +77,7 @@ int main(int argc, char* argv[]) {
     auto start_time = std::chrono::steady_clock::now();
 
     // Use the admin client's AsyncStopRuntime method - fire and forget
-    hipc::FullPtr<chimaera::admin::StopRuntimeTask> stop_task;
+    chi::Future<chimaera::admin::StopRuntimeTask> stop_task;
     try {
       stop_task = admin_client.AsyncStopRuntime(pool_query, shutdown_flags, grace_period_ms);
       if (stop_task.IsNull()) {

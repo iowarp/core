@@ -48,7 +48,7 @@ TEST_CASE("FlushTask Basic Functionality", "[flush][admin]") {
     auto flush_task = admin_client.AsyncFlush(pool_query);
 
     // Wait for completion
-    flush_task->Wait();
+    flush_task.Wait();
 
     // Verify results
     REQUIRE(flush_task->return_code_ == 0);
@@ -74,7 +74,7 @@ TEST_CASE("FlushTask with MOD_NAME Container and Async Tasks",
 
     // Send multiple async Custom tasks to the MOD_NAME runtime
     const int num_async_tasks = 5;
-    std::vector<hipc::FullPtr<chimaera::MOD_NAME::CustomTask>> async_tasks;
+    std::vector<chi::Future<chimaera::MOD_NAME::CustomTask>> async_tasks;
 
     for (int i = 0; i < num_async_tasks; i++) {
       std::string input_data = "test_data_" + std::to_string(i);
@@ -94,14 +94,14 @@ TEST_CASE("FlushTask with MOD_NAME Container and Async Tasks",
     std::thread flush_thread([&]() {
       auto flush_task =
           flush_admin_client.AsyncFlush(chi::PoolQuery::Local());
-      flush_task->Wait();
+      flush_task.Wait();
 
       flush_result_code.store(flush_task->return_code_);
       flush_completed.store(true);
 
       // Clean up flush task
       auto* ipc_manager = CHI_IPC;
-      ipc_manager->DelTask(flush_task);
+      ipc_manager->DelTask(flush_task.GetTaskPtr());
     });
 
     // Give the flush a moment to start
@@ -109,7 +109,7 @@ TEST_CASE("FlushTask with MOD_NAME Container and Async Tasks",
 
     // Wait for all async operations to complete
     for (auto& async_task : async_tasks) {
-      async_task->Wait();
+      async_task.Wait();
       REQUIRE(async_task->return_code_ == 0);
     }
 
@@ -121,7 +121,7 @@ TEST_CASE("FlushTask with MOD_NAME Container and Async Tasks",
     // Clean up async tasks
     auto* cleanup_ipc_manager = CHI_IPC;
     for (auto& async_task : async_tasks) {
-      cleanup_ipc_manager->DelTask(async_task);
+      cleanup_ipc_manager->DelTask(async_task.GetTaskPtr());
     }
 
     INFO("MOD_NAME flush test completed - flush works with async Custom tasks");

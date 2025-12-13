@@ -300,11 +300,11 @@ public:
    * Helper method to wait for task completion with timeout
    */
   template <typename TaskType>
-  bool WaitForTaskCompletion(hipc::FullPtr<TaskType> task,
+  bool WaitForTaskCompletion(chi::Future<TaskType> task,
                              int timeout_ms = 5000) {
     auto start_time = std::chrono::steady_clock::now();
 
-    task->Wait();
+    task.Wait();
     while (!task->IsComplete()) {
       auto current_time = std::chrono::steady_clock::now();
       auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -380,7 +380,7 @@ TEST_CASE(
          << create_task->return_code_);
 
     // Cleanup task (real IPC cleanup)
-    CHI_IPC->DelTask(create_task);
+    CHI_IPC->DelTask(create_task.GetTaskPtr());
     INFO("Task cleaned up successfully");
   }
 }
@@ -488,7 +488,7 @@ TEST_CASE("FUNCTIONAL - Register Target",
         "SUCCESS: Async target registration completed with result: " << result);
 
     // Real IPC task cleanup
-    CHI_IPC->DelTask(register_task);
+    CHI_IPC->DelTask(register_task.GetTaskPtr());
     INFO("Task cleaned up successfully");
   }
 }
@@ -575,7 +575,7 @@ TEST_CASE(
     INFO("PutBlob completed successfully.");
 
     // Cleanup task
-    CHI_IPC->DelTask(put_task);
+    CHI_IPC->DelTask(put_task.GetTaskPtr());
     INFO("SUCCESS: Real PutBlob operation completed!");
   }
 
@@ -619,11 +619,11 @@ TEST_CASE(
       if (!put_task.IsNull() && fixture->WaitForTaskCompletion(put_task, 10000) &&
           put_task->return_code_.load() == 0) {
         INFO("Blob " << blob_name << " stored successfully");
-        CHI_IPC->DelTask(put_task);
+        CHI_IPC->DelTask(put_task.GetTaskPtr());
       } else {
         INFO("Blob " << blob_name << " storage failed");
         if (!put_task.IsNull())
-          CHI_IPC->DelTask(put_task);
+          CHI_IPC->DelTask(put_task.GetTaskPtr());
       }
     }
 
@@ -669,7 +669,7 @@ TEST_CASE(
         INFO("Chunk at offset " << offset << " storage failed");
       }
       if (!chunk_task.IsNull())
-        CHI_IPC->DelTask(chunk_task);
+        CHI_IPC->DelTask(chunk_task.GetTaskPtr());
     }
 
     INFO("SUCCESS: Offset operations completed for partial blob updates!");
@@ -712,7 +712,7 @@ TEST_CASE(
     INFO("Async PutBlob completed with result: " << result);
 
     // Cleanup task
-    CHI_IPC->DelTask(put_task);
+    CHI_IPC->DelTask(put_task.GetTaskPtr());
     INFO("SUCCESS: Asynchronous blob storage with real task management!");
   }
 
@@ -736,7 +736,7 @@ TEST_CASE(
         INFO("Empty name result: "
              << (success ? "true" : "false")
              << " (false indicates proper error handling)");
-        CHI_IPC->DelTask(error_task);
+        CHI_IPC->DelTask(error_task.GetTaskPtr());
       }
     }
 
@@ -751,7 +751,7 @@ TEST_CASE(
         INFO("Valid name result: "
              << (success ? "true" : "false")
              << " (true expected for valid operation)");
-        CHI_IPC->DelTask(valid_task);
+        CHI_IPC->DelTask(valid_task.GetTaskPtr());
       }
     }
 
@@ -767,7 +767,7 @@ TEST_CASE(
         INFO("Invalid tag result: "
              << (success ? "true" : "false")
              << " (false indicates proper error handling)");
-        CHI_IPC->DelTask(invalid_tag_task);
+        CHI_IPC->DelTask(invalid_tag_task.GetTaskPtr());
       }
     }
 
@@ -843,7 +843,7 @@ TEST_CASE(
     REQUIRE(put_task->return_code_.load() == 0);
 
     INFO("Blob stored successfully");
-    CHI_IPC->DelTask(put_task);
+    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // ACTUAL FUNCTIONAL TEST - call the real GetBlob API
     INFO("Calling fixture->core_client_->GetBlob() to retrieve stored data...");
@@ -920,11 +920,11 @@ TEST_CASE(
           put_task->return_code_.load() == 0) {
         stored_blob_names.push_back(blob_name);
         INFO("Stored " << blob_name << " successfully");
-        CHI_IPC->DelTask(put_task);
+        CHI_IPC->DelTask(put_task.GetTaskPtr());
       } else {
         INFO("Failed to store " << blob_name);
         if (!put_task.IsNull())
-          CHI_IPC->DelTask(put_task);
+          CHI_IPC->DelTask(put_task.GetTaskPtr());
       }
     }
 
@@ -998,7 +998,7 @@ TEST_CASE(
     REQUIRE(put_task->return_code_.load() == 0);
 
     INFO("Full blob stored successfully");
-    CHI_IPC->DelTask(put_task);
+    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // FUNCTIONAL TEST - retrieve partial blob with real offset/size
     INFO("Retrieving partial blob: offset=" << partial_offset
@@ -1071,7 +1071,7 @@ TEST_CASE(
     REQUIRE(put_task->return_code_.load() == 0);
 
     INFO("Blob stored successfully");
-    CHI_IPC->DelTask(put_task);
+    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // ACTUAL FUNCTIONAL TEST - call the real AsyncGetBlob API
     INFO("Calling fixture->core_client_->AsyncGetBlob()...");
@@ -1112,7 +1112,7 @@ TEST_CASE(
     }
 
     // Cleanup task
-    CHI_IPC->DelTask(get_task);
+    CHI_IPC->DelTask(get_task.GetTaskPtr());
     INFO("SUCCESS: Asynchronous blob retrieval with real task management!");
   }
 
@@ -1229,7 +1229,7 @@ TEST_CASE(
     REQUIRE(put_task->return_code_.load() == 0);
 
     INFO("PutBlob success");
-    CHI_IPC->DelTask(put_task);
+    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // STEP 2: Retrieve the blob
     INFO("Step 2: Retrieving blob with GetBlob...");
@@ -1322,11 +1322,11 @@ TEST_CASE(
           put_task->return_code_.load() == 0) {
         stored_blob_names.push_back(blob_name);
         INFO("✓ " << blob_name << " stored successfully");
-        CHI_IPC->DelTask(put_task);
+        CHI_IPC->DelTask(put_task.GetTaskPtr());
       } else {
         INFO("✗ " << blob_name << " storage failed");
         if (!put_task.IsNull())
-          CHI_IPC->DelTask(put_task);
+          CHI_IPC->DelTask(put_task.GetTaskPtr());
       }
     }
 
@@ -1412,7 +1412,7 @@ TEST_CASE(
         INFO("Tag1 blob stored successfully");
       }
       if (!put1_task.IsNull())
-        CHI_IPC->DelTask(put1_task);
+        CHI_IPC->DelTask(put1_task.GetTaskPtr());
     }
 
     // Store in tag2
@@ -1430,7 +1430,7 @@ TEST_CASE(
         INFO("Tag2 blob stored successfully");
       }
       if (!put2_task.IsNull())
-        CHI_IPC->DelTask(put2_task);
+        CHI_IPC->DelTask(put2_task.GetTaskPtr());
     }
 
     // Verify isolation - retrieve from each tag
@@ -1514,7 +1514,7 @@ TEST_CASE(
     bool put_success = (put_result == 0);
     INFO("Async put completed with success: " << (put_success ? "true"
                                                               : "false"));
-    CHI_IPC->DelTask(put_task);
+    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // STEP 2: Sync Get
     INFO("Step 2: Sync GetBlob...");
@@ -1598,7 +1598,7 @@ TEST_CASE(
         INFO("✗ Chunk " << i << " storage failed");
       }
       if (!chunk_task.IsNull())
-        CHI_IPC->DelTask(chunk_task);
+        CHI_IPC->DelTask(chunk_task.GetTaskPtr());
     }
 
     // PHASE 2: Retrieve chunks and verify using blob name
@@ -1766,7 +1766,7 @@ TEST_CASE(
        << put_task->return_code_.load());
 
   // Cleanup PutBlob task
-  CHI_IPC->DelTask(put_task);
+  CHI_IPC->DelTask(put_task.GetTaskPtr());
 
   // Step 5: GetBlob with blob_name
   INFO("Step 5: Executing GetBlob with blob_name...");
@@ -1822,7 +1822,7 @@ TEST_CASE(
                                                    << " bytes match exactly");
 
   // Cleanup GetBlob task
-  CHI_IPC->DelTask(get_task);
+  CHI_IPC->DelTask(get_task.GetTaskPtr());
 
   INFO("=== COMPREHENSIVE TEST COMPLETED SUCCESSFULLY ===");
   INFO("✓ PutBlob with blob_name='test_blob' completed");
@@ -1907,7 +1907,7 @@ TEST_CASE(
       REQUIRE(put_task->return_code_.load() == 0);
 
       INFO("✓ Blob " << i << " stored: " << blob_name);
-      CHI_IPC->DelTask(put_task);
+      CHI_IPC->DelTask(put_task.GetTaskPtr());
     }
 
     // Phase 2: Verify initial scores are 0.5
@@ -1929,7 +1929,7 @@ TEST_CASE(
       REQUIRE(!reorganize_task.IsNull());
       REQUIRE(fixture->WaitForTaskCompletion(reorganize_task, 10000));
       REQUIRE(reorganize_task->return_code_.load() == 0);
-      CHI_IPC->DelTask(reorganize_task);
+      CHI_IPC->DelTask(reorganize_task.GetTaskPtr());
       INFO("✓ Blob " << i << " reorganized successfully");
     }
     INFO("✓ All blobs reorganized successfully");
@@ -1991,7 +1991,7 @@ TEST_CASE(
       REQUIRE(!put_task.IsNull());
       REQUIRE(fixture->WaitForTaskCompletion(put_task, 10000));
       REQUIRE(put_task->return_code_.load() == 0);
-      CHI_IPC->DelTask(put_task);
+      CHI_IPC->DelTask(put_task.GetTaskPtr());
       
       INFO("✓ Test blob " << i << " stored with score " << initial_scores[i]);
     }
@@ -2005,7 +2005,7 @@ TEST_CASE(
       REQUIRE(!threshold_reorganize_task.IsNull());
       REQUIRE(fixture->WaitForTaskCompletion(threshold_reorganize_task, 10000));
       REQUIRE(threshold_reorganize_task->return_code_.load() == 0);
-      CHI_IPC->DelTask(threshold_reorganize_task);
+      CHI_IPC->DelTask(threshold_reorganize_task.GetTaskPtr());
     }
 
     // Verify that blobs with significant score differences were updated
@@ -2056,7 +2056,7 @@ TEST_CASE(
       REQUIRE(!put_task.IsNull());
       REQUIRE(fixture->WaitForTaskCompletion(put_task, 10000));
       REQUIRE(put_task->return_code_.load() == 0);
-      CHI_IPC->DelTask(put_task);
+      CHI_IPC->DelTask(put_task.GetTaskPtr());
 
       if ((i + 1) % 8 == 0) {
         INFO("✓ Created " << (i + 1) << "/" << batch_size << " batch blobs");
@@ -2072,7 +2072,7 @@ TEST_CASE(
       REQUIRE(!batch_reorganize_task.IsNull());
       REQUIRE(fixture->WaitForTaskCompletion(batch_reorganize_task, 10000));
       REQUIRE(batch_reorganize_task->return_code_.load() == 0);
-      CHI_IPC->DelTask(batch_reorganize_task);
+      CHI_IPC->DelTask(batch_reorganize_task.GetTaskPtr());
 
       if ((i + 1) % 8 == 0) {
         INFO("✓ Reorganized " << (i + 1) << "/" << batch_size << " blobs");
@@ -2288,7 +2288,7 @@ TEST_CASE(
                           << ", completer=" << put_completer);
 
     // Cleanup put task
-    CHI_IPC->DelTask(put_task);
+    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // Allocate buffer for GetBlob result
     hipc::FullPtr<char> get_blob_data_fullptr =
@@ -2318,7 +2318,7 @@ TEST_CASE(
     REQUIRE(fixture->VerifyTestData(retrieved_data, pattern));
 
     // Cleanup get task
-    CHI_IPC->DelTask(get_task);
+    CHI_IPC->DelTask(get_task.GetTaskPtr());
 
     INFO("Iteration " << i << " completed successfully");
   }
