@@ -9,6 +9,7 @@
 #include "chimaera/container.h"
 #include "chimaera/singletons.h"
 #include "chimaera/worker.h"
+#include "chimaera/future.h"
 
 // Namespace alias for boost::context::detail
 namespace bctx = boost::context::detail;
@@ -124,8 +125,17 @@ void Task::Yield(double block_time_us) {
 }
 
 bool Task::IsComplete() const {
-  // Completion check (works for both client and runtime modes)
-  return is_complete_.load() != 0;
+  // Check if FutureShm is available
+  if (!future_shm_.IsNull()) {
+    // Get the FutureShm object via allocator
+    auto *alloc = this->GetAllocator();
+    hipc::FullPtr<FutureShm<AllocT>> future_ptr(alloc, future_shm_);
+    if (!future_ptr.IsNull()) {
+      return future_ptr->is_complete_.load() != 0;
+    }
+  }
+  // For tasks without Future (synchronous tasks), assume complete
+  return true;
 }
 
 void Task::Aggregate(const hipc::FullPtr<Task> &replica_task) {

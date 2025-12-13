@@ -29,6 +29,7 @@ namespace chi {
 class Task;
 class Container;
 struct RunContext;
+template<typename AllocT> class FutureShm;
 
 /**
  * Task statistics for I/O and compute time tracking
@@ -60,12 +61,11 @@ class Task : public hipc::ShmContainer<CHI_MAIN_ALLOC_T> {
   IN ibitfield task_flags_; /**< Task properties and flags */
   IN double period_ns_;     /**< Period in nanoseconds for periodic tasks */
   IN RunContext *run_ctx_; /**< Pointer to runtime context for task execution */
-  std::atomic<u32> is_complete_; /**< Atomic flag indicating task completion
-                                   (0=not complete, 1=complete) */
   std::atomic<u32>
       return_code_; /**< Task return code (0=success, non-zero=error) */
   OUT std::atomic<ContainerId> completer_; /**< Container ID that completed this task */
   TaskStat stat_;   /**< Task statistics for I/O and compute tracking */
+  hipc::ShmPtr<FutureShm<AllocT>> future_shm_; /**< Pointer to FutureShm for async operations */
 
   /**
    * SHM default constructor
@@ -90,9 +90,9 @@ class Task : public hipc::ShmContainer<CHI_MAIN_ALLOC_T> {
     pool_query_ = pool_query;
     period_ns_ = 0.0;
     run_ctx_ = nullptr;
-    is_complete_.store(0); // Initialize as not complete
     return_code_.store(0); // Initialize as success
     completer_.store(0); // Initialize as null (0 is invalid container ID)
+    future_shm_.SetNull();
   }
 
   /**
@@ -110,8 +110,7 @@ class Task : public hipc::ShmContainer<CHI_MAIN_ALLOC_T> {
     return_code_.store(other->return_code_.load());
     completer_.store(other->completer_.load());
     stat_ = other->stat_;
-    // Explicitly initialize as not complete for copied tasks
-    is_complete_.store(0);
+    future_shm_ = other->future_shm_;
   }
 
   /**
@@ -125,11 +124,11 @@ class Task : public hipc::ShmContainer<CHI_MAIN_ALLOC_T> {
     task_flags_.Clear();
     period_ns_ = 0.0;
     run_ctx_ = nullptr;
-    is_complete_.store(0); // Initialize as not complete
     return_code_.store(0); // Initialize as success
     completer_.store(0); // Initialize as null (0 is invalid container ID)
     stat_.io_size_ = 0;
     stat_.compute_ = 0;
+    future_shm_.SetNull();
   }
 
   /**
@@ -335,6 +334,22 @@ class Task : public hipc::ShmContainer<CHI_MAIN_ALLOC_T> {
   }
 
   /**
+   * Set the FutureShm pointer for this task
+   * @param future_shm ShmPtr to the FutureShm object
+   */
+  HSHM_CROSS_FUN void SetFutureShm(hipc::ShmPtr<FutureShm<AllocT>> future_shm) {
+    future_shm_ = future_shm;
+  }
+
+  /**
+   * Get the FutureShm pointer for this task
+   * @return ShmPtr to the FutureShm object
+   */
+  HSHM_CROSS_FUN hipc::ShmPtr<FutureShm<AllocT>> GetFutureShm() const {
+    return future_shm_;
+  }
+
+  /**
    * Base aggregate method - propagates return codes from replica tasks
    * Sets this task's return code to the replica's return code if replica has non-zero return code
    * @param replica_task The replica task to aggregate from
@@ -470,8 +485,8 @@ struct RunContext {
     // Check each task in the waiting_for_tasks vector
     for (const auto &waiting_task : waiting_for_tasks) {
       if (!waiting_task.IsNull()) {
-        // Check if the waiting task is completed using atomic flag
-        if (waiting_task->is_complete_.load() == 0) {
+        // Check if the waiting task is completed
+        if (!waiting_task->IsComplete()) {
           return false; // Found a subtask that's not completed yet
         }
       }

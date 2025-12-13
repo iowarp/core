@@ -19,6 +19,7 @@
 #include "chimaera/task_archives.h"
 #include "chimaera/task_queue.h"
 #include "chimaera/work_orchestrator.h"
+#include "chimaera/future.h"
 
 namespace chi {
 
@@ -968,8 +969,14 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     HILOG(kDebug, "Worker: Sent remote task outputs back to node {}",
           ret_node_id);
   } else {
-    // Mark task as complete
-    task_ptr->is_complete_.store(1);
+    // Mark task as complete via FutureShm
+    if (!task_ptr->future_shm_.IsNull()) {
+      auto *alloc = task_ptr->GetAllocator();
+      hipc::FullPtr<FutureShm<CHI_MAIN_ALLOC_T>> future_ptr(alloc, task_ptr->future_shm_);
+      if (!future_ptr.IsNull()) {
+        future_ptr->is_complete_.store(1);
+      }
+    }
   }
 
   // Deallocate stack and context

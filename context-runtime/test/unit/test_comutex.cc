@@ -146,7 +146,7 @@ public:
 
       for (size_t i = 0; i < tasks.size(); ++i) {
         if (!completed[i] && !tasks[i].IsNull() &&
-            tasks[i]->is_complete_.load() != 0) {
+            tasks[i]->IsComplete()) {
           completed[i] = true;
           completed_count++;
         }
