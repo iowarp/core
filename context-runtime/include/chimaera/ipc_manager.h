@@ -178,9 +178,7 @@ public:
     const std::vector<char>& serialized = archive.GetData();
     auto& future_shm = future.GetFutureShm();
     future_shm->serialized_task_.reserve(serialized.size());
-    for (char c : serialized) {
-      future_shm->serialized_task_.push_back(c);
-    }
+    memcpy(future_shm->serialized_task_.data(), serialized.data(), serialized.size());
 
     // 5. Map task to lane using configured policy
     u32 num_lanes = shared_header_->num_sched_queues;

@@ -387,7 +387,7 @@ struct RunContext {
   std::vector<FullPtr<Task>> subtasks_; // Replica tasks for this execution
   std::atomic<u32> completed_replicas_; // Count of completed replicas
   u32 block_count_;  // Number of times task has been blocked
-  hipc::ShmPtr<FutureShm<CHI_MAIN_ALLOC_T>> future_shm_;  // FutureShm for async completion tracking
+  Future<Task> future_;  // Future for async completion tracking
 
   RunContext()
       : stack_ptr(nullptr), stack_base_for_free(nullptr), stack_size(0),
@@ -395,7 +395,6 @@ struct RunContext {
         est_load(0.0), block_time_us(0.0), block_start(), yield_context{}, resume_context{},
         container(nullptr), lane(nullptr), exec_mode(ExecMode::kExec),
         completed_replicas_(0), block_count_(0) {
-    future_shm_.SetNull();
   }
 
   /**
@@ -416,7 +415,7 @@ struct RunContext {
         subtasks_(std::move(other.subtasks_)),
         completed_replicas_(other.completed_replicas_.load()),
         block_count_(other.block_count_),
-        future_shm_(other.future_shm_) {}
+        future_(std::move(other.future_)) {}
 
   /**
    * Move assignment operator - required because of atomic member
@@ -443,7 +442,7 @@ struct RunContext {
       subtasks_ = std::move(other.subtasks_);
       completed_replicas_.store(other.completed_replicas_.load());
       block_count_ = other.block_count_;
-      future_shm_ = other.future_shm_;
+      future_ = std::move(other.future_);
     }
     return *this;
   }

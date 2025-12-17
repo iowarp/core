@@ -24,6 +24,9 @@ class FutureShm : public hipc::ShmContainer<AllocT> {
   /** Pool ID for the task */
   PoolId pool_id_;
 
+  /** Method ID for the task */
+  u32 method_id_;
+
   /** Serialized task data */
   hipc::vector<char, AllocT> serialized_task_;
 
@@ -37,6 +40,7 @@ class FutureShm : public hipc::ShmContainer<AllocT> {
       : hipc::ShmContainer<AllocT>(alloc),
         serialized_task_(alloc) {
     pool_id_ = PoolId::GetNull();
+    method_id_ = 0;
     is_complete_.store(0);
   }
 };
@@ -75,6 +79,7 @@ class Future {
     // Copy pool_id to FutureShm
     if (!task_ptr_.IsNull() && !future_shm_.IsNull()) {
       future_shm_->pool_id_ = task_ptr_->pool_id_;
+      future_shm_->method_id_ = task_ptr_->method_;
     }
   }
 
@@ -86,11 +91,17 @@ class Future {
    */
   Future(AllocT* alloc, hipc::FullPtr<TaskT> task_ptr, hipc::ShmPtr<FutureT> future_shm)
       : task_ptr_(task_ptr),
-        future_shm_(alloc, future_shm) {
-    // Copy pool_id to FutureShm
-    if (!task_ptr_.IsNull() && !future_shm_.IsNull()) {
-      future_shm_->pool_id_ = task_ptr_->pool_id_;
-    }
+        future_shm_(alloc, future_shm) {}
+
+  /**
+   * Constructor from FullPtr<FutureShm> and FullPtr<Task>
+   * @param future_shm FullPtr to existing FutureShm object
+   * @param task_ptr FullPtr to the task (wraps private memory with null allocator)
+   */
+  Future(hipc::FullPtr<FutureT> future_shm, hipc::FullPtr<TaskT> task_ptr)
+      : task_ptr_(task_ptr),
+        future_shm_(future_shm) {
+    // No need to copy pool_id - FutureShm already has it
   }
 
   /**
@@ -165,6 +176,13 @@ class Future {
     if (!future_shm_.IsNull()) {
       future_shm_->is_complete_.store(1);
     }
+  }
+
+  /**
+   * Mark the task as complete (alias for Complete)
+   */
+  void SetComplete() {
+    Complete();
   }
 
   /**

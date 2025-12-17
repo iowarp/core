@@ -141,5 +141,15 @@ EndTask should do:
 2. run_ctx->future_.SetComplete();
 3. container->DelTask(run_ctx->future_.task_);
 
+@CLAUDE.md
+
+Let's divide the Future class into two classes Future and Promise.
+Future should have the constructor ``Future(AllocT* alloc, hipc::FullPtr<TaskT> task_ptr)``.
+Future should expose IsComplete() and Wait().
+Promise should have the constructor ``Future(hipc::FullPtr<FutureT> future_shm, hipc::FullPtr<TaskT> task_ptr)``.
+Promise should expose SetComplete().
+RunContext should store Promise instead of Future.
+We should update chi_refresh_repo to do Promise instead of Future for all inputs.
+
 Let's add a new hipc::mpsc_queue to the WorkOrchestrator.
 This queue should be called network_queue. 

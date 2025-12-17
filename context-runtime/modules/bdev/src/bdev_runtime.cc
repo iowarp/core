@@ -301,8 +301,7 @@ void Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx) {
   // Store user-provided performance characteristics
   perf_metrics_ = params.perf_metrics_;
 
-  // Store maximum blocks per operation
-  max_blocks_per_operation_ = params.max_blocks_per_operation_;
+  // Note: max_blocks_per_operation_ is already initialized in Runtime constructor to 64
 
   // Set success result
   task->return_code_ = 0;

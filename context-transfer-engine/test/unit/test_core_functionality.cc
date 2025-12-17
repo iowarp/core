@@ -305,7 +305,7 @@ public:
     auto start_time = std::chrono::steady_clock::now();
 
     task.Wait();
-    while (!task->IsComplete()) {
+    while (!task.IsComplete()) {
       auto current_time = std::chrono::steady_clock::now();
       auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
           current_time - start_time);

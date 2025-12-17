@@ -322,7 +322,7 @@ using CreateTask = chimaera::admin::GetOrCreatePoolTask<CreateParams>;
 struct AllocateBlocksTask : public chi::Task {
   // Task-specific data
   IN chi::u64 size_;                  // Requested total size
-  OUT ArrayVector<Block, 16> blocks_;  // Allocated blocks information (max 16 blocks)
+  OUT ArrayVector<Block, 128> blocks_;  // Allocated blocks information (max 128 blocks)
 
   /** SHM default constructor */
   AllocateBlocksTask()
@@ -366,7 +366,7 @@ struct AllocateBlocksTask : public chi::Task {
  */
 struct FreeBlocksTask : public chi::Task {
   // Task-specific data
-  IN ArrayVector<Block, 16> blocks_;  // Blocks to free (max 16 blocks)
+  IN ArrayVector<Block, 128> blocks_;  // Blocks to free (max 128 blocks)
 
   /** SHM default constructor */
   FreeBlocksTask()
@@ -418,7 +418,7 @@ struct FreeBlocksTask : public chi::Task {
  */
 struct WriteTask : public chi::Task {
   // Task-specific data
-  IN ArrayVector<Block, 16> blocks_; // Blocks to write to (max 16 blocks)
+  IN ArrayVector<Block, 128> blocks_; // Blocks to write to (max 128 blocks)
   IN hipc::ShmPtr<> data_;            // Data to write (pointer-based)
   IN size_t length_;                 // Size of data to write
   OUT chi::u64 bytes_written_;       // Number of bytes actually written
@@ -430,7 +430,7 @@ struct WriteTask : public chi::Task {
   /** Emplace constructor */
   explicit WriteTask(const chi::TaskId &task_node, const chi::PoolId &pool_id,
                      const chi::PoolQuery &pool_query,
-                     const ArrayVector<Block, 16> &blocks,
+                     const ArrayVector<Block, 128> &blocks,
                      hipc::ShmPtr<> data, size_t length)
       : chi::Task(task_node, pool_id, pool_query, 10), blocks_(blocks),
         data_(data), length_(length), bytes_written_(0) {
@@ -490,7 +490,7 @@ struct WriteTask : public chi::Task {
  */
 struct ReadTask : public chi::Task {
   // Task-specific data
-  IN ArrayVector<Block, 16> blocks_; // Blocks to read from (max 16 blocks)
+  IN ArrayVector<Block, 128> blocks_; // Blocks to read from (max 128 blocks)
   OUT hipc::ShmPtr<> data_;           // Read data (pointer-based)
   INOUT size_t
       length_; // Size of data buffer (IN: buffer size, OUT: actual size)
@@ -503,7 +503,7 @@ struct ReadTask : public chi::Task {
   /** Emplace constructor */
   explicit ReadTask(const chi::TaskId &task_node, const chi::PoolId &pool_id,
                     const chi::PoolQuery &pool_query,
-                    const ArrayVector<Block, 16> &blocks,
+                    const ArrayVector<Block, 128> &blocks,
                     hipc::ShmPtr<> data, size_t length)
       : chi::Task(task_node, pool_id, pool_query, 10), blocks_(blocks),
         data_(data), length_(length), bytes_read_(0) {

@@ -537,6 +537,16 @@ public:
     }
   }
 
+  hipc::FullPtr<chi::Task> NewTask(chi::u32 method) override {
+    // Test implementation - create a basic Task
+    (void)method;
+    auto *ipc_manager = CHI_IPC;
+    if (ipc_manager) {
+      return ipc_manager->NewTask<chi::Task>();
+    }
+    return hipc::FullPtr<chi::Task>();
+  }
+
   void Aggregate(chi::u32 method, chi::Future<chi::Task>& origin_future,
                  chi::Future<chi::Task>& replica_future) override {
     // Test implementation - do nothing

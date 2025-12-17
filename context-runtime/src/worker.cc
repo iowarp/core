@@ -165,8 +165,9 @@ u32 Worker::ProcessNewTasks() {
       hipc::FullPtr<FutureShm<CHI_MAIN_ALLOC_T>> future_shm(alloc, future_shm_ptr);
 
       if (!future_shm.IsNull()) {
-        // Get pool_id from FutureShm
+        // Get pool_id and method_id from FutureShm
         PoolId pool_id = future_shm->pool_id_;
+        u32 method_id = future_shm->method_id_;
 
         // Get container for routing
         auto *pool_manager = CHI_POOL_MANAGER;
@@ -178,25 +179,34 @@ u32 Worker::ProcessNewTasks() {
           continue;
         }
 
-        // Deserialize task inputs from FutureShm using LocalLoadTaskArchive
-        std::vector<char> serialized_data(future_shm->serialized_task_.begin(),
-                                           future_shm->serialized_task_.end());
-        LocalLoadTaskArchive archive(serialized_data);
-        archive.SetMsgType(LocalMsgType::kSerializeIn);
+        // Create task using container->NewTask based on method_id
+        hipc::FullPtr<Task> task_full_ptr = container->NewTask(method_id);
 
-        // Allocate new task using standard new
-        auto *task_ptr = new Task();
-
-        // Deserialize into the task
-        archive >> (*task_ptr);
-
-        // Wrap task in FullPtr using raw pointer constructor (private memory)
-        hipc::FullPtr<Task> task_full_ptr(task_ptr);
+        if (task_full_ptr.IsNull()) {
+          // Task allocation failed - mark as complete with error
+          future_shm->is_complete_.store(1);
+          continue;
+        }
 
         // Allocate stack and RunContext before routing
         if (!task_full_ptr->IsRouted()) {
           BeginTask(task_full_ptr, container, assigned_lane_, future_shm_ptr);
         }
+
+        // Construct Future<Task> from FutureShm and Task
+        Future<Task> future(future_shm, task_full_ptr);
+
+        // Store future in RunContext
+        RunContext *run_ctx = task_full_ptr->run_ctx_;
+        if (run_ctx) {
+          run_ctx->future_ = std::move(future);
+        }
+
+        // Deserialize task inputs from FutureShm using container->LocalLoadIn
+        std::vector<char> serialized_data(future_shm->serialized_task_.begin(),
+                                           future_shm->serialized_task_.end());
+        LocalLoadTaskArchive archive(serialized_data);
+        container->LocalLoadIn(method_id, archive, run_ctx->future_);
 
         // Route task using consolidated routing function
         if (RouteTask(task_full_ptr, assigned_lane_, container)) {
@@ -800,7 +810,7 @@ void Worker::BeginTask(const FullPtr<Task> &task_ptr, Container *container,
   run_ctx->container = container;     // Store container for CHI_CUR_CONTAINER
   run_ctx->lane = lane;               // Store lane for CHI_CUR_LANE
   run_ctx->waiting_for_tasks.clear(); // Clear waiting tasks for new task
-  run_ctx->future_shm_ = future_shm_ptr;  // Store FutureShm for completion tracking
+  // Note: future_ will be set later in ProcessNewTasks after Future is constructed
   // Set RunContext pointer in task
   task_ptr->run_ctx_ = run_ctx;
 
@@ -987,27 +997,26 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     HILOG(kDebug, "Worker: Sent remote task outputs back to node {}",
           ret_node_id);
   } else {
-    // Serialize outputs back to FutureShm for local completion
-    if (!run_ctx->future_shm_.IsNull()) {
-      auto *alloc = CHI_IPC->GetMainAlloc();
-      hipc::FullPtr<FutureShm<CHI_MAIN_ALLOC_T>> future_shm(alloc, run_ctx->future_shm_);
-      if (!future_shm.IsNull()) {
-        // Serialize task outputs using LocalSaveTaskArchive
-        LocalSaveTaskArchive archive(LocalMsgType::kSerializeOut);
-        archive << (*task_ptr.ptr_);
-
-        // Copy serialized outputs to FutureShm
-        const std::vector<char>& serialized = archive.GetData();
-        future_shm->serialized_task_.clear();
-        future_shm->serialized_task_.reserve(serialized.size());
-        for (char c : serialized) {
-          future_shm->serialized_task_.push_back(c);
-        }
-
-        // Mark task as complete
-        future_shm->is_complete_.store(1);
-      }
+    // Local task completion using Future
+    // 1. Serialize outputs using container->LocalSaveOut
+    LocalSaveTaskArchive archive(LocalMsgType::kSerializeOut);
+    if (run_ctx->container) {
+      run_ctx->container->LocalSaveOut(task_ptr->method_, archive, run_ctx->future_);
     }
+
+    // Copy serialized outputs to FutureShm
+    if (!run_ctx->future_.IsNull()) {
+      const std::vector<char>& serialized = archive.GetData();
+      auto& future_shm = run_ctx->future_.GetFutureShm();
+      future_shm->serialized_task_.resize(serialized.size());
+      std::memcpy(future_shm->serialized_task_.data(), serialized.data(), serialized.size());
+    }
+
+    // 2. Mark task as complete
+    run_ctx->future_.SetComplete();
+
+    // 3. Delete task using container->Del
+    run_ctx->container->Del(task_ptr->method_, task_ptr);
   }
 
   // Deallocate stack and context
