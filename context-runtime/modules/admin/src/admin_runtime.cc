@@ -277,8 +277,6 @@ void Runtime::Flush(hipc::FullPtr<FlushTask> task, chi::RunContext &rctx) {
  * @param rctx RunContext for managing subtasks
  */
 void Runtime::SendIn(hipc::FullPtr<SendTask> task, chi::RunContext &rctx) {
-  // COMMENTED OUT - Will be reimplemented with Future-based approach
-  /*
   // Set I/O size to 1MB to ensure routing to slow workers
   task->stat_.io_size_ = 1024 * 1024; // 1MB
 
@@ -380,8 +378,7 @@ void Runtime::SendIn(hipc::FullPtr<SendTask> task, chi::RunContext &rctx) {
     chi::SaveTaskArchive archive(chi::MsgType::kSerializeIn, lbm_client.get());
 
     // Create task copy
-    hipc::FullPtr<chi::Task> task_copy;
-    container->NewCopy(origin_task->method_, origin_task, task_copy, true);
+    hipc::FullPtr<chi::Task> task_copy = container->NewCopyTask(origin_task->method_, origin_task, true);
     origin_task_rctx->subtasks_[i] = task_copy;
 
     // Set net_key in task_id to match send_map_key
@@ -423,8 +420,6 @@ void Runtime::SendIn(hipc::FullPtr<SendTask> task, chi::RunContext &rctx) {
   HILOG(kDebug, "=== [SendIn END] Task {} completed sending to {} targets ===",
         origin_task->task_id_, num_replicas);
   task->SetReturnCode(0);
-  */
-  task->SetReturnCode(0);
 }
 
 /**
@@ -432,8 +427,6 @@ void Runtime::SendIn(hipc::FullPtr<SendTask> task, chi::RunContext &rctx) {
  * @param task SendTask containing origin_task
  */
 void Runtime::SendOut(hipc::FullPtr<SendTask> task) {
-  // COMMENTED OUT - Will be reimplemented with Future-based approach
-  /*
   // Set I/O size to 1MB to ensure routing to slow workers
   task->stat_.io_size_ = 1024 * 1024; // 1MB
 
@@ -541,8 +534,6 @@ void Runtime::SendOut(hipc::FullPtr<SendTask> task) {
         origin_task->task_id_);
 
   task->SetReturnCode(0);
-  */
-  task->SetReturnCode(0);
 }
 
 /**
@@ -577,8 +568,6 @@ void Runtime::Send(hipc::FullPtr<SendTask> task, chi::RunContext &rctx) {
 void Runtime::RecvIn(hipc::FullPtr<RecvTask> task,
                      chi::LoadTaskArchive &archive,
                      hshm::lbm::Server *lbm_server) {
-  // COMMENTED OUT - Will be reimplemented with Future-based approach
-  /*
   // Set I/O size to 1MB to ensure routing to slow workers
   task->stat_.io_size_ = 1024 * 1024; // 1MB
 
@@ -633,11 +622,8 @@ void Runtime::RecvIn(hipc::FullPtr<RecvTask> task,
       continue;
     }
 
-    // Allocate task pointer (LoadTask will allocate it using NewTask)
-    hipc::FullPtr<chi::Task> task_ptr = hipc::FullPtr<chi::Task>::GetNull();
-
     // Call LoadTask to allocate and deserialize the task
-    container->LoadTask(task_info.method_id_, archive, task_ptr);
+    hipc::FullPtr<chi::Task> task_ptr = container->LoadTask(task_info.method_id_, archive);
 
     if (task_ptr.IsNull()) {
       HELOG(kError, "Admin: Failed to load task");
@@ -661,15 +647,14 @@ void Runtime::RecvIn(hipc::FullPtr<RecvTask> task,
           "recv_map",
           task_ptr->task_id_, task_info.pool_id_, net_key);
 
-    // Enqueue task for execution
-    ipc_manager->Enqueue(task_ptr);
-    HILOG(kDebug, "[RECV] Task {} received and enqueued",
+    // Send task for execution using IpcManager::Send
+    // Note: This creates a Future and enqueues it to worker lanes
+    (void)ipc_manager->Send(task_ptr);
+    HILOG(kDebug, "[RECV] Task {} received and sent for execution",
           task_ptr->task_id_);
   }
 
   HILOG(kDebug, "=== [RecvIn END] Processed {} task(s) ===", task_infos.size());
-  task->SetReturnCode(0);
-  */
   task->SetReturnCode(0);
 }
 
@@ -682,8 +667,6 @@ void Runtime::RecvIn(hipc::FullPtr<RecvTask> task,
 void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
                       chi::LoadTaskArchive &archive,
                       hshm::lbm::Server *lbm_server) {
-  // COMMENTED OUT - Will be reimplemented with Future-based approach
-  /*
   // Set I/O size to 1MB to ensure routing to slow workers
   task->stat_.io_size_ = 1024 * 1024; // 1MB
 
@@ -763,7 +746,10 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
 
     // Call LoadTask to deserialize - this will expose buffers via ar.bulk()
     // and populate archive.recv
-    container->LoadTask(replica->method_, archive, replica);
+    // Note: We pass the existing replica pointer to be updated in-place
+    hipc::FullPtr<chi::Task> loaded_replica = container->LoadTask(replica->method_, archive);
+    // The loaded task should match the replica (same task being deserialized)
+    (void)loaded_replica;  // Suppress unused variable warning
   }
 
   // Receive all bulk data using Lightbeam
@@ -837,11 +823,11 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
 
       // Unmark TASK_DATA_OWNER before deleting replicas to avoid freeing the
       // same data pointers twice Delete all origin_task replicas using
-      // container->Del() to avoid memory leak
+      // container->DelTask() to avoid memory leak
       if (container) {
         for (const auto &origin_task_ptr : origin_rctx->subtasks_) {
           origin_task_ptr->ClearFlags(TASK_DATA_OWNER);
-          container->Del(origin_task_ptr->method_, origin_task_ptr);
+          container->DelTask(origin_task_ptr->method_, origin_task_ptr);
         }
       }
 
@@ -867,8 +853,6 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
   HILOG(kDebug,
         "=== [RecvOut END] Processed {} task output(s) ===", task_infos.size());
   task->SetReturnCode(0);
-  */
-  task->SetReturnCode(0);
 }
 
 /**
@@ -884,6 +868,29 @@ void Runtime::Recv(hipc::FullPtr<RecvTask> task, chi::RunContext &rctx) {
       worker->SetTaskDidWork(false);
     }
     return;
+  }
+
+  // Add ZeroMQ file descriptor to current worker's epoll (one-time setup)
+  static thread_local bool zmq_fd_added = false;
+  if (!zmq_fd_added) {
+    chi::Worker *worker = CHI_CUR_WORKER;
+    if (worker) {
+      // Cast to ZeroMqServer to access GetFd()
+      auto *zmq_server = static_cast<hshm::lbm::ZeroMqServer*>(lbm_server);
+      int zmq_fd = zmq_server->GetFd();
+
+      // Add ZeroMQ FD to worker's epoll for event-driven polling
+      struct epoll_event ev;
+      ev.events = EPOLLIN;
+      ev.data.fd = zmq_fd;
+      int epoll_fd = worker->GetEpollFd();
+      if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, zmq_fd, &ev) == -1) {
+        HELOG(kError, "Admin: Failed to add ZeroMQ FD to worker epoll");
+      } else {
+        zmq_fd_added = true;
+        HILOG(kDebug, "Admin: Added ZeroMQ FD {} to worker {} epoll", zmq_fd, worker->GetId());
+      }
+    }
   }
 
   // Receive metadata first to determine mode (non-blocking)

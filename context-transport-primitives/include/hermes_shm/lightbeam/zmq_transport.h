@@ -257,6 +257,18 @@ class ZeroMqServer : public Server {
 
   std::string GetAddress() const override { return addr_; }
 
+  /**
+   * Get the file descriptor for the ZeroMQ socket
+   * Can be used with epoll for efficient event-driven I/O
+   * @return File descriptor for the socket
+   */
+  int GetFd() const {
+    int fd;
+    size_t fd_size = sizeof(fd);
+    zmq_getsockopt(socket_, ZMQ_FD, &fd, &fd_size);
+    return fd;
+  }
+
  private:
   std::string addr_;
   std::string protocol_;

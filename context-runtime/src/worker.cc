@@ -83,6 +83,8 @@ void Worker::SetTaskDidWork(bool did_work) { task_did_work_ = did_work; }
 
 bool Worker::GetTaskDidWork() const { return task_did_work_; }
 
+int Worker::GetEpollFd() const { return epoll_fd_; }
+
 void Worker::Finalize() {
   if (!is_initialized_) {
     return;

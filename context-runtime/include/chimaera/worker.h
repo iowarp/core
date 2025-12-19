@@ -163,6 +163,12 @@ public:
   bool GetTaskDidWork() const;
 
   /**
+   * Get the epoll file descriptor for this worker
+   * @return Epoll file descriptor
+   */
+  int GetEpollFd() const;
+
+  /**
    * Add run context to blocked queue based on block count
    * @param run_ctx_ptr Pointer to run context (task accessible via
    * run_ctx_ptr->task)
