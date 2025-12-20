@@ -73,6 +73,25 @@ class LibPressio : public Compressor {
     library_ = pressio_instance();
     if (library_ != nullptr) {
       compressor_ = pressio_get_compressor(library_, compressor_id_);
+      
+      // Configure SZ3 for lossy compression with relative error bound
+      // Default: 1e-4 (0.0001 = 0.01% relative error) for noticeable but controlled loss
+      if (compressor_ != nullptr && strcmp(compressor_id_, "sz3") == 0) {
+        struct pressio_options* options = pressio_compressor_get_options(compressor_);
+        if (options != nullptr) {
+          // Set relative error bound mode (1 = relative, 0 = absolute)
+          pressio_options_set_integer(options, "sz3:error_bound_mode", 1);
+          // Set relative error bound to 1e-4 (0.01% error) for lossy compression
+          // Note: Using sz3:rel_error_bound (not sz3:rel) as per SZ3 plugin options
+          pressio_options_set_double(options, "sz3:rel_error_bound", 1e-4);
+          // Also set the pressio-level relative error bound (some compressors use this)
+          pressio_options_set_double(options, "pressio:rel", 1e-4);
+          // Apply the options
+          int ret = pressio_compressor_set_options(compressor_, options);
+          pressio_options_free(options);
+          // Note: We don't fail if configuration fails, compressor will use defaults
+        }
+      }
     }
   }
 
