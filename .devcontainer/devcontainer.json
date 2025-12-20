@@ -44,7 +44,8 @@
                 "ms-azuretools.vscode-docker",
                 "ms-python.python",
                 "ms-python.vscode-pylance",
-                "ms-python.debugpy"
+                "ms-python.debugpy",
+                "nvidia.nsight-vscode-edition"
             ],
             "settings": {
                 "cmake.configureOnOpen": false,

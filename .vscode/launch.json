@@ -330,6 +330,72 @@
                 }
             ],
             "preLaunchTask": "cmake-build-debug"
+        },
+        {
+            "name": "Debug GPU Malloc Test",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/test_gpu_malloc",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "cmake-build-debug"
+        },
+        {
+            "name": "Debug GPU Malloc Test (CUDA-GDB)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/test_gpu_malloc",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "environment": [
+                {
+                    "name": "CUDA_VISIBLE_DEVICES",
+                    "value": "0"
+                }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/local/cuda/bin/cuda-gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set CUDA API failures to be fatal",
+                    "text": "set cuda api_failures stop",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set CUDA launch failures to be fatal",
+                    "text": "set cuda launch_blocking on",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "cmake-build-debug"
+        },
+        {
+            "name": "Debug GPU Malloc Test (Nsight)",
+            "type": "cuda-gdb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/test_gpu_malloc",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "preLaunchTask": "cmake-build-debug"
         }
     ]
 }
