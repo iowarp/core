@@ -1117,7 +1117,7 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     // Local task completion using Future
     // 1. Serialize outputs using container->LocalSaveTask (only if task will be
     // destroyed)
-    if (run_ctx->destroy_in_end_task_) {
+    if (run_ctx->destroy_in_end_task_ || task_ptr->IsFireAndForget()) {
       LocalSaveTaskArchive archive(LocalMsgType::kSerializeOut);
       if (run_ctx->container) {
         run_ctx->container->LocalSaveTask(task_ptr->method_, archive, task_ptr);
@@ -1144,8 +1144,8 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     }
 
     // 3. Delete task using container->DelTask (only if destroy_in_end_task is
-    // true)
-    if (run_ctx->destroy_in_end_task_) {
+    // true or task is fire-and-forget)
+    if (run_ctx->destroy_in_end_task_ || task_ptr->IsFireAndForget()) {
       run_ctx->container->DelTask(task_ptr->method_, task_ptr);
     }
   }

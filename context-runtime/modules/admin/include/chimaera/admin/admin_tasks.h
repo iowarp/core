@@ -459,6 +459,8 @@ struct SendTask : public chi::Task {
     task_flags_.Clear();
     pool_query_ = pool_query;
     stat_.io_size_ = 1024 * 1024; // 1MB
+    // Mark as fire-and-forget since SendTask will never be awaited
+    SetFireAndForget();
   }
 
   /**
