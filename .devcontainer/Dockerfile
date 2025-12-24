@@ -17,20 +17,6 @@ RUN apt-get update && apt-get install -y \
     iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
-# Remove system HDF5 packages to prevent conflicts with conda HDF5
-# System HDF5 was built against different libcurl than conda, causing linker errors
-RUN apt-get update && apt-get remove -y \
-    libhdf5-dev \
-    libhdf5-103-1t64 \
-    libhdf5-cpp-103-1t64 \
-    libhdf5-fortran-102t64 \
-    libhdf5-hl-100t64 \
-    libhdf5-hl-cpp-100t64 \
-    libhdf5-hl-fortran-100t64 \
-    hdf5-helpers \
-    hdf5-tools \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
 
 # Add Docker's official GPG key and repository
 RUN install -m 0755 -d /etc/apt/keyrings \
@@ -103,58 +89,19 @@ ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs:/usr/lib/x86_64-
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
-# Switch to iowarp user for conda and venv setup
+# Switch to iowarp user for venv setup
+# Note: conda is already installed in the base image (iowarp/iowarp-deps:latest)
+# with all development dependencies (boost, hdf5, yaml-cpp, zeromq, etc.)
 USER iowarp
 WORKDIR /home/iowarp
 
-# Install Miniconda
-RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh \
-    && bash /tmp/miniconda.sh -b -p /home/iowarp/miniconda3 \
-    && rm /tmp/miniconda.sh
-
-# Initialize conda for bash
-RUN /home/iowarp/miniconda3/bin/conda init bash \
-    && /home/iowarp/miniconda3/bin/conda config --add channels conda-forge \
-    && /home/iowarp/miniconda3/bin/conda config --set channel_priority strict
-
-# Accept Anaconda Terms of Service and install all development dependencies via conda
-# This avoids library conflicts between system packages and conda packages
-# Dependencies installed:
-#   - Build tools: cmake, ninja, conda-build
-#   - Core libraries: boost, hdf5, yaml-cpp, zeromq, cppzmq, cereal
-#   - Testing: catch2
-#   - Network: libcurl, openssl
-#   - Compression: zlib
-#   - Optional: poco (for Globus support), nlohmann_json
-#   - GPU: CUDA installed from NVIDIA repos (see below)
-RUN /home/iowarp/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main \
-    && /home/iowarp/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r \
-    && /home/iowarp/miniconda3/bin/conda install -y \
-    conda-build \
-    cmake \
-    ninja \
-    boost \
-    hdf5 \
-    yaml-cpp \
-    zeromq \
-    cppzmq \
-    cereal \
-    catch2 \
-    libcurl \
-    openssl \
-    zlib \
-    poco \
-    nlohmann_json \
-    && /home/iowarp/miniconda3/bin/conda clean -ya
-
 # Create Python virtual environment in user's home directory
-# Note: Users can choose between conda environments or venv
 RUN python3 -m venv /home/iowarp/venv \
     && /home/iowarp/venv/bin/pip install --upgrade pip setuptools wheel \
     && /home/iowarp/venv/bin/pip install pyyaml nanobind
 
-# Add conda activation and CUDA paths to bashrc
-# Conda base environment is auto-activated to ensure all conda dependencies are available
+# Add CUDA paths and conda activation to bashrc
+# Note: conda is inherited from base image with all dev dependencies pre-installed
 RUN echo '' >> /home/iowarp/.bashrc \
     && echo '# CUDA environment variables for GPU execution' >> /home/iowarp/.bashrc \
     && echo 'export CUDA_HOME=/usr/local/cuda-12.6' >> /home/iowarp/.bashrc \
@@ -163,19 +110,10 @@ RUN echo '' >> /home/iowarp/.bashrc \
     && echo 'export NVIDIA_VISIBLE_DEVICES=all' >> /home/iowarp/.bashrc \
     && echo 'export NVIDIA_DRIVER_CAPABILITIES=compute,utility' >> /home/iowarp/.bashrc \
     && echo '' >> /home/iowarp/.bashrc \
-    && echo '# >>> conda initialize >>>' >> /home/iowarp/.bashrc \
-    && echo '# Conda base environment is auto-activated with all dev dependencies' >> /home/iowarp/.bashrc \
-    && echo '# This includes: boost, hdf5, yaml-cpp, zeromq, cereal, catch2, etc.' >> /home/iowarp/.bashrc \
-    && echo '# Create custom environments if needed: conda create -n myenv' >> /home/iowarp/.bashrc \
-    && echo 'eval "$(/home/iowarp/miniconda3/bin/conda shell.bash hook)"' >> /home/iowarp/.bashrc \
-    && echo '# <<< conda initialize <<<' >> /home/iowarp/.bashrc \
-    && echo '' >> /home/iowarp/.bashrc \
-    && echo '# Python virtual environment (alternative to conda)' >> /home/iowarp/.bashrc \
-    && echo '# Note: venv is NOT recommended when using conda dependencies' >> /home/iowarp/.bashrc \
-    && echo '# Uncomment to auto-activate venv instead of conda (use at your own risk):' >> /home/iowarp/.bashrc \
-    && echo '# if [ -f /home/iowarp/venv/bin/activate ]; then' >> /home/iowarp/.bashrc \
-    && echo '#     source /home/iowarp/venv/bin/activate' >> /home/iowarp/.bashrc \
-    && echo '# fi' >> /home/iowarp/.bashrc
+    && echo '# Python virtual environment' >> /home/iowarp/.bashrc \
+    && echo 'if [ -f /home/iowarp/venv/bin/activate ]; then' >> /home/iowarp/.bashrc \
+    && echo '    source /home/iowarp/venv/bin/activate' >> /home/iowarp/.bashrc \
+    && echo 'fi' >> /home/iowarp/.bashrc
 
 WORKDIR /workspace
 

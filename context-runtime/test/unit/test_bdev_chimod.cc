@@ -1139,57 +1139,99 @@ TEST_CASE("bdev_file_vs_ram_comparison", "[bdev][file][ram][comparison]") {
 }
 
 TEST_CASE("bdev_file_explicit_backend", "[bdev][file][explicit]") {
+  HILOG(kInfo, "[bdev_file_explicit_backend] TEST START");
   BdevChimodFixture fixture;
+  HILOG(kInfo, "[bdev_file_explicit_backend] Checking g_initialized={}", g_initialized);
   REQUIRE(g_initialized);
+  HILOG(kInfo, "[bdev_file_explicit_backend] Creating test file...");
   REQUIRE(fixture.createTestFile(kDefaultFileSize));
+  HILOG(kInfo, "[bdev_file_explicit_backend] Test file created: {}", fixture.getTestFile());
 
   // Admin client is automatically initialized via CHI_ADMIN singleton
+  HILOG(kInfo, "[bdev_file_explicit_backend] Sleeping 100ms for admin client init...");
   std::this_thread::sleep_for(100ms);
+  HILOG(kInfo, "[bdev_file_explicit_backend] Done sleeping");
 
   // Create bdev client with explicit file backend
   chi::PoolId custom_pool_id(8008, 0);
+  HILOG(kInfo, "[bdev_file_explicit_backend] Creating bdev client with pool_id=(major:{}, minor:{})",
+        custom_pool_id.major_, custom_pool_id.minor_);
   chimaera::bdev::Client bdev_client(custom_pool_id);
+  HILOG(kInfo, "[bdev_file_explicit_backend] Bdev client created");
 
   // Create file-based container using explicit backend type
+  HILOG(kInfo, "[bdev_file_explicit_backend] Calling bdev_client.Create() with Dynamic pool query...");
   bool bdev_success = bdev_client.Create(chi::PoolQuery::Dynamic(), fixture.getTestFile(),
       custom_pool_id, chimaera::bdev::BdevType::kFile, 0, 32, 4096);
+  HILOG(kInfo, "[bdev_file_explicit_backend] bdev_client.Create() returned bdev_success={}", bdev_success);
   REQUIRE(bdev_success);
+  HILOG(kInfo, "[bdev_file_explicit_backend] Sleeping 100ms after Create...");
   std::this_thread::sleep_for(100ms);
+  HILOG(kInfo, "[bdev_file_explicit_backend] Done sleeping, starting loop");
+
+  // Get number of containers for logging
+  const chi::u32 num_containers = fixture.getNumContainers();
+  HILOG(kInfo, "[bdev_file_explicit_backend] num_containers={}", num_containers);
 
   // Test basic operations using DirectHash for distributed execution
   for (int i = 0; i < 16; ++i) {
+    HILOG(kInfo, "[bdev_file_explicit_backend] === ITERATION {} START ===", i);
     auto pool_query = chi::PoolQuery::DirectHash(i);
+    chi::ContainerId expected_container = static_cast<chi::ContainerId>(i % num_containers);
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: DirectHash({}) -> expected_container={}",
+          i, i, expected_container);
 
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Calling AsyncAllocateBlocks(k4KB)...", i);
     auto alloc_task =
         bdev_client.AsyncAllocateBlocks(pool_query, k4KB);
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: AsyncAllocateBlocks returned, calling Wait()...", i);
     alloc_task.Wait();
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: AllocateBlocks Wait() returned, return_code={}, blocks.size()={}",
+          i, alloc_task->return_code_, alloc_task->blocks_.size());
     REQUIRE(alloc_task->return_code_ == 0);
     REQUIRE(alloc_task->blocks_.size() > 0);
     chimaera::bdev::Block block = alloc_task->blocks_[0];
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Allocated block: offset={}, size={}, completer={}",
+          i, block.offset_, block.size_, alloc_task->GetCompleter());
     REQUIRE(block.size_ == k4KB);
     CHI_IPC->DelTask(alloc_task.GetTaskPtr());
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Deleted alloc_task", i);
 
     std::vector<hshm::u8> test_data(k4KB, 0x42 + i);
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Generated test_data of size {}", i, test_data.size());
 
     // Allocate buffers for Write/Read operations
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Allocating write buffer...", i);
     auto final_write_buffer = CHI_IPC->AllocateBuffer(test_data.size());
     REQUIRE_FALSE(final_write_buffer.IsNull());
     memcpy(final_write_buffer.ptr_, test_data.data(), test_data.size());
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Write buffer allocated and filled", i);
 
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Calling AsyncWrite...", i);
     auto write_task =
         bdev_client.AsyncWrite(pool_query, WrapBlock(block),
                                final_write_buffer.shm_.template Cast<void>().template Cast<void>(), test_data.size());
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: AsyncWrite returned, calling Wait()...", i);
     write_task.Wait();
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Write Wait() returned, return_code={}, bytes_written={}, completer={}",
+          i, write_task->return_code_, write_task->bytes_written_, write_task->GetCompleter());
     REQUIRE(write_task->return_code_ == 0);
     REQUIRE(write_task->bytes_written_ == k4KB);
     CHI_IPC->DelTask(write_task.GetTaskPtr());
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Deleted write_task", i);
 
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Allocating read buffer...", i);
     auto final_read_buffer = CHI_IPC->AllocateBuffer(k4KB);
     REQUIRE_FALSE(final_read_buffer.IsNull());
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Read buffer allocated", i);
 
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Calling AsyncRead...", i);
     auto read_task = bdev_client.AsyncRead(pool_query, WrapBlock(block),
                                            final_read_buffer.shm_.template Cast<void>().template Cast<void>(), k4KB);
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: AsyncRead returned, calling Wait()...", i);
     read_task.Wait();
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Read Wait() returned, return_code={}, bytes_read={}, completer={}",
+          i, read_task->return_code_, read_task->bytes_read_, read_task->GetCompleter());
     REQUIRE(read_task->return_code_ == 0);
     REQUIRE(read_task->bytes_read_ == k4KB);
 
@@ -1197,28 +1239,39 @@ TEST_CASE("bdev_file_explicit_backend", "[bdev][file][explicit]") {
     std::vector<hshm::u8> read_data(read_task->bytes_read_);
     memcpy(read_data.data(), final_read_buffer.ptr_, read_task->bytes_read_);
     CHI_IPC->DelTask(read_task.GetTaskPtr());
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Deleted read_task", i);
 
     bool data_ok =
         std::equal(test_data.begin(), test_data.end(), read_data.begin());
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Data verification: data_ok={}", i, data_ok);
     REQUIRE(data_ok);
 
     // Free buffers
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Freeing write buffer...", i);
     CHI_IPC->FreeBuffer(final_write_buffer);
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Freeing read buffer...", i);
     CHI_IPC->FreeBuffer(final_read_buffer);
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Buffers freed", i);
 
     std::vector<chimaera::bdev::Block> free_blocks;
     free_blocks.push_back(block);
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Calling AsyncFreeBlocks...", i);
     auto free_task =
         bdev_client.AsyncFreeBlocks(pool_query, free_blocks);
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: AsyncFreeBlocks returned, calling Wait()...", i);
     free_task.Wait();
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: FreeBlocks Wait() returned, return_code={}",
+          i, free_task->return_code_);
     REQUIRE(free_task->return_code_ == 0);
     CHI_IPC->DelTask(free_task.GetTaskPtr());
+    HILOG(kInfo, "[bdev_file_explicit_backend] Iteration {}: Deleted free_task", i);
 
     HILOG(kInfo,
-          "Iteration {}: File backend with explicit type specification working "
-          "correctly",
+          "[bdev_file_explicit_backend] === ITERATION {} COMPLETE - File backend with explicit type specification working "
+          "correctly ===",
           i);
   }
+  HILOG(kInfo, "[bdev_file_explicit_backend] TEST COMPLETE - All 16 iterations passed");
 }
 
 TEST_CASE("bdev_error_conditions_enhanced", "[bdev][error][enhanced]") {
