@@ -18,7 +18,8 @@ memory:
 networking:
   port: 8080
   neighborhood_size: 32
-  hostfile: /etc/iowarp/hostfile
+  # Hostfile path inside Docker container (mounted at /test_config)
+  hostfile: /test_config/hostfile
 
 # Logging configuration
 logging:

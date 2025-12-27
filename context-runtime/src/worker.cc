@@ -1141,6 +1141,8 @@ void Worker::ExecTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
 
 void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
                      bool should_complete, bool is_remote) {
+  HLOG(kInfo, "[TRACE] EndTask - task_id={}, pool_id={}, method={}, should_complete={}, is_remote={}",
+       task_ptr->task_id_, task_ptr->pool_id_, task_ptr->method_, should_complete, is_remote);
   if (!should_complete) {
     return;
   }
@@ -1185,7 +1187,9 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     }
 
     // 2. Mark task as complete
+    HLOG(kInfo, "[TRACE] EndTask - calling SetComplete for task_id={}", task_ptr->task_id_);
     run_ctx->future_.SetComplete();
+    HLOG(kInfo, "[TRACE] EndTask - SetComplete done for task_id={}", task_ptr->task_id_);
 
     // 2.5. Wake up parent task if waiting for this subtask
     RunContext *parent_task = run_ctx->future_.GetParentTask();
@@ -1258,6 +1262,11 @@ void Worker::ProcessBlockedQueue(std::queue<RunContext *> &queue,
   size_t queue_size = queue.size();
   size_t check_limit = std::min(queue_size, size_t(8));
 
+  if (queue_size > 0) {
+    HLOG(kInfo, "[TRACE] ProcessBlockedQueue - queue_idx={}, queue_size={}, check_limit={}",
+         queue_idx, queue_size, check_limit);
+  }
+
   for (size_t i = 0; i < check_limit; i++) {
     if (queue.empty()) {
       break;
@@ -1271,6 +1280,9 @@ void Worker::ProcessBlockedQueue(std::queue<RunContext *> &queue,
       continue;
     }
 
+    HLOG(kInfo, "[TRACE] ProcessBlockedQueue - processing task_id={}, pool_id={}, method={}",
+         run_ctx->task->task_id_, run_ctx->task->pool_id_, run_ctx->task->method_);
+
     // Always execute tasks from blocked queue
     // (Event queue will handle subtask completion wakeup)
     // Determine if this is a resume (task was started before) or first
@@ -1282,6 +1294,8 @@ void Worker::ProcessBlockedQueue(std::queue<RunContext *> &queue,
     // CRITICAL: Clear the is_yielded_ flag before resuming the task
     // This allows the task to call Wait() again if needed
     run_ctx->is_yielded_ = false;
+
+    HLOG(kInfo, "[TRACE] ProcessBlockedQueue - calling ExecTask, is_started={}", is_started);
 
     // Execute task with existing RunContext
     ExecTask(run_ctx->task, run_ctx, is_started);

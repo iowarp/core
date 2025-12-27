@@ -9,8 +9,10 @@ services:
       cte-cluster:
         ipv4_address: 172.26.0.10
     volumes:
-      - ${IOWARP_CORE_ROOT:-.}/context-transfer-engine/test/unit/distributed:/etc/iowarp:ro
-      - ${IOWARP_BUILD_DIR:-${IOWARP_CORE_ROOT:-.}/build}:/workspace/build:rw
+      # Use HOST_WORKSPACE for Docker-in-Docker environments (devcontainers)
+      # HOST_WORKSPACE should be the actual host path, not the container mount point
+      - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-.}}/context-transfer-engine/test/unit/distributed:/test_config:ro
+      - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-.}}/build:/workspace/build:rw
       - hdd1-storage:/mnt/hdd1
       - hdd2-storage:/mnt/hdd2
       - hdd3-storage:/mnt/hdd3
@@ -18,10 +20,10 @@ services:
     environment:
       - NODE_ID=1
       - NODE_IP=172.26.0.10
-      - CONTAINER_HOSTFILE=/etc/iowarp/hostfile
+      - CONTAINER_HOSTFILE=/test_config/hostfile
       - TEST_FILTER=${TEST_FILTER:-}
       - SECTION_FILTER=${SECTION_FILTER:-}
-      - WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml
+      - WRP_RUNTIME_CONF=/test_config/wrp_config.yaml
       - CTE_NUM_NODES=4
       - CHIMAERA_WITH_RUNTIME=0
     shm_size: '16gb'
@@ -38,34 +40,27 @@ services:
         echo 'Node 1: Creating storage directories...' &&
         mkdir -p /mnt/hdd1 /mnt/hdd2 /mnt/hdd3 /mnt/hdd4 &&
         export PATH=/usr/local/bin:$$PATH &&
-        export WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml &&
+        export WRP_RUNTIME_CONF=/test_config/wrp_config.yaml &&
+        export CONTAINER_HOSTFILE=/test_config/hostfile &&
         echo '========================================' &&
         echo 'Node 1: Starting Chimaera runtime in background' &&
         echo '========================================' &&
         chimaera_start_runtime &
         RUNTIME_PID=$$! &&
         echo \"Node 1: Runtime started (PID $$RUNTIME_PID)\" &&
+        sleep 2 &&
         echo '========================================' &&
         echo 'Node 1: Running distributed unit tests' &&
         echo '========================================' &&
         echo 'Flushing output before test execution...' &&
         sync &&
-        if [ -z \"$$TEST_FILTER\" ] && [ -z \"$$SECTION_FILTER\" ]; then
+        if [ -z \"$$TEST_FILTER\" ]; then
           echo 'Running all tests (no filter)' &&
-          test_core_functionality --reporter console --verbosity high --durations yes 2>&1
-          TEST_EXIT_CODE=$$?
-        elif [ -n \"$$TEST_FILTER\" ] && [ -z \"$$SECTION_FILTER\" ]; then
-          echo \"Test filter: $$TEST_FILTER\" &&
-          test_core_functionality --reporter console --verbosity high --durations yes \"$$TEST_FILTER\" 2>&1
-          TEST_EXIT_CODE=$$?
-        elif [ -z \"$$TEST_FILTER\" ] && [ -n \"$$SECTION_FILTER\" ]; then
-          echo \"Section filter: $$SECTION_FILTER\" &&
-          test_core_functionality --reporter console --verbosity high --durations yes -c \"$$SECTION_FILTER\" 2>&1
+          test_core_functionality 2>&1
           TEST_EXIT_CODE=$$?
         else
           echo \"Test filter: $$TEST_FILTER\" &&
-          echo \"Section filter: $$SECTION_FILTER\" &&
-          test_core_functionality --reporter console --verbosity high --durations yes \"$$TEST_FILTER\" -c \"$$SECTION_FILTER\" 2>&1
+          test_core_functionality \"$$TEST_FILTER\" 2>&1
           TEST_EXIT_CODE=$$?
         fi &&
         echo '========================================'
@@ -84,14 +79,14 @@ services:
       cte-cluster:
         ipv4_address: 172.26.0.11
     volumes:
-      - ${IOWARP_CORE_ROOT:-.}/context-transfer-engine/test/unit/distributed:/etc/iowarp:ro
-      - ${IOWARP_BUILD_DIR:-${IOWARP_CORE_ROOT:-.}/build}:/workspace/build:rw
+      - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-.}}/context-transfer-engine/test/unit/distributed:/test_config:ro
+      - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-.}}/build:/workspace/build:rw
       - hdd2-storage:/mnt/hdd2
     environment:
       - NODE_ID=2
       - NODE_IP=172.26.0.11
-      - CONTAINER_HOSTFILE=/etc/iowarp/hostfile
-      - WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml
+      - CONTAINER_HOSTFILE=/test_config/hostfile
+      - WRP_RUNTIME_CONF=/test_config/wrp_config.yaml
       - CTE_NUM_NODES=4
     shm_size: '16gb'
     mem_limit: 16g
@@ -105,7 +100,8 @@ services:
         sudo chown -R iowarp:iowarp /mnt &&
         mkdir -p /mnt/hdd2 &&
         export PATH=/usr/local/bin:$$PATH &&
-        export WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml &&
+        export WRP_RUNTIME_CONF=/test_config/wrp_config.yaml &&
+        export CONTAINER_HOSTFILE=/test_config/hostfile &&
         echo '========================================' &&
         echo 'Node 2: Starting Chimaera runtime in foreground' &&
         echo '========================================' &&
@@ -122,14 +118,14 @@ services:
       cte-cluster:
         ipv4_address: 172.26.0.12
     volumes:
-      - ${IOWARP_CORE_ROOT:-.}/context-transfer-engine/test/unit/distributed:/etc/iowarp:ro
-      - ${IOWARP_BUILD_DIR:-${IOWARP_CORE_ROOT:-.}/build}:/workspace/build:rw
+      - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-.}}/context-transfer-engine/test/unit/distributed:/test_config:ro
+      - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-.}}/build:/workspace/build:rw
       - hdd3-storage:/mnt/hdd3
     environment:
       - NODE_ID=3
       - NODE_IP=172.26.0.12
-      - CONTAINER_HOSTFILE=/etc/iowarp/hostfile
-      - WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml
+      - CONTAINER_HOSTFILE=/test_config/hostfile
+      - WRP_RUNTIME_CONF=/test_config/wrp_config.yaml
       - CTE_NUM_NODES=4
     shm_size: '16gb'
     mem_limit: 16g
@@ -143,7 +139,8 @@ services:
         sudo chown -R iowarp:iowarp /mnt &&
         mkdir -p /mnt/hdd3 &&
         export PATH=/usr/local/bin:$$PATH &&
-        export WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml &&
+        export WRP_RUNTIME_CONF=/test_config/wrp_config.yaml &&
+        export CONTAINER_HOSTFILE=/test_config/hostfile &&
         echo '========================================' &&
         echo 'Node 3: Starting Chimaera runtime in foreground' &&
         echo '========================================' &&
@@ -160,14 +157,14 @@ services:
       cte-cluster:
         ipv4_address: 172.26.0.13
     volumes:
-      - ${IOWARP_CORE_ROOT:-.}/context-transfer-engine/test/unit/distributed:/etc/iowarp:ro
-      - ${IOWARP_BUILD_DIR:-${IOWARP_CORE_ROOT:-.}/build}:/workspace/build:rw
+      - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-.}}/context-transfer-engine/test/unit/distributed:/test_config:ro
+      - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-.}}/build:/workspace/build:rw
       - hdd4-storage:/mnt/hdd4
     environment:
       - NODE_ID=4
       - NODE_IP=172.26.0.13
-      - CONTAINER_HOSTFILE=/etc/iowarp/hostfile
-      - WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml
+      - CONTAINER_HOSTFILE=/test_config/hostfile
+      - WRP_RUNTIME_CONF=/test_config/wrp_config.yaml
       - CTE_NUM_NODES=4
     shm_size: '16gb'
     mem_limit: 16g
@@ -181,7 +178,8 @@ services:
         sudo chown -R iowarp:iowarp /mnt &&
         mkdir -p /mnt/hdd4 &&
         export PATH=/usr/local/bin:$$PATH &&
-        export WRP_RUNTIME_CONF=/etc/iowarp/wrp_config.yaml &&
+        export WRP_RUNTIME_CONF=/test_config/wrp_config.yaml &&
+        export CONTAINER_HOSTFILE=/test_config/hostfile &&
         echo '========================================' &&
         echo 'Node 4: Starting Chimaera runtime in foreground' &&
         echo '========================================' &&

@@ -17,6 +17,8 @@ namespace bctx = boost::context::detail;
 namespace chi {
 
 void Task::Wait(std::atomic<u32> &is_complete, double yield_time_us) {
+  HLOG(kInfo, "[TRACE] Task::Wait START - task_id={}, pool_id={}, method={}, is_complete={}",
+       task_id_, pool_id_, method_, is_complete.load());
   auto *chimaera_manager = CHI_CHIMAERA_MANAGER;
   if (chimaera_manager && chimaera_manager->IsRuntime()) {
     // Runtime implementation: Yield until is_complete is set
@@ -61,10 +63,18 @@ void Task::Wait(std::atomic<u32> &is_complete, double yield_time_us) {
     } while (is_complete.load() == 0);
   } else {
     // Client implementation: Busy-wait on is_complete flag
+    HLOG(kInfo, "[TRACE] Task::Wait - client mode, busy-waiting on is_complete");
+    int wait_count = 0;
     while (is_complete.load() == 0) {
+      wait_count++;
+      if (wait_count % 1000000 == 0) {
+        HLOG(kInfo, "[TRACE] Task::Wait - still waiting, count={}, task_id={}", wait_count, task_id_);
+      }
       YieldBase();
     }
+    HLOG(kInfo, "[TRACE] Task::Wait - client mode, wait complete after {} iterations", wait_count);
   }
+  HLOG(kInfo, "[TRACE] Task::Wait END - task_id={}, is_complete={}", task_id_, is_complete.load());
 }
 
 void Task::YieldBase() {

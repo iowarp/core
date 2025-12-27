@@ -910,9 +910,11 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
       // ExecTask will handle checking if the task is complete and ending it
       // properly
       auto *worker = CHI_CUR_WORKER;
-      worker->AddToBlockedQueue(origin_rctx);
-      HLOG(kDebug, "[RecvOut] Added origin task {} back to blocked queue",
+      HLOG(kInfo, "[TRACE] RecvOut - ALL replicas complete for task {}, adding to blocked queue",
            origin_task->task_id_);
+      worker->AddToBlockedQueue(origin_rctx);
+      HLOG(kInfo, "[TRACE] RecvOut - Added origin task {} to blocked queue, run_ctx={:#x}",
+           origin_task->task_id_, reinterpret_cast<uintptr_t>(origin_rctx));
     }
   }
 
