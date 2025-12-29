@@ -152,11 +152,17 @@ void AllocationWorkerThread(size_t thread_id, const BenchmarkConfig &config,
   // Continuously perform allocate/free operations until stop signal
   while (!stop_flag.load(std::memory_order_relaxed)) {
     // Allocate blocks
-    auto blocks = bdev_client.AllocateBlocks(chi::PoolQuery::Local(),
-                                             alloc_size);
+    auto alloc_task = bdev_client.AsyncAllocateBlocks(chi::PoolQuery::Local(),
+                                                       alloc_size);
+    alloc_task.Wait();
+    std::vector<chimaera::bdev::Block> blocks;
+    for (size_t i = 0; i < alloc_task->blocks_.size(); ++i) {
+      blocks.push_back(alloc_task->blocks_[i]);
+    }
 
     // Free blocks immediately
-    bdev_client.FreeBlocks(chi::PoolQuery::Local(), blocks);
+    auto free_task = bdev_client.AsyncFreeBlocks(chi::PoolQuery::Local(), blocks);
+    free_task.Wait();
 
     local_ops++;
 
@@ -274,8 +280,13 @@ void IOWorkerThread(size_t thread_id, const BenchmarkConfig &config,
   // Continuously perform I/O operations until stop signal
   while (!stop_flag.load(std::memory_order_relaxed)) {
     // Allocate blocks for the requested I/O size
-    auto blocks = bdev_client.AllocateBlocks(chi::PoolQuery::Local(),
-                                             config.io_size);
+    auto alloc_task = bdev_client.AsyncAllocateBlocks(chi::PoolQuery::Local(),
+                                                       config.io_size);
+    alloc_task.Wait();
+    std::vector<chimaera::bdev::Block> blocks;
+    for (size_t i = 0; i < alloc_task->blocks_.size(); ++i) {
+      blocks.push_back(alloc_task->blocks_[i]);
+    }
 
     // Write data across all allocated blocks
     size_t bytes_written = 0;
@@ -287,9 +298,10 @@ void IOWorkerThread(size_t thread_id, const BenchmarkConfig &config,
       chimaera::bdev::ArrayVector<chimaera::bdev::Block, 128> single_block;
       single_block.push_back(blocks[block_idx]);
 
-      chi::u64 ret =
-          bdev_client.Write(chi::PoolQuery::Local(),
-                            single_block, write_buffer.shm_.template Cast<void>(), bytes_to_write);
+      auto write_task = bdev_client.AsyncWrite(chi::PoolQuery::Local(),
+                                                single_block, write_buffer.shm_.template Cast<void>(), bytes_to_write);
+      write_task.Wait();
+      chi::u64 ret = write_task->bytes_written_;
       if (ret != bytes_to_write) {
         std::cerr << "ERROR: Thread " << thread_id
                   << " failed to write data to block " << block_idx << "\n";
@@ -300,7 +312,8 @@ void IOWorkerThread(size_t thread_id, const BenchmarkConfig &config,
     }
 
     // Free blocks
-    bdev_client.FreeBlocks(chi::PoolQuery::Local(), blocks);
+    auto free_task = bdev_client.AsyncFreeBlocks(chi::PoolQuery::Local(), blocks);
+    free_task.Wait();
 
     local_ops++;
     local_bytes += config.io_size;
@@ -351,11 +364,12 @@ void LatencyWorkerThread(size_t thread_id, const BenchmarkConfig &config,
 
   // Continuously perform Custom operations until stop signal
   std::string input_data = "test";
-  std::string output_data;
   while (!stop_flag.load(std::memory_order_relaxed)) {
     // Call Custom with simple operation (operation_id = 0)
-    chi::u32 result = mod_client.Custom(chi::PoolQuery::Broadcast(),
-                                        input_data, 0, output_data);
+    auto task = mod_client.AsyncCustom(chi::PoolQuery::Broadcast(),
+                                        input_data, 0);
+    task.Wait();
+    chi::u32 result = task->return_code_;
 
     // Verify result (should echo back input_data)
     if (result != 0) {
@@ -476,11 +490,14 @@ int main(int argc, char **argv) {
     // Create MOD_NAME container for latency test
     test_pool_id = chi::PoolId(8000, 0);
     chimaera::MOD_NAME::Client mod_client(test_pool_id);
-    mod_client.Create(chi::PoolQuery::Broadcast(),
+    auto create_task = mod_client.AsyncCreate(chi::PoolQuery::Broadcast(),
                       "latency_test_pool", test_pool_id);
-    if (mod_client.GetReturnCode() != 0) {
+    create_task.Wait();
+    mod_client.pool_id_ = create_task->new_pool_id_;
+    mod_client.return_code_ = create_task->return_code_;
+    if (create_task->GetReturnCode() != 0) {
       std::cerr << "ERROR: Failed to create MOD_NAME container (return code: "
-                << mod_client.GetReturnCode() << ")\n";
+                << create_task->GetReturnCode() << ")\n";
       return 1;
     }
   } else {
@@ -515,11 +532,17 @@ int main(int argc, char **argv) {
       std::cout << "Using file-based BDev: " << pool_name << "\n";
     }
 
-    bdev_client.Create(chi::PoolQuery::Broadcast(), pool_name,
-                       test_pool_id, bdev_type, config.max_file_size, 32, 4096);
-    if (bdev_client.GetReturnCode() != 0) {
+    auto create_task = bdev_client.AsyncCreate(chi::PoolQuery::Broadcast(), pool_name,
+                                                test_pool_id, bdev_type, config.max_file_size, 32, 4096);
+    create_task.Wait();
+
+    // Update client pool_id_ with the actual pool ID from the task
+    bdev_client.pool_id_ = create_task->new_pool_id_;
+    bdev_client.return_code_ = create_task->return_code_;
+
+    if (create_task->GetReturnCode() != 0) {
       std::cerr << "ERROR: Failed to create BDev container (return code: "
-                << bdev_client.GetReturnCode() << ")\n";
+                << create_task->GetReturnCode() << ")\n";
       return 1;
     }
   }

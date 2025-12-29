@@ -253,7 +253,6 @@ class Client : public chi::ContainerClient {
     // CRITICAL: Update client pool_id_ with the actual pool ID from the task
     pool_id_ = task->new_pool_id_;
     
-    CHI_IPC->DelTask(task);
   }
 
   /**
@@ -1939,7 +1938,6 @@ void Create(const hipc::MemContext& mctx,
     // CRITICAL: Update client pool_id_ with the actual pool ID from the task
     pool_id_ = task->new_pool_id_;
 
-    CHI_IPC->DelTask(task);
 }
 ```
 
@@ -1992,7 +1990,6 @@ void Create(const hipc::MemContext& mctx,
     // CRITICAL: Update client pool_id_ with the actual pool ID from the task
     pool_id_ = task->new_pool_id_;
 
-    CHI_IPC->DelTask(task);
 }
 
 // MOD_NAME client Create method (simple case)
@@ -2006,7 +2003,6 @@ void Create(const hipc::MemContext& mctx,
     // CRITICAL: Update client pool_id_ with the actual pool ID from the task
     pool_id_ = task->new_pool_id_;
 
-    CHI_IPC->DelTask(task);
 }
 ```
 
@@ -4103,7 +4099,6 @@ When creating a new Chimaera module, ensure you have:
 - [ ] Inherits from `chi::ContainerClient`
 - [ ] Uses `CHI_IPC->NewTask<TaskType>()` for allocation
 - [ ] Uses `CHI_IPC->Enqueue()` for task submission
-- [ ] Uses `CHI_IPC->DelTask()` for cleanup
 - [ ] Provides both sync and async methods
 - [ ] **CRITICAL**: Create methods update `pool_id_ = task->new_pool_id_` after task completion
 

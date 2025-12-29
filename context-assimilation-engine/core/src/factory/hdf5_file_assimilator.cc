@@ -292,8 +292,10 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
   HLOG(kInfo, "ProcessDataset: Creating tag: '{}'", tag_name);
 
   // Get or create the tag in CTE
-    HLOG(kInfo, "ProcessDataset: Calling GetOrCreateTag for '{}'...", tag_name);
-  wrp_cte::core::TagId tag_id = cte_client_->GetOrCreateTag(tag_name);
+  HLOG(kInfo, "ProcessDataset: Calling GetOrCreateTag for '{}'...", tag_name);
+  auto tag_task = cte_client_->AsyncGetOrCreateTag(tag_name);
+  tag_task.Wait();
+  wrp_cte::core::TagId tag_id = tag_task->tag_id_;
   if (tag_id.IsNull()) {
     HLOG(kError, "Hdf5FileAssimilator: Failed to get or create tag '{}'", tag_name);
     H5Tclose(datatype_id);
@@ -319,13 +321,11 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
   if (desc_task->return_code_ != 0) {
     HLOG(kError, "Hdf5FileAssimilator: Failed to store description for dataset '{}', return_code: {}",
           dataset_path, desc_task->return_code_);
-    CHI_IPC->DelTask(desc_task.GetTaskPtr());
     H5Tclose(datatype_id);
     H5Sclose(dataspace_id);
     H5Dclose(dataset_id);
     return -6;
   }
-  CHI_IPC->DelTask(desc_task.GetTaskPtr());
   HLOG(kInfo, "ProcessDataset: Description blob stored successfully");
 
   HLOG(kInfo, "Hdf5FileAssimilator: Stored description for '{}': {}", tag_name, description);
@@ -488,7 +488,6 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
               first_task->return_code_);
         // Free the buffer before deleting the task
         CHI_IPC->FreeBuffer(first_task->blob_data_.template Cast<char>());
-        CHI_IPC->DelTask(first_task.GetTaskPtr());
         CHI_IPC->FreeBuffer(read_buffer);
         H5Tclose(datatype_id);
         H5Sclose(dataspace_id);
@@ -499,7 +498,6 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
       HLOG(kInfo, "ProcessDataset: First task completed successfully");
       // Free the buffer before deleting the task
       CHI_IPC->FreeBuffer(first_task->blob_data_.template Cast<char>());
-      CHI_IPC->DelTask(first_task.GetTaskPtr());
       active_tasks.erase(active_tasks.begin());
     }
   }
@@ -514,7 +512,6 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
             task->return_code_);
       // Free the buffer before deleting the task
       CHI_IPC->FreeBuffer(task->blob_data_.template Cast<char>());
-      CHI_IPC->DelTask(task.GetTaskPtr());
       CHI_IPC->FreeBuffer(read_buffer);
       H5Tclose(datatype_id);
       H5Sclose(dataspace_id);
@@ -523,7 +520,6 @@ int Hdf5FileAssimilator::ProcessDataset(hid_t file_id,
     }
     // Free the buffer before deleting the task
     CHI_IPC->FreeBuffer(task->blob_data_.template Cast<char>());
-    CHI_IPC->DelTask(task.GetTaskPtr());
   }
 
   HLOG(kInfo, "ProcessDataset: All tasks completed, cleaning up resources...");

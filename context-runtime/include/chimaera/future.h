@@ -2,6 +2,7 @@
 #define CHIMAERA_INCLUDE_CHIMAERA_FUTURE_H_
 
 #include <atomic>
+#include <coroutine>
 #include "hermes_shm/data_structures/ipc/vector.h"
 #include "hermes_shm/data_structures/ipc/shm_container.h"
 #include "hermes_shm/memory/allocator/allocator.h"
@@ -13,6 +14,176 @@ namespace chi {
 class Task;
 class IpcManager;
 struct RunContext;
+
+/**
+ * TaskResume - Coroutine return type for runtime methods
+ *
+ * This lightweight class serves as the return type for ChiMod Run methods
+ * that use C++20 coroutines. It holds a coroutine handle and provides
+ * methods to resume and check completion status.
+ */
+class TaskResume {
+ public:
+  /**
+   * Promise type for C++20 coroutine machinery
+   *
+   * The promise_type defines how the coroutine behaves at various points:
+   * - initial_suspend: suspend immediately (lazy start)
+   * - final_suspend: suspend at end (allow cleanup)
+   * - return_void: coroutines return void
+   */
+  struct promise_type {
+    /** Pointer to the RunContext for this coroutine */
+    RunContext* run_ctx_ = nullptr;
+
+    /**
+     * Create the TaskResume object from this promise
+     * @return TaskResume wrapping the coroutine handle
+     */
+    TaskResume get_return_object() {
+      return TaskResume(
+          std::coroutine_handle<promise_type>::from_promise(*this));
+    }
+
+    /**
+     * Suspend immediately on coroutine start (lazy evaluation)
+     * @return Always suspend
+     */
+    std::suspend_always initial_suspend() noexcept { return {}; }
+
+    /**
+     * Suspend at final suspension point (allows cleanup)
+     * @return Always suspend
+     */
+    std::suspend_always final_suspend() noexcept { return {}; }
+
+    /**
+     * Handle void return from coroutine
+     */
+    void return_void() {}
+
+    /**
+     * Handle unhandled exceptions by terminating
+     */
+    void unhandled_exception() { std::terminate(); }
+
+    /**
+     * Set the RunContext for this coroutine
+     * @param ctx Pointer to RunContext
+     */
+    void set_run_context(RunContext* ctx) { run_ctx_ = ctx; }
+
+    /**
+     * Get the RunContext for this coroutine
+     * @return Pointer to RunContext
+     */
+    RunContext* get_run_context() const { return run_ctx_; }
+  };
+
+  using handle_type = std::coroutine_handle<promise_type>;
+
+ private:
+  /** The coroutine handle */
+  handle_type handle_;
+
+ public:
+  /**
+   * Construct from coroutine handle
+   * @param h The coroutine handle
+   */
+  explicit TaskResume(handle_type h) : handle_(h) {}
+
+  /**
+   * Default constructor - null handle
+   */
+  TaskResume() : handle_(nullptr) {}
+
+  /**
+   * Move constructor
+   * @param other TaskResume to move from
+   */
+  TaskResume(TaskResume&& other) noexcept : handle_(other.handle_) {
+    other.handle_ = nullptr;
+  }
+
+  /**
+   * Move assignment operator
+   * @param other TaskResume to move from
+   * @return Reference to this
+   */
+  TaskResume& operator=(TaskResume&& other) noexcept {
+    if (this != &other) {
+      if (handle_) {
+        handle_.destroy();
+      }
+      handle_ = other.handle_;
+      other.handle_ = nullptr;
+    }
+    return *this;
+  }
+
+  /** Disable copy constructor */
+  TaskResume(const TaskResume&) = delete;
+
+  /** Disable copy assignment */
+  TaskResume& operator=(const TaskResume&) = delete;
+
+  /**
+   * Destructor - destroys the coroutine handle
+   */
+  ~TaskResume() {
+    if (handle_) {
+      handle_.destroy();
+    }
+  }
+
+  /**
+   * Get the coroutine handle
+   * @return The coroutine handle
+   */
+  handle_type get_handle() const { return handle_; }
+
+  /**
+   * Check if coroutine is done
+   * @return True if coroutine has completed
+   */
+  bool done() const { return handle_ && handle_.done(); }
+
+  /**
+   * Resume the coroutine
+   */
+  void resume() {
+    if (handle_ && !handle_.done()) {
+      handle_.resume();
+    }
+  }
+
+  /**
+   * Destroy the coroutine handle manually
+   */
+  void destroy() {
+    if (handle_) {
+      handle_.destroy();
+      handle_ = nullptr;
+    }
+  }
+
+  /**
+   * Check if the handle is valid
+   * @return True if handle is not null
+   */
+  explicit operator bool() const { return handle_ != nullptr; }
+
+  /**
+   * Release ownership of the handle without destroying it
+   * @return The coroutine handle
+   */
+  handle_type release() {
+    handle_type h = handle_;
+    handle_ = nullptr;
+    return h;
+  }
+};
 
 /**
  * FutureShm - Shared memory container for task future state
@@ -76,6 +247,9 @@ class Future {
   /** Parent task RunContext pointer (nullptr if no parent waiting) */
   RunContext* parent_task_;
 
+  /** Flag indicating if this Future owns the task and should destroy it */
+  bool is_owner_;
+
  public:
   /**
    * Constructor with allocator - allocates new FutureShm
@@ -84,7 +258,8 @@ class Future {
    */
   Future(AllocT* alloc, hipc::FullPtr<TaskT> task_ptr)
       : task_ptr_(task_ptr),
-        parent_task_(nullptr) {
+        parent_task_(nullptr),
+        is_owner_(false) {
     // Allocate FutureShm object
     future_shm_ = alloc->template NewObj<FutureT>(alloc).template Cast<FutureT>();
     // Copy pool_id to FutureShm
@@ -103,7 +278,8 @@ class Future {
   Future(AllocT* alloc, hipc::FullPtr<TaskT> task_ptr, hipc::ShmPtr<FutureT> future_shm)
       : task_ptr_(task_ptr),
         future_shm_(alloc, future_shm),
-        parent_task_(nullptr) {}
+        parent_task_(nullptr),
+        is_owner_(false) {}
 
   /**
    * Constructor from FullPtr<FutureShm> and FullPtr<Task>
@@ -113,14 +289,15 @@ class Future {
   Future(hipc::FullPtr<FutureT> future_shm, hipc::FullPtr<TaskT> task_ptr)
       : task_ptr_(task_ptr),
         future_shm_(future_shm),
-        parent_task_(nullptr) {
+        parent_task_(nullptr),
+        is_owner_(false) {
     // No need to copy pool_id - FutureShm already has it
   }
 
   /**
    * Default constructor - creates null future
    */
-  Future() : parent_task_(nullptr) {}
+  Future() : parent_task_(nullptr), is_owner_(false) {}
 
   /**
    * Constructor from ShmPtr<FutureShm> - used by ring buffer deserialization
@@ -129,7 +306,8 @@ class Future {
    */
   explicit Future(const hipc::ShmPtr<FutureT>& future_shm_ptr)
       : future_shm_(nullptr, future_shm_ptr),
-        parent_task_(nullptr) {
+        parent_task_(nullptr),
+        is_owner_(false) {
     // Task pointer starts null - will be set in ProcessNewTasks
     task_ptr_.SetNull();
   }
@@ -145,50 +323,79 @@ class Future {
   }
 
   /**
-   * Copy constructor
+   * Destructor - destroys the task if this Future owns it
+   */
+  ~Future() {
+    if (is_owner_) {
+      Destroy();
+    }
+  }
+
+  /**
+   * Destroy the task using CHI_IPC->DelTask if not null
+   * Sets the task pointer to null afterwards
+   */
+  void Destroy();
+
+  /**
+   * Copy constructor - does not transfer ownership
    * @param other Future to copy from
    */
   Future(const Future& other)
       : task_ptr_(other.task_ptr_),
         future_shm_(other.future_shm_),
-        parent_task_(other.parent_task_) {}
+        parent_task_(other.parent_task_),
+        is_owner_(false) {}  // Copy does not transfer ownership
 
   /**
-   * Copy assignment operator
+   * Copy assignment operator - does not transfer ownership
    * @param other Future to copy from
    * @return Reference to this future
    */
   Future& operator=(const Future& other) {
     if (this != &other) {
+      // Destroy existing task if we own it
+      if (is_owner_) {
+        Destroy();
+      }
       task_ptr_ = other.task_ptr_;
       future_shm_ = other.future_shm_;
       parent_task_ = other.parent_task_;
+      is_owner_ = false;  // Copy does not transfer ownership
     }
     return *this;
   }
 
   /**
-   * Move constructor
+   * Move constructor - transfers ownership
    * @param other Future to move from
    */
   Future(Future&& other) noexcept
       : task_ptr_(std::move(other.task_ptr_)),
         future_shm_(std::move(other.future_shm_)),
-        parent_task_(other.parent_task_) {
+        parent_task_(other.parent_task_),
+        is_owner_(other.is_owner_) {  // Transfer ownership
     other.parent_task_ = nullptr;
+    other.is_owner_ = false;  // Source no longer owns
   }
 
   /**
-   * Move assignment operator
+   * Move assignment operator - transfers ownership
    * @param other Future to move from
    * @return Reference to this future
    */
   Future& operator=(Future&& other) noexcept {
     if (this != &other) {
+      // Destroy existing task if we own it
+      if (is_owner_) {
+        Destroy();
+      }
       task_ptr_ = std::move(other.task_ptr_);
       future_shm_ = std::move(other.future_shm_);
       parent_task_ = other.parent_task_;
+      is_owner_ = other.is_owner_;  // Transfer ownership
       other.parent_task_ = nullptr;
+      other.is_owner_ = false;  // Source no longer owns
     }
     return *this;
   }
@@ -318,8 +525,10 @@ class Future {
    * have identical memory layouts - they both store the same underlying
    * pointers (task_ptr_, future_shm_, parent_task_).
    *
+   * Note: Cast does not transfer ownership - the original Future retains it.
+   *
    * @tparam NewTaskT The new task type to cast to
-   * @return Future<NewTaskT> with the same underlying state
+   * @return Future<NewTaskT> with the same underlying state (non-owning)
    */
   template<typename NewTaskT>
   Future<NewTaskT, AllocT> Cast() const {
@@ -329,6 +538,7 @@ class Future {
     result.task_ptr_ = task_ptr_.template Cast<NewTaskT>();
     result.future_shm_ = future_shm_;
     result.parent_task_ = parent_task_;
+    result.is_owner_ = false;  // Cast does not transfer ownership
     return result;
   }
 
@@ -347,7 +557,139 @@ class Future {
   void SetParentTask(RunContext* parent_task) {
     parent_task_ = parent_task;
   }
+
+  // =========================================================================
+  // C++20 Coroutine Awaitable Interface
+  // These methods allow `co_await future` in runtime coroutines
+  // =========================================================================
+
+  /**
+   * Check if the awaitable is ready (coroutine await_ready)
+   *
+   * If the task is already complete, the coroutine won't suspend.
+   * @return True if task is complete, false if coroutine should suspend
+   */
+  bool await_ready() const noexcept {
+    return IsComplete();
+  }
+
+  /**
+   * Suspend the coroutine and register for resumption (coroutine await_suspend)
+   *
+   * This is called when await_ready returns false. It stores the coroutine
+   * handle in the RunContext so the worker can resume it when the task
+   * completes. Also marks this Future as the owner of the task.
+   *
+   * @tparam PromiseT The promise type of the calling coroutine
+   * @param handle The coroutine handle to resume when task completes
+   * @return True to suspend, false to continue without suspending
+   */
+  template<typename PromiseT>
+  bool await_suspend(std::coroutine_handle<PromiseT> handle) noexcept {
+    // Mark this Future as owner of the task (will be destroyed on Future destruction)
+    is_owner_ = true;
+    auto* run_ctx = handle.promise().get_run_context();
+    if (!run_ctx) {
+      // No RunContext available, don't suspend
+      return false;
+    }
+    // Store parent context for resumption tracking
+    SetParentTask(run_ctx);
+    // Store coroutine handle in RunContext for worker to resume
+    run_ctx->coro_handle_ = handle;
+    run_ctx->is_yielded_ = true;
+    run_ctx->yield_time_us_ = 0.0;
+    return true;  // Suspend the coroutine
+  }
+
+  /**
+   * Get the result after resumption (coroutine await_resume)
+   *
+   * Returns reference to this Future so caller can access the completed task.
+   * Marks this Future as the owner if not already set (for await_ready=true case).
+   * @return Reference to this Future
+   */
+  Future<TaskT, AllocT>& await_resume() noexcept {
+    // If await_ready returned true, await_suspend wasn't called, so set ownership here
+    is_owner_ = true;
+    return *this;
+  }
 };
+
+/**
+ * YieldAwaiter - Awaitable for yielding control in coroutines
+ *
+ * This class implements the awaitable interface for cooperative yielding
+ * within ChiMod runtime coroutines. It allows tasks to yield control
+ * back to the worker with an optional delay before resumption.
+ *
+ * Usage:
+ *   co_await chi::yield();       // Yield immediately
+ *   co_await chi::yield(25.0);   // Yield with 25 microsecond delay
+ */
+class YieldAwaiter {
+ private:
+  /** Time in microseconds to delay before resumption */
+  double yield_time_us_;
+
+ public:
+  /**
+   * Construct a YieldAwaiter with optional delay
+   * @param us Microseconds to delay before resumption (default: 0)
+   */
+  explicit YieldAwaiter(double us = 0.0) : yield_time_us_(us) {}
+
+  /**
+   * Yield is never immediately ready - always suspends
+   * @return Always false (always suspend)
+   */
+  bool await_ready() const noexcept {
+    return false;
+  }
+
+  /**
+   * Suspend the coroutine and mark for yielded resumption
+   *
+   * @tparam PromiseT The promise type of the calling coroutine
+   * @param handle The coroutine handle to resume after yield
+   * @return True to suspend, false if no RunContext available
+   */
+  template<typename PromiseT>
+  bool await_suspend(std::coroutine_handle<PromiseT> handle) noexcept {
+    auto* run_ctx = handle.promise().get_run_context();
+    if (!run_ctx) {
+      // No RunContext available, don't suspend
+      return false;
+    }
+    // Store coroutine handle in RunContext for worker to resume
+    run_ctx->coro_handle_ = handle;
+    run_ctx->is_yielded_ = true;
+    run_ctx->yield_time_us_ = yield_time_us_;
+    return true;  // Suspend the coroutine
+  }
+
+  /**
+   * Resume after yield - nothing to return
+   */
+  void await_resume() noexcept {}
+};
+
+/**
+ * Create a YieldAwaiter for cooperative yielding in coroutines
+ *
+ * This function provides a clean syntax for yielding control within
+ * ChiMod runtime coroutines.
+ *
+ * @param us Microseconds to delay before resumption (default: 0)
+ * @return YieldAwaiter object that can be co_awaited
+ *
+ * Usage:
+ *   co_await chi::yield();       // Yield immediately
+ *   co_await chi::yield(25.0);   // Yield with 25 microsecond delay
+ */
+inline YieldAwaiter yield(double us = 0.0) {
+  return YieldAwaiter(us);
+}
 
 }  // namespace chi
 

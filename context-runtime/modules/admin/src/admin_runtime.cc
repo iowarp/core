@@ -237,7 +237,7 @@ void Runtime::InitiateShutdown(chi::u32 grace_period_ms) {
   std::abort();
 }
 
-void Runtime::Flush(hipc::FullPtr<FlushTask> task, chi::RunContext &rctx) {
+chi::TaskResume Runtime::Flush(hipc::FullPtr<FlushTask> task, chi::RunContext &rctx) {
   HLOG(kDebug, "Admin: Executing Flush task");
 
   // Initialize output values
@@ -249,7 +249,7 @@ void Runtime::Flush(hipc::FullPtr<FlushTask> task, chi::RunContext &rctx) {
     auto *work_orchestrator = CHI_WORK_ORCHESTRATOR;
     if (!work_orchestrator || !work_orchestrator->IsInitialized()) {
       task->return_code_ = 1;
-      return;
+      co_return;
     }
 
     // Loop until all work is complete
@@ -259,8 +259,8 @@ void Runtime::Flush(hipc::FullPtr<FlushTask> task, chi::RunContext &rctx) {
            "Admin: Flush found {} work units still remaining, waiting...",
            total_work_remaining);
 
-      // Brief sleep to avoid busy waiting
-      task->Yield(25);
+      // Brief yield to avoid busy waiting
+      co_await chi::yield(25);
     }
 
     // Store the final work count (should be 0)
@@ -274,6 +274,7 @@ void Runtime::Flush(hipc::FullPtr<FlushTask> task, chi::RunContext &rctx) {
     task->return_code_ = 99;
     HLOG(kError, "Admin: Flush failed with exception: {}", e.what());
   }
+  co_return;
 }
 
 //===========================================================================
@@ -290,11 +291,6 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
   auto *ipc_manager = CHI_IPC;
   auto *pool_manager = CHI_POOL_MANAGER;
 
-  // Log host information at method entry
-  const auto &this_host = CHI_IPC->GetThisHost();
-  HLOG(kDebug, "SendIn executing on host {} (node_id: {})",
-       this_host.ip_address, this_host.node_id);
-
   // Validate origin_task
   if (origin_task.IsNull()) {
     HLOG(kError, "SendIn: origin_task is null");
@@ -309,10 +305,6 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
     return;
   }
 
-  HLOG(kDebug,
-       "=== [SendIn BEGIN] Task {} (pool: {}) starting distributed send ===",
-       origin_task->task_id_, origin_task->pool_id_);
-
   // Pre-allocate send_map_key using origin_task pointer
   // This ensures consistent net_key across all replicas
   size_t send_map_key = size_t(origin_task.ptr_);
@@ -320,8 +312,6 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
   // Add the origin task to send_map before creating copies
   // Note: No lock needed - single net worker processes all Send/Recv tasks
   send_map_[send_map_key] = origin_task;
-  HLOG(kDebug, "[SendIn] Added origin task {} to send_map with net_key {}",
-       origin_task->task_id_, send_map_key);
 
   // Get pool_queries from task's RunContext
   chi::RunContext *origin_task_rctx = origin_task->run_ctx_;
@@ -337,49 +327,30 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
   // Reserve space for all replicas in subtasks vector BEFORE the loop
   // This ensures subtasks_.size() reflects the correct total replica count
   origin_task_rctx->subtasks_.resize(num_replicas);
-  HLOG(kDebug, "[SendIn] Reserved space for {} replicas in subtasks vector",
-       num_replicas);
+
+  HLOG(kDebug, "[SendIn] Task {} to {} replicas",
+       origin_task->task_id_, num_replicas);
 
   // Send to each target in pool_queries
-  HLOG(kDebug, "SendIn - processing {} replicas for pool_id={}", num_replicas,
-       origin_task->pool_id_);
-
   for (size_t i = 0; i < num_replicas; ++i) {
     const chi::PoolQuery &query = pool_queries[i];
-
-    HLOG(kDebug,
-         "SendIn - replica {} routing_mode={}, range_offset={}, range_count={}",
-         i, static_cast<int>(query.GetRoutingMode()), query.GetRangeOffset(),
-         query.GetRangeCount());
 
     // Determine target node_id based on query type
     chi::u64 target_node_id = 0;
 
     if (query.IsLocalMode()) {
       target_node_id = ipc_manager->GetNodeId();
-      HLOG(kDebug, "SendIn - replica {} LocalMode -> target_node_id={}", i,
-           target_node_id);
     } else if (query.IsPhysicalMode()) {
       target_node_id = query.GetNodeId();
-      HLOG(kDebug, "SendIn - replica {} PhysicalMode -> target_node_id={}", i,
-           target_node_id);
     } else if (query.IsDirectIdMode()) {
       chi::ContainerId container_id = query.GetContainerId();
       target_node_id =
           pool_manager->GetContainerNodeId(origin_task->pool_id_, container_id);
-      HLOG(kDebug,
-           "SendIn - replica {} DirectIdMode container_id={} -> "
-           "target_node_id={}",
-           i, container_id, target_node_id);
     } else if (query.IsRangeMode()) {
       chi::u32 offset = query.GetRangeOffset();
       chi::ContainerId container_id(offset);
       target_node_id =
           pool_manager->GetContainerNodeId(origin_task->pool_id_, container_id);
-      HLOG(kDebug,
-           "SendIn - replica {} RangeMode offset={} container_id={} -> "
-           "target_node_id={}",
-           i, offset, container_id, target_node_id);
     } else if (query.IsBroadcastMode()) {
       HLOG(kError,
            "Admin: Broadcast mode should be handled by "
@@ -403,14 +374,9 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
       continue;
     }
 
-    HLOG(kDebug, "SendIn - replica {} target_host: ip={}, node_id={}", i,
-         target_host->ip_address, target_host->node_id);
-
     // Get or create persistent Lightbeam client using connection pool
     auto *config_manager = CHI_CONFIG_MANAGER;
     int port = static_cast<int>(config_manager->GetPort());
-    HLOG(kDebug, "SendIn - getting pooled client to {}:{}",
-         target_host->ip_address, port);
     hshm::lbm::Client *lbm_client =
         ipc_manager->GetOrCreateClient(target_host->ip_address, port);
 
@@ -419,8 +385,6 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
            origin_task->task_id_, target_host->ip_address, port);
       continue;
     }
-
-    HLOG(kDebug, "SendIn - lbm_client obtained from pool: OK");
 
     // Create SaveTaskArchive with SerializeIn mode and lbm_client
     chi::SaveTaskArchive archive(chi::MsgType::kSerializeIn, lbm_client);
@@ -435,9 +399,6 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
     copy_id.net_key_ = send_map_key;
     copy_id.replica_id_ = i;
 
-    HLOG(kDebug, "SendIn - created task copy {} with net_key {} for node {}",
-         task_copy->task_id_, send_map_key, target_node_id);
-
     // Update the copy's pool query to current query
     task_copy->pool_query_ = query;
 
@@ -447,12 +408,10 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
 
     // Serialize the task using container->SaveTask (Expose will be called
     // automatically for bulks)
-    HLOG(kDebug, "SendIn - serializing task...");
     container->SaveTask(task_copy->method_, archive, task_copy);
 
     // Send using Lightbeam asynchronously (non-blocking)
     // Note: No lock needed - single net worker processes all Send/Recv tasks
-    HLOG(kDebug, "SendIn - calling Lightbeam Send...");
     hshm::lbm::LbmContext ctx(0);  // Non-blocking async send
     int rc = lbm_client->Send(archive, ctx);
 
@@ -462,12 +421,7 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
            origin_task->task_id_, rc);
       continue;
     }
-
-    HLOG(kDebug, "SendIn - task {} sent to node {} (rc={})",
-         task_copy->task_id_, target_node_id, rc);
   }
-
-  HLOG(kDebug, "SendIn END - completed sending to {} targets", num_replicas);
 }
 
 /**
@@ -477,11 +431,6 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
 void Runtime::SendOut(hipc::FullPtr<chi::Task> origin_task) {
   auto *ipc_manager = CHI_IPC;
   auto *pool_manager = CHI_POOL_MANAGER;
-
-  // Log host information at method entry
-  const auto &this_host = CHI_IPC->GetThisHost();
-  HLOG(kDebug, "SendOut executing on host {} (node_id: {})",
-       this_host.ip_address, this_host.node_id);
 
   // Validate origin_task
   if (origin_task.IsNull()) {
@@ -497,16 +446,9 @@ void Runtime::SendOut(hipc::FullPtr<chi::Task> origin_task) {
     return;
   }
 
-  HLOG(kDebug,
-       "=== [SendOut BEGIN] Task {} (pool: {}, method: {}) sending outputs "
-       "back ===",
-       origin_task->task_id_, origin_task->pool_id_, origin_task->method_);
-
   // Remove task from recv_map as we're completing it (use net_key for lookup)
   // Note: No lock needed - single net worker processes all Send/Recv tasks
   size_t net_key = origin_task->task_id_.net_key_;
-  HLOG(kDebug, "[SendOut] Removing task {} from recv_map with net_key {}",
-       origin_task->task_id_, net_key);
   auto *it = recv_map_.find(net_key);
   if (it == nullptr) {
     HLOG(kError,
@@ -558,13 +500,10 @@ void Runtime::SendOut(hipc::FullPtr<chi::Task> origin_task) {
     return;
   }
 
-  HLOG(kDebug, "[SEND] Task {} outputs sent back to node {}",
-       origin_task->task_id_, target_node_id);
+  HLOG(kDebug, "[SendOut] Task {}", origin_task->task_id_);
 
   // Delete the task after sending outputs
   ipc_manager->DelTask(origin_task);
-  HLOG(kDebug, "=== [SendOut END] Task {} completed and deleted ===",
-       origin_task->task_id_);
 }
 
 /**
@@ -613,29 +552,12 @@ void Runtime::RecvIn(hipc::FullPtr<RecvTask> task,
   auto *ipc_manager = CHI_IPC;
   auto *pool_manager = CHI_POOL_MANAGER;
 
-  // Log host information at method entry
-  auto &this_host = CHI_IPC->GetThisHost();
-  HLOG(kDebug, "RecvIn executing on host {} (node_id: {})",
-       this_host.ip_address, this_host.node_id);
-
   const auto &task_infos = archive.GetTaskInfos();
-  HLOG(kDebug,
-       "=== [RecvIn BEGIN] (node={}) Receiving {} task(s) from remote node ===",
-       ipc_manager->GetNodeId(), task_infos.size());
 
   // If no tasks to receive
   if (task_infos.empty()) {
-    HLOG(kDebug, "=== [RecvIn END] No tasks to receive ===");
     task->SetReturnCode(0);
     return;
-  }
-
-  // Log bulk counts from sender's metadata
-  HLOG(kDebug, "[RecvIn] Sender's meta.send has {} entries",
-       archive.send.size());
-  for (size_t i = 0; i < archive.send.size(); ++i) {
-    HLOG(kDebug, "[RecvIn] send[{}]: size={}, flags={}", i,
-         archive.send[i].size, archive.send[i].flags.bits_);
   }
 
   // Allocate buffers for bulk data and expose them for receiving
@@ -646,14 +568,6 @@ void Runtime::RecvIn(hipc::FullPtr<RecvTask> task,
         lbm_server->Expose(buffer, send_bulk.size, send_bulk.flags.bits_));
   }
 
-  // Log recv counts after allocation
-  HLOG(kDebug, "[RecvIn] After allocation, meta.recv has {} entries",
-       archive.recv.size());
-  for (size_t i = 0; i < archive.recv.size(); ++i) {
-    HLOG(kDebug, "[RecvIn] recv[{}]: size={}, flags={}", i,
-         archive.recv[i].size, archive.recv[i].flags.bits_);
-  }
-
   // Receive all bulk data using Lightbeam
   int rc = lbm_server->RecvBulks(archive);
   if (rc != 0) {
@@ -661,9 +575,6 @@ void Runtime::RecvIn(hipc::FullPtr<RecvTask> task,
     task->SetReturnCode(4);
     return;
   }
-
-  HLOG(kDebug, "Admin: Received {} bulk transfers via Lightbeam",
-       archive.recv.size());
 
   for (size_t task_idx = 0; task_idx < task_infos.size(); ++task_idx) {
     const auto &task_info = task_infos[task_idx];
@@ -694,20 +605,14 @@ void Runtime::RecvIn(hipc::FullPtr<RecvTask> task,
     size_t net_key = task_ptr->task_id_.net_key_;
     recv_map_[net_key] = task_ptr;
 
-    HLOG(kDebug,
-         "[RecvIn] Received task {} (pool: {}) with net_key {}, added to "
-         "recv_map",
-         task_ptr->task_id_, task_info.pool_id_, net_key);
+    HLOG(kDebug, "[RecvIn] Task {}", task_ptr->task_id_);
 
     // Send task for execution using IpcManager::Send with awake_event=false
     // Note: This creates a Future and enqueues it to worker lanes
     // awake_event=false prevents setting parent task for received remote tasks
     (void)ipc_manager->Send(task_ptr, false);
-    HLOG(kDebug, "[RECV] Task {} received and sent for execution",
-         task_ptr->task_id_);
   }
 
-  HLOG(kDebug, "=== [RecvIn END] Processed {} task(s) ===", task_infos.size());
   task->SetReturnCode(0);
 }
 
@@ -725,33 +630,16 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
 
   auto *pool_manager = CHI_POOL_MANAGER;
 
-  // Log host information at method entry
-  auto &this_host = CHI_IPC->GetThisHost();
-  HLOG(kDebug, "RecvOut executing on host {} (node_id: {})",
-       this_host.ip_address, this_host.node_id);
-
   const auto &task_infos = archive.GetTaskInfos();
-  HLOG(kDebug,
-       "=== [RecvOut BEGIN] Receiving {} task output(s) from remote node ===",
-       task_infos.size());
 
   // If no task outputs to receive
   if (task_infos.empty()) {
-    HLOG(kDebug, "=== [RecvOut END] No task outputs to receive ===");
     task->SetReturnCode(0);
     return;
   }
 
   // Set lbm_server in archive for bulk transfer exposure in output mode
   archive.SetLbmServer(lbm_server);
-
-  // Log bulk counts from sender's metadata
-  HLOG(kDebug, "[RecvOut] Sender's meta.send has {} entries",
-       archive.send.size());
-  for (size_t i = 0; i < archive.send.size(); ++i) {
-    HLOG(kDebug, "[RecvOut] send[{}]: size={}, flags={}", i,
-         archive.send[i].size, archive.send[i].flags.bits_);
-  }
 
   // First pass: Deserialize to expose buffers
   // LoadTask will call ar.bulk() which will expose the pointers and populate
@@ -761,9 +649,6 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
 
     // Locate origin task from send_map using net_key
     size_t net_key = task_info.task_id_.net_key_;
-    HLOG(kDebug,
-         "[RecvOut] Looking up origin task for replica {} with net_key {}",
-         task_info.task_id_, net_key);
 
     // Note: No lock needed - single net worker processes all Send/Recv tasks
     auto send_it = send_map_.find(net_key);
@@ -776,8 +661,6 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
       return;
     }
     hipc::FullPtr<chi::Task> origin_task = *send_it;
-    HLOG(kDebug, "[RecvOut] Found origin task {} for replica {}",
-         origin_task->task_id_, task_info.task_id_);
     chi::RunContext *origin_rctx = origin_task->run_ctx_;
 
     // Locate replica in origin's run_ctx using replica_id
@@ -806,14 +689,6 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
     container->LoadTask(origin_task->method_, archive, replica);
   }
 
-  // Log recv counts after deserialization
-  HLOG(kDebug, "[RecvOut] After deserialization, meta.recv has {} entries",
-       archive.recv.size());
-  for (size_t i = 0; i < archive.recv.size(); ++i) {
-    HLOG(kDebug, "[RecvOut] recv[{}]: size={}, flags={}", i,
-         archive.recv[i].size, archive.recv[i].flags.bits_);
-  }
-
   // Receive all bulk data using Lightbeam
   int rc = lbm_server->RecvBulks(archive);
   if (rc != 0) {
@@ -821,9 +696,6 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
     task->SetReturnCode(4);
     return;
   }
-
-  HLOG(kDebug, "[RecvOut] Received {} bulk transfers via Lightbeam",
-       archive.recv.size());
 
   // Second pass: Aggregate results
   for (size_t task_idx = 0; task_idx < task_infos.size(); ++task_idx) {
@@ -862,14 +734,12 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
 
     // Aggregate replica results into origin task
     container->Aggregate(origin_task->method_, origin_task, replica);
-    HLOG(kDebug, "[RECV] Task {} outputs received and aggregated",
-         origin_task->task_id_);
+
+    HLOG(kDebug, "[RecvOut] Task {}", origin_task->task_id_);
 
     // Increment completed replicas counter in origin's rctx
     origin_rctx->completed_replicas_++;
     chi::u32 completed = origin_rctx->completed_replicas_;
-    HLOG(kDebug, "[RecvOut] Origin task {} completed {}/{} replicas",
-         origin_task->task_id_, completed, origin_rctx->subtasks_.size());
 
     // If all replicas completed
     if (completed == origin_rctx->subtasks_.size()) {
@@ -899,20 +769,10 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
       // ExecTask will handle checking if the task is complete and ending it
       // properly
       auto *worker = CHI_CUR_WORKER;
-      HLOG(kInfo,
-           "[TRACE] RecvOut - ALL replicas complete for task {}, adding to "
-           "blocked queue",
-           origin_task->task_id_);
       worker->EndTask(origin_task, origin_rctx, true);
-      HLOG(kInfo,
-           "[TRACE] RecvOut - Added origin task {} to blocked queue, "
-           "run_ctx={:#x}",
-           origin_task->task_id_, reinterpret_cast<uintptr_t>(origin_rctx));
     }
   }
 
-  HLOG(kDebug,
-       "=== [RecvOut END] Processed {} task output(s) ===", task_infos.size());
   task->SetReturnCode(0);
 }
 
@@ -947,12 +807,8 @@ void Runtime::Recv(hipc::FullPtr<RecvTask> task, chi::RunContext &rctx) {
     return;
   }
 
-  // Only log when we actually receive a message (not periodic polling noise)
-  HLOG(kDebug, "Recv - RecvMetadata returned rc={}", rc);
   if (rc != 0) {
-    if (rc == -1) {
-      HLOG(kDebug, "Admin: RecvMetadata returned -1 (deserialization issue)");
-    } else {
+    if (rc != -1) {
       HLOG(kError, "Admin: Lightbeam RecvMetadata failed with error code {}",
            rc);
     }
@@ -960,16 +816,8 @@ void Runtime::Recv(hipc::FullPtr<RecvTask> task, chi::RunContext &rctx) {
     return;
   }
 
-  // Log message type - only when we have actual work
-  chi::MsgType msg_type = archive.GetMsgType();
-  const char *msg_type_str =
-      (msg_type == chi::MsgType::kSerializeIn)    ? "SerializeIn"
-      : (msg_type == chi::MsgType::kSerializeOut) ? "SerializeOut"
-      : (msg_type == chi::MsgType::kHeartbeat)    ? "Heartbeat"
-                                                  : "Unknown";
-  HLOG(kDebug, "Admin: Received metadata (type: {})", msg_type_str);
-
   // Dispatch based on message type
+  chi::MsgType msg_type = archive.GetMsgType();
   switch (msg_type) {
     case chi::MsgType::kSerializeIn:
       RecvIn(task, archive, lbm_server);
@@ -978,7 +826,6 @@ void Runtime::Recv(hipc::FullPtr<RecvTask> task, chi::RunContext &rctx) {
       RecvOut(task, archive, lbm_server);
       break;
     case chi::MsgType::kHeartbeat:
-      HLOG(kDebug, "Admin: Received heartbeat message");
       task->SetReturnCode(0);
       break;
     default:

@@ -82,8 +82,8 @@ public:
         return false; // Timeout
       }
 
-      // Use the task's own Yield() method for efficient waiting
-      task->Yield();
+      // Yield to allow other tasks to run
+      HSHM_THREAD_MODEL->Yield();
     }
 
     return true; // Task completed
@@ -175,18 +175,24 @@ TEST_CASE("MOD_NAME Custom Task Execution", "[task][mod_name][custom]") {
     chimaera::MOD_NAME::Client mod_name_client(kTestModNamePoolId);
 
     // Step 4: Create the MOD_NAME container
-    chi::DomainQuery pool_query; // Default domain query
+    chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
     std::string pool_name = "test_mod_name_pool";
-    bool success = mod_name_client.Create(pool_query, pool_name, kTestModNamePoolId);
+    auto create_task = mod_name_client.AsyncCreate(pool_query, pool_name, kTestModNamePoolId);
+    create_task.Wait();
+    mod_name_client.pool_id_ = create_task->new_pool_id_;
+    mod_name_client.return_code_ = create_task->return_code_;
+    bool success = (create_task->return_code_ == 0);
     REQUIRE(success);
 
     // Step 5: Submit custom task
     std::string input_data = "test_input_data";
     chi::u32 operation_id = 42;
-    std::string output_data;
 
-    // Execute custom operation synchronously
-    chi::u32 result_code = mod_name_client.Custom(pool_query, input_data, operation_id, output_data);
+    // Execute custom operation asynchronously and wait
+    auto task = mod_name_client.AsyncCustom(pool_query, input_data, operation_id);
+    task.Wait();
+    std::string output_data = task->data_.str();
+    chi::u32 result_code = task->return_code_;
 
     // Verify results
     REQUIRE(result_code == 0); // Assuming 0 means success
@@ -212,9 +218,13 @@ TEST_CASE("MOD_NAME Async Task Execution", "[task][mod_name][async]") {
     chimaera::MOD_NAME::Client mod_name_client(kTestModNamePoolId);
 
     // Create the MOD_NAME container
-    chi::DomainQuery pool_query;
+    chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
     std::string pool_name = "test_mod_name_pool";
-    bool success = mod_name_client.Create(pool_query, pool_name, kTestModNamePoolId);
+    auto create_task = mod_name_client.AsyncCreate(pool_query, pool_name, kTestModNamePoolId);
+    create_task.Wait();
+    mod_name_client.pool_id_ = create_task->new_pool_id_;
+    mod_name_client.return_code_ = create_task->return_code_;
+    bool success = (create_task->return_code_ == 0);
     REQUIRE(success);
 
     // Submit async custom task
@@ -255,11 +265,15 @@ TEST_CASE("Error Handling Tests", "[error][edge_cases]") {
     chimaera::MOD_NAME::Client mod_name_client(kTestModNamePoolId);
 
     // This should not crash, but may fail
-    chi::DomainQuery pool_query;
+    chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
 
     // Creating container without runtime should fail or handle gracefully
     std::string pool_name = "test_mod_name_pool";
-    bool success = mod_name_client.Create(pool_query, pool_name, kTestModNamePoolId);
+    auto create_task = mod_name_client.AsyncCreate(pool_query, pool_name, kTestModNamePoolId);
+    create_task.Wait();
+    mod_name_client.pool_id_ = create_task->new_pool_id_;
+    mod_name_client.return_code_ = create_task->return_code_;
+    bool success = (create_task->return_code_ == 0);
     REQUIRE_NOTHROW(success);
   }
 
@@ -270,11 +284,15 @@ TEST_CASE("Error Handling Tests", "[error][edge_cases]") {
     constexpr chi::PoolId kInvalidPoolId = chi::PoolId(9999, 0);
     chimaera::MOD_NAME::Client invalid_client(kInvalidPoolId);
 
-    chi::DomainQuery pool_query;
+    chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
     std::string pool_name = "test_invalid_pool";
 
     // This should not crash
-    bool success = invalid_client.Create(pool_query, pool_name, kInvalidPoolId);
+    auto create_task = invalid_client.AsyncCreate(pool_query, pool_name, kInvalidPoolId);
+    create_task.Wait();
+    invalid_client.pool_id_ = create_task->new_pool_id_;
+    invalid_client.return_code_ = create_task->return_code_;
+    bool success = (create_task->return_code_ == 0);
     REQUIRE_NOTHROW(success);
   }
 
@@ -283,9 +301,13 @@ TEST_CASE("Error Handling Tests", "[error][edge_cases]") {
     REQUIRE(fixture.createModNamePool());
 
     chimaera::MOD_NAME::Client mod_name_client(kTestModNamePoolId);
-    chi::DomainQuery pool_query;
+    chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
     std::string pool_name = "test_mod_name_pool";
-    bool success = mod_name_client.Create(pool_query, pool_name, kTestModNamePoolId);
+    auto create_task = mod_name_client.AsyncCreate(pool_query, pool_name, kTestModNamePoolId);
+    create_task.Wait();
+    mod_name_client.pool_id_ = create_task->new_pool_id_;
+    mod_name_client.return_code_ = create_task->return_code_;
+    bool success = (create_task->return_code_ == 0);
     REQUIRE(success);
 
     // Submit a task
@@ -319,9 +341,13 @@ TEST_CASE("Concurrent Task Execution", "[concurrent][stress]") {
     REQUIRE(fixture.createModNamePool());
 
     chimaera::MOD_NAME::Client mod_name_client(kTestModNamePoolId);
-    chi::DomainQuery pool_query;
+    chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
     std::string pool_name = "test_mod_name_pool";
-    bool success = mod_name_client.Create(pool_query, pool_name, kTestModNamePoolId);
+    auto create_task = mod_name_client.AsyncCreate(pool_query, pool_name, kTestModNamePoolId);
+    create_task.Wait();
+    mod_name_client.pool_id_ = create_task->new_pool_id_;
+    mod_name_client.return_code_ = create_task->return_code_;
+    bool success = (create_task->return_code_ == 0);
     REQUIRE(success);
 
     // Submit multiple concurrent tasks
@@ -371,9 +397,13 @@ TEST_CASE("Memory Management", "[memory][cleanup]") {
     REQUIRE(fixture.createModNamePool());
 
     chimaera::MOD_NAME::Client mod_name_client(kTestModNamePoolId);
-    chi::DomainQuery pool_query;
+    chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
     std::string pool_name = "test_mod_name_pool";
-    bool success = mod_name_client.Create(pool_query, pool_name, kTestModNamePoolId);
+    auto create_task = mod_name_client.AsyncCreate(pool_query, pool_name, kTestModNamePoolId);
+    create_task.Wait();
+    mod_name_client.pool_id_ = create_task->new_pool_id_;
+    mod_name_client.return_code_ = create_task->return_code_;
+    bool success = (create_task->return_code_ == 0);
     REQUIRE(success);
 
     // Allocate many tasks to test memory management
@@ -411,16 +441,22 @@ TEST_CASE("Performance Tests", "[performance][timing]") {
     REQUIRE(fixture.createModNamePool());
 
     chimaera::MOD_NAME::Client mod_name_client(kTestModNamePoolId);
-    chi::DomainQuery pool_query;
+    chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
     std::string pool_name = "test_mod_name_pool";
-    bool success = mod_name_client.Create(pool_query, pool_name, kTestModNamePoolId);
+    auto create_task = mod_name_client.AsyncCreate(pool_query, pool_name, kTestModNamePoolId);
+    create_task.Wait();
+    mod_name_client.pool_id_ = create_task->new_pool_id_;
+    mod_name_client.return_code_ = create_task->return_code_;
+    bool success = (create_task->return_code_ == 0);
     REQUIRE(success);
 
     // Measure task execution time
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    std::string output_data;
-    chi::u32 result_code = mod_name_client.Custom(pool_query, "performance_test", 1, output_data);
+    auto task = mod_name_client.AsyncCustom(pool_query, "performance_test", 1);
+    task.Wait();
+    std::string output_data = task->data_.str();
+    chi::u32 result_code = task->return_code_;
 
     auto end_time = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(

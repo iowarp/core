@@ -58,7 +58,6 @@ bool ContentTransferEngine::ClientInit(const chi::PoolQuery &pool_query) {
   cte_client->pool_id_ = create_task->new_pool_id_;
 
   // Delete the create task
-  CHI_IPC->DelTask(create_task.GetTaskPtr());
 
   // Mark as successfully initialized
   is_initialized_ = true;
@@ -72,7 +71,11 @@ std::vector<std::string> ContentTransferEngine::TagQuery(
     chi::u32 max_tags,
     const chi::PoolQuery &pool_query) {
   auto *cte_client = WRP_CTE_CLIENT;
-  return cte_client->TagQuery(tag_re, max_tags, pool_query);
+  auto task = cte_client->AsyncTagQuery(tag_re, max_tags, pool_query);
+  task.Wait();
+
+  std::vector<std::string> results = task->results_;
+  return results;
 }
 
 std::vector<std::pair<std::string, std::string>> ContentTransferEngine::BlobQuery(
@@ -81,7 +84,15 @@ std::vector<std::pair<std::string, std::string>> ContentTransferEngine::BlobQuer
     chi::u32 max_blobs,
     const chi::PoolQuery &pool_query) {
   auto *cte_client = WRP_CTE_CLIENT;
-  return cte_client->BlobQuery(tag_re, blob_re, max_blobs, pool_query);
+  auto task = cte_client->AsyncBlobQuery(tag_re, blob_re, max_blobs, pool_query);
+  task.Wait();
+
+  std::vector<std::pair<std::string, std::string>> results;
+  for (size_t i = 0; i < task->tag_names_.size(); ++i) {
+    results.emplace_back(task->tag_names_[i], task->blob_names_[i]);
+  }
+
+  return results;
 }
 
 } // namespace wrp_cte::core

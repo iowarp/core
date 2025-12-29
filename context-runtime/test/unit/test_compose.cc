@@ -133,17 +133,29 @@ TEST_CASE("Admin client Compose method", "[compose]") {
   const auto& compose_config = config_manager->GetComposeConfig();
   REQUIRE(!compose_config.pools_.empty());
 
-  // Call Compose
-  REQUIRE(admin_client->Compose(compose_config));
+  // Call AsyncCompose for each pool
+  auto* ipc_manager = CHI_IPC;
+  for (const auto& pool_config : compose_config.pools_) {
+    auto compose_task = admin_client->AsyncCompose(pool_config);
+    compose_task.Wait();
+    REQUIRE(compose_task->GetReturnCode() == 0);
+    ipc_manager->DelTask(compose_task.GetTaskPtr());
+  }
 
   // Verify pool was created by checking if we can access it
   chi::PoolId bdev_pool_id(200, 0);
   chimaera::bdev::Client bdev_client(bdev_pool_id);
 
   // Try to allocate blocks to verify the pool exists and is functional
-  auto blocks = bdev_client.AllocateBlocks(chi::PoolQuery::Local(), 1024);
+  auto alloc_task = bdev_client.AsyncAllocateBlocks(chi::PoolQuery::Local(), 1024);
+  alloc_task.Wait();
+  std::vector<chimaera::bdev::Block> blocks;
+  for (size_t i = 0; i < alloc_task->blocks_.size(); ++i) {
+    blocks.push_back(alloc_task->blocks_[i]);
+  }
+  REQUIRE(alloc_task->GetReturnCode() == 0);
+  ipc_manager->DelTask(alloc_task.GetTaskPtr());
 
-  REQUIRE(bdev_client.GetReturnCode() == 0);
   REQUIRE(blocks.size() > 0);
 
   std::cout << "Admin client Compose test passed\n";

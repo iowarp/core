@@ -13,29 +13,16 @@ public:
   explicit Client(const chi::PoolId &pool_id) { Init(pool_id); }
 
   /**
-   * Synchronous container creation - waits for completion
-   */
-  void Create(const chi::PoolQuery &pool_query,
-              const std::string &pool_name, const chi::PoolId &custom_pool_id,
-              const CreateParams &params = CreateParams()) {
-    auto task =
-        AsyncCreate(pool_query, pool_name, custom_pool_id, params);
-    task.Wait();
-
-    // CRITICAL: Update client pool_id_ with the actual pool ID from the task
-    pool_id_ = task->new_pool_id_;
-
-    CHI_IPC->DelTask(task.GetTaskPtr());
-  }
-
-  /**
    * Asynchronous container creation - returns immediately
+   * After Wait(), caller should:
+   *   1. Update client pool_id_: client.Init(task->new_pool_id_)
+   * Note: Task is automatically freed when Future goes out of scope
    */
   chi::Future<CreateTask>
   AsyncCreate(const chi::PoolQuery &pool_query,
               const std::string &pool_name, const chi::PoolId &custom_pool_id,
               const CreateParams &params = CreateParams()) {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     // CRITICAL: CreateTask MUST use admin pool for GetOrCreatePool processing
     auto task = ipc_manager->NewTask<CreateTask>(
@@ -52,29 +39,14 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous target registration - waits for completion
-   */
-  chi::u32 RegisterTarget(            const std::string &target_name,
-                          chimaera::bdev::BdevType bdev_type,
-                          chi::u64 total_size,
-                          const chi::PoolQuery &target_query = chi::PoolQuery::Local(),
-                          const chi::PoolId &bdev_id = chi::PoolId::GetNull()) {
-    auto task = AsyncRegisterTarget(target_name, bdev_type, total_size, target_query, bdev_id);
-    task.Wait();
-    chi::u32 result = task->return_code_;
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous target registration - returns immediately
    */
   chi::Future<RegisterTargetTask>
-  AsyncRegisterTarget(        const std::string &target_name,
+  AsyncRegisterTarget(const std::string &target_name,
                       chimaera::bdev::BdevType bdev_type, chi::u64 total_size,
                       const chi::PoolQuery &target_query = chi::PoolQuery::Local(),
                       const chi::PoolId &bdev_id = chi::PoolId::GetNull()) {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<RegisterTargetTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), target_name,
@@ -84,22 +56,11 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous target unregistration - waits for completion
-   */
-  chi::u32 UnregisterTarget(              const std::string &target_name) {
-    auto task = AsyncUnregisterTarget(target_name);
-    task.Wait();
-    chi::u32 result = task->return_code_;
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous target unregistration - returns immediately
    */
   chi::Future<UnregisterTargetTask>
-  AsyncUnregisterTarget(          const std::string &target_name) {
-auto *ipc_manager = CHI_IPC;
+  AsyncUnregisterTarget(const std::string &target_name) {
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<UnregisterTargetTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), target_name);
@@ -108,25 +69,11 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous target listing - waits for completion
-   */
-  std::vector<std::string> ListTargets() {
-    auto task = AsyncListTargets();
-    task.Wait();
-
-    // Get results directly (already std::vector<std::string>)
-    std::vector<std::string> result = task->target_names_;
-
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous target listing - returns immediately
    */
   chi::Future<ListTargetsTask>
   AsyncListTargets() {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<ListTargetsTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic());
@@ -135,22 +82,11 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous target stats update - waits for completion
-   */
-  chi::u32 StatTargets() {
-    auto task = AsyncStatTargets();
-    task.Wait();
-    chi::u32 result = task->return_code_;
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous target stats update - returns immediately
    */
   chi::Future<StatTargetsTask>
   AsyncStatTargets() {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<StatTargetsTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic());
@@ -159,25 +95,12 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous get or create tag - waits for completion
-   */
-  TagId GetOrCreateTag(         const std::string &tag_name,
-                       const TagId &tag_id = TagId::GetNull()) {
-    auto task = AsyncGetOrCreateTag(tag_name, tag_id);
-    task.Wait();
-
-    TagId result = task->tag_id_;
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous get or create tag - returns immediately
    */
   chi::Future<GetOrCreateTagTask<CreateParams>>
   AsyncGetOrCreateTag(const std::string &tag_name,
                       const TagId &tag_id = TagId::GetNull()) {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<GetOrCreateTagTask<CreateParams>>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), tag_name,
@@ -187,30 +110,13 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous put blob - waits for completion
-   */
-  bool PutBlob(const TagId &tag_id,
-               const std::string &blob_name, chi::u64 offset, chi::u64 size,
-               hipc::ShmPtr<> blob_data, float score, chi::u32 flags) {
-    auto task = AsyncPutBlob(tag_id, blob_name, offset, size, blob_data,
-                             score, flags);
-    task.Wait();
-    bool result = (task->return_code_ == 0);
-    if (!result) {
-      HLOG(kError, "PutBlob failed: {}", task->return_code_);
-    }
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
-   * Asynchronous put blob - returns immediately (unimplemented for now)
+   * Asynchronous put blob - returns immediately
    */
   chi::Future<PutBlobTask>
   AsyncPutBlob(const TagId &tag_id,
                const std::string &blob_name, chi::u64 offset, chi::u64 size,
                hipc::ShmPtr<> blob_data, float score, chi::u32 flags) {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<PutBlobTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), tag_id,
@@ -220,27 +126,13 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous get blob - waits for completion
-   */
-  bool GetBlob(const TagId &tag_id,
-               const std::string &blob_name, chi::u64 offset, chi::u64 size,
-               chi::u32 flags, hipc::ShmPtr<> blob_data) {
-    auto task =
-        AsyncGetBlob(tag_id, blob_name, offset, size, flags, blob_data);
-    task.Wait();
-    bool result = (task->return_code_ == 0);
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous get blob - returns immediately
    */
   chi::Future<GetBlobTask>
   AsyncGetBlob(const TagId &tag_id,
                const std::string &blob_name, chi::u64 offset, chi::u64 size,
                chi::u32 flags, hipc::ShmPtr<> blob_data) {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<GetBlobTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), tag_id,
@@ -250,24 +142,12 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous reorganize blob - waits for completion
-   */
-  chi::u32 ReorganizeBlob(const TagId &tag_id,
-                          const std::string &blob_name, float new_score) {
-    auto task = AsyncReorganizeBlob(tag_id, blob_name, new_score);
-    task.Wait();
-    chi::u32 result = task->return_code_;
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous reorganize blob - returns immediately
    */
   chi::Future<ReorganizeBlobTask>
   AsyncReorganizeBlob(const TagId &tag_id,
                       const std::string &blob_name, float new_score) {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<ReorganizeBlobTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), tag_id,
@@ -277,23 +157,11 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous delete blob - waits for completion
-   */
-  bool DelBlob(const TagId &tag_id,
-               const std::string &blob_name) {
-    auto task = AsyncDelBlob(tag_id, blob_name);
-    task.Wait();
-    bool result = (task->return_code_ == 0);
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous delete blob - returns immediately
    */
-  chi::Future<DelBlobTask> AsyncDelBlob(                            const TagId &tag_id,
-                                          const std::string &blob_name) {
-auto *ipc_manager = CHI_IPC;
+  chi::Future<DelBlobTask> AsyncDelBlob(const TagId &tag_id,
+                                        const std::string &blob_name) {
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<DelBlobTask>(chi::CreateTaskId(), pool_id_,
                                                   chi::PoolQuery::Dynamic(),
@@ -303,32 +171,10 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous delete tag by tag ID - waits for completion
-   */
-  bool DelTag(const TagId &tag_id) {
-    auto task = AsyncDelTag(tag_id);
-    task.Wait();
-    bool result = (task->return_code_ == 0);
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
-   * Synchronous delete tag by tag name - waits for completion
-   */
-  bool DelTag(const std::string &tag_name) {
-    auto task = AsyncDelTag(tag_name);
-    task.Wait();
-    bool result = (task->return_code_ == 0);
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous delete tag by tag ID - returns immediately
    */
-  chi::Future<DelTagTask> AsyncDelTag(                          const TagId &tag_id) {
-auto *ipc_manager = CHI_IPC;
+  chi::Future<DelTagTask> AsyncDelTag(const TagId &tag_id) {
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<DelTagTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), tag_id);
@@ -339,8 +185,8 @@ auto *ipc_manager = CHI_IPC;
   /**
    * Asynchronous delete tag by tag name - returns immediately
    */
-  chi::Future<DelTagTask> AsyncDelTag(                          const std::string &tag_name) {
-auto *ipc_manager = CHI_IPC;
+  chi::Future<DelTagTask> AsyncDelTag(const std::string &tag_name) {
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<DelTagTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), tag_name);
@@ -349,21 +195,10 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous get tag size - waits for completion
-   */
-  size_t GetTagSize(const TagId &tag_id) {
-    auto task = AsyncGetTagSize(tag_id);
-    task.Wait();
-    size_t result = (task->return_code_ == 0) ? task->tag_size_ : 0;
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous get tag size - returns immediately
    */
-  chi::Future<GetTagSizeTask> AsyncGetTagSize(                                  const TagId &tag_id) {
-auto *ipc_manager = CHI_IPC;
+  chi::Future<GetTagSizeTask> AsyncGetTagSize(const TagId &tag_id) {
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<GetTagSizeTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), tag_id);
@@ -372,30 +207,11 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous poll telemetry log - waits for completion
-   */
-  std::vector<CteTelemetry>
-  PollTelemetryLog(     std::uint64_t minimum_logical_time) {
-    auto task = AsyncPollTelemetryLog(minimum_logical_time);
-    task.Wait();
-
-    // Convert HSHM vector to standard vector for client use
-    std::vector<CteTelemetry> result;
-    result.reserve(task->entries_.size());
-    for (const auto &entry : task->entries_) {
-      result.push_back(entry);
-    }
-
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous poll telemetry log - returns immediately
    */
   chi::Future<PollTelemetryLogTask>
-  AsyncPollTelemetryLog(          std::uint64_t minimum_logical_time) {
-auto *ipc_manager = CHI_IPC;
+  AsyncPollTelemetryLog(std::uint64_t minimum_logical_time) {
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<PollTelemetryLogTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(),
@@ -405,24 +221,12 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous get blob score - waits for completion
-   */
-  float GetBlobScore(const TagId &tag_id,
-                     const std::string &blob_name) {
-    auto task = AsyncGetBlobScore(tag_id, blob_name);
-    task.Wait();
-    float result = (task->return_code_ == 0) ? task->score_ : 0.0f;
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous get blob score - returns immediately
    */
   chi::Future<GetBlobScoreTask>
   AsyncGetBlobScore(const TagId &tag_id,
                     const std::string &blob_name) {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<GetBlobScoreTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), tag_id,
@@ -432,24 +236,12 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous get blob size - waits for completion
-   */
-  chi::u64 GetBlobSize(const TagId &tag_id,
-                       const std::string &blob_name) {
-    auto task = AsyncGetBlobSize(tag_id, blob_name);
-    task.Wait();
-    chi::u64 result = (task->return_code_ == 0) ? task->size_ : 0;
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous get blob size - returns immediately
    */
   chi::Future<GetBlobSizeTask>
   AsyncGetBlobSize(const TagId &tag_id,
                    const std::string &blob_name) {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<GetBlobSizeTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), tag_id,
@@ -459,25 +251,11 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous get contained blobs - waits for completion
-   */
-  std::vector<std::string> GetContainedBlobs(                               const TagId &tag_id) {
-    auto task = AsyncGetContainedBlobs(tag_id);
-    task.Wait();
-    std::vector<std::string> result;
-    if (task->return_code_ == 0) {
-      result = task->blob_names_;
-    }
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
    * Asynchronous get contained blobs - returns immediately
    */
   chi::Future<GetContainedBlobsTask>
   AsyncGetContainedBlobs(const TagId &tag_id) {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<GetContainedBlobsTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), tag_id);
@@ -486,39 +264,17 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous tag query - waits for completion
-   * Queries tags by regex pattern
-   * @param mctx Memory context
+   * Asynchronous tag query - returns immediately
    * @param tag_regex Tag regex pattern to match
    * @param max_tags Maximum number of tags to return (0 = no limit)
    * @param pool_query Pool query for routing (default: Broadcast)
-   * @return Vector of matching tag names
-   */
-  std::vector<std::string> TagQuery(                       const std::string &tag_regex,
-                                     chi::u32 max_tags = 0,
-                                     const chi::PoolQuery &pool_query = chi::PoolQuery::Broadcast()) {
-    auto task = AsyncTagQuery(tag_regex, max_tags, pool_query);
-    task.Wait();
-    std::vector<std::string> result;
-    if (task->return_code_ == 0) {
-      result = task->results_;
-    }
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
-   * Asynchronous tag query - returns immediately
-   * @param mctx Memory context
-   * @param tag_regex Tag regex pattern to match
-   * @param pool_query Pool query for routing (default: Broadcast)
-   * @return Task pointer for async operation
+   * @return Future for async operation
    */
   chi::Future<TagQueryTask>
-  AsyncTagQuery(  const std::string &tag_regex,
+  AsyncTagQuery(const std::string &tag_regex,
                 chi::u32 max_tags = 0,
                 const chi::PoolQuery &pool_query = chi::PoolQuery::Broadcast()) {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<TagQueryTask>(
         chi::CreateTaskId(), pool_id_, pool_query, tag_regex, max_tags);
@@ -527,45 +283,19 @@ auto *ipc_manager = CHI_IPC;
   }
 
   /**
-   * Synchronous blob query - waits for completion
-   * Queries blobs by tag and blob regex patterns
-   * @param mctx Memory context
+   * Asynchronous blob query - returns immediately
    * @param tag_regex Tag regex pattern to match
    * @param blob_regex Blob regex pattern to match
    * @param max_blobs Maximum number of blobs to return (0 = no limit)
    * @param pool_query Pool query for routing (default: Broadcast)
-   * @return Vector of pairs (tag_name, blob_name) for matching blobs
-   */
-  std::vector<std::pair<std::string, std::string>> BlobQuery(                        const std::string &tag_regex,
-                                      const std::string &blob_regex,
-                                      chi::u32 max_blobs = 0,
-                                      const chi::PoolQuery &pool_query = chi::PoolQuery::Broadcast()) {
-    auto task = AsyncBlobQuery(tag_regex, blob_regex, max_blobs, pool_query);
-    task.Wait();
-    std::vector<std::pair<std::string, std::string>> result;
-    if (task->return_code_ == 0) {
-      for (size_t i = 0; i < task->tag_names_.size(); ++i) {
-        result.emplace_back(task->tag_names_[i], task->blob_names_[i]);
-      }
-    }
-    CHI_IPC->DelTask(task.GetTaskPtr());
-    return result;
-  }
-
-  /**
-   * Asynchronous blob query - returns immediately
-   * @param mctx Memory context
-   * @param tag_regex Tag regex pattern to match
-   * @param blob_regex Blob regex pattern to match
-   * @param pool_query Pool query for routing (default: Broadcast)
-   * @return Task pointer for async operation
+   * @return Future for async operation
    */
   chi::Future<BlobQueryTask>
-  AsyncBlobQuery(   const std::string &tag_regex,
+  AsyncBlobQuery(const std::string &tag_regex,
                  const std::string &blob_regex,
                  chi::u32 max_blobs = 0,
                  const chi::PoolQuery &pool_query = chi::PoolQuery::Broadcast()) {
-auto *ipc_manager = CHI_IPC;
+    auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<BlobQueryTask>(
         chi::CreateTaskId(), pool_id_, pool_query, tag_regex, blob_regex, max_blobs);

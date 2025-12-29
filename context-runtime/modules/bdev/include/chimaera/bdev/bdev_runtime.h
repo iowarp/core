@@ -204,8 +204,8 @@ class Runtime : public chi::Container {
   /**
    * Execute a method on a task - using autogen dispatcher
    */
-  void Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
-           chi::RunContext& rctx) override;
+  chi::TaskResume Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
+                      chi::RunContext& rctx) override;
 
   /**
    * Delete/cleanup a task - using autogen dispatcher

@@ -205,7 +205,9 @@ bool VerifyDatasetData(const std::string& file_path,
   }
 
   // Get CTE tag
-  wrp_cte::core::TagId tag_id = cte_client->GetOrCreateTag(tag_name);
+  auto tag_task = cte_client->AsyncGetOrCreateTag(tag_name);
+  tag_task.Wait();
+  wrp_cte::core::TagId tag_id = tag_task->tag_id_;
   if (tag_id.IsNull()) {
     std::cerr << "    ERROR: Tag not found in CTE: " << tag_name << std::endl;
     H5Tclose(datatype_id);
@@ -216,7 +218,9 @@ bool VerifyDatasetData(const std::string& file_path,
   }
 
   // Get tag size from CTE
-  size_t cte_tag_size = cte_client->GetTagSize(tag_id);
+  auto size_task = cte_client->AsyncGetTagSize(tag_id);
+  size_task.Wait();
+  size_t cte_tag_size = size_task->tag_size_;
   std::cout << "    CTE tag size: " << cte_tag_size << " bytes" << std::endl;
 
   // Check if sizes match
@@ -236,7 +240,9 @@ bool VerifyDatasetData(const std::string& file_path,
   // Read data from CTE by getting all blobs (chunks)
   // For datasets <= 1MB, data is in "chunk_0"
   // For larger datasets, data is split across "chunk_0", "chunk_1", etc.
-  std::vector<std::string> blob_names = cte_client->GetContainedBlobs(tag_id);
+  auto blobs_task = cte_client->AsyncGetContainedBlobs(tag_id);
+  blobs_task.Wait();
+  std::vector<std::string> blob_names = blobs_task->blob_names_;
   std::cout << "    Found " << blob_names.size() << " blobs in tag" << std::endl;
 
   // Filter out the "description" blob and get only chunk blobs
@@ -261,7 +267,9 @@ bool VerifyDatasetData(const std::string& file_path,
   size_t bytes_read = 0;
   for (const auto& blob_name : chunk_blobs) {
     // Get blob size
-    chi::u64 blob_size = cte_client->GetBlobSize(tag_id, blob_name);
+    auto blob_size_task = cte_client->AsyncGetBlobSize(tag_id, blob_name);
+    blob_size_task.Wait();
+    chi::u64 blob_size = blob_size_task->size_;
     std::cout << "    Reading blob '" << blob_name << "' (size: " << blob_size << " bytes)" << std::endl;
 
     if (bytes_read + blob_size > total_size) {
@@ -278,7 +286,9 @@ bool VerifyDatasetData(const std::string& file_path,
 
     // Read blob into shared memory buffer
     hipc::ShmPtr<> blob_shm_ptr = blob_buffer.shm_.template Cast<void>();
-    bool success = cte_client->GetBlob(tag_id, blob_name, 0, blob_size, 0, blob_shm_ptr);
+    auto get_blob_task = cte_client->AsyncGetBlob(tag_id, blob_name, 0, blob_size, 0, blob_shm_ptr);
+    get_blob_task.Wait();
+    bool success = (get_blob_task->GetReturnCode() == 0);
     if (!success) {
       std::cerr << "    ERROR: Failed to read blob '" << blob_name << "'" << std::endl;
       CHI_IPC->FreeBuffer(blob_buffer);
@@ -470,11 +480,12 @@ int main(int argc, char* argv[]) {
     wrp_cae::core::Client cae_client;
     wrp_cae::core::CreateParams params;
 
-    cae_client.Create(
+    auto create_task = cae_client.AsyncCreate(
         chi::PoolQuery::Local(),
         "test_cae_pool",
         wrp_cae::core::kCaePoolId,
         params);
+    create_task.Wait();
 
     std::cout << "CAE pool created with ID: " << cae_client.pool_id_ << std::endl;
 
@@ -496,8 +507,10 @@ int main(int argc, char* argv[]) {
     // Step 5: Call ParseOmni with vector containing single context
     std::cout << "\n[STEP 5] Calling ParseOmni..." << std::endl;
     std::vector<wrp_cae::core::AssimilationCtx> contexts = {ctx};
-    chi::u32 num_tasks_scheduled = 0;
-    chi::u32 result_code = cae_client.ParseOmni(contexts, num_tasks_scheduled);
+    auto parse_task = cae_client.AsyncParseOmni(contexts);
+    parse_task.Wait();
+    chi::u32 result_code = parse_task->GetReturnCode();
+    chi::u32 num_tasks_scheduled = parse_task->num_tasks_scheduled_;
 
     std::cout << "ParseOmni completed:" << std::endl;
     std::cout << "  result_code: " << result_code << std::endl;
@@ -541,7 +554,9 @@ int main(int argc, char* argv[]) {
       std::cout << "  Full tag name: " << full_tag_name << std::endl;
 
       // Check if tag exists
-      wrp_cte::core::TagId tag_id = cte_client->GetOrCreateTag(full_tag_name);
+      auto tag_task = cte_client->AsyncGetOrCreateTag(full_tag_name);
+      tag_task.Wait();
+      wrp_cte::core::TagId tag_id = tag_task->tag_id_;
       if (tag_id.IsNull()) {
         std::cerr << "  WARNING: Tag not found in CTE: " << full_tag_name << std::endl;
         continue;
@@ -551,7 +566,9 @@ int main(int argc, char* argv[]) {
       std::cout << "  Tag found (ID: " << tag_id << ")" << std::endl;
 
       // Get tag size
-      size_t tag_size = cte_client->GetTagSize(tag_id);
+      auto size_task = cte_client->AsyncGetTagSize(tag_id);
+      size_task.Wait();
+      size_t tag_size = size_task->tag_size_;
       std::cout << "  Tag size: " << tag_size << " bytes" << std::endl;
 
       if (tag_size == 0) {

@@ -11,7 +11,16 @@
       "Bash(cat:*)",
       "Bash(git -C /workspace submodule status:*)",
       "WebSearch",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(ninja:*)",
+      "Bash(make:*)",
+      "Bash(./build/bin/chi_refresh_repo:*)",
+      "Bash(./build/bin/chimaera_unit_tests:*)",
+      "Bash(./build/bin/chimaera_bdev_chimod_tests:*)",
+      "Bash(timeout 30 ./build/bin/chimaera_comutex_tests:*)",
+      "Bash(timeout 60 ./build/bin/chimaera_bdev_chimod_tests:*)",
+      "Bash(grep:*)",
+      "Bash(timeout 60 ./bin/chimaera_comutex_tests:*)"
     ],
     "deny": [],
     "ask": []

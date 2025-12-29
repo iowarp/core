@@ -378,6 +378,12 @@ struct AllocateBlocksTask : public chi::Task {
     size_ = other->size_;
     blocks_ = other->blocks_;
   }
+
+  /** Aggregate replica results into this task */
+  void Aggregate(const hipc::FullPtr<AllocateBlocksTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
 };
 
 /**
@@ -435,6 +441,12 @@ struct FreeBlocksTask : public chi::Task {
     Task::Copy(other.template Cast<Task>());
     // Copy FreeBlocksTask-specific fields
     blocks_ = other->blocks_;
+  }
+
+  /** Aggregate replica results into this task */
+  void Aggregate(const hipc::FullPtr<FreeBlocksTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
   }
 };
 
@@ -652,6 +664,12 @@ struct GetStatsTask : public chi::Task {
     // Copy GetStatsTask-specific fields
     metrics_ = other->metrics_;
     remaining_size_ = other->remaining_size_;
+  }
+
+  /** Aggregate replica results into this task */
+  void Aggregate(const hipc::FullPtr<GetStatsTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
   }
 };
 

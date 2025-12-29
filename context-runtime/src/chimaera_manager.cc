@@ -201,13 +201,30 @@ bool Chimaera::ServerInit() {
       return false;
     }
 
-    // Call compose to create all configured pools
-    if (!admin_client->Compose(compose_config)) {
-      HLOG(kError, "Compose processing failed");
-      return false;
+    // Iterate over each pool configuration and create asynchronously
+    for (const auto& pool_config : compose_config.pools_) {
+      HLOG(kInfo, "Compose: Creating pool {} (module: {})",
+            pool_config.pool_name_, pool_config.mod_name_);
+
+      // Create pool asynchronously and wait
+      auto task = admin_client->AsyncCompose(pool_config);
+      task.Wait();
+
+      // Check return code
+      u32 return_code = task->GetReturnCode();
+      if (return_code != 0) {
+        HLOG(kError, "Compose: Failed to create pool {} (module: {}), return code: {}",
+              pool_config.pool_name_, pool_config.mod_name_, return_code);
+        return false;
+      }
+
+      HLOG(kInfo, "Compose: Successfully created pool {} (module: {})",
+            pool_config.pool_name_, pool_config.mod_name_);
+
+      // Cleanup task
     }
 
-    HLOG(kInfo, "Compose processing completed successfully");
+    HLOG(kInfo, "Compose: All {} pools created successfully", compose_config.pools_.size());
   }
 
   // Start local server last - after all other initialization is complete

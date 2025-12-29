@@ -104,8 +104,8 @@ public:
   // Pure virtual methods - implementations are in autogen/core_lib_exec.cc
   void Init(const chi::PoolId &pool_id, const std::string &pool_name,
             chi::u32 container_id = 0) override;
-  void Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
-           chi::RunContext &rctx) override;
+  chi::TaskResume Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
+                      chi::RunContext &rctx) override;
   void Monitor(chi::MonitorModeId mode, chi::u32 method,
                chi::Future<chi::Task>& task_future, chi::RunContext &rctx);
   void DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) override;

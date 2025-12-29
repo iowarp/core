@@ -59,13 +59,20 @@ public:
     // Create admin pool
     admin_client_ =
         std::make_unique<chimaera::admin::Client>(chi::kAdminPoolId);
-    admin_client_->Create(chi::PoolQuery::Local(), "admin",
-                          chi::kAdminPoolId);
+    auto create_task = admin_client_->AsyncCreate(chi::PoolQuery::Local(), "admin",
+                                                   chi::kAdminPoolId);
+    create_task.Wait();
+
+    // Update client pool_id_ with the actual pool ID from the task
+    admin_client_->pool_id_ = create_task->new_pool_id_;
+    admin_client_->return_code_ = create_task->return_code_;
 
     // Verify admin creation succeeded
-    if (admin_client_->GetReturnCode() != 0) {
+    if (create_task->GetReturnCode() != 0) {
+      ipc_manager->DelTask(create_task.GetTaskPtr());
       throw std::runtime_error("Failed to create admin pool");
     }
+    ipc_manager->DelTask(create_task.GetTaskPtr());
   }
 
   ~ChimaeraTestFixture() {

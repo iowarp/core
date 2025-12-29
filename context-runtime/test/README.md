@@ -166,7 +166,6 @@ TEST_CASE("Custom Task Test", "[task][custom]") {
     REQUIRE(task->result_code_ == 0);
     
     // Cleanup
-    CHI_IPC->DelTask(task);
   }
 }
 ```
@@ -196,7 +195,6 @@ constexpr chi::PoolId kTestModNamePoolId = 100; // Test pool ID
 1. **Tests timeout** - Increase `kTestTimeoutMs` or check Chimaera initialization
 2. **Pool creation fails** - Verify admin ChiMod is available and working
 3. **Task submission fails** - Check IPC manager initialization and pool existence
-4. **Memory errors** - Ensure proper task cleanup using `CHI_IPC->DelTask()`
 
 ### Debug Mode
 

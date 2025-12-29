@@ -154,8 +154,11 @@ void Runtime::WaitTest(hipc::FullPtr<WaitTestTask> task,
     // Use the client API for recursive calls - this tests the Wait()
     // functionality properly Create a subtask with remaining depth
     chi::u32 remaining_depth = task->depth_ - task->current_depth_;
-    chi::u32 origin_task_final_depth = client_.WaitTest(
+    auto subtask = client_.AsyncWaitTest(
         task->pool_query_, remaining_depth, task->test_id_);
+    subtask.Wait();
+    chi::u32 origin_task_final_depth = subtask->current_depth_;
+    (void)origin_task_final_depth;
 
     // The subtask returns the final depth it reached, so we set our depth to
     // that

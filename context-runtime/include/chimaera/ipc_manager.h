@@ -721,6 +721,9 @@ namespace chi {
 
 template <typename TaskT, typename AllocT>
 void Future<TaskT, AllocT>::Wait() {
+  // Mark this Future as owner of the task (will be destroyed on Future destruction)
+  is_owner_ = true;
+
   if (!task_ptr_.IsNull() && !future_shm_.IsNull()) {
     // Call IpcManager::Recv() to poll for completion and deserialize results
     CHI_IPC->Recv(*this);
@@ -732,6 +735,24 @@ void Future<TaskT, AllocT>::Wait() {
     }
     future_shm_.SetNull();
   }
+}
+
+template <typename TaskT, typename AllocT>
+void Future<TaskT, AllocT>::Destroy() {
+  // Destroy the task using CHI_IPC->DelTask if not null
+  if (!task_ptr_.IsNull()) {
+    CHI_IPC->DelTask(task_ptr_);
+    task_ptr_.SetNull();
+  }
+  // Also free FutureShm if it wasn't freed in Wait()
+  if (!future_shm_.IsNull()) {
+    auto *alloc = CHI_IPC->GetMainAlloc();
+    if (alloc != nullptr) {
+      alloc->DelObj(future_shm_);
+    }
+    future_shm_.SetNull();
+  }
+  is_owner_ = false;
 }
 
 }  // namespace chi

@@ -10,6 +10,7 @@
 #include "wrp_cte/core/core_runtime.h"
 #include "wrp_cte/core/autogen/core_methods.h"
 #include <chimaera/chimaera.h>
+#include <chimaera/future.h>  // For TaskResume coroutine return type
 
 namespace wrp_cte::core {
 
@@ -26,7 +27,7 @@ void Runtime::Init(const chi::PoolId &pool_id, const std::string &pool_name,
   client_ = Client(pool_id);
 }
 
-void Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) {
+chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) {
   switch (method) {
     case Method::kCreate: {
       // Cast task FullPtr to specific type
@@ -147,6 +148,8 @@ void Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunCo
       break;
     }
   }
+  // co_return makes this a coroutine returning TaskResume
+  co_return;
 }
 
 void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {

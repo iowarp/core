@@ -674,7 +674,6 @@ alloc_task->Wait();
 
 if (alloc_task->return_code_ == 0) {
   auto& blocks = alloc_task->blocks_;
-  CHI_IPC->DelTask(alloc_task);
 
   // Prepare data buffer
   auto* ipc_manager = CHI_IPC;
@@ -689,7 +688,6 @@ if (alloc_task->return_code_ == 0) {
 
   std::cout << "Async write completed, bytes written: "
             << write_task->bytes_written_ << std::endl;
-  CHI_IPC->DelTask(write_task);
 
   // Async read
   hipc::ShmPtr<> read_ptr = ipc_manager->AllocateBuffer(data_size);
@@ -698,7 +696,6 @@ if (alloc_task->return_code_ == 0) {
 
   std::cout << "Async read completed, bytes read: "
             << read_task->bytes_read_ << std::endl;
-  CHI_IPC->DelTask(read_task);
 
   // Free blocks
   bdev_client.FreeBlocks(HSHM_MCTX, pool_query, blocks);
@@ -812,7 +809,6 @@ if (task->return_code_ != 0) {
   std::cerr << "Async allocation failed with code: " << task->return_code_ << std::endl;
 }
 
-CHI_IPC->DelTask(task);
 ```
 
 **Common Error Scenarios:**

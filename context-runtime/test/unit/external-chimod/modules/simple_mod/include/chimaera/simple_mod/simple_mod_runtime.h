@@ -54,7 +54,7 @@ public:
   /**
    * Execute a method on a task
    */
-  void Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) override;
+  chi::TaskResume Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) override;
 
   /**
    * Delete/cleanup a task

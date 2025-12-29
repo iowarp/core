@@ -814,20 +814,7 @@ FullPtr<char> IpcManager::AllocateBuffer(size_t size) {
     buffer = allocator->AllocateObjs<char>(size);
     if (buffer.IsNull()) {
       // Allocation failed - yield to allow other tasks to run
-      Worker *worker = CHI_CUR_WORKER;
-      if (worker) {
-        // We're in a task context - yield from the current task
-        FullPtr<Task> current_task = worker->GetCurrentTask();
-        if (!current_task.IsNull()) {
-          current_task->Yield();
-        } else {
-          // No current task - yield from thread model
-          HSHM_THREAD_MODEL->Yield();
-        }
-      } else {
-        // Not in worker context - yield from thread model
-        HSHM_THREAD_MODEL->Yield();
-      }
+      HSHM_THREAD_MODEL->Yield();
     }
   }
 

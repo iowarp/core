@@ -195,6 +195,12 @@ struct BaseCreateTask : public chi::Task {
     is_admin_ = other->is_admin_;
     do_compose_ = other->do_compose_;
   }
+
+  /** Aggregate replica results into this task */
+  void Aggregate(const hipc::FullPtr<BaseCreateTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
 };
 
 /**
@@ -287,6 +293,12 @@ struct DestroyPoolTask : public chi::Task {
     destruction_flags_ = other->destruction_flags_;
     error_message_ = other->error_message_;
   }
+
+  /** Aggregate replica results into this task */
+  void Aggregate(const hipc::FullPtr<DestroyPoolTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
 };
 
 /**
@@ -353,6 +365,12 @@ struct StopRuntimeTask : public chi::Task {
     grace_period_ms_ = other->grace_period_ms_;
     error_message_ = other->error_message_;
   }
+
+  /** Aggregate replica results into this task */
+  void Aggregate(const hipc::FullPtr<StopRuntimeTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
 };
 
 /**
@@ -408,6 +426,12 @@ struct FlushTask : public chi::Task {
     Task::Copy(other.template Cast<Task>());
     // Copy FlushTask-specific fields
     total_work_done_ = other->total_work_done_;
+  }
+
+  /** Aggregate replica results into this task */
+  void Aggregate(const hipc::FullPtr<FlushTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
   }
 };
 
@@ -475,6 +499,12 @@ struct SendTask : public chi::Task {
     transfer_flags_ = other->transfer_flags_;
     error_message_ = other->error_message_;
   }
+
+  /** Aggregate replica results into this task */
+  void Aggregate(const hipc::FullPtr<SendTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
 };
 
 /**
@@ -534,6 +564,12 @@ struct RecvTask : public chi::Task {
     // Copy RecvTask-specific fields
     transfer_flags_ = other->transfer_flags_;
     error_message_ = other->error_message_;
+  }
+
+  /** Aggregate replica results into this task */
+  void Aggregate(const hipc::FullPtr<RecvTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
   }
 };
 

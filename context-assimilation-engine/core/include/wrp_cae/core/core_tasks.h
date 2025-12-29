@@ -116,6 +116,15 @@ struct ParseOmniTask : public chi::Task {
     result_code_ = other->result_code_;
     error_message_ = other->error_message_;
   }
+
+  /**
+   * Aggregate replica results into this task
+   * @param other Pointer to the replica task to aggregate from
+   */
+  void Aggregate(const hipc::FullPtr<ParseOmniTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
 };
 
 }  // namespace wrp_cae::core

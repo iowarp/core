@@ -198,7 +198,6 @@ TEST_CASE("ChiMod Complete Workflow", "[workflow]") {
         HSHM_MCTX, pool_query, kTestPoolId, params);
     
     REQUIRE(fixture.waitForTaskCompletion(create_task));
-    CHI_IPC->DelTask(create_task);
 
     // Step 3: Initialize ChiMod client
     chimaera::your_module::Client module_client(kTestPoolId);
@@ -231,7 +230,6 @@ TEST_CASE("ChiMod Complete Workflow", "[workflow]") {
     REQUIRE_FALSE(output.empty());
     INFO("Async operation result: " << output);
     
-    CHI_IPC->DelTask(task);
   }
 
   SECTION("Error handling and edge cases") {
@@ -251,7 +249,6 @@ TEST_CASE("ChiMod Complete Workflow", "[workflow]") {
     INFO("Task completed within short timeout: " << completed);
     
     if (!task.IsNull()) {
-      CHI_IPC->DelTask(task);
     }
   }
 }
@@ -330,7 +327,6 @@ cmake --build build
 class ResourceGuard {
 public:
   ResourceGuard(hipc::FullPtr<TaskType> task) : task_(task) {}
-  ~ResourceGuard() { if (!task_.IsNull()) CHI_IPC->DelTask(task_); }
 private:
   hipc::FullPtr<TaskType> task_;
 };

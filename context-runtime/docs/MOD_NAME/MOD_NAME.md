@@ -416,7 +416,6 @@ for (size_t i = 0; i < tasks.size(); ++i) {
   std::cout << "  Output data: " << tasks[i]->data_.str() << std::endl;
   
   // Clean up
-  CHI_IPC->DelTask(tasks[i]);
 }
 ```
 
@@ -494,7 +493,6 @@ if (task->result_code_ != 0) {
             << task->result_code_ << std::endl;
 }
 
-CHI_IPC->DelTask(task);
 ```
 
 ## Development Guidelines

@@ -40,7 +40,9 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
 
   // Get or create the tag in CTE
   HLOG(kInfo, "BinaryFileAssimilator: Getting or creating tag '{}'", tag_name);
-    wrp_cte::core::TagId tag_id = cte_client_->GetOrCreateTag(tag_name);
+  auto tag_task = cte_client_->AsyncGetOrCreateTag(tag_name);
+  tag_task.Wait();
+  wrp_cte::core::TagId tag_id = tag_task->tag_id_;
   if (tag_id.IsNull()) {
     HLOG(kError, "BinaryFileAssimilator: Failed to get or create tag '{}'", tag_name);
     return -3;
@@ -116,10 +118,8 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
   if (desc_task->return_code_ != 0) {
     HLOG(kError, "BinaryFileAssimilator: Failed to store description for tag '{}', return_code: {}",
           tag_name, desc_task->return_code_);
-    CHI_IPC->DelTask(desc_task.GetTaskPtr());
     return -9;
   }
-  CHI_IPC->DelTask(desc_task.GetTaskPtr());
   HLOG(kInfo, "BinaryFileAssimilator: Description blob stored successfully");
 
   // Define chunking parameters
@@ -223,13 +223,11 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
               first_task->return_code_);
         // Free the buffer before deleting the task
         CHI_IPC->FreeBuffer(first_task->blob_data_.template Cast<char>());
-        CHI_IPC->DelTask(first_task.GetTaskPtr());
         return -10;
       }
 
       // Free the buffer before deleting the task
       CHI_IPC->FreeBuffer(first_task->blob_data_.template Cast<char>());
-      CHI_IPC->DelTask(first_task.GetTaskPtr());
       active_tasks.erase(active_tasks.begin());
     }
   }
@@ -243,12 +241,10 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
             task->return_code_);
       // Free the buffer before deleting the task
       CHI_IPC->FreeBuffer(task->blob_data_.template Cast<char>());
-      CHI_IPC->DelTask(task.GetTaskPtr());
       return -10;
     }
     // Free the buffer before deleting the task
     CHI_IPC->FreeBuffer(task->blob_data_.template Cast<char>());
-    CHI_IPC->DelTask(task.GetTaskPtr());
   }
 
   file.close();

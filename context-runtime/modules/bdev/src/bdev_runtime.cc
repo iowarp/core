@@ -576,8 +576,8 @@ chi::u32 Runtime::PerformAsyncIO(bool is_write, chi::u64 offset, void *buffer,
            error_code, errno, strerror(errno));
       return 3;
     }
-    // Operation still in progress, yield the current task
-    task->Yield();
+    // Operation still in progress, yield the thread
+    HSHM_THREAD_MODEL->Yield();
   }
 
   // Get the result

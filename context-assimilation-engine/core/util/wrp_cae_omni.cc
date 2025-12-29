@@ -184,8 +184,10 @@ int main(int argc, char* argv[]) {
     std::cout.flush();
 
     // Call ParseOmni with vector of contexts
-    chi::u32 num_tasks_scheduled = 0;
-    chi::u32 result = client.ParseOmni(contexts, num_tasks_scheduled);
+    auto parse_task = client.AsyncParseOmni(contexts);
+    parse_task.Wait();
+    chi::u32 result = parse_task->GetReturnCode();
+    chi::u32 num_tasks_scheduled = parse_task->num_tasks_scheduled_;
 
     if (result != 0) {
       std::cerr << "Error: ParseOmni failed with result code " << result

@@ -37,11 +37,21 @@ bool WRP_CAE_CLIENT_INIT(const std::string &config_path,
 
   // Create the CAE pool
   wrp_cae::core::CreateParams params;
-  cae_client->Create(
+  auto create_task = cae_client->AsyncCreate(
       pool_query,
       "cae_client_pool",
       wrp_cae::core::kCaePoolId,
       params);
+  create_task.Wait();
+
+  // Update client pool_id_ with the actual pool ID from the task
+  cae_client->pool_id_ = create_task->new_pool_id_;
+  cae_client->return_code_ = create_task->return_code_;
+
+  // Check if creation was successful
+  if (create_task->GetReturnCode() != 0) {
+    return false;
+  }
 
   // Mark as initialized
   is_initialized = true;

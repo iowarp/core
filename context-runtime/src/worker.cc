@@ -1,5 +1,8 @@
 /**
  * Worker implementation
+ *
+ * Uses C++20 stackless coroutines for task suspension and resumption.
+ * Coroutines are managed via std::coroutine_handle stored in RunContext.
  */
 
 #include "chimaera/worker.h"
@@ -10,7 +13,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-#include <boost/context/detail/fcontext.hpp>
+#include <coroutine>
 #include <cstdlib>
 #include <iostream>
 #include <unordered_set>
@@ -104,20 +107,14 @@ void Worker::Finalize() {
 
   Stop();
 
-  // Clean up cached stacks and RunContexts
-  while (!stack_cache_.empty()) {
-    StackAndContext cached_entry = stack_cache_.front();
-    stack_cache_.pop();
-
-    // Free the cached stack
-    if (cached_entry.stack_base_for_free) {
-      free(cached_entry.stack_base_for_free);
-    }
+  // Clean up cached RunContexts
+  while (!context_cache_.empty()) {
+    CachedContext cached_entry = context_cache_.front();
+    context_cache_.pop();
 
     // Free the cached RunContext
     if (cached_entry.run_ctx) {
-      cached_entry.run_ctx->~RunContext();
-      free(cached_entry.run_ctx);
+      delete cached_entry.run_ctx;
     }
   }
 
@@ -194,8 +191,6 @@ void Worker::Run() {
     return;
   }
 
-  HLOG(kDebug, "Worker {}: Set up signalfd={} for tid={}", worker_id_,
-       signal_fd, tid);
 
   // Main worker loop - process tasks from assigned lane
   while (is_running_) {
@@ -454,17 +449,13 @@ bool Worker::RouteTask(Future<Task> &future, TaskLane *lane,
   FullPtr<Task> task_ptr = future.GetTaskPtr();
 
   if (task_ptr.IsNull()) {
-    HLOG(kDebug, "Worker::RouteTask - task_ptr is null, returning false");
     return false;
   }
 
   // Check if task has already been routed - if so, return true immediately
   if (task_ptr->IsRouted()) {
-    HLOG(kDebug, "Worker::RouteTask - task already routed, getting container");
     auto *pool_manager = CHI_POOL_MANAGER;
     container = pool_manager->GetContainer(task_ptr->pool_id_);
-    HLOG(kDebug, "Worker::RouteTask - already routed, container={}",
-         (void *)container);
     return (container != nullptr);
   }
 
@@ -499,11 +490,7 @@ bool Worker::RouteTask(Future<Task> &future, TaskLane *lane,
   } else {
     // Route task globally using admin client's ClientSendTaskIn method
     // RouteGlobal never fails, so no need for fallback logic
-    HLOG(kDebug, "Worker::RouteTask - calling RouteGlobal");
     RouteGlobal(future, pool_queries);
-    HLOG(kDebug,
-         "Worker::RouteTask - RouteGlobal done, returning false (no local "
-         "exec)");
     return false;  // No local execution needed
   }
 }
@@ -604,16 +591,6 @@ bool Worker::RouteGlobal(Future<Task> &future,
   // Get task pointer from future
   FullPtr<Task> task_ptr = future.GetTaskPtr();
 
-  HLOG(kDebug,
-       "Worker::RouteGlobal START - method={}, pool_id={}, num_queries={}",
-       task_ptr->method_, task_ptr->pool_id_, pool_queries.size());
-
-  for (size_t i = 0; i < pool_queries.size(); ++i) {
-    HLOG(kDebug, "Worker::RouteGlobal - query[{}] routing_mode={}, node_id={}",
-         i, static_cast<int>(pool_queries[i].GetRoutingMode()),
-         pool_queries[i].GetNodeId());
-  }
-
   auto *ipc_manager = CHI_IPC;
 
   // Store pool_queries in task's RunContext for SendIn to access
@@ -622,12 +599,8 @@ bool Worker::RouteGlobal(Future<Task> &future,
     run_ctx->pool_queries = pool_queries;
   }
 
-  HLOG(kDebug, "Worker::RouteGlobal - enqueueing task directly to net_queue_");
-
   // Enqueue the original task directly to net_queue_ priority 0 (SendIn)
   ipc_manager->EnqueueNetTask(future, NetQueuePriority::kSendIn);
-
-  HLOG(kDebug, "Worker::RouteGlobal - enqueued to net_queue_");
 
   // Set TASK_ROUTED flag on original task
   task_ptr->SetFlags(TASK_ROUTED);
@@ -689,28 +662,21 @@ std::vector<PoolQuery> Worker::ResolveLocalQuery(
 
 std::vector<PoolQuery> Worker::ResolveDynamicQuery(
     const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
-  HLOG(kDebug, "Worker::ResolveDynamicQuery START - pool_id={}, method={}",
-       pool_id, task_ptr->method_);
-
   // Use the current RunContext that was allocated by BeginTask
   RunContext *run_ctx = task_ptr->run_ctx_;
   if (run_ctx == nullptr) {
-    HLOG(kDebug,
-         "Worker::ResolveDynamicQuery - run_ctx is nullptr, returning empty");
     return {};  // Return empty vector if no RunContext
   }
 
   // Set execution mode to kDynamicSchedule
   // This tells ExecTask to call RerouteDynamicTask instead of EndTask
   run_ctx->exec_mode = ExecMode::kDynamicSchedule;
-  HLOG(kDebug, "Worker::ResolveDynamicQuery - set exec_mode=kDynamicSchedule");
 
   // Return Local query for execution
   // After task completes, RerouteDynamicTask will re-route with updated
   // pool_query
   std::vector<PoolQuery> result;
   result.push_back(PoolQuery::Local());
-  HLOG(kDebug, "Worker::ResolveDynamicQuery - returning Local query");
   return result;
 }
 
@@ -837,38 +803,20 @@ std::vector<PoolQuery> Worker::ResolveRangeQuery(
 
 std::vector<PoolQuery> Worker::ResolveBroadcastQuery(
     const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
-  HLOG(kDebug, "Worker::ResolveBroadcastQuery START - pool_id={}, method={}",
-       pool_id, task_ptr->method_);
-
   auto *pool_manager = CHI_POOL_MANAGER;
   if (pool_manager == nullptr) {
-    HLOG(kDebug,
-         "Worker::ResolveBroadcastQuery - pool_manager is null, returning "
-         "original query");
     return {query};  // Fallback to original query
   }
 
   // Get pool info to find the total number of containers
   const PoolInfo *pool_info = pool_manager->GetPoolInfo(pool_id);
   if (pool_info == nullptr || pool_info->num_containers_ == 0) {
-    HLOG(kDebug,
-         "Worker::ResolveBroadcastQuery - pool_info is null or 0 containers, "
-         "returning original query");
     return {query};  // Fallback to original query
   }
 
-  HLOG(
-      kDebug,
-      "Worker::ResolveBroadcastQuery - num_containers={}, creating Range query",
-      pool_info->num_containers_);
-
   // Create a Range query that covers all containers, then resolve it
   PoolQuery range_query = PoolQuery::Range(0, pool_info->num_containers_);
-  auto result = ResolveRangeQuery(range_query, pool_id, task_ptr);
-  HLOG(kDebug,
-       "Worker::ResolveBroadcastQuery - ResolveRangeQuery returned {} queries",
-       result.size());
-  return result;
+  return ResolveRangeQuery(range_query, pool_id, task_ptr);
 }
 
 std::vector<PoolQuery> Worker::ResolvePhysicalQuery(
@@ -877,76 +825,39 @@ std::vector<PoolQuery> Worker::ResolvePhysicalQuery(
   return {query};
 }
 
-RunContext *Worker::AllocateStackAndContext(size_t size) {
+RunContext *Worker::AllocateContext() {
   // Try to get from cache first
-  if (!stack_cache_.empty()) {
-    StackAndContext cached_entry = stack_cache_.front();
-    stack_cache_.pop();
+  if (!context_cache_.empty()) {
+    CachedContext cached_entry = context_cache_.front();
+    context_cache_.pop();
 
-    if (cached_entry.run_ctx && cached_entry.stack_base_for_free) {
+    if (cached_entry.run_ctx) {
       RunContext *run_ctx = cached_entry.run_ctx;
       run_ctx->Clear();
       return run_ctx;
     }
   }
 
-  // Normalize size to page-aligned
-  const size_t page_size = 4096;
-  size = ((size + page_size - 1) / page_size) * page_size;
-
-  // Cache miss or size mismatch - allocate new stack and RunContext
-  void *stack_base = nullptr;
-  int ret = posix_memalign(&stack_base, page_size, size);
+  // Cache miss - allocate new RunContext
+  // With C++20 stackless coroutines, no stack allocation is needed
   RunContext *new_run_ctx = new RunContext();
-
-  if (ret == 0 && stack_base && new_run_ctx) {
-    // Store the malloc base pointer for freeing later
-    new_run_ctx->stack_base_for_free = stack_base;
-    new_run_ctx->stack_size = size;
-
-    // Set the correct stack pointer based on stack growth direction from work
-    // orchestrator
-    WorkOrchestrator *orchestrator = CHI_WORK_ORCHESTRATOR;
-    bool grows_downward = orchestrator ? orchestrator->IsStackDownward()
-                                       : true;  // Default to downward
-
-    if (grows_downward) {
-      // Stack grows downward: point to aligned end of the malloc buffer
-      // Ensure 16-byte alignment (required for x86-64 ABI)
-      char *stack_top = static_cast<char *>(stack_base) + size;
-      new_run_ctx->stack_ptr = reinterpret_cast<void *>(
-          reinterpret_cast<uintptr_t>(stack_top) & ~static_cast<uintptr_t>(15));
-    } else {
-      // Stack grows upward: point to the beginning of the malloc buffer
-      // Ensure 16-byte alignment
-      new_run_ctx->stack_ptr = reinterpret_cast<void *>(
-          (reinterpret_cast<uintptr_t>(stack_base) + 15) &
-          ~static_cast<uintptr_t>(15));
-    }
-
-    return new_run_ctx;
-  }
-
-  // Cleanup on failure
-  if (stack_base) free(stack_base);
-  if (new_run_ctx) delete new_run_ctx;
-
-  return nullptr;
+  return new_run_ctx;
 }
 
-void Worker::DeallocateStackAndContext(RunContext *run_ctx) {
+void Worker::DeallocateContext(RunContext *run_ctx) {
   if (!run_ctx) {
     return;
   }
 
-  // Add to cache for reuse instead of freeing
-  // Create StackAndContext entry with the stack and RunContext
-  StackAndContext cache_entry(run_ctx->stack_base_for_free, run_ctx->stack_size,
-                              run_ctx);
+  // Destroy coroutine handle if it exists
+  if (run_ctx->coro_handle_) {
+    run_ctx->coro_handle_.destroy();
+    run_ctx->coro_handle_ = nullptr;
+  }
 
-  // Add to cache
-  stack_cache_.push(cache_entry);
-  // std::queue always succeeds in pushing (will grow dynamically)
+  // Add to cache for reuse instead of freeing
+  CachedContext cache_entry(run_ctx);
+  context_cache_.push(cache_entry);
 }
 
 void Worker::BeginTask(Future<Task> &future, Container *container,
@@ -956,13 +867,14 @@ void Worker::BeginTask(Future<Task> &future, Container *container,
     return;
   }
 
-  // Allocate stack and RunContext together for new task
-  RunContext *run_ctx = AllocateStackAndContext(65536);  // 64KB default
+  // Allocate RunContext for new task
+  // With C++20 stackless coroutines, no stack allocation is needed
+  RunContext *run_ctx = AllocateContext();
 
   if (!run_ctx) {
-    // FATAL: Stack allocation failure - this is a critical error
+    // FATAL: Context allocation failure - this is a critical error
     HLOG(kFatal,
-         "Worker {}: Failed to allocate stack for task execution. Task "
+         "Worker {}: Failed to allocate context for task execution. Task "
          "method: {}, pool: {}",
          worker_id_, task_ptr->method_, task_ptr->pool_id_);
     std::abort();  // Fatal failure
@@ -978,6 +890,7 @@ void Worker::BeginTask(Future<Task> &future, Container *container,
   run_ctx->event_queue_ = event_queue_;  // Set pointer to worker's event queue
   run_ctx->destroy_in_end_task_ = destroy_in_end_task;  // Set destroy flag
   run_ctx->future_ = future;  // Store future in RunContext
+  run_ctx->coro_handle_ = nullptr;  // Coroutine not started yet
   // Set RunContext pointer in task
   task_ptr->run_ctx_ = run_ctx;
 
@@ -985,8 +898,7 @@ void Worker::BeginTask(Future<Task> &future, Container *container,
   SetCurrentRunContext(run_ctx);
 }
 
-void Worker::BeginFiber(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
-                        void (*fiber_fn)(boost::context::detail::transfer_t)) {
+void Worker::StartCoroutine(const FullPtr<Task> &task_ptr, RunContext *run_ctx) {
   // Set current run context
   SetCurrentRunContext(run_ctx);
 
@@ -996,87 +908,95 @@ void Worker::BeginFiber(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     run_ctx->container->UpdateWork(task_ptr, *run_ctx, 1);
   }
 
-  // Create fiber context for this task using provided fiber function
-  // stack_ptr is already correctly positioned based on stack growth direction
-  bctx::fcontext_t fiber_fctx =
-      bctx::make_fcontext(run_ctx->stack_ptr, run_ctx->stack_size, fiber_fn);
+  // Get the container from RunContext
+  Container *container = run_ctx->container;
+  if (!container) {
+    HLOG(kWarning, "Container not found in RunContext for pool_id: {}",
+         task_ptr->pool_id_);
+    return;
+  }
 
-  // Jump to fiber context to execute the task
-  bctx::transfer_t fiber_result = bctx::jump_fcontext(fiber_fctx, nullptr);
+  // Call the container's Run function which returns a TaskResume coroutine
+  try {
+    TaskResume task_resume = container->Run(task_ptr->method_, task_ptr, *run_ctx);
 
-  // Update yield_context with current worker context so task can return here
-  // The fiber_result contains the worker context for the task to use
-  run_ctx->yield_context = fiber_result;
+    // Store the coroutine handle in RunContext for later resumption
+    auto handle = task_resume.release();
+    run_ctx->coro_handle_ = handle;
 
-  // Update resume_context only if the task actually yielded (is_yielded_ =
-  // true)
-  if (run_ctx->is_yielded_) {
-    run_ctx->resume_context = fiber_result;
+    // Set the run context in the coroutine's promise so it can access it
+    if (handle) {
+      auto typed_handle = TaskResume::handle_type::from_address(handle.address());
+      typed_handle.promise().set_run_context(run_ctx);
+
+      // Resume the coroutine to run until first suspension point or completion
+      // initial_suspend returns suspend_always, so we need to resume to start execution
+      handle.resume();
+
+      // Check if coroutine completed (no suspension points)
+      if (handle.done()) {
+        // Coroutine completed - clean up
+        handle.destroy();
+        run_ctx->coro_handle_ = nullptr;
+      }
+    }
+  } catch (const std::exception &e) {
+    HLOG(kError, "Task execution failed: {}", e.what());
+    // Clean up coroutine handle on exception
+    if (run_ctx->coro_handle_) {
+      run_ctx->coro_handle_.destroy();
+      run_ctx->coro_handle_ = nullptr;
+    }
+  } catch (...) {
+    HLOG(kError, "Task execution failed with unknown exception");
+    // Clean up coroutine handle on exception
+    if (run_ctx->coro_handle_) {
+      run_ctx->coro_handle_.destroy();
+      run_ctx->coro_handle_ = nullptr;
+    }
   }
 }
 
-void Worker::ResumeFiber(const FullPtr<Task> &task_ptr, RunContext *run_ctx) {
+void Worker::ResumeCoroutine(const FullPtr<Task> &task_ptr, RunContext *run_ctx) {
   // Set current run context
   SetCurrentRunContext(run_ctx);
 
-  // Resume execution - jump back to where the task yielded
+  // Clear yielded flag before resumption
+  run_ctx->is_yielded_ = false;
 
-  // Validate resume_context before jumping
-  if (!run_ctx->resume_context.fctx) {
-    HLOG(kFatal,
-         "Worker {}: resume_context.fctx is null when resuming task. "
-         "Stack: {} Size: {} Task method: {} Pool: {}",
-         worker_id_, run_ctx->stack_ptr, run_ctx->stack_size, task_ptr->method_,
-         task_ptr->pool_id_);
-    std::abort();
-  }
-
-  // Check if stack pointer is still valid
-  if (!run_ctx->stack_ptr || !run_ctx->stack_base_for_free) {
-    HLOG(kFatal,
-         "Worker {}: Stack context is invalid when resuming task. "
-         "stack_ptr: {} stack_base: {} Task method: {} Pool: {}",
-         worker_id_, run_ctx->stack_ptr, run_ctx->stack_base_for_free,
-         task_ptr->method_, task_ptr->pool_id_);
-    std::abort();
-  }
-
-  // Validate that resume_context.fctx points within the allocated stack range
-  uintptr_t fctx_addr =
-      reinterpret_cast<uintptr_t>(run_ctx->resume_context.fctx);
-  uintptr_t stack_start =
-      reinterpret_cast<uintptr_t>(run_ctx->stack_base_for_free);
-  uintptr_t stack_end = stack_start + run_ctx->stack_size;
-
-  if (fctx_addr < stack_start || fctx_addr > stack_end) {
+  // Check if we have a valid coroutine handle
+  if (!run_ctx->coro_handle_) {
     HLOG(kWarning,
-         "Worker {}: resume_context.fctx ({:#x}) is outside stack range "
-         "[{:#x}, {:#x}]. "
+         "Worker {}: Attempted to resume task without coroutine handle. "
          "Task method: {} Pool: {}",
-         worker_id_, fctx_addr, stack_start, stack_end, task_ptr->method_,
-         task_ptr->pool_id_);
+         worker_id_, task_ptr->method_, task_ptr->pool_id_);
+    return;
   }
 
-  HLOG(kDebug,
-       "Worker {}: Resuming task - fctx: {:#x}, stack: [{:#x}, {:#x}], "
-       "method: {}",
-       worker_id_, fctx_addr, stack_start, stack_end, task_ptr->method_);
+  // Resume the coroutine - it will run until next co_await or co_return
+  try {
+    run_ctx->coro_handle_.resume();
 
-  // Resume execution - jump back to task's yield point
-  // Use temporary variables to avoid read/write conflict on resume_context
-  bctx::fcontext_t resume_fctx = run_ctx->resume_context.fctx;
-  void *resume_data = run_ctx->resume_context.data;
-
-  // Jump to task's yield point and capture the result
-  bctx::transfer_t resume_result =
-      bctx::jump_fcontext(resume_fctx, resume_data);
-
-  // Update yield_context with current worker context so task can return here
-  run_ctx->yield_context = resume_result;
-
-  // Update resume_context only if the task yielded again (is_yielded_ = true)
-  if (run_ctx->is_yielded_) {
-    run_ctx->resume_context = resume_result;
+    // Check if coroutine completed after resumption
+    if (run_ctx->coro_handle_.done()) {
+      // Coroutine completed - clean up
+      run_ctx->coro_handle_.destroy();
+      run_ctx->coro_handle_ = nullptr;
+    }
+  } catch (const std::exception &e) {
+    HLOG(kError, "Task resume failed: {}", e.what());
+    // Clean up coroutine handle on exception
+    if (run_ctx->coro_handle_) {
+      run_ctx->coro_handle_.destroy();
+      run_ctx->coro_handle_ = nullptr;
+    }
+  } catch (...) {
+    HLOG(kError, "Task resume failed with unknown exception");
+    // Clean up coroutine handle on exception
+    if (run_ctx->coro_handle_) {
+      run_ctx->coro_handle_.destroy();
+      run_ctx->coro_handle_ = nullptr;
+    }
   }
 }
 
@@ -1089,15 +1009,14 @@ void Worker::ExecTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
 
   // Check if task is null or run context is null
   if (task_ptr.IsNull() || !run_ctx) {
-    HLOG(kDebug, "Worker::ExecTask - null task or run_ctx, returning");
     return;  // Consider null tasks as completed
   }
 
-  // Call appropriate fiber function based on task state
+  // Call appropriate coroutine function based on task state
   if (is_started) {
-    ResumeFiber(task_ptr, run_ctx);
+    ResumeCoroutine(task_ptr, run_ctx);
   } else {
-    BeginFiber(task_ptr, run_ctx, FiberExecutionFunction);
+    StartCoroutine(task_ptr, run_ctx);
     task_ptr->SetFlags(TASK_STARTED);
   }
 
@@ -1106,17 +1025,18 @@ void Worker::ExecTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     did_work_ = true;
   }
 
-  // Common cleanup logic for both fiber and direct execution
-  if (run_ctx->is_yielded_) {
+  // Check if coroutine is done or yielded
+  bool coro_done = run_ctx->coro_handle_ && run_ctx->coro_handle_.done();
+
+  // If coroutine yielded (not done and is_yielded_ set), don't clean up
+  if (run_ctx->is_yielded_ && !coro_done) {
     // Task is blocked - don't clean up, will be resumed later
-    HLOG(kDebug, "Worker::ExecTask - task yielded, returning (blocked)");
     return;  // Task is not completed, blocked for later resume
   }
 
   // Check if this is a dynamic scheduling task
   if (run_ctx->exec_mode == ExecMode::kDynamicSchedule) {
     // Dynamic scheduling - re-route task with updated pool_query
-    HLOG(kDebug, "Worker::ExecTask - calling RerouteDynamicTask");
     RerouteDynamicTask(task_ptr, run_ctx);
     return;
   }
@@ -1130,12 +1050,6 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   // Get task properties at the start
   bool is_remote = task_ptr->IsRemote();
   bool is_periodic = task_ptr->IsPeriodic();
-
-  HLOG(kInfo,
-       "[TRACE] EndTask - task_id={}, pool_id={}, method={}, is_remote={}, "
-       "is_periodic={}, can_resched={}",
-       task_ptr->task_id_, task_ptr->pool_id_, task_ptr->method_, is_remote,
-       is_periodic, can_resched);
 
   // Handle periodic task rescheduling
   if (is_periodic && can_resched) {
@@ -1152,9 +1066,6 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   if (is_remote) {
     auto *ipc_manager = CHI_IPC;
     ipc_manager->EnqueueNetTask(run_ctx->future_, NetQueuePriority::kSendOut);
-    HLOG(kDebug,
-         "[TRACE] EndTask - enqueued remote task {} to net_queue_ for SendOut",
-         task_ptr->task_id_);
     return;
   }
 
@@ -1176,11 +1087,7 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   }
 
   // 2. Mark task as complete
-  HLOG(kInfo, "[TRACE] EndTask - calling SetComplete for task_id={}",
-       task_ptr->task_id_);
   run_ctx->future_.SetComplete();
-  HLOG(kInfo, "[TRACE] EndTask - SetComplete done for task_id={}",
-       task_ptr->task_id_);
 
   // 2.5. Wake up parent task if waiting for this subtask
   RunContext *parent_task = run_ctx->future_.GetParentTask();
@@ -1197,18 +1104,12 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     run_ctx->container->DelTask(task_ptr->method_, task_ptr);
   }
 
-  // Deallocate stack and context
-  DeallocateStackAndContext(run_ctx);
+  // Deallocate context
+  DeallocateContext(run_ctx);
 }
 
 void Worker::RerouteDynamicTask(const FullPtr<Task> &task_ptr,
                                 RunContext *run_ctx) {
-  HLOG(kDebug,
-       "Worker::RerouteDynamicTask START - method={}, pool_id={}, "
-       "new_routing_mode={}",
-       task_ptr->method_, task_ptr->pool_id_,
-       static_cast<int>(task_ptr->pool_query_.GetRoutingMode()));
-
   // Dynamic scheduling complete - now re-route task with updated pool_query
   // The task's pool_query_ should have been updated during execution
   // (e.g., from Dynamic to Local or Broadcast)
@@ -1218,46 +1119,28 @@ void Worker::RerouteDynamicTask(const FullPtr<Task> &task_ptr,
 
   // Reset the TASK_STARTED flag so the task can be executed again
   task_ptr->ClearFlags(TASK_STARTED | TASK_ROUTED);
-  HLOG(kDebug,
-       "Worker::RerouteDynamicTask - cleared TASK_STARTED|TASK_ROUTED flags");
 
   // Re-route the task using the updated pool_query
-  HLOG(kDebug, "Worker::RerouteDynamicTask - calling RouteTask");
   if (RouteTask(run_ctx->future_, lane, container)) {
-    HLOG(kDebug,
-         "Worker::RerouteDynamicTask - RouteTask returned true, exec_mode={}",
-         static_cast<int>(run_ctx->exec_mode));
     // Avoids recursive call to RerouteDynamicTask
     if (run_ctx->exec_mode == ExecMode::kDynamicSchedule) {
-      HLOG(kDebug,
-           "Worker::RerouteDynamicTask - still kDynamicSchedule, calling "
-           "EndTask");
       EndTask(task_ptr, run_ctx, false);
       return;
     }
     // Successfully re-routed - execute the task again
     // Note: ExecTask will call BeginFiber since TASK_STARTED is unset
-    HLOG(kDebug, "Worker::RerouteDynamicTask - calling ExecTask");
     ExecTask(task_ptr, run_ctx, false);
-  } else {
-    HLOG(kDebug,
-         "Worker::RerouteDynamicTask - RouteTask returned false (routed "
-         "globally)");
   }
+  // RouteTask returned false means task was routed globally
 }
 
 void Worker::ProcessBlockedQueue(std::queue<RunContext *> &queue,
                                  u32 queue_idx) {
+  (void)queue_idx;  // Unused parameter, kept for API consistency
+
   // Process only first 8 tasks in the queue
   size_t queue_size = queue.size();
   size_t check_limit = std::min(queue_size, size_t(8));
-
-  if (queue_size > 0) {
-    HLOG(kInfo,
-         "[TRACE] ProcessBlockedQueue - queue_idx={}, queue_size={}, "
-         "check_limit={}",
-         queue_idx, queue_size, check_limit);
-  }
 
   for (size_t i = 0; i < check_limit; i++) {
     if (queue.empty()) {
@@ -1272,12 +1155,6 @@ void Worker::ProcessBlockedQueue(std::queue<RunContext *> &queue,
       continue;
     }
 
-    HLOG(kInfo,
-         "[TRACE] ProcessBlockedQueue - processing task_id={}, pool_id={}, "
-         "method={}",
-         run_ctx->task->task_id_, run_ctx->task->pool_id_,
-         run_ctx->task->method_);
-
     // Always execute tasks from blocked queue
     // (Event queue will handle subtask completion wakeup)
     // Determine if this is a resume (task was started before) or first
@@ -1289,9 +1166,6 @@ void Worker::ProcessBlockedQueue(std::queue<RunContext *> &queue,
     // CRITICAL: Clear the is_yielded_ flag before resuming the task
     // This allows the task to call Wait() again if needed
     run_ctx->is_yielded_ = false;
-
-    HLOG(kInfo, "[TRACE] ProcessBlockedQueue - calling ExecTask, is_started={}",
-         is_started);
 
     // Execute task with existing RunContext
     ExecTask(run_ctx->task, run_ctx, is_started);
@@ -1508,50 +1382,6 @@ void Worker::ReschedulePeriodicTask(RunContext *run_ctx,
   // Add to blocked queue - block count will be incremented automatically
   run_ctx->yield_time_us_ = task_ptr->period_ns_ / 1000.0;
   AddToBlockedQueue(run_ctx);
-}
-
-void Worker::FiberExecutionFunction(boost::context::detail::transfer_t t) {
-  // This function runs in the fiber context
-  // Use thread-local storage to get context
-  Worker *worker = CHI_CUR_WORKER;
-  RunContext *run_ctx = worker->GetCurrentRunContext();
-  FullPtr<Task> task_ptr =
-      worker ? worker->GetCurrentTask() : FullPtr<Task>::GetNull();
-
-  if (!task_ptr.IsNull() && worker && run_ctx) {
-    // Store the worker's context (from parameter t) - this is where we jump
-    // back when yielding or when task completes
-    run_ctx->yield_context = t;
-    // Execute the task directly - merged TaskExecutionFunction logic
-    try {
-      // Get the container from RunContext
-      Container *container = run_ctx->container;
-
-      if (container) {
-        // Call the container's Run function with the task
-        container->Run(task_ptr->method_, task_ptr, *run_ctx);
-      } else {
-        // Container not found - this is an error condition
-        HLOG(kWarning, "Container not found in RunContext for pool_id: {}",
-             task_ptr->pool_id_);
-      }
-    } catch (const std::exception &e) {
-      // Handle execution errors
-      HLOG(kError, "Task execution failed: {}", e.what());
-    } catch (...) {
-      // Handle unknown errors
-      HLOG(kError, "Task execution failed with unknown exception");
-    }
-
-    // Task completion and work count handling is done in ExecTask
-    // This avoids duplicate logic and ensures proper ordering
-  }
-
-  // Jump back to worker context when task completes
-  // Use temporary variables to avoid potential read/write conflicts
-  bctx::fcontext_t worker_fctx = run_ctx->yield_context.fctx;
-  void *worker_data = run_ctx->yield_context.data;
-  bctx::jump_fcontext(worker_fctx, worker_data);
 }
 
 }  // namespace chi

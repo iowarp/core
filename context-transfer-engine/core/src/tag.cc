@@ -5,9 +5,16 @@
 namespace wrp_cte::core {
 
 Tag::Tag(const std::string &tag_name) : tag_name_(tag_name) {
-  // Call the WRP_CTE client GetOrCreateTag function
+  // Call the WRP_CTE client AsyncGetOrCreateTag function
   auto *cte_client = WRP_CTE_CLIENT;
-  tag_id_ = cte_client->GetOrCreateTag(tag_name);
+  auto task = cte_client->AsyncGetOrCreateTag(tag_name);
+  task.Wait();
+
+  if (task->GetReturnCode() != 0) {
+    throw std::runtime_error("GetOrCreateTag operation failed");
+  }
+
+  tag_id_ = task->tag_id_;
 }
 
 Tag::Tag(const TagId &tag_id) : tag_id_(tag_id), tag_name_("") {}
@@ -37,11 +44,14 @@ void Tag::PutBlob(const std::string &blob_name, const char *data, size_t data_si
 void Tag::PutBlob(const std::string &blob_name, const hipc::ShmPtr<> &data, size_t data_size,
                   size_t off, float score) {
   auto *cte_client = WRP_CTE_CLIENT;
-  bool result = cte_client->PutBlob(tag_id_, blob_name,
-                                    off, data_size, data, score, 0);
-  if (!result) {
+  auto task = cte_client->AsyncPutBlob(tag_id_, blob_name,
+                                       off, data_size, data, score, 0);
+  task.Wait();
+
+  if (task->GetReturnCode() != 0) {
     throw std::runtime_error("PutBlob operation failed");
   }
+
 }
 
 // NOTE: AsyncPutBlob(const char*) overload removed due to memory management issues.
@@ -94,33 +104,48 @@ void Tag::GetBlob(const std::string &blob_name, hipc::ShmPtr<> data, size_t data
   if (data_size == 0) {
     throw std::invalid_argument("data_size must be specified for GetBlob");
   }
-  
+
   if (data.IsNull()) {
     throw std::invalid_argument("data pointer must be pre-allocated by caller. "
                                "Use CHI_IPC->AllocateBuffer(data_size) to allocate shared memory.");
   }
-  
+
   auto *cte_client = WRP_CTE_CLIENT;
-  bool result = cte_client->GetBlob(tag_id_, blob_name,
-                                    off, data_size, 0, data);
-  if (!result) {
+  auto task = cte_client->AsyncGetBlob(tag_id_, blob_name,
+                                       off, data_size, 0, data);
+  task.Wait();
+
+  if (task->GetReturnCode() != 0) {
     throw std::runtime_error("GetBlob operation failed");
   }
+
 }
 
 float Tag::GetBlobScore(const std::string &blob_name) {
   auto *cte_client = WRP_CTE_CLIENT;
-  return cte_client->GetBlobScore(tag_id_, blob_name);
+  auto task = cte_client->AsyncGetBlobScore(tag_id_, blob_name);
+  task.Wait();
+
+  float score = task->score_;
+  return score;
 }
 
 chi::u64 Tag::GetBlobSize(const std::string &blob_name) {
   auto *cte_client = WRP_CTE_CLIENT;
-  return cte_client->GetBlobSize(tag_id_, blob_name);
+  auto task = cte_client->AsyncGetBlobSize(tag_id_, blob_name);
+  task.Wait();
+
+  chi::u64 size = task->size_;
+  return size;
 }
 
 std::vector<std::string> Tag::GetContainedBlobs() {
   auto *cte_client = WRP_CTE_CLIENT;
-  return cte_client->GetContainedBlobs(tag_id_);
+  auto task = cte_client->AsyncGetContainedBlobs(tag_id_);
+  task.Wait();
+
+  std::vector<std::string> blobs = task->blob_names_;
+  return blobs;
 }
 
 } // namespace wrp_cte::core

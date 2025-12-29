@@ -478,8 +478,17 @@ endif()
 # Global Settings
 #------------------------------------------------------------------------------
 # C++ Standard - Applied to all subdirectories
-set(CMAKE_CXX_STANDARD_20)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# C++20 Coroutines support
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  add_compile_options(-fcoroutines)
+  message(STATUS "GCC detected - enabling coroutines with -fcoroutines")
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  # Clang 14+ supports coroutines in C++20 mode natively
+  message(STATUS "Clang detected - coroutines enabled via C++20 mode")
+endif()
 
 # Export compile commands for IDE integration - Applied to all subdirectories
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

@@ -3,8 +3,8 @@
 
 #include <sys/epoll.h>
 
-#include <boost/context/detail/fcontext.hpp>
 #include <chrono>
+#include <coroutine>
 #include <functional>
 #include <mutex>
 #include <queue>
@@ -28,19 +28,15 @@ using WorkQueue =
 class Task;
 
 /**
- * Structure to hold a cached stack and RunContext together
- * Used for efficient reuse of stack allocations
+ * Structure to hold a cached RunContext for reuse
+ * With C++20 stackless coroutines, we don't need stack allocations
  */
-struct StackAndContext {
-  void *stack_base_for_free; /**< Base pointer for freeing the stack */
-  size_t stack_size;         /**< Size of the stack in bytes */
+struct CachedContext {
   RunContext *run_ctx;       /**< Pointer to the RunContext */
 
-  StackAndContext()
-      : stack_base_for_free(nullptr), stack_size(0), run_ctx(nullptr) {}
+  CachedContext() : run_ctx(nullptr) {}
 
-  StackAndContext(void *stack_base, size_t size, RunContext *ctx)
-      : stack_base_for_free(stack_base), stack_size(size), run_ctx(ctx) {}
+  explicit CachedContext(RunContext *ctx) : run_ctx(ctx) {}
 };
 
 // Macro for accessing HSHM thread-local storage (worker thread context)
@@ -308,21 +304,21 @@ class Worker {
 
  private:
   /**
-   * Allocate stack and RunContext for task execution (64KB default)
-   * @param size Stack size in bytes
-   * @return RunContext pointer with stack_ptr set
+   * Allocate RunContext for task execution
+   * With C++20 stackless coroutines, no stack allocation is needed
+   * @return RunContext pointer
    */
-  RunContext *AllocateStackAndContext(size_t size = 65536);  // 64KB default
+  RunContext *AllocateContext();
 
   /**
-   * Deallocate task execution stack and RunContext
-   * @param run_ctx_ptr Pointer to RunContext containing stack info to
-   * deallocate
+   * Deallocate task execution RunContext
+   * Returns context to cache for reuse
+   * @param run_ctx_ptr Pointer to RunContext to deallocate
    */
-  void DeallocateStackAndContext(RunContext *run_ctx_ptr);
+  void DeallocateContext(RunContext *run_ctx_ptr);
 
   /**
-   * Begin task execution using boost::fiber for context switching
+   * Begin task execution
    * @param future Future object containing the task and completion state
    * @param container Container for the task
    * @param lane Lane for the task (can be nullptr)
@@ -353,6 +349,7 @@ class Worker {
 
   /**
    * Execute task with context switching capability
+   * Uses C++20 coroutines for suspension and resumption
    * @param task_ptr Full pointer to task to execute
    * @param run_ctx_ptr Pointer to existing RunContext
    * @param is_started True if task is resuming, false for new task
@@ -361,20 +358,19 @@ class Worker {
                 bool is_started);
 
   /**
-   * Begin fiber execution for a new task
+   * Start coroutine execution for a new task
+   * Creates the coroutine and runs until first suspension point
    * @param task_ptr Full pointer to task to execute
    * @param run_ctx Pointer to RunContext for task
-   * @param fiber_fn Function pointer for fiber execution
    */
-  void BeginFiber(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
-                  void (*fiber_fn)(boost::context::detail::transfer_t));
+  void StartCoroutine(const FullPtr<Task> &task_ptr, RunContext *run_ctx);
 
   /**
-   * Resume fiber execution for a yielded/blocked task
+   * Resume coroutine execution for a yielded/blocked task
    * @param task_ptr Full pointer to task to resume
    * @param run_ctx Pointer to RunContext for task
    */
-  void ResumeFiber(const FullPtr<Task> &task_ptr, RunContext *run_ctx);
+  void ResumeCoroutine(const FullPtr<Task> &task_ptr, RunContext *run_ctx);
 
   /**
    * End dynamic scheduling task and re-route with updated pool query
@@ -382,12 +378,6 @@ class Worker {
    * @param run_ctx Pointer to RunContext for task
    */
   void RerouteDynamicTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx);
-
-  /**
-   * Static function for boost::fiber execution context
-   * @param t Transfer context for boost::fiber
-   */
-  static void FiberExecutionFunction(boost::context::detail::transfer_t t);
 
   u32 worker_id_;
   ThreadType thread_type_;
@@ -403,9 +393,9 @@ class Worker {
   // Single lane assigned to this worker (one lane per worker)
   TaskLane *assigned_lane_;
 
-  // Stack and RunContext cache for efficient reuse
-  // Using ext_ring_buffer for O(1) enqueue/dequeue operations
-  std::queue<StackAndContext> stack_cache_;
+  // RunContext cache for efficient reuse
+  // With C++20 stackless coroutines, we only cache RunContext objects
+  std::queue<CachedContext> context_cache_;
 
   // Blocked queue system for cooperative tasks (waiting for subtasks):
   // - Queue[0]: Tasks blocked <=2 times (checked every % 2 iterations)

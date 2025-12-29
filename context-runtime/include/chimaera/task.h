@@ -2,7 +2,7 @@
 #define CHIMAERA_INCLUDE_CHIMAERA_TASK_H_
 
 #include <atomic>
-#include <boost/context/detail/fcontext.hpp>
+#include <coroutine>
 #include <sstream>
 #include <vector>
 
@@ -136,12 +136,6 @@ class Task {
   HSHM_CROSS_FUN void Wait(std::atomic<u32>& is_complete, double yield_time_us = 0.0);
 
   /**
-   * Yield execution back to worker by waiting for task completion
-   * @param yield_time_us Yield duration in microseconds (default: 0.0 for cooperative tasks)
-   */
-  HSHM_CROSS_FUN void Yield(double yield_time_us = 0.0);
-
-  /**
    * Check if task is periodic
    * @return true if task has periodic flag set
    */
@@ -267,13 +261,6 @@ class Task {
   }
 
   /**
-   * Yield execution back to worker (runtime) or sleep briefly (non-runtime)
-   * In runtime: Jumps back to worker fiber context with estimated completion
-   * time Outside runtime: Uses SleepForUs when worker is null
-   */
-  HSHM_CROSS_FUN void YieldBase();
-
-  /**
    * Get the task return code
    * @return Return code (0=success, non-zero=error)
    */
@@ -344,40 +331,36 @@ enum class ExecMode : u32 {
 
 /**
  * Context passed to task execution methods
+ *
+ * RunContext holds the execution state for a task, including the coroutine
+ * handle for C++20 stackless coroutines. When a task yields (co_await),
+ * the coro_handle_ is used to resume execution later.
  */
 struct RunContext {
-  void *stack_ptr; // Stack pointer (positioned for boost::context based on
-                   // stack growth)
-  void *stack_base_for_free; // Original malloc pointer for freeing
-  size_t stack_size;
+  /** Coroutine handle for C++20 stackless coroutines */
+  std::coroutine_handle<> coro_handle_;
   ThreadType thread_type;
   u32 worker_id;
-  FullPtr<Task> task; // Task being executed by this context
-  bool is_yielded_;    // Task is waiting for completion
-  double est_load;    // Estimated time until task should wake up (microseconds)
-  double yield_time_us_;  // Time in microseconds for task to yield
-  hshm::Timepoint block_start; // Time when task was blocked (real time)
-  boost::context::detail::transfer_t
-      yield_context; // boost::context transfer from FiberExecutionFunction
-                     // parameter - used for yielding back
-  boost::context::detail::transfer_t
-      resume_context;    // boost::context transfer for resuming into yield
-                         // function
-  Container *container;  // Current container being executed
-  TaskLane *lane;        // Current lane being processed
-  ExecMode exec_mode;    // Execution mode (kExec or kDynamicSchedule)
-  void *event_queue_;    // Pointer to worker's event queue (mpsc_queue<RunContext*>)
-  std::vector<PoolQuery> pool_queries;  // Pool queries for task distribution
-  std::vector<FullPtr<Task>> subtasks_; // Replica tasks for this execution
-  u32 completed_replicas_; // Count of completed replicas
-  u32 yield_count_;  // Number of times task has yielded
-  Future<Task> future_;  // Future for async completion tracking
-  bool destroy_in_end_task_;  // Flag to indicate if task should be destroyed in EndTask
+  FullPtr<Task> task; /**< Task being executed by this context */
+  bool is_yielded_;    /**< Task is waiting for completion */
+  double est_load;    /**< Estimated time until task should wake up (microseconds) */
+  double yield_time_us_;  /**< Time in microseconds for task to yield */
+  hshm::Timepoint block_start; /**< Time when task was blocked (real time) */
+  Container *container;  /**< Current container being executed */
+  TaskLane *lane;        /**< Current lane being processed */
+  ExecMode exec_mode;    /**< Execution mode (kExec or kDynamicSchedule) */
+  void *event_queue_;    /**< Pointer to worker's event queue */
+  std::vector<PoolQuery> pool_queries;  /**< Pool queries for task distribution */
+  std::vector<FullPtr<Task>> subtasks_; /**< Replica tasks for this execution */
+  u32 completed_replicas_; /**< Count of completed replicas */
+  u32 yield_count_;  /**< Number of times task has yielded */
+  Future<Task> future_;  /**< Future for async completion tracking */
+  bool destroy_in_end_task_;  /**< Flag to indicate if task should be destroyed in EndTask */
 
   RunContext()
-      : stack_ptr(nullptr), stack_base_for_free(nullptr), stack_size(0),
+      : coro_handle_(nullptr),
         thread_type(kSchedWorker), worker_id(0), is_yielded_(false),
-        est_load(0.0), yield_time_us_(0.0), block_start(), yield_context{}, resume_context{},
+        est_load(0.0), yield_time_us_(0.0), block_start(),
         container(nullptr), lane(nullptr), exec_mode(ExecMode::kExec),
         event_queue_(nullptr),
         completed_replicas_(0), yield_count_(0), destroy_in_end_task_(false) {
@@ -387,13 +370,11 @@ struct RunContext {
    * Move constructor
    */
   RunContext(RunContext &&other) noexcept
-      : stack_ptr(other.stack_ptr),
-        stack_base_for_free(other.stack_base_for_free),
-        stack_size(other.stack_size), thread_type(other.thread_type),
+      : coro_handle_(other.coro_handle_),
+        thread_type(other.thread_type),
         worker_id(other.worker_id), task(std::move(other.task)),
         is_yielded_(other.is_yielded_), est_load(other.est_load),
         yield_time_us_(other.yield_time_us_), block_start(other.block_start),
-        yield_context(other.yield_context), resume_context(other.resume_context),
         container(other.container), lane(other.lane),
         exec_mode(other.exec_mode),
         event_queue_(other.event_queue_),
@@ -403,6 +384,7 @@ struct RunContext {
         yield_count_(other.yield_count_),
         future_(std::move(other.future_)),
         destroy_in_end_task_(other.destroy_in_end_task_) {
+    other.coro_handle_ = nullptr;
     other.event_queue_ = nullptr;
   }
 
@@ -411,9 +393,7 @@ struct RunContext {
    */
   RunContext &operator=(RunContext &&other) noexcept {
     if (this != &other) {
-      stack_ptr = other.stack_ptr;
-      stack_base_for_free = other.stack_base_for_free;
-      stack_size = other.stack_size;
+      coro_handle_ = other.coro_handle_;
       thread_type = other.thread_type;
       worker_id = other.worker_id;
       task = std::move(other.task);
@@ -421,8 +401,6 @@ struct RunContext {
       est_load = other.est_load;
       yield_time_us_ = other.yield_time_us_;
       block_start = other.block_start;
-      yield_context = other.yield_context;
-      resume_context = other.resume_context;
       container = other.container;
       lane = other.lane;
       exec_mode = other.exec_mode;
@@ -433,6 +411,7 @@ struct RunContext {
       yield_count_ = other.yield_count_;
       future_ = std::move(other.future_);
       destroy_in_end_task_ = other.destroy_in_end_task_;
+      other.coro_handle_ = nullptr;
       other.event_queue_ = nullptr;
     }
     return *this;

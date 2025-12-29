@@ -217,7 +217,6 @@ private:
       // Wait for all async operations to complete
       for (auto &task : tasks) {
         task.Wait();
-        CHI_IPC->DelTask(task.GetTaskPtr());
       }
     }
 
@@ -356,7 +355,6 @@ private:
       // Wait for Put operations
       for (auto &task : put_tasks) {
         task.Wait();
-        CHI_IPC->DelTask(task.GetTaskPtr());
       }
 
       // Perform Get operations synchronously

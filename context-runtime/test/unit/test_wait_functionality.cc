@@ -79,16 +79,20 @@ namespace {
      */
     bool createContainer(chi::PoolId pool_id) {
       chimaera::MOD_NAME::Client client(pool_id);
-      
-      
+
+
       try {
         std::string pool_name = "wait_test_pool_" + std::to_string(pool_id.ToU64());
-        bool success = client.Create(chi::PoolQuery::Dynamic(), pool_name, pool_id);
+        auto create_task = client.AsyncCreate(chi::PoolQuery::Dynamic(), pool_name, pool_id);
+        create_task.Wait();
+        client.pool_id_ = create_task->new_pool_id_;
+        client.return_code_ = create_task->return_code_;
+        bool success = (create_task->return_code_ == 0);
         REQUIRE(success);
-        
+
         // Give container time to initialize
         std::this_thread::sleep_for(100ms);
-        
+
         INFO("Successfully created MOD_NAME container for pool " + std::to_string(pool_id.ToU64()));
         return true;
       } catch (const std::exception& e) {
@@ -162,45 +166,49 @@ TEST_CASE("wait_test_basic_functionality", "[wait_test][basic]") {
   
   SECTION("Basic WaitTest with depth 1") {
     chimaera::MOD_NAME::Client client(kWaitTestPoolId);
-    
-    
+
+
     chi::u32 test_id = fixture.generateTestId();
     chi::u32 depth = 1;
-    
+
     auto start_time = std::chrono::steady_clock::now();
-    
-    // Call synchronous WaitTest method
-    chi::u32 final_depth = client.WaitTest(chi::PoolQuery::Local(), depth, test_id);
-    
+
+    // Call async WaitTest method and wait
+    auto task = client.AsyncWaitTest(chi::PoolQuery::Local(), depth, test_id);
+    task.Wait();
+    chi::u32 final_depth = task->current_depth_;
+
     auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start_time).count();
-    
+
     // Verify the result
     REQUIRE(final_depth == depth);
-    
-    INFO("WaitTest with depth " + std::to_string(depth) + 
+
+    INFO("WaitTest with depth " + std::to_string(depth) +
          " completed in " + std::to_string(elapsed_time) + "ms");
   }
   
   SECTION("Basic WaitTest with depth 3") {
     chimaera::MOD_NAME::Client client(kWaitTestPoolId);
-    
-    
+
+
     chi::u32 test_id = fixture.generateTestId();
     chi::u32 depth = 3;
-    
+
     auto start_time = std::chrono::steady_clock::now();
-    
-    // Call synchronous WaitTest method
-    chi::u32 final_depth = client.WaitTest(chi::PoolQuery::Local(), depth, test_id);
-    
+
+    // Call async WaitTest method and wait
+    auto task = client.AsyncWaitTest(chi::PoolQuery::Local(), depth, test_id);
+    task.Wait();
+    chi::u32 final_depth = task->current_depth_;
+
     auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start_time).count();
-    
+
     // Verify the result
     REQUIRE(final_depth == depth);
-    
-    INFO("WaitTest with depth " + std::to_string(depth) + 
+
+    INFO("WaitTest with depth " + std::to_string(depth) +
          " completed in " + std::to_string(elapsed_time) + "ms");
   }
 }
@@ -218,45 +226,49 @@ TEST_CASE("wait_test_recursive_functionality", "[wait_test][recursive]") {
   
   SECTION("Recursive WaitTest with depth 5") {
     chimaera::MOD_NAME::Client client(kWaitTestPoolId);
-    
-    
+
+
     chi::u32 test_id = fixture.generateTestId();
     chi::u32 depth = 5;
-    
+
     auto start_time = std::chrono::steady_clock::now();
-    
-    // Call synchronous WaitTest method
-    chi::u32 final_depth = client.WaitTest(chi::PoolQuery::Local(), depth, test_id);
-    
+
+    // Call async WaitTest method and wait
+    auto task = client.AsyncWaitTest(chi::PoolQuery::Local(), depth, test_id);
+    task.Wait();
+    chi::u32 final_depth = task->current_depth_;
+
     auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start_time).count();
-    
+
     // Verify the result
     REQUIRE(final_depth == depth);
-    
-    INFO("Recursive WaitTest with depth " + std::to_string(depth) + 
+
+    INFO("Recursive WaitTest with depth " + std::to_string(depth) +
          " completed in " + std::to_string(elapsed_time) + "ms");
   }
   
   SECTION("Deep recursive WaitTest with depth 10") {
     chimaera::MOD_NAME::Client client(kWaitTestPoolId);
-    
-    
+
+
     chi::u32 test_id = fixture.generateTestId();
     chi::u32 depth = 10;
-    
+
     auto start_time = std::chrono::steady_clock::now();
-    
-    // Call synchronous WaitTest method
-    chi::u32 final_depth = client.WaitTest(chi::PoolQuery::Local(), depth, test_id);
-    
+
+    // Call async WaitTest method and wait
+    auto task = client.AsyncWaitTest(chi::PoolQuery::Local(), depth, test_id);
+    task.Wait();
+    chi::u32 final_depth = task->current_depth_;
+
     auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start_time).count();
-    
+
     // Verify the result
     REQUIRE(final_depth == depth);
-    
-    INFO("Deep recursive WaitTest with depth " + std::to_string(depth) + 
+
+    INFO("Deep recursive WaitTest with depth " + std::to_string(depth) +
          " completed in " + std::to_string(elapsed_time) + "ms");
   }
 }
@@ -274,66 +286,65 @@ TEST_CASE("wait_test_async_functionality", "[wait_test][async]") {
   
   SECTION("Async WaitTest with manual Wait() call") {
     chimaera::MOD_NAME::Client client(kWaitTestPoolId);
-    
-    
+
+
     chi::u32 test_id = fixture.generateTestId();
     chi::u32 depth = 4;
-    
+
     auto start_time = std::chrono::steady_clock::now();
-    
+
     // Call asynchronous WaitTest method
     auto task = client.AsyncWaitTest(chi::PoolQuery::Local(), depth, test_id);
-    
+
     // Manually call Wait() - this tests the recursive Wait functionality
     task.Wait();
-    
+
     auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start_time).count();
-    
+
     // Verify the result
     REQUIRE(task->current_depth_ == depth);
-    
-    INFO("Async WaitTest with depth " + std::to_string(depth) + 
+
+    INFO("Async WaitTest with depth " + std::to_string(depth) +
          " completed in " + std::to_string(elapsed_time) + "ms");
-    
+
     // Clean up
-    auto* ipc_manager = CHI_IPC;
-    ipc_manager->DelTask(task.GetTaskPtr());
+    (void)CHI_IPC;
   }
   
   SECTION("Multiple concurrent async WaitTest tasks") {
     chimaera::MOD_NAME::Client client(kWaitTestPoolId);
-    
-    
+
+
     const int num_tasks = 3;
     std::vector<chi::u32> depths = {2, 3, 4};
     std::vector<chi::Future<chimaera::MOD_NAME::WaitTestTask>> tasks;
-    
+
     auto start_time = std::chrono::steady_clock::now();
-    
+
     // Submit multiple async tasks
     for (int i = 0; i < num_tasks; ++i) {
       chi::u32 test_id = fixture.generateTestId();
       auto task = client.AsyncWaitTest(chi::PoolQuery::Local(), depths[i], test_id);
       tasks.push_back(task);
     }
-    
+
     // Wait for all tasks to complete
     for (int i = 0; i < num_tasks; ++i) {
       tasks[i].Wait();
       REQUIRE(tasks[i]->current_depth_ == depths[i]);
     }
-    
+
     auto elapsed_time = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start_time).count();
-    
-    INFO("Multiple concurrent WaitTest tasks completed in " + 
+
+    INFO("Multiple concurrent WaitTest tasks completed in " +
          std::to_string(elapsed_time) + "ms");
-    
+
     // Clean up all tasks
-    auto* ipc_manager = CHI_IPC;
+    (void)CHI_IPC;
     for (auto& task : tasks) {
-      ipc_manager->DelTask(task.GetTaskPtr());
+      (void)task;
     }
   }
 }
@@ -351,33 +362,37 @@ TEST_CASE("wait_test_edge_cases", "[wait_test][edge_cases]") {
   
   SECTION("WaitTest with depth 0") {
     chimaera::MOD_NAME::Client client(kWaitTestPoolId);
-    
-    
+
+
     chi::u32 test_id = fixture.generateTestId();
     chi::u32 depth = 0;
-    
+
     // Call with depth 0 - should complete immediately without recursion
-    chi::u32 final_depth = client.WaitTest(chi::PoolQuery::Local(), depth, test_id);
-    
+    auto task = client.AsyncWaitTest(chi::PoolQuery::Local(), depth, test_id);
+    task.Wait();
+    chi::u32 final_depth = task->current_depth_;
+
     // With depth 0, current_depth should be incremented to 1 but no recursion
     REQUIRE(final_depth >= depth);
-    
+
     INFO("WaitTest with depth 0 completed with final depth: " + std::to_string(final_depth));
   }
   
   SECTION("WaitTest with same test_id multiple times") {
     chimaera::MOD_NAME::Client client(kWaitTestPoolId);
-    
-    
+
+
     chi::u32 test_id = fixture.generateTestId();
     chi::u32 depth = 2;
-    
+
     // Run the same test ID multiple times
     for (int i = 0; i < 3; ++i) {
-      chi::u32 final_depth = client.WaitTest(chi::PoolQuery::Local(), depth, test_id);
+      auto task = client.AsyncWaitTest(chi::PoolQuery::Local(), depth, test_id);
+      task.Wait();
+      chi::u32 final_depth = task->current_depth_;
       REQUIRE(final_depth == depth);
     }
-    
+
     INFO("WaitTest with same test_id ran successfully multiple times");
   }
 }

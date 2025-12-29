@@ -35,12 +35,13 @@
  * - Follow Google C++ style guide
  */
 
-#include "simple_test.h"
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <thread>
+
+#include "simple_test.h"
 
 using namespace std::chrono_literals;
 
@@ -61,9 +62,9 @@ namespace fs = std::filesystem;
  * Returns true if unset or set to any value except "0", "false", "no", "off"
  */
 bool ShouldInitializeRuntime() {
-  const char* env_val = std::getenv("CHIMAERA_WITH_RUNTIME");
+  const char *env_val = std::getenv("CHIMAERA_WITH_RUNTIME");
   if (env_val == nullptr) {
-    return true; // Default: initialize runtime
+    return true;  // Default: initialize runtime
   }
   std::string val(env_val);
   // Convert to lowercase for case-insensitive comparison
@@ -88,7 +89,7 @@ bool ShouldInitializeRuntime() {
  * - Google C++ Style Guide compliant naming and patterns
  */
 class CTECoreFunctionalTestFixture {
-public:
+ public:
   // Flag to track if setup has been completed (singleton initialization)
   bool setup_completed_ = false;
 
@@ -101,13 +102,14 @@ public:
 
   // Test configuration constants
   static constexpr chi::u64 kTestTargetSize =
-      1024 * 1024 * 100; // 10MB test target
-  static constexpr size_t kTestBlobSize = 4096; // 4KB test blobs
+      1024 * 1024 * 100;                         // 10MB test target
+  static constexpr size_t kTestBlobSize = 4096;  // 4KB test blobs
 
   // CTE Core pool configuration - use constants from core_tasks.h
-  // These are kept for backward compatibility but delegate to the canonical constants
-  static inline const chi::PoolId& kCTECorePoolId = wrp_cte::core::kCtePoolId;
-  static inline const char* kCTECorePoolName = wrp_cte::core::kCtePoolName;
+  // These are kept for backward compatibility but delegate to the canonical
+  // constants
+  static inline const chi::PoolId &kCTECorePoolId = wrp_cte::core::kCtePoolId;
+  static inline const char *kCTECorePoolName = wrp_cte::core::kCtePoolName;
 
   std::unique_ptr<wrp_cte::core::Client> core_client_;
   std::string test_storage_path_;
@@ -141,7 +143,7 @@ public:
     }
 
     // Generate unique pool ID for this test session
-    int rand_id = 1000 + rand() % 9000; // Random ID 1000-9999
+    int rand_id = 1000 + rand() % 9000;  // Random ID 1000-9999
     core_pool_id_ = chi::PoolId(static_cast<chi::u32>(rand_id), 0);
     INFO("Generated pool ID: " << core_pool_id_.ToU64());
 
@@ -184,7 +186,7 @@ public:
    * Initialize both runtime and client
    */
 
-public:
+ public:
   /**
    * Helper method to create test data buffer with verifiable pattern
    */
@@ -241,7 +243,8 @@ public:
 
   /**
    * Helper method to copy data from shared memory pointer (Pointer version)
-   * For compatibility with current GetBlob API that still returns hipc::ShmPtr<>
+   * For compatibility with current GetBlob API that still returns
+   * hipc::ShmPtr<>
    */
   std::vector<char> CopyFromSharedMemory(hipc::ShmPtr<> ptr, size_t size) {
     std::vector<char> result;
@@ -305,29 +308,90 @@ public:
     auto start_time = std::chrono::steady_clock::now();
 
     task.Wait();
-    while (!task.IsComplete()) {
-      auto current_time = std::chrono::steady_clock::now();
-      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-          current_time - start_time);
-
-      if (elapsed.count() > timeout_ms) {
-        INFO("Task timeout after " << timeout_ms << "ms");
-        return false;
-      }
-
-      // Small sleep to avoid busy waiting
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
 
     INFO("Task completed successfully");
     return true;
+  }
+
+  /**
+   * Async helper: Create CTE core pool
+   */
+  void CreateAsync(chi::PoolQuery pool_query, const std::string& pool_name,
+                   chi::PoolId pool_id, wrp_cte::core::CreateParams& params) {
+    auto task = core_client_->AsyncCreate(pool_query, pool_name, pool_id, params);
+    task.Wait();
+  }
+
+  /**
+   * Async helper: Register target
+   */
+  chi::u32 RegisterTargetAsync(const std::string& target_name,
+                                chimaera::bdev::BdevType bdev_type,
+                                chi::u64 capacity, chi::PoolQuery query,
+                                chi::PoolId bdev_id) {
+    auto task = core_client_->AsyncRegisterTarget(target_name, bdev_type, capacity, query, bdev_id);
+    task.Wait();
+    chi::u32 result = task->GetReturnCode();
+    return result;
+  }
+
+  /**
+   * Async helper: Get or create tag
+   */
+  wrp_cte::core::TagId GetOrCreateTagAsync(const std::string& tag_name) {
+    auto task = core_client_->AsyncGetOrCreateTag(tag_name);
+    task.Wait();
+    wrp_cte::core::TagId tag_id = task->tag_id_;
+    return tag_id;
+  }
+
+  /**
+   * Async helper: Get blob score
+   */
+  float GetBlobScoreAsync(wrp_cte::core::TagId tag_id, const std::string& blob_name) {
+    auto task = core_client_->AsyncGetBlobScore(tag_id, blob_name);
+    task.Wait();
+    float score = task->score_;
+    return score;
+  }
+
+  /**
+   * Async helper: Get blob
+   */
+  bool GetBlobAsync(wrp_cte::core::TagId tag_id, const std::string& blob_name,
+                    chi::u64 off, chi::u64 size, chi::u64 flags,
+                    hipc::ShmPtr<> data_ptr) {
+    auto task = core_client_->AsyncGetBlob(tag_id, blob_name, off, size, flags, data_ptr);
+    task.Wait();
+    bool success = (task->GetReturnCode() == 0);
+    return success;
+  }
+
+  /**
+   * Async helper: Stat targets
+   */
+  chi::u32 StatTargetsAsync() {
+    auto task = core_client_->AsyncStatTargets();
+    task.Wait();
+    chi::u32 result = task->GetReturnCode();
+    return result;
+  }
+
+  /**
+   * Async helper: List targets
+   */
+  std::vector<std::string> ListTargetsAsync() {
+    auto task = core_client_->AsyncListTargets();
+    task.Wait();
+    std::vector<std::string> targets = task->target_names_;
+    return targets;
   }
 };
 
 /**
  * FUNCTIONAL Test Case: Create CTE Core Pool
  *
- * This test ACTUALLY calls fixture->core_client_->Create() with real runtime
+ * This test ACTUALLY calls fixture->CreateAsync() with real runtime
  * initialization. It verifies:
  * 1. CTE Core pool can be created successfully using admin pool
  * 2. CreateTask uses chi::kAdminPoolId as required by CLAUDE.md
@@ -335,12 +399,10 @@ public:
  * 4. Configuration parameters are properly applied
  * 5. Real shared memory operations work correctly
  */
-TEST_CASE(
-                 "FUNCTIONAL - Create CTE Core Pool",
-                 "[cte][core][pool][creation]") {
-
-  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();  SECTION("FUNCTIONAL - Synchronous pool creation with real runtime") {
-    INFO("=== Testing REAL fixture->core_client_->Create() call ===");
+TEST_CASE("FUNCTIONAL - Create CTE Core Pool", "[cte][core][pool][creation]") {
+  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();
+  SECTION("FUNCTIONAL - Synchronous pool creation with real runtime") {
+    INFO("=== Testing REAL fixture->CreateAsync() call ===");
 
     // Create pool using dynamic query (never null as per CLAUDE.md)
     chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
@@ -348,9 +410,10 @@ TEST_CASE(
     // Create parameters with test configuration
     wrp_cte::core::CreateParams params;
 
-    // ACTUAL FUNCTIONAL TEST - call the real Create API
-    REQUIRE_NOTHROW(fixture->core_client_->Create(pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
-                                         CTECoreFunctionalTestFixture::kCTECorePoolId, params));
+    // ACTUAL FUNCTIONAL TEST - call the real Create API (using async helper)
+    REQUIRE_NOTHROW(fixture->CreateAsync(
+        pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
+        CTECoreFunctionalTestFixture::kCTECorePoolId, params));
 
     INFO("SUCCESS: CTE Core pool created with pool ID: "
          << fixture->core_pool_id_.ToU64());
@@ -364,15 +427,16 @@ TEST_CASE(
     wrp_cte::core::CreateParams params;
 
     // ACTUAL FUNCTIONAL TEST - call the real AsyncCreate API
-    auto create_task = fixture->core_client_->AsyncCreate(pool_query,
-                                                  CTECoreFunctionalTestFixture::kCTECorePoolName,
-                                                  CTECoreFunctionalTestFixture::kCTECorePoolId, params);
+    auto create_task = fixture->core_client_->AsyncCreate(
+        pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
+        CTECoreFunctionalTestFixture::kCTECorePoolId, params);
     REQUIRE(!create_task.IsNull());
 
     INFO("AsyncCreate returned valid task, waiting for completion...");
 
     // Wait for real task completion with timeout
-    REQUIRE(fixture->WaitForTaskCompletion(create_task, 10000)); // 10 second timeout
+    REQUIRE(fixture->WaitForTaskCompletion(create_task,
+                                           10000));  // 10 second timeout
 
     // Verify successful completion
     REQUIRE(create_task->return_code_ == 0);
@@ -380,7 +444,6 @@ TEST_CASE(
          << create_task->return_code_);
 
     // Cleanup task (real IPC cleanup)
-    CHI_IPC->DelTask(create_task.GetTaskPtr());
     INFO("Task cleaned up successfully");
   }
 }
@@ -388,50 +451,56 @@ TEST_CASE(
 /**
  * FUNCTIONAL Test Case: Register Target
  *
- * This test ACTUALLY calls fixture->core_client_->RegisterTarget() with real bdev
- * targets. It verifies:
+ * This test ACTUALLY calls fixture->RegisterTargetAsync() with real
+ * bdev targets. It verifies:
  * 1. File-based bdev target can be registered successfully
  * 2. Target registration uses proper bdev configuration
  * 3. Target is created in home directory as specified
  * 4. Registration returns success code
  * 5. Real file system operations work correctly
  */
-TEST_CASE("FUNCTIONAL - Register Target",
-                 "[cte][core][target][registration]") {
-
-  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();  // First create the core pool using REAL API calls
+TEST_CASE("FUNCTIONAL - Register Target", "[cte][core][target][registration]") {
+  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::
+      GetInstance();  // First create the core pool using REAL API calls
   chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
   wrp_cte::core::CreateParams params;
 
   INFO("Creating core pool before target registration...");
-  REQUIRE_NOTHROW(fixture->core_client_->Create(pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
-                                       CTECoreFunctionalTestFixture::kCTECorePoolId, params));
+  REQUIRE_NOTHROW(fixture->CreateAsync(
+      pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
+      CTECoreFunctionalTestFixture::kCTECorePoolId, params));
   INFO("Core pool created successfully");
 
-  SECTION("FUNCTIONAL - Register file-based bdev target with real file "
-          "operations") {
-    // Use the fixture->test_storage_path_ as target_name since that's what matters for
-    // bdev creation
+  SECTION(
+      "FUNCTIONAL - Register file-based bdev target with real file "
+      "operations") {
+    // Use the fixture->test_storage_path_ as target_name since that's what
+    // matters for bdev creation
     const std::string target_name = fixture->test_storage_path_;
 
-    INFO("=== Testing REAL fixture->core_client_->RegisterTarget() call ===");
+    INFO("=== Testing REAL fixture->RegisterTargetAsync() call ===");
     INFO("Target name (file path): " << target_name);
-    INFO("Target size: " << CTECoreFunctionalTestFixture::kTestTargetSize << " bytes");
+    INFO("Target size: " << CTECoreFunctionalTestFixture::kTestTargetSize
+                         << " bytes");
 
     // ACTUAL FUNCTIONAL TEST - call the real RegisterTarget API
-    chi::u32 result = fixture->core_client_->RegisterTarget(
-        target_name, chimaera::bdev::BdevType::kFile, CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(), chi::PoolId(600, 0));
+    chi::u32 result = fixture->RegisterTargetAsync(
+        target_name, chimaera::bdev::BdevType::kFile,
+        CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(),
+        chi::PoolId(600, 0));
 
     // Verify successful registration
     REQUIRE(result == 0);
     INFO("SUCCESS: Target registered with result code: " << result);
 
     // FUNCTIONAL TEST - verify target appears in real target list
-    INFO("Calling fixture->core_client_->ListTargets() to verify registration...");
-    auto targets = fixture->core_client_->ListTargets();
+    INFO(
+        "Calling fixture->ListTargetsAsync() to verify "
+        "registration...");
+    auto targets = fixture->ListTargetsAsync();
     INFO("Listed targets: " << targets.size());
     REQUIRE(!targets.empty());
- 
+
     bool target_found = false;
     for (const auto &target_name_found : targets) {
       HLOG(kInfo, "target: {} vs {}", target_name_found, target_name);
@@ -446,34 +515,41 @@ TEST_CASE("FUNCTIONAL - Register Target",
         "This is a REAL target registration, not a parameter validation test!");
   }
 
-//   SECTION("FUNCTIONAL - Register target with invalid parameters (real error "
-//           "handling)") {
-//     INFO("=== Testing REAL error handling in RegisterTarget ===");
+  //   SECTION("FUNCTIONAL - Register target with invalid parameters (real error
+  //   "
+  //           "handling)") {
+  //     INFO("=== Testing REAL error handling in RegisterTarget ===");
 
-//     // Test with empty target name - should fail with REAL error handling
-//     INFO("Attempting to register target with empty name...");
-//     chi::u32 result = fixture->core_client_->RegisterTarget(
-//         fixture->mctx_,
-//         "", // Empty name should cause failure
-//         chimaera::bdev::BdevType::kFile, CTECoreFunctionalTestFixture::kTestTargetSize);
+  //     // Test with empty target name - should fail with REAL error handling
+  //     INFO("Attempting to register target with empty name...");
+  //     chi::u32 result = fixture->RegisterTargetAsync(
+  //         fixture->mctx_,
+  //         "", // Empty name should cause failure
+  //         chimaera::bdev::BdevType::kFile,
+  //         CTECoreFunctionalTestFixture::kTestTargetSize);
 
-//     // FUNCTIONAL TEST - verify real error handling
-//     INFO("RegisterTarget with empty name returned: " << result);
-//     REQUIRE(result != 0); // Should fail with non-zero error code
-//     INFO("SUCCESS: Real error handling detected empty target name");
-//   }
+  //     // FUNCTIONAL TEST - verify real error handling
+  //     INFO("RegisterTarget with empty name returned: " << result);
+  //     REQUIRE(result != 0); // Should fail with non-zero error code
+  //     INFO("SUCCESS: Real error handling detected empty target name");
+  //   }
 
-  SECTION("FUNCTIONAL - Asynchronous target registration with real task "
-          "management") {
-    // Use the fixture->test_storage_path_ as target_name since that's what matters for
-    // bdev creation
+  SECTION(
+      "FUNCTIONAL - Asynchronous target registration with real task "
+      "management") {
+    // Use the fixture->test_storage_path_ as target_name since that's what
+    // matters for bdev creation
     const std::string target_name = fixture->test_storage_path_;
 
-    INFO("=== Testing REAL fixture->core_client_->AsyncRegisterTarget() call ===");
+    INFO(
+        "=== Testing REAL fixture->core_client_->AsyncRegisterTarget() call "
+        "===");
 
     // ACTUAL FUNCTIONAL TEST - call the real AsyncRegisterTarget API
     auto register_task = fixture->core_client_->AsyncRegisterTarget(
-        target_name, chimaera::bdev::BdevType::kFile, CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(), chi::PoolId(601, 0));
+        target_name, chimaera::bdev::BdevType::kFile,
+        CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(),
+        chi::PoolId(601, 0));
 
     REQUIRE(!register_task.IsNull());
     INFO("AsyncRegisterTarget returned valid task, waiting for completion...");
@@ -488,7 +564,6 @@ TEST_CASE("FUNCTIONAL - Register Target",
         "SUCCESS: Async target registration completed with result: " << result);
 
     // Real IPC task cleanup
-    CHI_IPC->DelTask(register_task.GetTaskPtr());
     INFO("Task cleaned up successfully");
   }
 }
@@ -506,47 +581,49 @@ TEST_CASE("FUNCTIONAL - Register Target",
  * 7. Asynchronous operations with real task management
  * 8. Error cases with real error handling
  */
-TEST_CASE(
-                 "FUNCTIONAL - PutBlob Operations",
-                 "[cte][core][blob][put][functional]") {
-
-  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();  // Setup: Create core pool and register target
+TEST_CASE("FUNCTIONAL - PutBlob Operations",
+          "[cte][core][blob][put][functional]") {
+  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::
+      GetInstance();  // Setup: Create core pool and register target
   chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
   wrp_cte::core::CreateParams params;
 
-  REQUIRE_NOTHROW(fixture->core_client_->Create(pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
-                                       CTECoreFunctionalTestFixture::kCTECorePoolId, params));
+  REQUIRE_NOTHROW(fixture->CreateAsync(
+      pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
+      CTECoreFunctionalTestFixture::kCTECorePoolId, params));
 
-  // Use the fixture->test_storage_path_ as target_name since that's what matters for
-  // bdev creation
+  // Use the fixture->test_storage_path_ as target_name since that's what
+  // matters for bdev creation
   const std::string target_name = fixture->test_storage_path_;
-  chi::u32 reg_result = fixture->core_client_->RegisterTarget(
-      target_name, chimaera::bdev::BdevType::kFile, CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(), chi::PoolId(602, 0));
+  chi::u32 reg_result = fixture->RegisterTargetAsync(
+      target_name, chimaera::bdev::BdevType::kFile,
+      CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(),
+      chi::PoolId(602, 0));
   REQUIRE(reg_result == 0);
 
   // Create a test tag for blob grouping
   const std::string tag_name = "putblob_test_tag";
-  wrp_cte::core::TagId tag_id = fixture->core_client_->GetOrCreateTag(tag_name);
+  wrp_cte::core::TagId tag_id = fixture->GetOrCreateTagAsync(tag_name);
   REQUIRE(!tag_id.IsNull());
 
   SECTION("FUNCTIONAL - Basic blob storage with data integrity") {
     INFO("=== Testing REAL PutBlob with data integrity ===\n");
 
     const std::string blob_name = "functional_blob_basic";
-    const chi::u64 blob_size = 1024;           // 1KB test data
+    const chi::u64 blob_size = 1024;  // 1KB test data
     const float score = 0.75f;
 
     // Create distinctive test data
-    auto test_data = fixture->CreateTestData(blob_size, 'B'); // 'B' for Basic
+    auto test_data = fixture->CreateTestData(blob_size, 'B');  // 'B' for Basic
     REQUIRE(fixture->VerifyTestData(test_data, 'B'));
 
     // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
     // Using CHI_IPC->AllocateBuffer() which returns hipc::FullPtr<char>
-    hipc::FullPtr<char> blob_data_fullptr =
-        CHI_IPC->AllocateBuffer(blob_size);
+    hipc::FullPtr<char> blob_data_fullptr = CHI_IPC->AllocateBuffer(blob_size);
     if (blob_data_fullptr.IsNull()) {
-      INFO("Memory context allocation failed - unable to allocate shared "
-           "memory");
+      INFO(
+          "Memory context allocation failed - unable to allocate shared "
+          "memory");
       INFO("PutBlob would be called with:");
       INFO("  Tag ID: " << tag_id);
       INFO("  Blob name: " << blob_name);
@@ -563,9 +640,9 @@ TEST_CASE(
     INFO("Calling fixture->core_client_->AsyncPutBlob() with real data...");
     auto put_task =
         fixture->core_client_->AsyncPutBlob(tag_id, blob_name,
-                                   0, // offset
-                                   blob_size, blob_data_ptr, score,
-                                   0 // flags
+                                            0,  // offset
+                                            blob_size, blob_data_ptr, score,
+                                            0  // flags
         );
 
     REQUIRE(!put_task.IsNull());
@@ -575,23 +652,20 @@ TEST_CASE(
     INFO("PutBlob completed successfully.");
 
     // Cleanup task
-    CHI_IPC->DelTask(put_task.GetTaskPtr());
     INFO("SUCCESS: Real PutBlob operation completed!");
   }
 
   SECTION("FUNCTIONAL - Multiple blob storage with different sizes") {
     INFO("=== Testing REAL PutBlob with multiple blobs ===\n");
 
-    const std::vector<
-        std::tuple<std::string, chi::u64, char, float>>
+    const std::vector<std::tuple<std::string, chi::u64, char, float>>
         blob_configs = {
-            {"small_blob", 512, 'S', 0.3f},   // Small: 512 bytes
-            {"medium_blob", 2048, 'M', 0.6f}, // Medium: 2KB
-            {"large_blob", 8192, 'L', 0.9f}   // Large: 8KB
+            {"small_blob", 512, 'S', 0.3f},    // Small: 512 bytes
+            {"medium_blob", 2048, 'M', 0.6f},  // Medium: 2KB
+            {"large_blob", 8192, 'L', 0.9f}    // Large: 8KB
         };
 
-    for (const auto &[blob_name, blob_size, pattern, score] :
-         blob_configs) {
+    for (const auto &[blob_name, blob_size, pattern, score] : blob_configs) {
       INFO("Storing blob: " << blob_name << " (" << blob_size << " bytes)");
 
       // Create test data with unique pattern
@@ -607,23 +681,21 @@ TEST_CASE(
                          << " due to memory context allocation failure");
         continue;
       }
-      hipc::ShmPtr<> blob_data_ptr = blob_data_fullptr.shm_.template Cast<void>();
+      hipc::ShmPtr<> blob_data_ptr =
+          blob_data_fullptr.shm_.template Cast<void>();
 
       REQUIRE(fixture->CopyToSharedMemory(blob_data_fullptr, test_data));
 
       // Store the blob using AsyncPutBlob
-      auto put_task =
-          fixture->core_client_->AsyncPutBlob(tag_id, blob_name, 0,
-                                     blob_size, blob_data_ptr, score, 0);
+      auto put_task = fixture->core_client_->AsyncPutBlob(
+          tag_id, blob_name, 0, blob_size, blob_data_ptr, score, 0);
 
-      if (!put_task.IsNull() && fixture->WaitForTaskCompletion(put_task, 10000) &&
+      if (!put_task.IsNull() &&
+          fixture->WaitForTaskCompletion(put_task, 10000) &&
           put_task->return_code_ == 0) {
         INFO("Blob " << blob_name << " stored successfully");
-        CHI_IPC->DelTask(put_task.GetTaskPtr());
       } else {
         INFO("Blob " << blob_name << " storage failed");
-        if (!put_task.IsNull())
-          CHI_IPC->DelTask(put_task.GetTaskPtr());
       }
     }
 
@@ -634,8 +706,8 @@ TEST_CASE(
     INFO("=== Testing REAL PutBlob with offset operations ===\n");
 
     const std::string blob_name = "offset_blob";
-    const chi::u64 total_size = 4096;          // 4KB total
-    const chi::u64 chunk_size = 1024;          // 1KB chunks
+    const chi::u64 total_size = 4096;  // 4KB total
+    const chi::u64 chunk_size = 1024;  // 1KB chunks
 
     // Store blob in chunks using offsets
     for (chi::u64 offset = 0; offset < total_size; offset += chunk_size) {
@@ -645,8 +717,7 @@ TEST_CASE(
 
       auto chunk_data = fixture->CreateTestData(chunk_size, pattern);
       // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
-      hipc::FullPtr<char> chunk_fullptr =
-          CHI_IPC->AllocateBuffer(chunk_size);
+      hipc::FullPtr<char> chunk_fullptr = CHI_IPC->AllocateBuffer(chunk_size);
 
       if (chunk_fullptr.IsNull()) {
         INFO("Skipping chunk at offset "
@@ -658,18 +729,16 @@ TEST_CASE(
       REQUIRE(fixture->CopyToSharedMemory(chunk_fullptr, chunk_data));
 
       // Store chunk at specific offset using AsyncPutBlob
-      auto chunk_task =
-          fixture->core_client_->AsyncPutBlob(tag_id, blob_name, offset,
-                                     chunk_size, chunk_ptr, 0.8f, 0);
+      auto chunk_task = fixture->core_client_->AsyncPutBlob(
+          tag_id, blob_name, offset, chunk_size, chunk_ptr, 0.8f, 0);
 
-      if (!chunk_task.IsNull() && fixture->WaitForTaskCompletion(chunk_task, 10000) &&
+      if (!chunk_task.IsNull() &&
+          fixture->WaitForTaskCompletion(chunk_task, 10000) &&
           chunk_task->return_code_ == 0) {
         INFO("Chunk at offset " << offset << " stored successfully");
       } else {
         INFO("Chunk at offset " << offset << " storage failed");
       }
-      if (!chunk_task.IsNull())
-        CHI_IPC->DelTask(chunk_task.GetTaskPtr());
     }
 
     INFO("SUCCESS: Offset operations completed for partial blob updates!");
@@ -681,10 +750,9 @@ TEST_CASE(
     const std::string blob_name = "async_blob";
     const chi::u64 blob_size = 2048;
 
-    auto test_data = fixture->CreateTestData(blob_size, 'A'); // 'A' for Async
+    auto test_data = fixture->CreateTestData(blob_size, 'A');  // 'A' for Async
     // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
-    hipc::FullPtr<char> blob_data_fullptr =
-        CHI_IPC->AllocateBuffer(blob_size);
+    hipc::FullPtr<char> blob_data_fullptr = CHI_IPC->AllocateBuffer(blob_size);
 
     if (blob_data_fullptr.IsNull()) {
       INFO("Skipping async test due to memory context allocation failure");
@@ -697,22 +765,21 @@ TEST_CASE(
 
     // ACTUAL FUNCTIONAL TEST - call the real AsyncPutBlob API
     INFO("Calling fixture->core_client_->AsyncPutBlob()...");
-    auto put_task =
-        fixture->core_client_->AsyncPutBlob(tag_id, blob_name, 0,
-                                   blob_size, blob_data_ptr, 0.7f, 0);
+    auto put_task = fixture->core_client_->AsyncPutBlob(
+        tag_id, blob_name, 0, blob_size, blob_data_ptr, 0.7f, 0);
 
     REQUIRE(!put_task.IsNull());
     INFO("AsyncPutBlob returned valid task, waiting for completion...");
 
     // Wait for real task completion
-    REQUIRE(fixture->WaitForTaskCompletion(put_task, 10000)); // 10 second timeout
+    REQUIRE(
+        fixture->WaitForTaskCompletion(put_task, 10000));  // 10 second timeout
 
     // Check result
     chi::u32 result = put_task->return_code_;
     INFO("Async PutBlob completed with result: " << result);
 
     // Cleanup task
-    CHI_IPC->DelTask(put_task.GetTaskPtr());
     INFO("SUCCESS: Asynchronous blob storage with real task management!");
   }
 
@@ -725,33 +792,33 @@ TEST_CASE(
     // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
     hipc::FullPtr<char> data_fullptr = CHI_IPC->AllocateBuffer(512);
     hipc::ShmPtr<> data_ptr =
-        data_fullptr.IsNull() ? hipc::ShmPtr<>::GetNull() : data_fullptr.shm_.template Cast<void>().template Cast<void>();
+        data_fullptr.IsNull()
+            ? hipc::ShmPtr<>::GetNull()
+            : data_fullptr.shm_.template Cast<void>().template Cast<void>();
 
-    if (!data_fullptr.IsNull() && fixture->CopyToSharedMemory(data_fullptr, test_data)) {
-      auto error_task = fixture->core_client_->AsyncPutBlob(tag_id, "",
-                                                   0, 512, data_ptr, 0.5f, 0);
+    if (!data_fullptr.IsNull() &&
+        fixture->CopyToSharedMemory(data_fullptr, test_data)) {
+      auto error_task = fixture->core_client_->AsyncPutBlob(tag_id, "", 0, 512,
+                                                            data_ptr, 0.5f, 0);
       if (!error_task.IsNull()) {
         bool completed = fixture->WaitForTaskCompletion(error_task, 5000);
         bool success = completed && (error_task->return_code_ == 0);
         INFO("Empty name result: "
              << (success ? "true" : "false")
              << " (false indicates proper error handling)");
-        CHI_IPC->DelTask(error_task.GetTaskPtr());
       }
     }
 
     // Test valid blob name (should succeed)
     INFO("Testing valid blob name...");
     if (!data_fullptr.IsNull()) {
-      auto valid_task = fixture->core_client_->AsyncPutBlob(tag_id, "valid_name",
-                                                  0, 512, data_ptr, 0.5f, 0);
+      auto valid_task = fixture->core_client_->AsyncPutBlob(
+          tag_id, "valid_name", 0, 512, data_ptr, 0.5f, 0);
       if (!valid_task.IsNull()) {
         bool completed = fixture->WaitForTaskCompletion(valid_task, 5000);
         bool success = completed && (valid_task->return_code_ == 0);
-        INFO("Valid name result: "
-             << (success ? "true" : "false")
-             << " (true expected for valid operation)");
-        CHI_IPC->DelTask(valid_task.GetTaskPtr());
+        INFO("Valid name result: " << (success ? "true" : "false")
+                                   << " (true expected for valid operation)");
       }
     }
 
@@ -759,15 +826,14 @@ TEST_CASE(
     INFO("Testing invalid tag ID error case...");
     if (!data_fullptr.IsNull()) {
       auto invalid_tag_task = fixture->core_client_->AsyncPutBlob(
-          wrp_cte::core::TagId{99999, 0}, "valid_name",
-          0, 512, data_ptr, 0.5f, 0);
+          wrp_cte::core::TagId{99999, 0}, "valid_name", 0, 512, data_ptr, 0.5f,
+          0);
       if (!invalid_tag_task.IsNull()) {
         bool completed = fixture->WaitForTaskCompletion(invalid_tag_task, 5000);
         bool success = completed && (invalid_tag_task->return_code_ == 0);
         INFO("Invalid tag result: "
              << (success ? "true" : "false")
              << " (false indicates proper error handling)");
-        CHI_IPC->DelTask(invalid_tag_task.GetTaskPtr());
       }
     }
 
@@ -787,43 +853,47 @@ TEST_CASE(
  * 6. Error cases with real error handling
  * 7. Cross-validation with previously stored blobs
  */
-TEST_CASE(
-                 "FUNCTIONAL - GetBlob Operations",
-                 "[cte][core][blob][get][functional]") {
-
-  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();  // Setup: Create core pool, register target, create tag
+TEST_CASE("FUNCTIONAL - GetBlob Operations",
+          "[cte][core][blob][get][functional]") {
+  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::
+      GetInstance();  // Setup: Create core pool, register target, create tag
   chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
   wrp_cte::core::CreateParams params;
 
-  REQUIRE_NOTHROW(fixture->core_client_->Create(pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
-                                       CTECoreFunctionalTestFixture::kCTECorePoolId, params));
+  REQUIRE_NOTHROW(fixture->CreateAsync(
+      pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
+      CTECoreFunctionalTestFixture::kCTECorePoolId, params));
 
-  // Use the fixture->test_storage_path_ as target_name since that's what matters for
-  // bdev creation
+  // Use the fixture->test_storage_path_ as target_name since that's what
+  // matters for bdev creation
   const std::string target_name = fixture->test_storage_path_;
-  chi::u32 reg_result = fixture->core_client_->RegisterTarget(
-      target_name, chimaera::bdev::BdevType::kFile, CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(), chi::PoolId(603, 0));
+  chi::u32 reg_result = fixture->RegisterTargetAsync(
+      target_name, chimaera::bdev::BdevType::kFile,
+      CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(),
+      chi::PoolId(603, 0));
   REQUIRE(reg_result == 0);
 
-  wrp_cte::core::TagId tag_id = fixture->core_client_->GetOrCreateTag("getblob_test_tag");
+  wrp_cte::core::TagId tag_id =
+      fixture->GetOrCreateTagAsync("getblob_test_tag");
 
   SECTION("FUNCTIONAL - Basic store and retrieve with data integrity") {
     INFO("=== Testing REAL GetBlob with data integrity ===\n");
 
     const std::string blob_name = "functional_blob_retrieve";
-    const chi::u64 blob_size = 2048;           // 2KB test data
+    const chi::u64 blob_size = 2048;  // 2KB test data
 
     // Create distinctive test data
-    auto original_data = fixture->CreateTestData(blob_size, 'R'); // 'R' for Retrieve
+    auto original_data =
+        fixture->CreateTestData(blob_size, 'R');  // 'R' for Retrieve
     REQUIRE(fixture->VerifyTestData(original_data, 'R'));
 
     // Store the blob first
     // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
-    hipc::FullPtr<char> put_data_fullptr =
-        CHI_IPC->AllocateBuffer(blob_size);
+    hipc::FullPtr<char> put_data_fullptr = CHI_IPC->AllocateBuffer(blob_size);
     if (put_data_fullptr.IsNull()) {
-      INFO("Memory context allocation failed - unable to allocate shared "
-           "memory");
+      INFO(
+          "Memory context allocation failed - unable to allocate shared "
+          "memory");
       INFO("GetBlob would be called with:");
       INFO("  Tag ID: " << tag_id);
       INFO("  Blob name: " << blob_name);
@@ -843,14 +913,12 @@ TEST_CASE(
     REQUIRE(put_task->return_code_ == 0);
 
     INFO("Blob stored successfully");
-    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // ACTUAL FUNCTIONAL TEST - call the real GetBlob API
-    INFO("Calling fixture->core_client_->GetBlob() to retrieve stored data...");
+    INFO("Calling fixture->GetBlobAsync() to retrieve stored data...");
 
     // Allocate buffer for retrieved data
-    hipc::FullPtr<char> get_data_fullptr =
-        CHI_IPC->AllocateBuffer(blob_size);
+    hipc::FullPtr<char> get_data_fullptr = CHI_IPC->AllocateBuffer(blob_size);
     if (get_data_fullptr.IsNull()) {
       INFO("Failed to allocate buffer for GetBlob");
       return;
@@ -858,19 +926,21 @@ TEST_CASE(
     hipc::ShmPtr<> get_data_ptr = get_data_fullptr.shm_.template Cast<void>();
 
     // Use blob name for retrieval
-    bool get_success = fixture->core_client_->GetBlob(
+    bool get_success = fixture->GetBlobAsync(
         tag_id, blob_name, 0, blob_size, 0, get_data_ptr);
 
     if (get_success) {
       // Verify data integrity
-      auto retrieved_data = fixture->CopyFromSharedMemory(get_data_ptr, blob_size);
+      auto retrieved_data =
+          fixture->CopyFromSharedMemory(get_data_ptr, blob_size);
 
       if (!retrieved_data.empty()) {
         REQUIRE(retrieved_data.size() == blob_size);
         REQUIRE(fixture->VerifyTestData(retrieved_data, 'R'));
         REQUIRE(retrieved_data == original_data);
-        INFO("SUCCESS: Data integrity verified - retrieved data matches "
-             "original!");
+        INFO(
+            "SUCCESS: Data integrity verified - retrieved data matches "
+            "original!");
       } else {
         INFO("Retrieved data pointer valid but data copy failed");
       }
@@ -884,13 +954,10 @@ TEST_CASE(
   SECTION("FUNCTIONAL - Multiple blob retrieval from same tag") {
     INFO("=== Testing REAL GetBlob with multiple blobs ===\n");
 
-    const std::vector<
-        std::tuple<std::string, chi::u64, char>>
-        blob_configs = {
-            {"multi_blob_1", 1024, '1'},
-            {"multi_blob_2", 1536, '2'},
-            {"multi_blob_3", 2048, '3'}
-        };
+    const std::vector<std::tuple<std::string, chi::u64, char>> blob_configs = {
+        {"multi_blob_1", 1024, '1'},
+        {"multi_blob_2", 1536, '2'},
+        {"multi_blob_3", 2048, '3'}};
 
     // Store all blobs first
     std::vector<std::vector<char>> original_data_set;
@@ -902,8 +969,7 @@ TEST_CASE(
       original_data_set.push_back(blob_data);
 
       // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
-      hipc::FullPtr<char> put_fullptr =
-          CHI_IPC->AllocateBuffer(blob_size);
+      hipc::FullPtr<char> put_fullptr = CHI_IPC->AllocateBuffer(blob_size);
       if (put_fullptr.IsNull()) {
         INFO("Skipping " << blob_name
                          << " due to memory context allocation failure");
@@ -916,15 +982,13 @@ TEST_CASE(
       auto put_task = fixture->core_client_->AsyncPutBlob(
           tag_id, blob_name, 0, blob_size, put_ptr, 0.5f, 0);
 
-      if (!put_task.IsNull() && fixture->WaitForTaskCompletion(put_task, 10000) &&
+      if (!put_task.IsNull() &&
+          fixture->WaitForTaskCompletion(put_task, 10000) &&
           put_task->return_code_ == 0) {
         stored_blob_names.push_back(blob_name);
         INFO("Stored " << blob_name << " successfully");
-        CHI_IPC->DelTask(put_task.GetTaskPtr());
       } else {
         INFO("Failed to store " << blob_name);
-        if (!put_task.IsNull())
-          CHI_IPC->DelTask(put_task.GetTaskPtr());
       }
     }
 
@@ -939,8 +1003,7 @@ TEST_CASE(
       INFO("Retrieving blob: " << blob_name);
 
       // Allocate buffer for retrieved data
-      hipc::FullPtr<char> buffer_fullptr =
-          CHI_IPC->AllocateBuffer(blob_size);
+      hipc::FullPtr<char> buffer_fullptr = CHI_IPC->AllocateBuffer(blob_size);
       if (buffer_fullptr.IsNull()) {
         INFO("Failed to allocate buffer for GetBlob");
         continue;
@@ -948,11 +1011,12 @@ TEST_CASE(
       hipc::ShmPtr<> buffer_ptr = buffer_fullptr.shm_.template Cast<void>();
 
       // Use blob name for retrieval
-      bool get_success = fixture->core_client_->GetBlob(
+      bool get_success = fixture->GetBlobAsync(
           tag_id, blob_name, 0, blob_size, 0, buffer_ptr);
 
       if (get_success) {
-        auto retrieved_data = fixture->CopyFromSharedMemory(buffer_ptr, blob_size);
+        auto retrieved_data =
+            fixture->CopyFromSharedMemory(buffer_ptr, blob_size);
         if (!retrieved_data.empty()) {
           REQUIRE(retrieved_data == expected_data);
           REQUIRE(fixture->VerifyTestData(retrieved_data, pattern));
@@ -970,19 +1034,20 @@ TEST_CASE(
     INFO("=== Testing REAL GetBlob with partial retrieval ===\n");
 
     const std::string blob_name = "partial_retrieval_blob";
-    const chi::u64 total_size = 8192;          // 8KB total
-    const chi::u64 partial_offset = 2048;      // Start at 2KB
-    const chi::u64 partial_size = 2048;        // Retrieve 2KB
+    const chi::u64 total_size = 8192;      // 8KB total
+    const chi::u64 partial_offset = 2048;  // Start at 2KB
+    const chi::u64 partial_size = 2048;    // Retrieve 2KB
 
     // Create distinctive test data with patterns
-    auto full_data = fixture->CreateTestData(total_size, 'F'); // 'F' for Full
+    auto full_data = fixture->CreateTestData(total_size, 'F');  // 'F' for Full
 
     // Store the full blob
     // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
     hipc::FullPtr<char> put_fullptr = CHI_IPC->AllocateBuffer(total_size);
     if (put_fullptr.IsNull()) {
-      INFO("Skipping partial retrieval test due to memory context allocation "
-           "failure");
+      INFO(
+          "Skipping partial retrieval test due to memory context allocation "
+          "failure");
       return;
     }
     hipc::ShmPtr<> put_ptr = put_fullptr.shm_.template Cast<void>();
@@ -998,7 +1063,6 @@ TEST_CASE(
     REQUIRE(put_task->return_code_ == 0);
 
     INFO("Full blob stored successfully");
-    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // FUNCTIONAL TEST - retrieve partial blob with real offset/size
     INFO("Retrieving partial blob: offset=" << partial_offset
@@ -1011,12 +1075,12 @@ TEST_CASE(
       INFO("Failed to allocate buffer for partial GetBlob");
       return;
     }
-    hipc::ShmPtr<> partial_buffer_ptr = partial_buffer_fullptr.shm_.template Cast<void>();
+    hipc::ShmPtr<> partial_buffer_ptr =
+        partial_buffer_fullptr.shm_.template Cast<void>();
 
     // Use blob name for retrieval
-    bool partial_success = fixture->core_client_->GetBlob(
-        tag_id, blob_name, partial_offset, partial_size, 0,
-        partial_buffer_ptr);
+    bool partial_success = fixture->GetBlobAsync(
+        tag_id, blob_name, partial_offset, partial_size, 0, partial_buffer_ptr);
 
     if (partial_success) {
       auto partial_data =
@@ -1026,9 +1090,9 @@ TEST_CASE(
         REQUIRE(partial_data.size() == partial_size);
 
         // Verify partial data matches the corresponding section of full data
-        std::vector<char> expected_partial(full_data.begin() + partial_offset,
-                                           full_data.begin() + partial_offset +
-                                               partial_size);
+        std::vector<char> expected_partial(
+            full_data.begin() + partial_offset,
+            full_data.begin() + partial_offset + partial_size);
         REQUIRE(partial_data == expected_partial);
 
         INFO("SUCCESS: Partial data matches expected section of full blob!");
@@ -1046,10 +1110,10 @@ TEST_CASE(
     INFO("=== Testing REAL AsyncGetBlob with task management ===\n");
 
     const std::string blob_name = "async_retrieve_blob";
-    const chi::u64 blob_size = 3072;           // 3KB
+    const chi::u64 blob_size = 3072;  // 3KB
 
     // Store blob for async retrieval
-    auto test_data = fixture->CreateTestData(blob_size, 'A'); // 'A' for Async
+    auto test_data = fixture->CreateTestData(blob_size, 'A');  // 'A' for Async
     // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
     hipc::FullPtr<char> put_fullptr = CHI_IPC->AllocateBuffer(blob_size);
 
@@ -1071,7 +1135,6 @@ TEST_CASE(
     REQUIRE(put_task->return_code_ == 0);
 
     INFO("Blob stored successfully");
-    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // ACTUAL FUNCTIONAL TEST - call the real AsyncGetBlob API
     INFO("Calling fixture->core_client_->AsyncGetBlob()...");
@@ -1083,18 +1146,19 @@ TEST_CASE(
       INFO("Failed to allocate buffer for AsyncGetBlob");
       return;
     }
-    hipc::ShmPtr<> async_buffer_ptr = async_buffer_fullptr.shm_.template Cast<void>();
+    hipc::ShmPtr<> async_buffer_ptr =
+        async_buffer_fullptr.shm_.template Cast<void>();
 
     // Use blob name for retrieval
-    auto get_task =
-        fixture->core_client_->AsyncGetBlob(tag_id, blob_name, 0,
-                                   blob_size, 0, async_buffer_ptr);
+    auto get_task = fixture->core_client_->AsyncGetBlob(
+        tag_id, blob_name, 0, blob_size, 0, async_buffer_ptr);
 
     REQUIRE(!get_task.IsNull());
     INFO("AsyncGetBlob returned valid task, waiting for completion...");
 
     // Wait for real task completion
-    REQUIRE(fixture->WaitForTaskCompletion(get_task, 10000)); // 10 second timeout
+    REQUIRE(
+        fixture->WaitForTaskCompletion(get_task, 10000));  // 10 second timeout
 
     // Check result and data
     chi::u32 result = get_task->return_code_;
@@ -1103,7 +1167,8 @@ TEST_CASE(
                                                                   : "false"));
 
     if (get_success) {
-      auto retrieved_data = fixture->CopyFromSharedMemory(async_buffer_ptr, blob_size);
+      auto retrieved_data =
+          fixture->CopyFromSharedMemory(async_buffer_ptr, blob_size);
       if (!retrieved_data.empty()) {
         REQUIRE(retrieved_data == test_data);
         REQUIRE(fixture->VerifyTestData(retrieved_data, 'A'));
@@ -1112,7 +1177,6 @@ TEST_CASE(
     }
 
     // Cleanup task
-    CHI_IPC->DelTask(get_task.GetTaskPtr());
     INFO("SUCCESS: Asynchronous blob retrieval with real task management!");
   }
 
@@ -1120,43 +1184,43 @@ TEST_CASE(
     INFO("=== Testing REAL GetBlob error handling ===\n");
 
     // Allocate buffer for error case testing
-    hipc::FullPtr<char> error_buffer_fullptr =
-        CHI_IPC->AllocateBuffer(1024);
+    hipc::FullPtr<char> error_buffer_fullptr = CHI_IPC->AllocateBuffer(1024);
     if (error_buffer_fullptr.IsNull()) {
       INFO("Failed to allocate buffer for error case testing");
       return;
     }
-    hipc::ShmPtr<> error_buffer_ptr = error_buffer_fullptr.shm_.template Cast<void>();
+    hipc::ShmPtr<> error_buffer_ptr =
+        error_buffer_fullptr.shm_.template Cast<void>();
 
     // Test non-existent blob name
     INFO("Testing non-existent blob name error case...");
-    bool get_success1 = fixture->core_client_->GetBlob(tag_id, "nonexistent_blob_99001",
-                                              0, 1024, 0, error_buffer_ptr);
+    bool get_success1 = fixture->GetBlobAsync(
+        tag_id, "nonexistent_blob_99001", 0, 1024, 0, error_buffer_ptr);
     INFO("Non-existent blob result: "
          << (get_success1 ? "true" : "false")
          << " (false indicates proper error handling)");
 
     // Test another non-existent blob name
     INFO("Testing another non-existent blob name error case...");
-    bool get_success2 = fixture->core_client_->GetBlob(tag_id, "nonexistent_blob_99999",
-                                              0, 1024, 0, error_buffer_ptr);
+    bool get_success2 = fixture->GetBlobAsync(
+        tag_id, "nonexistent_blob_99999", 0, 1024, 0, error_buffer_ptr);
     INFO("Another non-existent blob result: "
          << (get_success2 ? "true" : "false")
          << " (false indicates proper error handling)");
 
     // Test invalid tag ID
     INFO("Testing invalid tag ID error case...");
-    bool get_success3 = fixture->core_client_->GetBlob(
-        wrp_cte::core::TagId{88888, 0}, "some_blob",
-        0, 1024, 0, error_buffer_ptr);
+    bool get_success3 = fixture->GetBlobAsync(
+        wrp_cte::core::TagId{88888, 0}, "some_blob", 0, 1024, 0,
+        error_buffer_ptr);
     INFO("Invalid tag result: " << (get_success3 ? "true" : "false")
                                 << " (false indicates proper error handling)");
 
     // Test invalid offset/size ranges
     INFO("Testing invalid offset/size error case...");
-    bool get_success4 = fixture->core_client_->GetBlob(
-        tag_id, "some_blob", 999999, 1024, 0,
-        error_buffer_ptr); // Large offset
+    bool get_success4 =
+        fixture->GetBlobAsync(tag_id, "some_blob", 999999, 1024, 0,
+                                       error_buffer_ptr);  // Large offset
     INFO("Invalid range result: "
          << (get_success4 ? "true" : "false")
          << " (false indicates proper error handling)");
@@ -1178,34 +1242,38 @@ TEST_CASE(
  * 6. Validate score handling and metadata consistency
  * 7. Ensure proper cleanup and resource management
  */
-TEST_CASE(
-                 "FUNCTIONAL - PutBlob-GetBlob Integration Cycles",
-                 "[cte][core][blob][integration][put-get]") {
-
-  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();  // Setup: Create core pool and register target
+TEST_CASE("FUNCTIONAL - PutBlob-GetBlob Integration Cycles",
+          "[cte][core][blob][integration][put-get]") {
+  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::
+      GetInstance();  // Setup: Create core pool and register target
   chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
   wrp_cte::core::CreateParams params;
 
-  REQUIRE_NOTHROW(fixture->core_client_->Create(pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
-                                       CTECoreFunctionalTestFixture::kCTECorePoolId, params));
+  REQUIRE_NOTHROW(fixture->CreateAsync(
+      pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
+      CTECoreFunctionalTestFixture::kCTECorePoolId, params));
 
   const std::string target_name = fixture->test_storage_path_;
-  chi::u32 reg_result = fixture->core_client_->RegisterTarget(
-      target_name, chimaera::bdev::BdevType::kFile, CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(), chi::PoolId(604, 0));
+  chi::u32 reg_result = fixture->RegisterTargetAsync(
+      target_name, chimaera::bdev::BdevType::kFile,
+      CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(),
+      chi::PoolId(604, 0));
   REQUIRE(reg_result == 0);
 
   // Create test tag for integration testing
-  wrp_cte::core::TagId tag_id = fixture->core_client_->GetOrCreateTag("integration_test_tag");
+  wrp_cte::core::TagId tag_id =
+      fixture->GetOrCreateTagAsync("integration_test_tag");
 
   SECTION("FUNCTIONAL - Basic Put-Get cycle with data integrity") {
     INFO("=== Testing REAL Put-Get cycle with data integrity ===\n");
 
     const std::string blob_name = "integration_basic_blob";
-    const chi::u64 blob_size = 4096;           // 4KB
+    const chi::u64 blob_size = 4096;  // 4KB
     const float score = 0.85f;
 
     // Create distinctive test data
-    auto original_data = fixture->CreateTestData(blob_size, 'I'); // 'I' for Integration
+    auto original_data =
+        fixture->CreateTestData(blob_size, 'I');  // 'I' for Integration
     REQUIRE(fixture->VerifyTestData(original_data, 'I'));
 
     // Allocate shared memory and store data using CHI_CLIENT pattern
@@ -1229,27 +1297,27 @@ TEST_CASE(
     REQUIRE(put_task->return_code_ == 0);
 
     INFO("PutBlob success");
-    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // STEP 2: Retrieve the blob
     INFO("Step 2: Retrieving blob with GetBlob...");
 
     // Allocate buffer for retrieved data
-    hipc::FullPtr<char> get_buffer_fullptr =
-        CHI_IPC->AllocateBuffer(blob_size);
+    hipc::FullPtr<char> get_buffer_fullptr = CHI_IPC->AllocateBuffer(blob_size);
     if (get_buffer_fullptr.IsNull()) {
       INFO("Failed to allocate buffer for GetBlob");
       return;
     }
-    hipc::ShmPtr<> get_buffer_ptr = get_buffer_fullptr.shm_.template Cast<void>();
+    hipc::ShmPtr<> get_buffer_ptr =
+        get_buffer_fullptr.shm_.template Cast<void>();
 
     // Use blob name for retrieval
-    bool get_success = fixture->core_client_->GetBlob(
+    bool get_success = fixture->GetBlobAsync(
         tag_id, blob_name, 0, blob_size, 0, get_buffer_ptr);
 
     // STEP 3: Verify data integrity
     if (get_success) {
-      auto retrieved_data = fixture->CopyFromSharedMemory(get_buffer_ptr, blob_size);
+      auto retrieved_data =
+          fixture->CopyFromSharedMemory(get_buffer_ptr, blob_size);
 
       if (!retrieved_data.empty()) {
         INFO("Step 3: Verifying data integrity...");
@@ -1281,8 +1349,7 @@ TEST_CASE(
   SECTION("FUNCTIONAL - Multiple Put-Get cycles with different blob sizes") {
     INFO("=== Testing REAL multiple Put-Get cycles ===\n");
 
-    const std::vector<
-        std::tuple<std::string, chi::u64, char, float>>
+    const std::vector<std::tuple<std::string, chi::u64, char, float>>
         test_blobs = {
             {"small_cycle", 256, 'S', 0.2f},    // 256 bytes
             {"medium_cycle", 2048, 'M', 0.5f},  // 2KB
@@ -1295,8 +1362,7 @@ TEST_CASE(
 
     // PHASE 1: Store all blobs
     INFO("Phase 1: Storing all test blobs...");
-    for (const auto &[blob_name, blob_size, pattern, score] :
-         test_blobs) {
+    for (const auto &[blob_name, blob_size, pattern, score] : test_blobs) {
       INFO("Storing " << blob_name << " (" << blob_size << " bytes, pattern '"
                       << pattern << "')");
 
@@ -1304,8 +1370,7 @@ TEST_CASE(
       stored_data.push_back(blob_data);
 
       // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
-      hipc::FullPtr<char> put_fullptr =
-          CHI_IPC->AllocateBuffer(blob_size);
+      hipc::FullPtr<char> put_fullptr = CHI_IPC->AllocateBuffer(blob_size);
       if (put_fullptr.IsNull()) {
         INFO("Skipping " << blob_name
                          << " due to memory context allocation failure");
@@ -1318,27 +1383,23 @@ TEST_CASE(
       auto put_task = fixture->core_client_->AsyncPutBlob(
           tag_id, blob_name, 0, blob_size, put_ptr, score, 0);
 
-      if (!put_task.IsNull() && fixture->WaitForTaskCompletion(put_task, 10000) &&
+      if (!put_task.IsNull() &&
+          fixture->WaitForTaskCompletion(put_task, 10000) &&
           put_task->return_code_ == 0) {
         stored_blob_names.push_back(blob_name);
         INFO("✓ " << blob_name << " stored successfully");
-        CHI_IPC->DelTask(put_task.GetTaskPtr());
       } else {
         INFO("✗ " << blob_name << " storage failed");
-        if (!put_task.IsNull())
-          CHI_IPC->DelTask(put_task.GetTaskPtr());
       }
     }
 
     // PHASE 2: Retrieve and verify all blobs using blob names
     INFO("\nPhase 2: Retrieving and verifying all test blobs...");
     size_t blob_index = 0;
-    for (const auto &[blob_name, blob_size, pattern, score] :
-         test_blobs) {
+    for (const auto &[blob_name, blob_size, pattern, score] : test_blobs) {
       if (blob_index >= stored_data.size() ||
           blob_index >= stored_blob_names.size()) {
-        INFO("Skipping retrieval of " << blob_name
-                                      << " - not stored");
+        INFO("Skipping retrieval of " << blob_name << " - not stored");
         continue;
       }
 
@@ -1351,15 +1412,16 @@ TEST_CASE(
         INFO("Failed to allocate buffer for GetBlob");
         continue;
       }
-      hipc::ShmPtr<> multi_buffer_ptr = multi_buffer_fullptr.shm_.template Cast<void>();
+      hipc::ShmPtr<> multi_buffer_ptr =
+          multi_buffer_fullptr.shm_.template Cast<void>();
 
       // Use blob name for retrieval
-      bool multi_success =
-          fixture->core_client_->GetBlob(tag_id, blob_name, 0,
-                                blob_size, 0, multi_buffer_ptr);
+      bool multi_success = fixture->GetBlobAsync(
+          tag_id, blob_name, 0, blob_size, 0, multi_buffer_ptr);
 
       if (multi_success) {
-        auto retrieved_data = fixture->CopyFromSharedMemory(multi_buffer_ptr, blob_size);
+        auto retrieved_data =
+            fixture->CopyFromSharedMemory(multi_buffer_ptr, blob_size);
 
         if (!retrieved_data.empty()) {
           const auto &expected_data = stored_data[blob_index];
@@ -1384,8 +1446,10 @@ TEST_CASE(
     INFO("=== Testing REAL cross-tag isolation ===\n");
 
     // Create two separate tags
-    wrp_cte::core::TagId tag1_id = fixture->core_client_->GetOrCreateTag("isolation_tag_1");
-    wrp_cte::core::TagId tag2_id = fixture->core_client_->GetOrCreateTag("isolation_tag_2");
+    wrp_cte::core::TagId tag1_id =
+        fixture->GetOrCreateTagAsync("isolation_tag_1");
+    wrp_cte::core::TagId tag2_id =
+        fixture->GetOrCreateTagAsync("isolation_tag_2");
 
     const std::string blob_name = "isolation_test_blob";
     const chi::u64 blob_size = 1024;
@@ -1400,37 +1464,39 @@ TEST_CASE(
     // Store in tag1
     // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
     hipc::FullPtr<char> put1_fullptr = CHI_IPC->AllocateBuffer(blob_size);
-    hipc::ShmPtr<> put1_ptr =
-        put1_fullptr.IsNull() ? hipc::ShmPtr<>::GetNull() : put1_fullptr.shm_.template Cast<void>();
+    hipc::ShmPtr<> put1_ptr = put1_fullptr.IsNull()
+                                  ? hipc::ShmPtr<>::GetNull()
+                                  : put1_fullptr.shm_.template Cast<void>();
     bool tag1_stored = false;
-    if (!put1_fullptr.IsNull() && fixture->CopyToSharedMemory(put1_fullptr, tag1_data)) {
+    if (!put1_fullptr.IsNull() &&
+        fixture->CopyToSharedMemory(put1_fullptr, tag1_data)) {
       auto put1_task = fixture->core_client_->AsyncPutBlob(
           tag1_id, blob_name, 0, blob_size, put1_ptr, 0.5f, 0);
-      if (!put1_task.IsNull() && fixture->WaitForTaskCompletion(put1_task, 10000) &&
+      if (!put1_task.IsNull() &&
+          fixture->WaitForTaskCompletion(put1_task, 10000) &&
           put1_task->return_code_ == 0) {
         tag1_stored = true;
         INFO("Tag1 blob stored successfully");
       }
-      if (!put1_task.IsNull())
-        CHI_IPC->DelTask(put1_task.GetTaskPtr());
     }
 
     // Store in tag2
     // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
     hipc::FullPtr<char> put2_fullptr = CHI_IPC->AllocateBuffer(blob_size);
-    hipc::ShmPtr<> put2_ptr =
-        put2_fullptr.IsNull() ? hipc::ShmPtr<>::GetNull() : put2_fullptr.shm_.template Cast<void>();
+    hipc::ShmPtr<> put2_ptr = put2_fullptr.IsNull()
+                                  ? hipc::ShmPtr<>::GetNull()
+                                  : put2_fullptr.shm_.template Cast<void>();
     bool tag2_stored = false;
-    if (!put2_fullptr.IsNull() && fixture->CopyToSharedMemory(put2_fullptr, tag2_data)) {
+    if (!put2_fullptr.IsNull() &&
+        fixture->CopyToSharedMemory(put2_fullptr, tag2_data)) {
       auto put2_task = fixture->core_client_->AsyncPutBlob(
           tag2_id, blob_name, 0, blob_size, put2_ptr, 0.5f, 0);
-      if (!put2_task.IsNull() && fixture->WaitForTaskCompletion(put2_task, 10000) &&
+      if (!put2_task.IsNull() &&
+          fixture->WaitForTaskCompletion(put2_task, 10000) &&
           put2_task->return_code_ == 0) {
         tag2_stored = true;
         INFO("Tag2 blob stored successfully");
       }
-      if (!put2_task.IsNull())
-        CHI_IPC->DelTask(put2_task.GetTaskPtr());
     }
 
     // Verify isolation - retrieve from each tag
@@ -1441,15 +1507,16 @@ TEST_CASE(
     hipc::FullPtr<char> tag1_buffer_fullptr =
         CHI_IPC->AllocateBuffer(blob_size);
     if (!tag1_buffer_fullptr.IsNull() && tag1_stored) {
-      hipc::ShmPtr<> tag1_buffer_ptr = tag1_buffer_fullptr.shm_.template Cast<void>();
+      hipc::ShmPtr<> tag1_buffer_ptr =
+          tag1_buffer_fullptr.shm_.template Cast<void>();
 
       // Use blob name for retrieval
-      bool get1_success =
-          fixture->core_client_->GetBlob(tag1_id, blob_name, 0,
-                                blob_size, 0, tag1_buffer_ptr);
+      bool get1_success = fixture->GetBlobAsync(
+          tag1_id, blob_name, 0, blob_size, 0, tag1_buffer_ptr);
 
       if (get1_success) {
-        auto retrieved1_data = fixture->CopyFromSharedMemory(tag1_buffer_ptr, blob_size);
+        auto retrieved1_data =
+            fixture->CopyFromSharedMemory(tag1_buffer_ptr, blob_size);
         if (!retrieved1_data.empty()) {
           REQUIRE(retrieved1_data == tag1_data);
           REQUIRE(fixture->VerifyTestData(retrieved1_data, '1'));
@@ -1463,15 +1530,16 @@ TEST_CASE(
     hipc::FullPtr<char> tag2_buffer_fullptr =
         CHI_IPC->AllocateBuffer(blob_size);
     if (!tag2_buffer_fullptr.IsNull() && tag2_stored) {
-      hipc::ShmPtr<> tag2_buffer_ptr = tag2_buffer_fullptr.shm_.template Cast<void>();
+      hipc::ShmPtr<> tag2_buffer_ptr =
+          tag2_buffer_fullptr.shm_.template Cast<void>();
 
       // Use blob name for retrieval
-      bool get2_success =
-          fixture->core_client_->GetBlob(tag2_id, blob_name, 0,
-                                blob_size, 0, tag2_buffer_ptr);
+      bool get2_success = fixture->GetBlobAsync(
+          tag2_id, blob_name, 0, blob_size, 0, tag2_buffer_ptr);
 
       if (get2_success) {
-        auto retrieved2_data = fixture->CopyFromSharedMemory(tag2_buffer_ptr, blob_size);
+        auto retrieved2_data =
+            fixture->CopyFromSharedMemory(tag2_buffer_ptr, blob_size);
         if (!retrieved2_data.empty()) {
           REQUIRE(retrieved2_data == tag2_data);
           REQUIRE(fixture->VerifyTestData(retrieved2_data, '2'));
@@ -1488,13 +1556,14 @@ TEST_CASE(
     INFO("=== Testing REAL Async Put -> Sync Get cycle ===\n");
 
     const std::string blob_name = "async_put_sync_get";
-    const chi::u64 blob_size = 3072;           // 3KB
+    const chi::u64 blob_size = 3072;  // 3KB
 
-    auto test_data = fixture->CreateTestData(blob_size, 'A'); // 'A' for Async
+    auto test_data = fixture->CreateTestData(blob_size, 'A');  // 'A' for Async
     // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
     hipc::FullPtr<char> put_fullptr = CHI_IPC->AllocateBuffer(blob_size);
 
-    if (put_fullptr.IsNull() || !fixture->CopyToSharedMemory(put_fullptr, test_data)) {
+    if (put_fullptr.IsNull() ||
+        !fixture->CopyToSharedMemory(put_fullptr, test_data)) {
       INFO(
           "Skipping async-sync cycle due to memory context allocation failure");
       return;
@@ -1514,7 +1583,6 @@ TEST_CASE(
     bool put_success = (put_result == 0);
     INFO("Async put completed with success: " << (put_success ? "true"
                                                               : "false"));
-    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // STEP 2: Sync Get
     INFO("Step 2: Sync GetBlob...");
@@ -1526,12 +1594,12 @@ TEST_CASE(
       INFO("Failed to allocate buffer for sync GetBlob");
       return;
     }
-    hipc::ShmPtr<> sync_get_buffer_ptr = sync_get_buffer_fullptr.shm_.template Cast<void>();
+    hipc::ShmPtr<> sync_get_buffer_ptr =
+        sync_get_buffer_fullptr.shm_.template Cast<void>();
 
     // Use blob name for retrieval
-    bool sync_get_success =
-        fixture->core_client_->GetBlob(tag_id, blob_name, 0,
-                              blob_size, 0, sync_get_buffer_ptr);
+    bool sync_get_success = fixture->GetBlobAsync(
+        tag_id, blob_name, 0, blob_size, 0, sync_get_buffer_ptr);
 
     // STEP 3: Verify integrity
     if (sync_get_success) {
@@ -1540,8 +1608,9 @@ TEST_CASE(
       if (!retrieved_data.empty()) {
         REQUIRE(retrieved_data == test_data);
         REQUIRE(fixture->VerifyTestData(retrieved_data, 'A'));
-        INFO("SUCCESS: Async Put -> Sync Get cycle with perfect data "
-             "integrity!");
+        INFO(
+            "SUCCESS: Async Put -> Sync Get cycle with perfect data "
+            "integrity!");
       }
     }
   }
@@ -1550,8 +1619,8 @@ TEST_CASE(
     INFO("=== Testing REAL partial Put-Get operations ===\n");
 
     const std::string blob_name = "partial_operations_blob";
-    const chi::u64 total_size = 8192;          // 8KB total
-    const chi::u64 chunk_size = 2048;          // 2KB chunks
+    const chi::u64 total_size = 8192;  // 8KB total
+    const chi::u64 chunk_size = 2048;  // 2KB chunks
 
     // Create full data with distinct patterns for each chunk
     std::vector<char> full_data;
@@ -1576,8 +1645,7 @@ TEST_CASE(
                             << pattern << "'");
 
       // Following MODULE_DEVELOPMENT_GUIDE.md AllocateBuffer<T> specification
-      hipc::FullPtr<char> chunk_fullptr =
-          CHI_IPC->AllocateBuffer(chunk_size);
+      hipc::FullPtr<char> chunk_fullptr = CHI_IPC->AllocateBuffer(chunk_size);
       if (chunk_fullptr.IsNull() ||
           !fixture->CopyToSharedMemory(chunk_fullptr, chunk_data[i])) {
         INFO("Skipping chunk " << i
@@ -1586,19 +1654,17 @@ TEST_CASE(
       }
       hipc::ShmPtr<> chunk_ptr = chunk_fullptr.shm_.template Cast<void>();
 
-      auto chunk_task =
-          fixture->core_client_->AsyncPutBlob(tag_id, blob_name, offset,
-                                     chunk_size, chunk_ptr, 0.6f, 0);
+      auto chunk_task = fixture->core_client_->AsyncPutBlob(
+          tag_id, blob_name, offset, chunk_size, chunk_ptr, 0.6f, 0);
 
-      if (!chunk_task.IsNull() && fixture->WaitForTaskCompletion(chunk_task, 10000) &&
+      if (!chunk_task.IsNull() &&
+          fixture->WaitForTaskCompletion(chunk_task, 10000) &&
           chunk_task->return_code_ == 0) {
         chunks_stored = true;
         INFO("✓ Chunk " << i << " stored successfully");
       } else {
         INFO("✗ Chunk " << i << " storage failed");
       }
-      if (!chunk_task.IsNull())
-        CHI_IPC->DelTask(chunk_task.GetTaskPtr());
     }
 
     // PHASE 2: Retrieve chunks and verify using blob name
@@ -1621,12 +1687,12 @@ TEST_CASE(
         INFO("Failed to allocate buffer for chunk GetBlob");
         continue;
       }
-      hipc::ShmPtr<> chunk_get_buffer_ptr = chunk_get_buffer_fullptr.shm_.template Cast<void>();
+      hipc::ShmPtr<> chunk_get_buffer_ptr =
+          chunk_get_buffer_fullptr.shm_.template Cast<void>();
 
       // Use blob name for retrieval
-      bool chunk_get_success =
-          fixture->core_client_->GetBlob(tag_id, blob_name, offset,
-                                chunk_size, 0, chunk_get_buffer_ptr);
+      bool chunk_get_success = fixture->GetBlobAsync(
+          tag_id, blob_name, offset, chunk_size, 0, chunk_get_buffer_ptr);
 
       if (chunk_get_success) {
         auto retrieved_chunk =
@@ -1649,15 +1715,16 @@ TEST_CASE(
       INFO("Failed to allocate buffer for full blob GetBlob");
       return;
     }
-    hipc::ShmPtr<> full_buffer_ptr = full_buffer_fullptr.shm_.template Cast<void>();
+    hipc::ShmPtr<> full_buffer_ptr =
+        full_buffer_fullptr.shm_.template Cast<void>();
 
     // Use blob name for retrieval
-    bool full_success =
-        fixture->core_client_->GetBlob(tag_id, blob_name, 0,
-                              total_size, 0, full_buffer_ptr);
+    bool full_success = fixture->GetBlobAsync(
+        tag_id, blob_name, 0, total_size, 0, full_buffer_ptr);
 
     if (full_success) {
-      auto retrieved_full = fixture->CopyFromSharedMemory(full_buffer_ptr, total_size);
+      auto retrieved_full =
+          fixture->CopyFromSharedMemory(full_buffer_ptr, total_size);
       if (!retrieved_full.empty()) {
         REQUIRE(retrieved_full.size() == total_size);
         REQUIRE(retrieved_full == full_data);
@@ -1673,7 +1740,8 @@ TEST_CASE(
  * FUNCTIONAL Test Case: PutBlob-GetBlob Comprehensive Integration
  *
  * This test implements the EXACT workflow requirements:
- * 1. PutBlob with blob_name="test_blob" and blob_id=BlobId::GetNull() (null/default)
+ * 1. PutBlob with blob_name="test_blob" and blob_id=BlobId::GetNull()
+ * (null/default)
  * 2. Extract the actual blob_id returned from PutBlob task
  * 3. GetBlob with extracted blob_id and empty blob_name=""
  * 4. Verify data integrity matches exactly
@@ -1688,37 +1756,40 @@ TEST_CASE(
  * - Test should FAIL if chimaera runtime is not properly initialized
  * - Test should FAIL if data doesn't match exactly
  */
-TEST_CASE(
-                 "FUNCTIONAL - PutBlob-GetBlob Comprehensive Integration",
-                 "[cte][core][blob][integration][put-get][comprehensive]") {
-
-  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();  INFO("=== COMPREHENSIVE PutBlob-GetBlob Integration Test ===");
+TEST_CASE("FUNCTIONAL - PutBlob-GetBlob Comprehensive Integration",
+          "[cte][core][blob][integration][put-get][comprehensive]") {
+  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();
+  INFO("=== COMPREHENSIVE PutBlob-GetBlob Integration Test ===");
 
   // Setup: Create core pool, register target, create tag
   chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
   wrp_cte::core::CreateParams params;
 
   INFO("Step 1: Creating core pool...");
-  REQUIRE_NOTHROW(fixture->core_client_->Create(pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
-                                       CTECoreFunctionalTestFixture::kCTECorePoolId, params));
+  REQUIRE_NOTHROW(fixture->CreateAsync(
+      pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
+      CTECoreFunctionalTestFixture::kCTECorePoolId, params));
   INFO("✓ Core pool created successfully");
 
   INFO("Step 2: Registering target...");
   const std::string target_name = fixture->test_storage_path_;
-  chi::u32 reg_result = fixture->core_client_->RegisterTarget(
-      target_name, chimaera::bdev::BdevType::kFile, CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(), chi::PoolId(605, 0));
+  chi::u32 reg_result = fixture->RegisterTargetAsync(
+      target_name, chimaera::bdev::BdevType::kFile,
+      CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(),
+      chi::PoolId(605, 0));
   REQUIRE(reg_result == 0);
   INFO("✓ Target registered successfully");
 
   INFO("Step 3: Creating test tag...");
-  wrp_cte::core::TagId tag_id = fixture->core_client_->GetOrCreateTag("comprehensive_test_tag");
+  wrp_cte::core::TagId tag_id =
+      fixture->GetOrCreateTagAsync("comprehensive_test_tag");
   REQUIRE((tag_id.major_ != 0 || tag_id.minor_ != 0));
   INFO("✓ Test tag created with ID: " << tag_id);
 
   // Test data preparation
-  const chi::u64 test_data_size = 4096; // 4KB test data
+  const chi::u64 test_data_size = 4096;  // 4KB test data
   auto original_data =
-      fixture->CreateTestData(test_data_size, 'C'); // 'C' for Comprehensive
+      fixture->CreateTestData(test_data_size, 'C');  // 'C' for Comprehensive
   REQUIRE(fixture->VerifyTestData(original_data, 'C'));
   INFO("✓ Test data prepared (" << test_data_size
                                 << " bytes with pattern 'C')");
@@ -1735,12 +1806,11 @@ TEST_CASE(
   // Step 4: PutBlob with blob_name="test_blob"
   INFO("Step 4: Executing PutBlob with specific requirements...");
 
-  const std::string blob_name = "test_blob"; // Non-empty string as required
+  const std::string blob_name = "test_blob";  // Non-empty string as required
   const float blob_score = 0.75f;
 
   // Allocate shared memory for PutBlob
-  hipc::FullPtr<char> put_data_buffer =
-      CHI_IPC->AllocateBuffer(test_data_size);
+  hipc::FullPtr<char> put_data_buffer = CHI_IPC->AllocateBuffer(test_data_size);
   REQUIRE(!put_data_buffer.IsNull());
   hipc::ShmPtr<> put_data_ptr = put_data_buffer.shm_.template Cast<void>();
 
@@ -1749,9 +1819,8 @@ TEST_CASE(
   INFO("✓ Test data copied to shared memory buffer");
 
   // Create PutBlob task
-  auto put_task =
-      fixture->core_client_->AsyncPutBlob(tag_id, blob_name, 0,
-                                 test_data_size, put_data_ptr, blob_score, 0);
+  auto put_task = fixture->core_client_->AsyncPutBlob(
+      tag_id, blob_name, 0, test_data_size, put_data_ptr, blob_score, 0);
 
   REQUIRE(!put_task.IsNull());
   INFO("✓ PutBlob task created with:");
@@ -1766,21 +1835,18 @@ TEST_CASE(
        << put_task->return_code_);
 
   // Cleanup PutBlob task
-  CHI_IPC->DelTask(put_task.GetTaskPtr());
 
   // Step 5: GetBlob with blob_name
   INFO("Step 5: Executing GetBlob with blob_name...");
 
   // Allocate shared memory for GetBlob
-  hipc::FullPtr<char> get_data_buffer =
-      CHI_IPC->AllocateBuffer(test_data_size);
+  hipc::FullPtr<char> get_data_buffer = CHI_IPC->AllocateBuffer(test_data_size);
   REQUIRE(!get_data_buffer.IsNull());
   hipc::ShmPtr<> get_data_ptr = get_data_buffer.shm_.template Cast<void>();
 
   // Create GetBlob task using blob_name
-  auto get_task =
-      fixture->core_client_->AsyncGetBlob(tag_id, blob_name,
-                                 0, test_data_size, 0, get_data_ptr);
+  auto get_task = fixture->core_client_->AsyncGetBlob(
+      tag_id, blob_name, 0, test_data_size, 0, get_data_ptr);
 
   REQUIRE(!get_task.IsNull());
   INFO("✓ GetBlob task created with:");
@@ -1797,7 +1863,8 @@ TEST_CASE(
   // doesn't match)
   INFO("Step 6: Verifying data integrity...");
 
-  auto retrieved_data = fixture->CopyFromSharedMemory(get_data_ptr, test_data_size);
+  auto retrieved_data =
+      fixture->CopyFromSharedMemory(get_data_ptr, test_data_size);
   REQUIRE(!retrieved_data.empty());
   REQUIRE(retrieved_data.size() == test_data_size);
 
@@ -1822,7 +1889,6 @@ TEST_CASE(
                                                    << " bytes match exactly");
 
   // Cleanup GetBlob task
-  CHI_IPC->DelTask(get_task.GetTaskPtr());
 
   INFO("=== COMPREHENSIVE TEST COMPLETED SUCCESSFULLY ===");
   INFO("✓ PutBlob with blob_name='test_blob' completed");
@@ -1845,46 +1911,53 @@ TEST_CASE(
  *
  * Following CLAUDE.md requirements:
  * - Use real API calls with proper runtime initialization
- * - Test the actual ReorganizeBlob implementation with controlled async operations
+ * - Test the actual ReorganizeBlob implementation with controlled async
+ * operations
  * - Verify score filtering based on score_difference_threshold configuration
  * - Test processing multiple blobs (updated from batch API to per-blob API)
  */
-TEST_CASE(
-                 "FUNCTIONAL - ReorganizeBlob Operations",
-                 "[cte][core][blob][reorganize][functional]") {
-
-  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();  INFO("=== FUNCTIONAL ReorganizeBlob Test ===");
+TEST_CASE("FUNCTIONAL - ReorganizeBlob Operations",
+          "[cte][core][blob][reorganize][functional]") {
+  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();
+  INFO("=== FUNCTIONAL ReorganizeBlob Test ===");
 
   // Setup: Create core pool, register target, create tag
   chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
   wrp_cte::core::CreateParams params;
 
   INFO("Step 1: Setting up CTE environment...");
-  REQUIRE_NOTHROW(fixture->core_client_->Create(pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
-                                       CTECoreFunctionalTestFixture::kCTECorePoolId, params));
+  REQUIRE_NOTHROW(fixture->CreateAsync(
+      pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
+      CTECoreFunctionalTestFixture::kCTECorePoolId, params));
 
   const std::string target_name = fixture->test_storage_path_;
-  chi::u32 reg_result = fixture->core_client_->RegisterTarget(
-      target_name, chimaera::bdev::BdevType::kFile, CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(), chi::PoolId(606, 0));
+  chi::u32 reg_result = fixture->RegisterTargetAsync(
+      target_name, chimaera::bdev::BdevType::kFile,
+      CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(),
+      chi::PoolId(606, 0));
   REQUIRE(reg_result == 0);
 
-  wrp_cte::core::TagId tag_id = fixture->core_client_->GetOrCreateTag("reorganize_test_tag");
+  wrp_cte::core::TagId tag_id =
+      fixture->GetOrCreateTagAsync("reorganize_test_tag");
   REQUIRE((tag_id.major_ != 0 || tag_id.minor_ != 0));
   INFO("✓ Environment setup completed");
 
-  SECTION("FUNCTIONAL - Store 10 blobs with score 0.5, then reorganize to score 1.0") {
+  SECTION(
+      "FUNCTIONAL - Store 10 blobs with score 0.5, then reorganize to score "
+      "1.0") {
     INFO("=== Testing 10 blobs: 0.5 → 1.0 score reorganization ===");
 
     const size_t num_blobs = 10;
     const float initial_score = 0.5f;
     const float target_score = 1.0f;
-    const chi::u64 blob_size = 2048; // 2KB per blob
+    const chi::u64 blob_size = 2048;  // 2KB per blob
 
     std::vector<std::string> blob_names;
     std::vector<std::vector<char>> blob_data;
 
     // Phase 1: Store 10 blobs with initial score 0.5
-    INFO("Phase 1: Storing " << num_blobs << " blobs with score " << initial_score);
+    INFO("Phase 1: Storing " << num_blobs << " blobs with score "
+                             << initial_score);
     for (size_t i = 0; i < num_blobs; ++i) {
       std::string blob_name = "reorganize_blob_" + std::to_string(i);
       blob_names.push_back(blob_name);
@@ -1899,21 +1972,20 @@ TEST_CASE(
       REQUIRE(fixture->CopyToSharedMemory(put_buffer, data));
 
       auto put_task = fixture->core_client_->AsyncPutBlob(
-          tag_id, blob_name, 0,
-          blob_size, put_buffer.shm_.template Cast<void>(), initial_score, 0);
+          tag_id, blob_name, 0, blob_size,
+          put_buffer.shm_.template Cast<void>(), initial_score, 0);
 
       REQUIRE(!put_task.IsNull());
       REQUIRE(fixture->WaitForTaskCompletion(put_task, 10000));
       REQUIRE(put_task->return_code_ == 0);
 
       INFO("✓ Blob " << i << " stored: " << blob_name);
-      CHI_IPC->DelTask(put_task.GetTaskPtr());
     }
 
     // Phase 2: Verify initial scores are 0.5
     INFO("Phase 2: Verifying initial scores...");
     for (size_t i = 0; i < num_blobs; ++i) {
-      float score = fixture->core_client_->GetBlobScore(tag_id, blob_names[i]);
+      float score = fixture->GetBlobScoreAsync(tag_id, blob_names[i]);
       REQUIRE(std::abs(score - initial_score) < 0.01f);
       INFO("✓ Blob " << i << " initial score verified: " << score);
     }
@@ -1929,7 +2001,6 @@ TEST_CASE(
       REQUIRE(!reorganize_task.IsNull());
       REQUIRE(fixture->WaitForTaskCompletion(reorganize_task, 10000));
       REQUIRE(reorganize_task->return_code_ == 0);
-      CHI_IPC->DelTask(reorganize_task.GetTaskPtr());
       INFO("✓ Blob " << i << " reorganized successfully");
     }
     INFO("✓ All blobs reorganized successfully");
@@ -1937,7 +2008,8 @@ TEST_CASE(
     // Phase 4: Verify updated scores are 1.0
     INFO("Phase 4: Verifying updated scores...");
     for (size_t i = 0; i < num_blobs; ++i) {
-      float updated_score = fixture->core_client_->GetBlobScore(tag_id, blob_names[i]);
+      float updated_score =
+          fixture->GetBlobScoreAsync(tag_id, blob_names[i]);
       REQUIRE(std::abs(updated_score - target_score) < 0.01f);
       INFO("✓ Blob " << i << " updated score verified: " << updated_score);
     }
@@ -1948,11 +2020,13 @@ TEST_CASE(
       hipc::FullPtr<char> get_buffer = CHI_IPC->AllocateBuffer(blob_size);
       REQUIRE(!get_buffer.IsNull());
 
-      bool get_success = fixture->core_client_->GetBlob(
-          tag_id, blob_names[i], 0, blob_size, 0, get_buffer.shm_.template Cast<void>());
+      bool get_success =
+          fixture->GetBlobAsync(tag_id, blob_names[i], 0, blob_size, 0,
+                                         get_buffer.shm_.template Cast<void>());
       REQUIRE(get_success);
 
-      auto retrieved_data = fixture->CopyFromSharedMemory(get_buffer.shm_.template Cast<void>(), blob_size);
+      auto retrieved_data = fixture->CopyFromSharedMemory(
+          get_buffer.shm_.template Cast<void>(), blob_size);
       REQUIRE(retrieved_data == blob_data[i]);
 
       char expected_pattern = static_cast<char>('A' + (i % 26));
@@ -1960,7 +2034,9 @@ TEST_CASE(
       INFO("✓ Blob " << i << " data integrity verified after reorganization");
     }
 
-    INFO("SUCCESS: All 10 blobs successfully reorganized from score 0.5 to 1.0!");
+    INFO(
+        "SUCCESS: All 10 blobs successfully reorganized from score 0.5 to "
+        "1.0!");
   }
 
   SECTION("FUNCTIONAL - Score difference threshold filtering") {
@@ -1968,61 +2044,63 @@ TEST_CASE(
 
     const size_t num_test_blobs = 5;
     const chi::u64 blob_size = 1024;
-    
+
     // Create test blobs with different initial scores
     std::vector<std::string> test_blob_names;
     std::vector<float> initial_scores = {0.1f, 0.5f, 0.7f, 0.9f, 0.95f};
-    std::vector<float> target_scores = {0.15f, 0.55f, 0.75f, 0.95f, 1.0f}; // Small and large differences
+    std::vector<float> target_scores = {0.15f, 0.55f, 0.75f, 0.95f,
+                                        1.0f};  // Small and large differences
 
     INFO("Creating test blobs with varying scores...");
     for (size_t i = 0; i < num_test_blobs; ++i) {
       std::string blob_name = "threshold_test_blob_" + std::to_string(i);
       test_blob_names.push_back(blob_name);
 
-      auto data = fixture->CreateTestData(blob_size, static_cast<char>('T' + i));
+      auto data =
+          fixture->CreateTestData(blob_size, static_cast<char>('T' + i));
       hipc::FullPtr<char> put_buffer = CHI_IPC->AllocateBuffer(blob_size);
       REQUIRE(!put_buffer.IsNull());
       REQUIRE(fixture->CopyToSharedMemory(put_buffer, data));
 
       auto put_task = fixture->core_client_->AsyncPutBlob(
-          tag_id, blob_name, 0,
-          blob_size, put_buffer.shm_.template Cast<void>(), initial_scores[i], 0);
+          tag_id, blob_name, 0, blob_size,
+          put_buffer.shm_.template Cast<void>(), initial_scores[i], 0);
 
       REQUIRE(!put_task.IsNull());
       REQUIRE(fixture->WaitForTaskCompletion(put_task, 10000));
       REQUIRE(put_task->return_code_ == 0);
-      CHI_IPC->DelTask(put_task.GetTaskPtr());
-      
+
       INFO("✓ Test blob " << i << " stored with score " << initial_scores[i]);
     }
 
     // Execute ReorganizeBlob with mixed score differences (one per blob)
     INFO("Executing ReorganizeBlob operations with mixed score differences...");
     for (size_t i = 0; i < num_test_blobs; ++i) {
-      auto threshold_reorganize_task = fixture->core_client_->AsyncReorganizeBlob(
-          tag_id, test_blob_names[i], target_scores[i]);
+      auto threshold_reorganize_task =
+          fixture->core_client_->AsyncReorganizeBlob(tag_id, test_blob_names[i],
+                                                     target_scores[i]);
 
       REQUIRE(!threshold_reorganize_task.IsNull());
       REQUIRE(fixture->WaitForTaskCompletion(threshold_reorganize_task, 10000));
       REQUIRE(threshold_reorganize_task->return_code_ == 0);
-      CHI_IPC->DelTask(threshold_reorganize_task.GetTaskPtr());
     }
 
     // Verify that blobs with significant score differences were updated
     // Note: Default score_difference_threshold is 0.05 based on implementation
     INFO("Verifying score updates based on threshold filtering...");
     for (size_t i = 0; i < num_test_blobs; ++i) {
-      float current_score = fixture->core_client_->GetBlobScore(tag_id, test_blob_names[i]);
+      float current_score =
+          fixture->GetBlobScoreAsync(tag_id, test_blob_names[i]);
       float score_diff = std::abs(target_scores[i] - initial_scores[i]);
-      
-      if (score_diff >= 0.05f) { // Should be updated
+
+      if (score_diff >= 0.05f) {  // Should be updated
         REQUIRE(std::abs(current_score - target_scores[i]) < 0.01f);
-        INFO("✓ Blob " << i << " score updated: " << initial_scores[i] 
-             << " → " << current_score << " (diff: " << score_diff << ")");
-      } else { // Should remain unchanged
+        INFO("✓ Blob " << i << " score updated: " << initial_scores[i] << " → "
+                       << current_score << " (diff: " << score_diff << ")");
+      } else {  // Should remain unchanged
         REQUIRE(std::abs(current_score - initial_scores[i]) < 0.01f);
-        INFO("✓ Blob " << i << " score unchanged: " << current_score 
-             << " (diff below threshold: " << score_diff << ")");
+        INFO("✓ Blob " << i << " score unchanged: " << current_score
+                       << " (diff below threshold: " << score_diff << ")");
       }
     }
 
@@ -2035,11 +2113,12 @@ TEST_CASE(
     const size_t batch_size = 32;
     const float initial_score = 0.3f;
     const float target_score = 0.8f;
-    const chi::u64 blob_size = 512; // Smaller blobs for batch test
+    const chi::u64 blob_size = 512;  // Smaller blobs for batch test
 
     std::vector<std::string> batch_blob_names;
-    
-    INFO("Creating " << batch_size << " blobs for multiple blob processing test...");
+
+    INFO("Creating " << batch_size
+                     << " blobs for multiple blob processing test...");
     for (size_t i = 0; i < batch_size; ++i) {
       std::string blob_name = "batch_blob_" + std::to_string(i);
       batch_blob_names.push_back(blob_name);
@@ -2050,13 +2129,12 @@ TEST_CASE(
       REQUIRE(fixture->CopyToSharedMemory(put_buffer, data));
 
       auto put_task = fixture->core_client_->AsyncPutBlob(
-          tag_id, blob_name, 0,
-          blob_size, put_buffer.shm_.template Cast<void>(), initial_score, 0);
+          tag_id, blob_name, 0, blob_size,
+          put_buffer.shm_.template Cast<void>(), initial_score, 0);
 
       REQUIRE(!put_task.IsNull());
       REQUIRE(fixture->WaitForTaskCompletion(put_task, 10000));
       REQUIRE(put_task->return_code_ == 0);
-      CHI_IPC->DelTask(put_task.GetTaskPtr());
 
       if ((i + 1) % 8 == 0) {
         INFO("✓ Created " << (i + 1) << "/" << batch_size << " batch blobs");
@@ -2064,7 +2142,8 @@ TEST_CASE(
     }
 
     // Execute reorganization for each blob (updated from batched operation)
-    INFO("Executing ReorganizeBlob operations for " << batch_size << " blobs...");
+    INFO("Executing ReorganizeBlob operations for " << batch_size
+                                                    << " blobs...");
     for (size_t i = 0; i < batch_size; ++i) {
       auto batch_reorganize_task = fixture->core_client_->AsyncReorganizeBlob(
           tag_id, batch_blob_names[i], target_score);
@@ -2072,7 +2151,6 @@ TEST_CASE(
       REQUIRE(!batch_reorganize_task.IsNull());
       REQUIRE(fixture->WaitForTaskCompletion(batch_reorganize_task, 10000));
       REQUIRE(batch_reorganize_task->return_code_ == 0);
-      CHI_IPC->DelTask(batch_reorganize_task.GetTaskPtr());
 
       if ((i + 1) % 8 == 0) {
         INFO("✓ Reorganized " << (i + 1) << "/" << batch_size << " blobs");
@@ -2084,17 +2162,20 @@ TEST_CASE(
     INFO("Verifying all " << batch_size << " blobs were reorganized...");
     size_t verified_count = 0;
     for (size_t i = 0; i < batch_size; ++i) {
-      float current_score = fixture->core_client_->GetBlobScore(tag_id, batch_blob_names[i]);
+      float current_score =
+          fixture->GetBlobScoreAsync(tag_id, batch_blob_names[i]);
       REQUIRE(std::abs(current_score - target_score) < 0.01f);
       verified_count++;
-      
+
       if ((i + 1) % 8 == 0) {
-        INFO("✓ Verified " << (i + 1) << "/" << batch_size << " batch blob scores");
+        INFO("✓ Verified " << (i + 1) << "/" << batch_size
+                           << " batch blob scores");
       }
     }
 
     REQUIRE(verified_count == batch_size);
-    INFO("SUCCESS: Processing of " << batch_size << " blobs completed successfully!");
+    INFO("SUCCESS: Processing of " << batch_size
+                                   << " blobs completed successfully!");
   }
 
   INFO("=== ReorganizeBlob FUNCTIONAL Test Completed Successfully ===");
@@ -2111,15 +2192,15 @@ TEST_CASE(
  * 5. Retrieve and verify all blobs
  * 6. Update target statistics
  */
-TEST_CASE("End-to-End CTE Core Workflow",
-                 "[cte][core][integration]") {
-
-  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();  chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
+TEST_CASE("End-to-End CTE Core Workflow", "[cte][core][integration]") {
+  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();
+  chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
   wrp_cte::core::CreateParams params;
 
   // Step 1: Initialize CTE core pool
-  REQUIRE_NOTHROW(fixture->core_client_->Create(pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
-                                       CTECoreFunctionalTestFixture::kCTECorePoolId, params));
+  REQUIRE_NOTHROW(fixture->CreateAsync(
+      pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
+      CTECoreFunctionalTestFixture::kCTECorePoolId, params));
   INFO("Step 1 completed: CTE core pool initialized");
 
   // Step 2: Register multiple targets
@@ -2128,8 +2209,10 @@ TEST_CASE("End-to-End CTE Core Workflow",
     // Use the actual file path as target_name since that's what matters for
     // bdev creation
     std::string target_name = fixture->test_storage_path_ + "_" + suffix;
-    chi::u32 result = fixture->core_client_->RegisterTarget(
-        target_name, chimaera::bdev::BdevType::kFile, CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(), chi::PoolId(607, 0));
+    chi::u32 result = fixture->RegisterTargetAsync(
+        target_name, chimaera::bdev::BdevType::kFile,
+        CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(),
+        chi::PoolId(607, 0));
     REQUIRE(result == 0);
   }
   INFO("Step 2 completed: Multiple targets registered");
@@ -2139,7 +2222,8 @@ TEST_CASE("End-to-End CTE Core Workflow",
   std::vector<wrp_cte::core::TagId> tag_ids;
 
   for (const auto &tag_name : tag_names) {
-    wrp_cte::core::TagId tag_id = fixture->core_client_->GetOrCreateTag(tag_name);
+    wrp_cte::core::TagId tag_id =
+        fixture->GetOrCreateTagAsync(tag_name);
     REQUIRE(!tag_id.IsNull());
     tag_ids.push_back(tag_id);
   }
@@ -2152,9 +2236,10 @@ TEST_CASE("End-to-End CTE Core Workflow",
   for (size_t i = 0; i < tag_ids.size(); ++i) {
     wrp_cte::core::TagId tag_id = tag_ids[i];
     std::string blob_name = "blob_" + std::to_string(i);
-    chi::u64 blob_size = 1024 * (i + 1); // Variable sizes
+    chi::u64 blob_size = 1024 * (i + 1);  // Variable sizes
 
-    auto blob_data = fixture->CreateTestData(blob_size, static_cast<char>('A' + i));
+    auto blob_data =
+        fixture->CreateTestData(blob_size, static_cast<char>('A' + i));
 
     // Validate blob parameters
     REQUIRE(!blob_name.empty());
@@ -2180,17 +2265,17 @@ TEST_CASE("End-to-End CTE Core Workflow",
     char expected_pattern = static_cast<char>('A' + (j % 26));
     REQUIRE(fixture->VerifyTestData(simulated_retrieved, expected_pattern));
 
-    INFO("Blob retrieved and verified - Name: "
-         << blob_name << ", Integrity: PASS");
+    INFO("Blob retrieved and verified - Name: " << blob_name
+                                                << ", Integrity: PASS");
   }
   INFO("Step 5 completed: All blob data integrity verified");
 
   // Step 6: Update target statistics
-  chi::u32 stat_result = fixture->core_client_->StatTargets();
+  chi::u32 stat_result = fixture->StatTargetsAsync();
   INFO("Step 6 completed: Target statistics updated, result: " << stat_result);
 
   // Verify targets are still listed correctly
-  auto final_targets = fixture->core_client_->ListTargets();
+  auto final_targets = fixture->ListTargetsAsync();
   REQUIRE(final_targets.size() >= target_suffixes.size());
   INFO("Integration test completed successfully - all steps verified");
 }
@@ -2209,13 +2294,12 @@ TEST_CASE("End-to-End CTE Core Workflow",
  * Environment Variables:
  * - CTE_NUM_NODES: Number of nodes in the distributed system (default: 1)
  */
-TEST_CASE(
-                 "FUNCTIONAL - Distributed Execution Validation",
-                 "[cte][core][distributed][validation]") {
-
-  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::GetInstance();  // Parse number of nodes from environment variable
+TEST_CASE("FUNCTIONAL - Distributed Execution Validation",
+          "[cte][core][distributed][validation]") {
+  auto *fixture = hshm::Singleton<CTECoreFunctionalTestFixture>::
+      GetInstance();  // Parse number of nodes from environment variable
   int num_nodes = 1;
-  const char* num_nodes_env = std::getenv("CTE_NUM_NODES");
+  const char *num_nodes_env = std::getenv("CTE_NUM_NODES");
   if (num_nodes_env != nullptr) {
     num_nodes = std::atoi(num_nodes_env);
     if (num_nodes < 1) {
@@ -2228,25 +2312,27 @@ TEST_CASE(
   chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
   wrp_cte::core::CreateParams params;
 
-  REQUIRE_NOTHROW(fixture->core_client_->Create(pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
-                                       CTECoreFunctionalTestFixture::kCTECorePoolId, params));
+  REQUIRE_NOTHROW(fixture->CreateAsync(
+      pool_query, CTECoreFunctionalTestFixture::kCTECorePoolName,
+      CTECoreFunctionalTestFixture::kCTECorePoolId, params));
   REQUIRE(fixture->core_client_->GetReturnCode() == 0);
 
   // Use the fixture->test_storage_path_ as target_name
   const std::string target_name = fixture->test_storage_path_;
-  chi::u32 reg_result = fixture->core_client_->RegisterTarget(
-      target_name, chimaera::bdev::BdevType::kFile, CTECoreFunctionalTestFixture::kTestTargetSize,
-      chi::PoolQuery::Local(), chi::PoolId(608, 0));
+  chi::u32 reg_result = fixture->RegisterTargetAsync(
+      target_name, chimaera::bdev::BdevType::kFile,
+      CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(),
+      chi::PoolId(608, 0));
   REQUIRE(reg_result == 0);
 
   // Create a test tag for blob grouping
   const std::string tag_name = "distributed_test_tag";
-  wrp_cte::core::TagId tag_id = fixture->core_client_->GetOrCreateTag(tag_name);
+  wrp_cte::core::TagId tag_id = fixture->GetOrCreateTagAsync(tag_name);
   REQUIRE(!tag_id.IsNull());
 
   // Test configuration
   constexpr int num_iterations = 16;
-  constexpr chi::u64 blob_size = 4096; // 4KB per blob
+  constexpr chi::u64 blob_size = 4096;  // 4KB per blob
   const float score = 0.75f;
 
   // Tracking variables for completer statistics
@@ -2265,8 +2351,7 @@ TEST_CASE(
     REQUIRE(fixture->VerifyTestData(test_data, pattern));
 
     // Allocate shared memory for blob data
-    hipc::FullPtr<char> blob_data_fullptr =
-        CHI_IPC->AllocateBuffer(blob_size);
+    hipc::FullPtr<char> blob_data_fullptr = CHI_IPC->AllocateBuffer(blob_size);
     REQUIRE(!blob_data_fullptr.IsNull());
     hipc::ShmPtr<> blob_data_ptr = blob_data_fullptr.shm_.template Cast<void>();
 
@@ -2288,17 +2373,17 @@ TEST_CASE(
                           << ", completer=" << put_completer);
 
     // Cleanup put task
-    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // Allocate buffer for GetBlob result
     hipc::FullPtr<char> get_blob_data_fullptr =
         CHI_IPC->AllocateBuffer(blob_size);
     REQUIRE(!get_blob_data_fullptr.IsNull());
-    hipc::ShmPtr<> get_blob_data_ptr = get_blob_data_fullptr.shm_.template Cast<void>();
+    hipc::ShmPtr<> get_blob_data_ptr =
+        get_blob_data_fullptr.shm_.template Cast<void>();
 
     // Execute GetBlob operation
-    auto get_task = fixture->core_client_->AsyncGetBlob(tag_id, blob_name, 0,
-                                               blob_size, 0, get_blob_data_ptr);
+    auto get_task = fixture->core_client_->AsyncGetBlob(
+        tag_id, blob_name, 0, blob_size, 0, get_blob_data_ptr);
 
     REQUIRE(!get_task.IsNull());
     REQUIRE(fixture->WaitForTaskCompletion(get_task, 10000));
@@ -2313,12 +2398,12 @@ TEST_CASE(
     // Verify retrieved data matches original
     hipc::ShmPtr<> retrieved_data_ptr = get_task->blob_data_;
     REQUIRE(!retrieved_data_ptr.IsNull());
-    auto retrieved_data = fixture->CopyFromSharedMemory(retrieved_data_ptr, blob_size);
+    auto retrieved_data =
+        fixture->CopyFromSharedMemory(retrieved_data_ptr, blob_size);
     REQUIRE(retrieved_data.size() == blob_size);
     REQUIRE(fixture->VerifyTestData(retrieved_data, pattern));
 
     // Cleanup get task
-    CHI_IPC->DelTask(get_task.GetTaskPtr());
 
     INFO("Iteration " << i << " completed successfully");
   }
@@ -2326,10 +2411,10 @@ TEST_CASE(
   INFO("All " << num_iterations << " iterations completed");
 
   // Calculate average completer values (without rounding error)
-  double put_avg_completer =
-      static_cast<double>(put_completer_sum) / static_cast<double>(num_iterations);
-  double get_avg_completer =
-      static_cast<double>(get_completer_sum) / static_cast<double>(num_iterations);
+  double put_avg_completer = static_cast<double>(put_completer_sum) /
+                             static_cast<double>(num_iterations);
+  double get_avg_completer = static_cast<double>(get_completer_sum) /
+                             static_cast<double>(num_iterations);
 
   HLOG(kInfo, "PutBlob completer statistics:");
   HLOG(kInfo, "  Sum: {}", put_completer_sum);
@@ -2344,8 +2429,9 @@ TEST_CASE(
   if (num_nodes > 1) {
     REQUIRE(put_avg_completer > 0.0);
     REQUIRE(get_avg_completer > 0.0);
-    INFO("SUCCESS: Distributed execution validated - operations executed "
-         "across multiple nodes");
+    INFO(
+        "SUCCESS: Distributed execution validated - operations executed "
+        "across multiple nodes");
   } else {
     INFO("Single node test - distributed execution validation skipped");
   }

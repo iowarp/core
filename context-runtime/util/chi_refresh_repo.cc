@@ -243,6 +243,7 @@ class ChiModGenerator {
     oss << "#include \"" << namespace_name << "/" << module_name << "/" << chimod_name << "_runtime.h\"\n";
     oss << "#include \"" << namespace_name << "/" << module_name << "/autogen/" << chimod_name << "_methods.h\"\n";
     oss << "#include <chimaera/chimaera.h>\n";
+    oss << "#include <chimaera/future.h>  // For TaskResume coroutine return type\n";
     oss << "\n";
     oss << "namespace " << namespace_name << "::" << chimod_name << " {\n";
     oss << "\n";
@@ -259,7 +260,7 @@ class ChiModGenerator {
     oss << "  client_ = Client(pool_id);\n";
     oss << "}\n";
     oss << "\n";
-    oss << "void Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) {\n";
+    oss << "chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) {\n";
     oss << "  switch (method) {\n";
 
     // Add Run switch cases for each method
@@ -278,6 +279,8 @@ class ChiModGenerator {
     oss << "      break;\n";
     oss << "    }\n";
     oss << "  }\n";
+    oss << "  // co_return makes this a coroutine returning TaskResume\n";
+    oss << "  co_return;\n";
     oss << "}\n";
     oss << "\n";
     oss << "void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {\n";

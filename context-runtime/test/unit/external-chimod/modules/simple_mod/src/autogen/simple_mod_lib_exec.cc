@@ -10,6 +10,7 @@
 #include "external_test/simple_mod/simple_mod_runtime.h"
 #include "external_test/simple_mod/autogen/simple_mod_methods.h"
 #include <chimaera/chimaera.h>
+#include <chimaera/future.h>  // For TaskResume coroutine return type
 
 namespace external_test::simple_mod {
 
@@ -26,13 +27,15 @@ void Runtime::Init(const chi::PoolId &pool_id, const std::string &pool_name,
   client_ = Client(pool_id);
 }
 
-void Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) {
+chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) {
   switch (method) {
     default: {
       // Unknown method - do nothing
       break;
     }
   }
+  // co_return makes this a coroutine returning TaskResume
+  co_return;
 }
 
 void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
@@ -58,24 +61,40 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
   }
 }
 
-hipc::FullPtr<chi::Task> Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive) {
-  auto* ipc_manager = CHI_IPC;
+void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
+                        hipc::FullPtr<chi::Task> task_ptr) {
   switch (method) {
     default: {
-      // Unknown method - return null
-      return hipc::FullPtr<chi::Task>();
+      // Unknown method - do nothing
+      break;
     }
   }
 }
 
-hipc::FullPtr<chi::Task> Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive) {
-  auto* ipc_manager = CHI_IPC;
+hipc::FullPtr<chi::Task> Runtime::AllocLoadTask(chi::u32 method, chi::LoadTaskArchive& archive) {
+  hipc::FullPtr<chi::Task> task_ptr = NewTask(method);
+  if (!task_ptr.IsNull()) {
+    LoadTask(method, archive, task_ptr);
+  }
+  return task_ptr;
+}
+
+void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
+                            hipc::FullPtr<chi::Task> task_ptr) {
   switch (method) {
     default: {
-      // Unknown method - return null
-      return hipc::FullPtr<chi::Task>();
+      // Unknown method - do nothing
+      break;
     }
   }
+}
+
+hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive) {
+  hipc::FullPtr<chi::Task> task_ptr = NewTask(method);
+  if (!task_ptr.IsNull()) {
+    LocalLoadTask(method, archive, task_ptr);
+  }
+  return task_ptr;
 }
 
 void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive, 

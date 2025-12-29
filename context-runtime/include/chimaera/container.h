@@ -87,9 +87,13 @@ class Container {
 
   /**
    * Execute a method on a task - must be implemented by derived classes
+   *
+   * This method returns TaskResume to support C++20 coroutine-based execution.
+   * The returned TaskResume holds the coroutine handle that the worker uses
+   * to suspend and resume task execution.
    */
-  virtual void Run(u32 method, hipc::FullPtr<Task> task_ptr,
-                   RunContext& rctx) = 0;
+  virtual TaskResume Run(u32 method, hipc::FullPtr<Task> task_ptr,
+                         RunContext& rctx) = 0;
 
   /**
    * Delete/cleanup a task - must be implemented by derived classes

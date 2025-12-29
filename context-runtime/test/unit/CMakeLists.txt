@@ -520,558 +520,558 @@ set_target_properties(${TEST_TARGET} PROPERTIES
 if(CHIMAERA_ENABLE_TESTS)
   # Task Archive Tests
   add_test(
-    NAME task_archive_basic_tests
+    NAME cr_task_archive_basic_tests
     COMMAND ${TASK_ARCHIVE_TEST_TARGET} "[task_archive][input_in],[task_archive][output_in],[task_archive][input_out],[task_archive][output_out]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(task_archive_basic_tests PROPERTIES
+  set_tests_properties(cr_task_archive_basic_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
   
   
   add_test(
-    NAME task_archive_bulk_transfer_tests
+    NAME cr_task_archive_bulk_transfer_tests
     COMMAND ${TASK_ARCHIVE_TEST_TARGET} "[task_archive][bulk_transfer]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(task_archive_bulk_transfer_tests PROPERTIES
+  set_tests_properties(cr_task_archive_bulk_transfer_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
   
   
   add_test(
-    NAME task_archive_non_task_tests
+    NAME cr_task_archive_non_task_tests
     COMMAND ${TASK_ARCHIVE_TEST_TARGET} "[task_archive][non_task]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(task_archive_non_task_tests PROPERTIES
+  set_tests_properties(cr_task_archive_non_task_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
   
   
   add_test(
-    NAME task_archive_task_base_tests
+    NAME cr_task_archive_task_base_tests
     COMMAND ${TASK_ARCHIVE_TEST_TARGET} "[task_archive][task_base]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(task_archive_task_base_tests PROPERTIES
+  set_tests_properties(cr_task_archive_task_base_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
   
   
   add_test(
-    NAME task_archive_admin_tasks_tests
+    NAME cr_task_archive_admin_tasks_tests
     COMMAND ${TASK_ARCHIVE_TEST_TARGET} "[task_archive][admin_tasks]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(task_archive_admin_tasks_tests PROPERTIES
+  set_tests_properties(cr_task_archive_admin_tasks_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
   
   
   add_test(
-    NAME task_archive_bidirectional_tests
+    NAME cr_task_archive_bidirectional_tests
     COMMAND ${TASK_ARCHIVE_TEST_TARGET} "[task_archive][bidirectional]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(task_archive_bidirectional_tests PROPERTIES
+  set_tests_properties(cr_task_archive_bidirectional_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
   
   
   add_test(
-    NAME task_archive_container_tests
+    NAME cr_task_archive_container_tests
     COMMAND ${TASK_ARCHIVE_TEST_TARGET} "[task_archive][container]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(task_archive_container_tests PROPERTIES
+  set_tests_properties(cr_task_archive_container_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
   
   
   add_test(
-    NAME task_archive_error_handling_tests
+    NAME cr_task_archive_error_handling_tests
     COMMAND ${TASK_ARCHIVE_TEST_TARGET} "[task_archive][error_handling]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(task_archive_error_handling_tests PROPERTIES
+  set_tests_properties(cr_task_archive_error_handling_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
   
   
   add_test(
-    NAME task_archive_performance_tests
+    NAME cr_task_archive_performance_tests
     COMMAND ${TASK_ARCHIVE_TEST_TARGET} "[task_archive][performance]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(task_archive_performance_tests PROPERTIES
+  set_tests_properties(cr_task_archive_performance_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
   
   
   add_test(
-    NAME task_archive_integration_tests
+    NAME cr_task_archive_integration_tests
     COMMAND ${TASK_ARCHIVE_TEST_TARGET} "[task_archive][integration]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(task_archive_integration_tests PROPERTIES
+  set_tests_properties(cr_task_archive_integration_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
   
   
   # Comprehensive task archive test
   add_test(
-    NAME all_task_archive_tests
+    NAME cr_all_task_archive_tests
     COMMAND ${TASK_ARCHIVE_TEST_TARGET}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(all_task_archive_tests PROPERTIES
+  set_tests_properties(cr_all_task_archive_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
 
   # Add test cases with different tags
   add_test(
-    NAME runtime_initialization_tests
+    NAME cr_runtime_initialization_tests
     COMMAND ${TEST_TARGET} "[runtime][initialization]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(runtime_initialization_tests PROPERTIES
+  set_tests_properties(cr_runtime_initialization_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME client_initialization_tests  
+    NAME cr_client_initialization_tests  
     COMMAND ${TEST_TARGET} "[client][initialization]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(client_initialization_tests PROPERTIES
+  set_tests_properties(cr_client_initialization_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME mod_name_task_tests
+    NAME cr_mod_name_task_tests
     COMMAND ${TEST_TARGET} "[task][mod_name]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(mod_name_task_tests PROPERTIES
+  set_tests_properties(cr_mod_name_task_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME error_handling_tests
+    NAME cr_error_handling_tests
     COMMAND ${TEST_TARGET} "[error][edge_cases]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(error_handling_tests PROPERTIES
+  set_tests_properties(cr_error_handling_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME concurrent_tests
+    NAME cr_concurrent_tests
     COMMAND ${TEST_TARGET} "[concurrent][stress]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(concurrent_tests PROPERTIES
+  set_tests_properties(cr_concurrent_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME memory_tests
+    NAME cr_memory_tests
     COMMAND ${TEST_TARGET} "[memory][cleanup]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(memory_tests PROPERTIES
+  set_tests_properties(cr_memory_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME performance_tests
+    NAME cr_performance_tests
     COMMAND ${TEST_TARGET} "[performance][timing]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(performance_tests PROPERTIES
+  set_tests_properties(cr_performance_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   # Flush Correctness Tests
   add_test(
-    NAME flush_basic_tests
+    NAME cr_flush_basic_tests
     COMMAND ${FLUSH_TEST_TARGET} "[flush][admin]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(flush_basic_tests PROPERTIES
+  set_tests_properties(cr_flush_basic_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   add_test(
-    NAME flush_work_orchestrator_tests
+    NAME cr_flush_work_orchestrator_tests
     COMMAND ${FLUSH_TEST_TARGET} "[flush][work_orchestrator]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(flush_work_orchestrator_tests PROPERTIES
+  set_tests_properties(cr_flush_work_orchestrator_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   add_test(
-    NAME flush_stress_tests
+    NAME cr_flush_stress_tests
     COMMAND ${FLUSH_TEST_TARGET} "[flush][stress]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(flush_stress_tests PROPERTIES
+  set_tests_properties(cr_flush_stress_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   # Comprehensive flush test
   add_test(
-    NAME all_flush_tests
+    NAME cr_all_flush_tests
     COMMAND ${FLUSH_TEST_TARGET}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(all_flush_tests PROPERTIES
+  set_tests_properties(cr_all_flush_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   # Bdev ChiMod Tests
   add_test(
-    NAME bdev_container_creation_tests
+    NAME cr_bdev_container_creation_tests
     COMMAND ${BDEV_TEST_TARGET} "[bdev][create]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(bdev_container_creation_tests PROPERTIES
+  set_tests_properties(cr_bdev_container_creation_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME bdev_block_allocation_tests
+    NAME cr_bdev_block_allocation_tests
     COMMAND ${BDEV_TEST_TARGET} "[bdev][allocate]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(bdev_block_allocation_tests PROPERTIES
+  set_tests_properties(cr_bdev_block_allocation_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME bdev_io_operations_tests
+    NAME cr_bdev_io_operations_tests
     COMMAND ${BDEV_TEST_TARGET} "[bdev][io]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(bdev_io_operations_tests PROPERTIES
+  set_tests_properties(cr_bdev_io_operations_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME bdev_async_operations_tests
+    NAME cr_bdev_async_operations_tests
     COMMAND ${BDEV_TEST_TARGET} "[bdev][async]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(bdev_async_operations_tests PROPERTIES
+  set_tests_properties(cr_bdev_async_operations_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME bdev_free_management_tests
+    NAME cr_bdev_free_management_tests
     COMMAND ${BDEV_TEST_TARGET} "[bdev][free]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(bdev_free_management_tests PROPERTIES
+  set_tests_properties(cr_bdev_free_management_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME bdev_performance_tests
+    NAME cr_bdev_performance_tests
     COMMAND ${BDEV_TEST_TARGET} "[bdev][performance]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(bdev_performance_tests PROPERTIES
+  set_tests_properties(cr_bdev_performance_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME bdev_error_handling_tests
+    NAME cr_bdev_error_handling_tests
     COMMAND ${BDEV_TEST_TARGET} "[bdev][error]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(bdev_error_handling_tests PROPERTIES
+  set_tests_properties(cr_bdev_error_handling_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME bdev_cleanup_tests
+    NAME cr_bdev_cleanup_tests
     COMMAND ${BDEV_TEST_TARGET} "[bdev][cleanup]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(bdev_cleanup_tests PROPERTIES
+  set_tests_properties(cr_bdev_cleanup_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   # Comprehensive bdev test
   add_test(
-    NAME all_bdev_tests
+    NAME cr_all_bdev_tests
     COMMAND ${BDEV_TEST_TARGET}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(all_bdev_tests PROPERTIES
+  set_tests_properties(cr_all_bdev_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
 
   # CoMutex Tests
   add_test(
-    NAME comutex_basic_tests
+    NAME cr_comutex_basic_tests
     COMMAND ${COMUTEX_TEST_TARGET} "[comutex][basic]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(comutex_basic_tests PROPERTIES
+  set_tests_properties(cr_comutex_basic_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME comutex_concurrent_tests
+    NAME cr_comutex_concurrent_tests
     COMMAND ${COMUTEX_TEST_TARGET} "[comutex][concurrent]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(comutex_concurrent_tests PROPERTIES
+  set_tests_properties(cr_comutex_concurrent_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME corwlock_basic_tests
+    NAME cr_corwlock_basic_tests
     COMMAND ${COMUTEX_TEST_TARGET} "[corwlock][basic]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(corwlock_basic_tests PROPERTIES
+  set_tests_properties(cr_corwlock_basic_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME corwlock_readers_tests
+    NAME cr_corwlock_readers_tests
     COMMAND ${COMUTEX_TEST_TARGET} "[corwlock][readers]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(corwlock_readers_tests PROPERTIES
+  set_tests_properties(cr_corwlock_readers_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME corwlock_writers_tests
+    NAME cr_corwlock_writers_tests
     COMMAND ${COMUTEX_TEST_TARGET} "[corwlock][writers]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(corwlock_writers_tests PROPERTIES
+  set_tests_properties(cr_corwlock_writers_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME corwlock_interaction_tests
+    NAME cr_corwlock_interaction_tests
     COMMAND ${COMUTEX_TEST_TARGET} "[corwlock][interaction]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(corwlock_interaction_tests PROPERTIES
+  set_tests_properties(cr_corwlock_interaction_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME tasknode_grouping_tests
+    NAME cr_tasknode_grouping_tests
     COMMAND ${COMUTEX_TEST_TARGET} "[tasknode][grouping]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(tasknode_grouping_tests PROPERTIES
+  set_tests_properties(cr_tasknode_grouping_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME comutex_error_tests
+    NAME cr_comutex_error_tests
     COMMAND ${COMUTEX_TEST_TARGET} "[comutex][error],[corwlock][error]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(comutex_error_tests PROPERTIES
+  set_tests_properties(cr_comutex_error_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME comutex_performance_tests
+    NAME cr_comutex_performance_tests
     COMMAND ${COMUTEX_TEST_TARGET} "[comutex][performance],[corwlock][performance]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(comutex_performance_tests PROPERTIES
+  set_tests_properties(cr_comutex_performance_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME comutex_integration_tests
+    NAME cr_comutex_integration_tests
     COMMAND ${COMUTEX_TEST_TARGET} "[integration]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(comutex_integration_tests PROPERTIES
+  set_tests_properties(cr_comutex_integration_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   # Comprehensive CoMutex test
   add_test(
-    NAME all_comutex_tests
+    NAME cr_all_comutex_tests
     COMMAND ${COMUTEX_TEST_TARGET}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(all_comutex_tests PROPERTIES
+  set_tests_properties(cr_all_comutex_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
 
   # Wait Functionality Tests
   add_test(
-    NAME wait_test_basic_tests
+    NAME cr_wait_test_basic_tests
     COMMAND ${WAIT_FUNCTIONALITY_TEST_TARGET} "[wait_test][basic]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(wait_test_basic_tests PROPERTIES
+  set_tests_properties(cr_wait_test_basic_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME wait_test_recursive_tests
+    NAME cr_wait_test_recursive_tests
     COMMAND ${WAIT_FUNCTIONALITY_TEST_TARGET} "[wait_test][recursive]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(wait_test_recursive_tests PROPERTIES
+  set_tests_properties(cr_wait_test_recursive_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME wait_test_async_tests
+    NAME cr_wait_test_async_tests
     COMMAND ${WAIT_FUNCTIONALITY_TEST_TARGET} "[wait_test][async]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(wait_test_async_tests PROPERTIES
+  set_tests_properties(cr_wait_test_async_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME wait_test_edge_cases_tests
+    NAME cr_wait_test_edge_cases_tests
     COMMAND ${WAIT_FUNCTIONALITY_TEST_TARGET} "[wait_test][edge_cases]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(wait_test_edge_cases_tests PROPERTIES
+  set_tests_properties(cr_wait_test_edge_cases_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   # Comprehensive Wait functionality test
   add_test(
-    NAME all_wait_functionality_tests
+    NAME cr_all_wait_functionality_tests
     COMMAND ${WAIT_FUNCTIONALITY_TEST_TARGET}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(all_wait_functionality_tests PROPERTIES
+  set_tests_properties(cr_all_wait_functionality_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   # IPC AllocateBuffer Tests
   add_test(
-    NAME ipc_allocate_buffer_basic_tests
+    NAME cr_ipc_allocate_buffer_basic_tests
     COMMAND ${IPC_ALLOCATE_BUFFER_TEST_TARGET} "[ipc][allocate_buffer][basic]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(ipc_allocate_buffer_basic_tests PROPERTIES
+  set_tests_properties(cr_ipc_allocate_buffer_basic_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME ipc_allocate_buffer_types_tests
+    NAME cr_ipc_allocate_buffer_types_tests
     COMMAND ${IPC_ALLOCATE_BUFFER_TEST_TARGET} "[ipc][allocate_buffer][types]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(ipc_allocate_buffer_types_tests PROPERTIES
+  set_tests_properties(cr_ipc_allocate_buffer_types_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME ipc_allocate_buffer_sizes_tests
+    NAME cr_ipc_allocate_buffer_sizes_tests
     COMMAND ${IPC_ALLOCATE_BUFFER_TEST_TARGET} "[ipc][allocate_buffer][sizes]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(ipc_allocate_buffer_sizes_tests PROPERTIES
+  set_tests_properties(cr_ipc_allocate_buffer_sizes_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME ipc_allocate_buffer_multiple_tests
+    NAME cr_ipc_allocate_buffer_multiple_tests
     COMMAND ${IPC_ALLOCATE_BUFFER_TEST_TARGET} "[ipc][allocate_buffer][multiple]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(ipc_allocate_buffer_multiple_tests PROPERTIES
+  set_tests_properties(cr_ipc_allocate_buffer_multiple_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME ipc_allocate_buffer_client_runtime_tests
+    NAME cr_ipc_allocate_buffer_client_runtime_tests
     COMMAND ${IPC_ALLOCATE_BUFFER_TEST_TARGET} "[ipc][allocate_buffer][client_runtime]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(ipc_allocate_buffer_client_runtime_tests PROPERTIES
+  set_tests_properties(cr_ipc_allocate_buffer_client_runtime_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME ipc_allocate_buffer_error_tests
+    NAME cr_ipc_allocate_buffer_error_tests
     COMMAND ${IPC_ALLOCATE_BUFFER_TEST_TARGET} "[ipc][allocate_buffer][error]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(ipc_allocate_buffer_error_tests PROPERTIES
+  set_tests_properties(cr_ipc_allocate_buffer_error_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME ipc_allocate_buffer_alignment_tests
+    NAME cr_ipc_allocate_buffer_alignment_tests
     COMMAND ${IPC_ALLOCATE_BUFFER_TEST_TARGET} "[ipc][allocate_buffer][alignment]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(ipc_allocate_buffer_alignment_tests PROPERTIES
+  set_tests_properties(cr_ipc_allocate_buffer_alignment_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   add_test(
-    NAME ipc_allocate_buffer_documentation_tests
+    NAME cr_ipc_allocate_buffer_documentation_tests
     COMMAND ${IPC_ALLOCATE_BUFFER_TEST_TARGET} "[ipc][allocate_buffer][documentation]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(ipc_allocate_buffer_documentation_tests PROPERTIES
+  set_tests_properties(cr_ipc_allocate_buffer_documentation_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
@@ -1079,71 +1079,71 @@ if(CHIMAERA_ENABLE_TESTS)
   # Comprehensive IPC AllocateBuffer test
   # TODO: Fix this test - currently failing
   # add_test(
-  #   NAME all_ipc_allocate_buffer_tests
+  #   NAME cr_all_ipc_allocate_buffer_tests
   #   COMMAND ${IPC_ALLOCATE_BUFFER_TEST_TARGET}
   #   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   # )
-  # set_tests_properties(all_ipc_allocate_buffer_tests PROPERTIES
+  # set_tests_properties(cr_all_ipc_allocate_buffer_tests PROPERTIES
   #   ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   # )
 
 
   # Add a comprehensive test that runs all tests
   add_test(
-    NAME all_chimaera_tests
+    NAME cr_all_chimaera_tests
     COMMAND ${TEST_TARGET}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
-  set_tests_properties(all_chimaera_tests PROPERTIES
+  set_tests_properties(cr_all_chimaera_tests PROPERTIES
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
   
   # Set test properties for timeout and environment
   set_tests_properties(
-    task_archive_basic_tests
-    task_archive_bulk_transfer_tests
-    task_archive_non_task_tests
-    task_archive_task_base_tests
-    task_archive_admin_tasks_tests
-    task_archive_bidirectional_tests
-    task_archive_container_tests
-    task_archive_error_handling_tests
-    task_archive_performance_tests
-    task_archive_integration_tests
-    all_task_archive_tests
-    runtime_initialization_tests
-    client_initialization_tests
-    mod_name_task_tests
-    error_handling_tests
-    concurrent_tests
-    memory_tests
-    performance_tests
-    flush_basic_tests
-    flush_work_orchestrator_tests
-    flush_stress_tests
-    all_flush_tests
-    bdev_container_creation_tests
-    bdev_block_allocation_tests
-    bdev_io_operations_tests
-    bdev_async_operations_tests
-    bdev_free_management_tests
-    bdev_performance_tests
-    bdev_error_handling_tests
-    bdev_cleanup_tests
-    all_bdev_tests
-    comutex_basic_tests
-    comutex_concurrent_tests
-    corwlock_basic_tests
-    corwlock_readers_tests
-    corwlock_writers_tests
-    corwlock_interaction_tests
-    tasknode_grouping_tests
-    comutex_error_tests
-    comutex_performance_tests
-    comutex_integration_tests
-    all_comutex_tests
-    all_chimaera_tests
+    cr_task_archive_basic_tests
+    cr_task_archive_bulk_transfer_tests
+    cr_task_archive_non_task_tests
+    cr_task_archive_task_base_tests
+    cr_task_archive_admin_tasks_tests
+    cr_task_archive_bidirectional_tests
+    cr_task_archive_container_tests
+    cr_task_archive_error_handling_tests
+    cr_task_archive_performance_tests
+    cr_task_archive_integration_tests
+    cr_all_task_archive_tests
+    cr_runtime_initialization_tests
+    cr_client_initialization_tests
+    cr_mod_name_task_tests
+    cr_error_handling_tests
+    cr_concurrent_tests
+    cr_memory_tests
+    cr_performance_tests
+    cr_flush_basic_tests
+    cr_flush_work_orchestrator_tests
+    cr_flush_stress_tests
+    cr_all_flush_tests
+    cr_bdev_container_creation_tests
+    cr_bdev_block_allocation_tests
+    cr_bdev_io_operations_tests
+    cr_bdev_async_operations_tests
+    cr_bdev_free_management_tests
+    cr_bdev_performance_tests
+    cr_bdev_error_handling_tests
+    cr_bdev_cleanup_tests
+    cr_all_bdev_tests
+    cr_comutex_basic_tests
+    cr_comutex_concurrent_tests
+    cr_corwlock_basic_tests
+    cr_corwlock_readers_tests
+    cr_corwlock_writers_tests
+    cr_corwlock_interaction_tests
+    cr_tasknode_grouping_tests
+    cr_comutex_error_tests
+    cr_comutex_performance_tests
+    cr_comutex_integration_tests
+    cr_all_comutex_tests
+    cr_all_chimaera_tests
     PROPERTIES
       TIMEOUT 180  # 180 second timeout for each test (increased for synchronization tests)
       ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;CHIMAERA_TEST_MODE=1"

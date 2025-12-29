@@ -106,6 +106,15 @@ struct FlushTask : public chi::Task {
     Task::Copy(other.template Cast<Task>());
     total_work_done_ = other->total_work_done_;
   }
+
+  /**
+   * Aggregate replica results into this task
+   * @param other Pointer to the replica task to aggregate from
+   */
+  void Aggregate(const hipc::FullPtr<FlushTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
 };
 
 }  // namespace external_test::simple_mod

@@ -94,6 +94,39 @@
    // Flag to track if setup has been completed (singleton initialization)
    bool setup_completed_ = false;
 
+   /**
+    * Helper: Async TagQuery
+    */
+   static std::vector<std::string> TagQueryAsync(wrp_cte::core::Client* client,
+                                                  const std::string& tag_pattern,
+                                                  chi::u32 flags,
+                                                  const chi::PoolQuery& pool_query) {
+     auto task = client->AsyncTagQuery(tag_pattern, flags, pool_query);
+     task.Wait();
+     return task->results_;
+   }
+
+   /**
+    * Helper: Async BlobQuery
+    */
+   static std::vector<std::pair<std::string, std::string>> BlobQueryAsync(
+       wrp_cte::core::Client* client,
+       const std::string& tag_pattern,
+       const std::string& blob_pattern,
+       chi::u32 flags,
+       const chi::PoolQuery& pool_query) {
+     auto task = client->AsyncBlobQuery(tag_pattern, blob_pattern, flags, pool_query);
+     task.Wait();
+     // Combine tag_names_ and blob_names_ into pairs
+     std::vector<std::pair<std::string, std::string>> results;
+     size_t count = std::min(task->tag_names_.size(), task->blob_names_.size());
+     results.reserve(count);
+     for (size_t i = 0; i < count; ++i) {
+       results.emplace_back(task->tag_names_[i], task->blob_names_[i]);
+     }
+     return results;
+   }
+
    CTEQueryTestFixture() {
      // Initialize test storage path in home directory
      std::string home_dir = hshm::SystemInfo::Getenv("HOME");
@@ -150,16 +183,18 @@
      // Create test storage target using bdev client
      chi::PoolId bdev_pool_id(200, 0);  // Custom pool ID for bdev
      chimaera::bdev::Client bdev_client(bdev_pool_id);
-     bdev_client.Create(chi::PoolQuery::Dynamic(), test_storage_path_,
-                        bdev_pool_id, chimaera::bdev::BdevType::kFile);
+     auto create_task = bdev_client.AsyncCreate(chi::PoolQuery::Dynamic(), test_storage_path_,
+                                                 bdev_pool_id, chimaera::bdev::BdevType::kFile);
+     create_task.Wait();
 
      // Wait for storage target creation
      std::this_thread::sleep_for(100ms);
 
      // Register the storage target with CTE
-     cte_client->RegisterTarget(test_storage_path_,
-                                chimaera::bdev::BdevType::kFile,
-                                kTestTargetSize, chi::PoolQuery::Local(), bdev_pool_id);
+     auto reg_task = cte_client->AsyncRegisterTarget(test_storage_path_,
+                                                      chimaera::bdev::BdevType::kFile,
+                                                      kTestTargetSize, chi::PoolQuery::Local(), bdev_pool_id);
+     reg_task.Wait();
      std::this_thread::sleep_for(100ms);
 
      // Create test tags and blobs
@@ -215,7 +250,7 @@
   (void)fixture; // Suppress unused variable warning
 
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->TagQuery("user_data", 0, chi::PoolQuery::Broadcast());
+   auto results = CTEQueryTestFixture::TagQueryAsync(cte_client, "user_data", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " tags");
    REQUIRE(results.size() >= 1);
@@ -240,7 +275,7 @@
 
    // Query for all tags starting with "user_"
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->TagQuery("user_.*", 0, chi::PoolQuery::Broadcast());
+   auto results = CTEQueryTestFixture::TagQueryAsync(cte_client, "user_.*", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " tags");
    REQUIRE(results.size() >= 2); // Should match user_data and user_logs
@@ -271,7 +306,7 @@
 
    // Query for tags matching either "system_config" or "system_cache"
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->TagQuery("system_(config|cache)", 0, chi::PoolQuery::Broadcast());
+   auto results = CTEQueryTestFixture::TagQueryAsync(cte_client, "system_(config|cache)", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " tags");
    REQUIRE(results.size() >= 2);
@@ -302,7 +337,7 @@
 
    // Query for all tags
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->TagQuery(".*", 0, chi::PoolQuery::Broadcast());
+   auto results = CTEQueryTestFixture::TagQueryAsync(cte_client, ".*", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " tags");
    REQUIRE(results.size() >= fixture->test_tags_.size());
@@ -333,7 +368,7 @@
 
    // Query for non-existent tag pattern
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->TagQuery("nonexistent_tag_pattern_xyz", 0, chi::PoolQuery::Broadcast());
+   auto results = CTEQueryTestFixture::TagQueryAsync(cte_client, "nonexistent_tag_pattern_xyz", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " tags");
    REQUIRE(results.empty());
@@ -349,7 +384,7 @@
 
    // Query for specific blob in specific tag
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->BlobQuery("user_data", "blob_001\\.dat", 0, chi::PoolQuery::Broadcast());
+   auto results = CTEQueryTestFixture::BlobQueryAsync(cte_client, "user_data", "blob_001\\.dat", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " blob pairs");
    REQUIRE(results.size() > 0);
@@ -375,7 +410,7 @@
 
    // Query for all .dat blobs in user_data tag
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->BlobQuery("user_data", "blob_.*\\.dat", 0, chi::PoolQuery::Broadcast());
+   auto results = CTEQueryTestFixture::BlobQueryAsync(cte_client, "user_data", "blob_.*\\.dat", 0, chi::PoolQuery::Broadcast());
 
    INFO("Total blobs matched: " << results.size());
    REQUIRE(results.size() >= 2); // Should match blob_001.dat and blob_002.dat
@@ -402,7 +437,7 @@
 
    // Query for all .txt files in any "user_" tag
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->BlobQuery("user_.*", "file_.*\\.txt", 0, chi::PoolQuery::Broadcast());
+   auto results = CTEQueryTestFixture::BlobQueryAsync(cte_client, "user_.*", "file_.*\\.txt", 0, chi::PoolQuery::Broadcast());
 
    INFO("Total blobs matched: " << results.size());
    REQUIRE(results.size() >= 4); // user_data and user_logs each have 2 .txt files
@@ -427,7 +462,7 @@
 
    // Query for all blobs in all tags
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->BlobQuery(".*", ".*", 0, chi::PoolQuery::Broadcast());
+   auto results = CTEQueryTestFixture::BlobQueryAsync(cte_client, ".*", ".*", 0, chi::PoolQuery::Broadcast());
 
    INFO("Total blobs matched: " << results.size());
    REQUIRE(results.size() >= fixture->test_blobs_.size());
@@ -443,7 +478,7 @@
 
    // Query for non-existent blob pattern in existing tag
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->BlobQuery("user_data", "nonexistent_blob_xyz", 0, chi::PoolQuery::Broadcast());
+   auto results = CTEQueryTestFixture::BlobQueryAsync(cte_client, "user_data", "nonexistent_blob_xyz", 0, chi::PoolQuery::Broadcast());
 
    INFO("Total blobs matched: " << results.size());
    REQUIRE(results.size() == 0);
@@ -459,7 +494,7 @@
 
    // Query for non-existent tag pattern
    auto *cte_client = WRP_CTE_CLIENT;
-   auto results = cte_client->BlobQuery("nonexistent_tag_xyz", ".*", 0, chi::PoolQuery::Broadcast());
+   auto results = CTEQueryTestFixture::BlobQueryAsync(cte_client, "nonexistent_tag_xyz", ".*", 0, chi::PoolQuery::Broadcast());
 
    INFO("Query returned " << results.size() << " blob pairs");
    REQUIRE(results.empty());
@@ -476,14 +511,14 @@
    auto *cte_client = WRP_CTE_CLIENT;
 
    // TagQuery with Local should work but only return local results
-   auto tag_results = cte_client->TagQuery("user_.*", 0, chi::PoolQuery::Local());
+   auto tag_results = CTEQueryTestFixture::TagQueryAsync(cte_client, "user_.*", 0, chi::PoolQuery::Local());
 
    INFO("TagQuery with Local returned " << tag_results.size() << " tags");
    // Should get results since tags were created locally
    REQUIRE(!tag_results.empty());
 
    // BlobQuery with Local should also work
-   auto blob_results = cte_client->BlobQuery("user_.*", "blob_.*", 0, chi::PoolQuery::Local());
+   auto blob_results = CTEQueryTestFixture::BlobQueryAsync(cte_client, "user_.*", "blob_.*", 0, chi::PoolQuery::Local());
 
    INFO("BlobQuery with Local returned " << blob_results.size() << " blob pairs");
    REQUIRE(blob_results.size() > 0);

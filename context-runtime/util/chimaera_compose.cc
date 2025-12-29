@@ -54,12 +54,31 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Process compose
-  if (!admin_client->Compose(compose_config)) {
-    std::cerr << "Compose processing failed\n";
-    return 1;
+  // Process compose - iterate over pools and create each one
+  auto* ipc_manager = CHI_IPC;
+  for (const auto& pool_config : compose_config.pools_) {
+    std::cout << "Creating pool " << pool_config.pool_name_
+              << " (module: " << pool_config.mod_name_ << ")\n";
+
+    // Create pool asynchronously and wait
+    auto task = admin_client->AsyncCompose(pool_config);
+    task.Wait();
+
+    // Check return code
+    chi::u32 return_code = task->GetReturnCode();
+    if (return_code != 0) {
+      std::cerr << "Failed to create pool " << pool_config.pool_name_
+                << " (module: " << pool_config.mod_name_
+                << "), return code: " << return_code << "\n";
+      return 1;
+    }
+
+    std::cout << "Successfully created pool " << pool_config.pool_name_ << "\n";
+
+    // Cleanup task
   }
 
-  std::cout << "Compose processing completed successfully\n";
+  std::cout << "Compose processing completed successfully - all "
+            << compose_config.pools_.size() << " pools created\n";
   return 0;
 }

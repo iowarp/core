@@ -164,9 +164,10 @@ void Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx) {
               "bdev_id=({},{})",
               client_.pool_id_, target_path, device.bdev_type_, capacity_bytes,
               container_hash, bdev_id.major_, bdev_id.minor_);
-        chi::u32 result =
-            client_.RegisterTarget(target_path, bdev_type,
-                                   capacity_bytes, target_query, bdev_id);
+        auto reg_task = client_.AsyncRegisterTarget(target_path, bdev_type,
+                                                     capacity_bytes, target_query, bdev_id);
+        reg_task.Wait();
+        chi::u32 result = reg_task->GetReturnCode();
 
         if (result == 0) {
           HLOG(kDebug, "  - Registered target: {} ({}, {} bytes) on node {}",
@@ -250,8 +251,11 @@ void Runtime::RegisterTarget(hipc::FullPtr<RegisterTargetTask> task,
 
     // Create the bdev container using the client
     chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
-    bdev_client.Create(pool_query, target_name,
-                       bdev_pool_id, bdev_type, total_size);
+    auto create_task = bdev_client.AsyncCreate(pool_query, target_name,
+                                                bdev_pool_id, bdev_type, total_size);
+    create_task.Wait();
+    bdev_client.pool_id_ = create_task->new_pool_id_;
+    bdev_client.return_code_ = create_task->return_code_;
 
     // Check if creation was successful
     if (bdev_client.return_code_ != 0) {
@@ -274,10 +278,12 @@ void Runtime::RegisterTarget(hipc::FullPtr<RegisterTargetTask> task,
       }
     }
 
-    // Get actual statistics from bdev using GetStats method
+    // Get actual statistics from bdev using AsyncGetStats method
     chi::u64 remaining_size;
-    chimaera::bdev::PerfMetrics perf_metrics =
-        bdev_client.GetStats(remaining_size);
+    auto stats_task = bdev_client.AsyncGetStats();
+    stats_task.Wait();
+    chimaera::bdev::PerfMetrics perf_metrics = stats_task->metrics_;
+    remaining_size = stats_task->remaining_size_;
 
     // Create target info with bdev client and performance stats
     auto *ipc_manager = CHI_IPC;
@@ -802,11 +808,9 @@ void Runtime::ReorganizeBlob(hipc::FullPtr<ReorganizeBlobTask> task,
 
     if (get_task->return_code_ != 0) {
       HLOG(kWarning, "Failed to get blob data during reorganization");
-      CHI_IPC->DelTask(get_task.GetTaskPtr());
       task->return_code_ = 6; // Get blob failed
       return;
     }
-    CHI_IPC->DelTask(get_task.GetTaskPtr());
 
     // Step 7: Put blob with new score (data reorganization)
     HLOG(kDebug,
@@ -819,11 +823,9 @@ void Runtime::ReorganizeBlob(hipc::FullPtr<ReorganizeBlobTask> task,
 
     if (put_task->return_code_ != 0) {
       HLOG(kWarning, "Failed to put blob during reorganization");
-      CHI_IPC->DelTask(put_task.GetTaskPtr());
       task->return_code_ = 7; // Put blob failed
       return;
     }
-    CHI_IPC->DelTask(put_task.GetTaskPtr());
 
     // Success
     task->return_code_ = 0;
@@ -982,7 +984,6 @@ void Runtime::DelTag(hipc::FullPtr<DelTagTask> task, chi::RunContext &ctx) {
         }
 
         // Clean up the task
-        CHI_IPC->DelTask(task.GetTaskPtr());
         ++processed_blobs;
       }
     }
@@ -1071,10 +1072,12 @@ const Config &Runtime::GetConfig() const { return config_; }
 
 void Runtime::UpdateTargetStats(const chi::PoolId &target_id,
                                 TargetInfo &target_info) {
-  // Get actual statistics from bdev using the GetStats method
+  // Get actual statistics from bdev using the AsyncGetStats method
   chi::u64 remaining_size;
-  chimaera::bdev::PerfMetrics perf_metrics =
-      target_info.bdev_client_.GetStats(remaining_size);
+  auto stats_task = target_info.bdev_client_.AsyncGetStats();
+  stats_task.Wait();
+  chimaera::bdev::PerfMetrics perf_metrics = stats_task->metrics_;
+  remaining_size = stats_task->remaining_size_;
 
   // Update target info with real performance metrics from bdev
   target_info.perf_metrics_ = perf_metrics;
@@ -1459,7 +1462,6 @@ chi::u32 Runtime::ModifyExistingData(const std::vector<BlobBlock> &blocks,
           (task->bytes_written_ == expected_size ? "SUCCESS" : "FAILED"));
 
     if (task->bytes_written_ != expected_size) {
-      CHI_IPC->DelTask(task.GetTaskPtr());
       HLOG(kError,
             "ModifyExistingData: WRITE FAILED - task[{}] wrote {} bytes, "
             "expected {}",
@@ -1467,7 +1469,6 @@ chi::u32 Runtime::ModifyExistingData(const std::vector<BlobBlock> &blocks,
       return 1;
     }
 
-    CHI_IPC->DelTask(task.GetTaskPtr());
   }
 
   HLOG(kDebug, "ModifyExistingData: All write tasks completed successfully");
@@ -1571,14 +1572,12 @@ chi::u32 Runtime::ReadData(const std::vector<BlobBlock> &blocks,
         (task->bytes_read_ == expected_size ? "SUCCESS" : "FAILED"));
 
     if (task->bytes_read_ != expected_size) {
-      CHI_IPC->DelTask(task.GetTaskPtr());
       HLOG(kError,
             "ReadData: READ FAILED - task[{}] read {} bytes, expected {}",
             task_idx, task->bytes_read_, expected_size);
       return 1;
     }
 
-    CHI_IPC->DelTask(task.GetTaskPtr());
   }
 
   HLOG(kDebug, "ReadData: All read tasks completed successfully");
@@ -1595,10 +1594,15 @@ bool Runtime::AllocateFromTarget(TargetInfo &target_info, chi::u64 size,
   }
 
   try {
-    // Use bdev client AllocateBlocks method to get actual offset
-    std::vector<chimaera::bdev::Block> allocated_blocks =
-        target_info.bdev_client_.AllocateBlocks(
-            target_info.target_query_, size);
+    // Use bdev client AsyncAllocateBlocks method to get actual offset
+    auto alloc_task = target_info.bdev_client_.AsyncAllocateBlocks(
+        target_info.target_query_, size);
+    alloc_task.Wait();
+
+    std::vector<chimaera::bdev::Block> allocated_blocks;
+    for (size_t i = 0; i < alloc_task->blocks_.size(); ++i) {
+      allocated_blocks.push_back(alloc_task->blocks_[i]);
+    }
 
     // Check if we got any blocks
     if (allocated_blocks.empty()) {
@@ -1652,8 +1656,9 @@ chi::u32 Runtime::FreeAllBlobBlocks(BlobInfo &blob_info) {
     const std::vector<chimaera::bdev::Block> &blocks = pool_entry.second.second;
     // Get bdev client for this pool from first blob block
     chimaera::bdev::Client bdev_client(pool_id);
-    chi::u32 free_result =
-        bdev_client.FreeBlocks(target_query, blocks);
+    auto free_task = bdev_client.AsyncFreeBlocks(target_query, blocks);
+    free_task.Wait();
+    chi::u32 free_result = free_task->GetReturnCode();
     if (free_result != 0) {
       HLOG(kWarning, "Failed to free blocks from pool {}", pool_id.major_);
     }

@@ -498,12 +498,13 @@ public:
     return 0; // Test implementation returns no work
   }
 
-  void Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
-           chi::RunContext &rctx) override {
+  chi::TaskResume Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
+                      chi::RunContext &rctx) override {
     // Test implementation - do nothing
     (void)method;
     (void)task_ptr;
     (void)rctx;
+    co_return;
   }
 
   void DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) override {

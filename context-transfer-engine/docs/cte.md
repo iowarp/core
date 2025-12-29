@@ -818,7 +818,6 @@ for (size_t i = 0; i < async_tasks.size(); ++i) {
         }
         
         // Clean up task
-        CHI_IPC->DelTask(async_tasks[i]);
         
     } catch (const std::exception& e) {
         std::cerr << "Error waiting for async operation " << i << ": " << e.what() << "\n";
@@ -847,7 +846,6 @@ if (put_task->result_code_ == 0) {
 }
 
 // Clean up task
-CHI_IPC->DelTask(put_task);
 
 // Multiple async operations
 std::vector<hipc::FullPtr<PutBlobTask>> tasks;
@@ -864,7 +862,6 @@ for (int i = 0; i < 10; ++i) {
 // Wait for all to complete
 for (auto& task : tasks) {
     task->Wait();
-    CHI_IPC->DelTask(task);
 }
 ```
 
@@ -1341,7 +1338,6 @@ for (auto& data_chunk : data_chunks) {
 // Wait for completion and cleanup
 for (auto& task : tasks) {
     task->Wait();
-    CHI_IPC->DelTask(task);
 }
 // buffers automatically cleaned up here
 ```
