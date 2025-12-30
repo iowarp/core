@@ -31,10 +31,12 @@ class Hdf5FileAssimilator : public BaseAssimilator {
 
   /**
    * Schedule assimilation tasks for an HDF5 file
+   * This is a coroutine that uses co_await for async CTE operations.
    * @param ctx Assimilation context with source, destination, and metadata
-   * @return 0 on success, non-zero error code on failure
+   * @param error_code Output: 0 on success, non-zero error code on failure
+   * @return TaskResume for coroutine suspension/resumption
    */
-  int Schedule(const AssimilationCtx& ctx) override;
+  chi::TaskResume Schedule(const AssimilationCtx& ctx, int& error_code) override;
 
  private:
   /**
@@ -79,13 +81,15 @@ class Hdf5FileAssimilator : public BaseAssimilator {
 
   /**
    * Process a single dataset: create tag, store description, transfer chunks
+   * This is a coroutine that uses co_await for async CTE operations.
    * @param file_id HDF5 file ID
    * @param dataset_path Path to dataset within file (e.g., "/data/temperature")
    * @param tag_prefix Prefix for tag name (destination path without protocol)
-   * @return 0 on success, non-zero error code on failure
+   * @param error_code Output: 0 on success, non-zero error code on failure
+   * @return TaskResume for coroutine suspension/resumption
    */
-  int ProcessDataset(hid_t file_id, const std::string& dataset_path,
-                     const std::string& tag_prefix);
+  chi::TaskResume ProcessDataset(hid_t file_id, const std::string& dataset_path,
+                                  const std::string& tag_prefix, int& error_code);
 
   /**
    * Get human-readable type name for HDF5 datatype

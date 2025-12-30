@@ -35,9 +35,11 @@ class Client : public chi::ContainerClient {
     auto* ipc_manager = CHI_IPC;
 
     // Use admin pool for CreateTask as per CLAUDE.md requirements
+    // Pass 'this' as client pointer for PostWait callback
     auto task = ipc_manager->NewTask<CreateTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, pool_query,
-        "external_test_simple_mod", "simple_mod_pool", pool_id_);
+        "external_test_simple_mod", "simple_mod_pool", pool_id_,
+        this);
 
     return ipc_manager->Send(task);
   }

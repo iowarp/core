@@ -128,14 +128,6 @@ class Task {
   }
 
   /**
-   * Wait for task completion (blocking)
-   * Uses Future's is_complete flag to determine when waiting is done
-   * @param is_complete Reference to atomic completion flag from Future
-   * @param yield_time_us Yield duration in microseconds (default: 0.0 for cooperative tasks)
-   */
-  HSHM_CROSS_FUN void Wait(std::atomic<u32>& is_complete, double yield_time_us = 0.0);
-
-  /**
    * Check if task is periodic
    * @return true if task has periodic flag set
    */
@@ -279,6 +271,16 @@ class Task {
    * @return Container ID that completed this task
    */
   HSHM_CROSS_FUN ContainerId GetCompleter() const { return completer_; }
+
+  /**
+   * Post-wait callback called after task completion
+   * Called by Future::Wait() and co_await Future after task is complete.
+   * Derived classes can override this to perform post-completion actions.
+   * Default implementation does nothing.
+   */
+  void PostWait() {
+    // Base implementation does nothing
+  }
 
   /**
    * Set the completer container ID (which container completed this task)

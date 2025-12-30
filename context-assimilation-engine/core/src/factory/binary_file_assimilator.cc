@@ -15,7 +15,7 @@ namespace wrp_cae::core {
 BinaryFileAssimilator::BinaryFileAssimilator(std::shared_ptr<wrp_cte::core::Client> cte_client)
     : cte_client_(cte_client) {}
 
-int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
+chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx, int& error_code) {
   HLOG(kInfo, "BinaryFileAssimilator::Schedule ENTRY: src='{}', dst='{}', range_off={}, range_size={}",
         ctx.src, ctx.dst, ctx.range_off, ctx.range_size);
 
@@ -26,7 +26,8 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
   if (dst_protocol != "iowarp") {
     HLOG(kError, "BinaryFileAssimilator: Destination protocol must be 'iowarp', got '{}'",
           dst_protocol);
-    return -1;
+    error_code = -1;
+    co_return;
   }
 
   // Extract tag name from destination URL
@@ -35,17 +36,19 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
 
   if (tag_name.empty()) {
     HLOG(kError, "BinaryFileAssimilator: Invalid destination URL, no tag name found");
-    return -2;
+    error_code = -2;
+    co_return;
   }
 
   // Get or create the tag in CTE
   HLOG(kInfo, "BinaryFileAssimilator: Getting or creating tag '{}'", tag_name);
   auto tag_task = cte_client_->AsyncGetOrCreateTag(tag_name);
-  tag_task.Wait();
+  co_await tag_task;
   wrp_cte::core::TagId tag_id = tag_task->tag_id_;
   if (tag_id.IsNull()) {
     HLOG(kError, "BinaryFileAssimilator: Failed to get or create tag '{}'", tag_name);
-    return -3;
+    error_code = -3;
+    co_return;
   }
   HLOG(kInfo, "BinaryFileAssimilator: Tag '{}' obtained/created successfully", tag_name);
 
@@ -55,7 +58,8 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
     // For now, log that dependencies are not yet supported
     HLOG(kInfo, "BinaryFileAssimilator: Dependency handling not yet implemented (depends_on: {})",
           ctx.depends_on);
-    return 0;
+    error_code = 0;
+    co_return;
   }
 
   // Extract source file path
@@ -64,7 +68,8 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
 
   if (src_path.empty()) {
     HLOG(kError, "BinaryFileAssimilator: Invalid source URL, no file path found");
-    return -4;
+    error_code = -4;
+    co_return;
   }
 
   // Determine file size and chunk parameters
@@ -81,14 +86,16 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
     file_size = GetFileSize(src_path);
     if (file_size == 0) {
       HLOG(kError, "BinaryFileAssimilator: Failed to get file size for '{}'", src_path);
-      return -5;
+      error_code = -5;
+      co_return;
     }
     HLOG(kInfo, "BinaryFileAssimilator: File size={} bytes", file_size);
     // Validate range
     if (chunk_offset + total_size > file_size) {
       HLOG(kError, "BinaryFileAssimilator: Range exceeds file size (offset: {}, size: {}, file_size: {})",
             chunk_offset, total_size, file_size);
-      return -6;
+      error_code = -6;
+      co_return;
     }
   } else {
     HLOG(kInfo, "BinaryFileAssimilator: Using full file mode");
@@ -96,7 +103,8 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
     file_size = GetFileSize(src_path);
     if (file_size == 0) {
       HLOG(kError, "BinaryFileAssimilator: Failed to get file size for '{}'", src_path);
-      return -5;
+      error_code = -5;
+      co_return;
     }
     HLOG(kInfo, "BinaryFileAssimilator: File size={} bytes", file_size);
     chunk_offset = 0;
@@ -113,12 +121,13 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
   HLOG(kInfo, "BinaryFileAssimilator: Storing description blob: '{}'", description);
   auto desc_task = cte_client_->AsyncPutBlob(
       tag_id, "description", 0, desc_size, desc_buffer.shm_.template Cast<void>(), 1.0f, 0);
-  desc_task.Wait();
+  co_await desc_task;
 
   if (desc_task->return_code_ != 0) {
     HLOG(kError, "BinaryFileAssimilator: Failed to store description for tag '{}', return_code: {}",
           tag_name, desc_task->return_code_);
-    return -9;
+    error_code = -9;
+    co_return;
   }
   HLOG(kInfo, "BinaryFileAssimilator: Description blob stored successfully");
 
@@ -136,7 +145,8 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
   std::ifstream file(src_path, std::ios::binary);
   if (!file.is_open()) {
     HLOG(kError, "BinaryFileAssimilator: Failed to open file '{}'", src_path);
-    return -7;
+    error_code = -7;
+    co_return;
   }
 
   // Seek to the starting offset
@@ -145,7 +155,8 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
   if (!file.good()) {
     HLOG(kError, "BinaryFileAssimilator: Failed to seek to offset {} in file '{}'",
           chunk_offset, src_path);
-    return -8;
+    error_code = -8;
+    co_return;
   }
 
   // Process chunks in batches
@@ -187,7 +198,8 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
           HLOG(kError, "BinaryFileAssimilator: File position: {}, bytes_processed: {}, total_size: {}",
                 file.tellg(), bytes_processed, total_size);
           CHI_IPC->FreeBuffer(buffer_ptr);
-          return -9;
+          error_code = -9;
+          co_return;
         }
       }
 
@@ -216,14 +228,15 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
     if (!active_tasks.empty()) {
       // Wait for the first task to complete
       auto& first_task = active_tasks.front();
-      first_task.Wait();
+      co_await first_task;
 
       if (first_task->return_code_ != 0) {
         HLOG(kError, "BinaryFileAssimilator: PutBlob task failed with code {}",
               first_task->return_code_);
         // Free the buffer before deleting the task
         CHI_IPC->FreeBuffer(first_task->blob_data_.template Cast<char>());
-        return -10;
+        error_code = -10;
+        co_return;
       }
 
       // Free the buffer before deleting the task
@@ -235,13 +248,14 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
   // Wait for all remaining tasks to complete
   HLOG(kInfo, "BinaryFileAssimilator: Waiting for {} remaining tasks to complete", active_tasks.size());
   for (auto& task : active_tasks) {
-    task.Wait();
+    co_await task;
     if (task->return_code_ != 0) {
       HLOG(kError, "BinaryFileAssimilator: PutBlob task failed with code {}",
             task->return_code_);
       // Free the buffer before deleting the task
       CHI_IPC->FreeBuffer(task->blob_data_.template Cast<char>());
-      return -10;
+      error_code = -10;
+      co_return;
     }
     // Free the buffer before deleting the task
     CHI_IPC->FreeBuffer(task->blob_data_.template Cast<char>());
@@ -253,7 +267,8 @@ int BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx) {
         num_chunks, src_path, tag_name);
   HLOG(kInfo, "BinaryFileAssimilator::Schedule EXIT: Success");
 
-  return 0;
+  error_code = 0;
+  co_return;
 }
 
 std::string BinaryFileAssimilator::GetUrlProtocol(const std::string& url) {

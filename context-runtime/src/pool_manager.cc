@@ -6,6 +6,7 @@
 
 #include "chimaera/admin/admin_tasks.h"
 #include "chimaera/container.h"
+#include "chimaera/future.h"
 #include "chimaera/task.h"
 
 // Global pointer variable definition for Pool manager singleton
@@ -40,7 +41,8 @@ bool PoolManager::ServerInit() {
   auto admin_task = ipc_manager->NewTask<chimaera::admin::CreateTask>(
       CreateTaskId(),
       kAdminPoolId,  // Use admin pool for admin container creation
-      PoolQuery::Local(), "chimaera_admin", "admin", kAdminPoolId);
+      PoolQuery::Local(), "chimaera_admin", "admin", kAdminPoolId,
+      nullptr);  // No client for internal admin pool creation
 
   RunContext run_ctx;
 
@@ -430,7 +432,26 @@ bool PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
     // CHIMAERA_INIT)
     // Create methods can spawn tasks internally that need to find this
     // container
-    container->Run(0, task, *run_ctx);  // Method::kCreate = 0
+    TaskResume task_resume = container->Run(0, task, *run_ctx);  // Method::kCreate = 0
+
+    // Get the coroutine handle and resume it
+    // Create methods typically don't yield, so they should complete immediately
+    auto handle = task_resume.release();
+    if (handle) {
+      // Set the run context in the coroutine's promise
+      auto typed_handle = TaskResume::handle_type::from_address(handle.address());
+      typed_handle.promise().set_run_context(run_ctx);
+
+      // Resume the coroutine to run until completion
+      // initial_suspend returns suspend_always, so we need to resume to start
+      handle.resume();
+
+      // Destroy the handle after completion
+      // (Create methods should not yield, so they complete immediately)
+      if (handle.done()) {
+        handle.destroy();
+      }
+    }
 
     if (!task->GetReturnCode() == 0) {
       HLOG(kError, "PoolManager: Failed to create container for ChiMod: {}",

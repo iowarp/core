@@ -44,7 +44,7 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
     case Method::kParseOmni: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<ParseOmniTask> typed_task = task_ptr.template Cast<ParseOmniTask>();
-      ParseOmni(typed_task, rctx);
+      co_await ParseOmni(typed_task, rctx);
       break;
     }
     default: {

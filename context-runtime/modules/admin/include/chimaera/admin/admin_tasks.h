@@ -72,11 +72,15 @@ struct BaseCreateTask : public chi::Task {
   volatile bool is_admin_;
   volatile bool do_compose_;
 
+  // Client pointer for PostWait callback (not serialized)
+  chi::ContainerClient *client_;
+
   /** SHM default constructor */
   BaseCreateTask()
       : chi::Task(), chimod_name_(CHI_IPC->GetMainAlloc()), pool_name_(CHI_IPC->GetMainAlloc()),
         chimod_params_(CHI_IPC->GetMainAlloc()), new_pool_id_(chi::PoolId::GetNull()),
-        error_message_(CHI_IPC->GetMainAlloc()), is_admin_(IS_ADMIN), do_compose_(DO_COMPOSE) {}
+        error_message_(CHI_IPC->GetMainAlloc()), is_admin_(IS_ADMIN), do_compose_(DO_COMPOSE),
+        client_(nullptr) {}
 
   /** Emplace constructor with CreateParams arguments */
   template <typename... CreateParamsArgs>
@@ -86,11 +90,13 @@ struct BaseCreateTask : public chi::Task {
                           const std::string &chimod_name,
                           const std::string &pool_name,
                           const chi::PoolId &target_pool_id,
+                          chi::ContainerClient *client,
                           CreateParamsArgs &&...create_params_args)
       : chi::Task(task_node, task_pool_id, pool_query, 0),
         chimod_name_(CHI_IPC->GetMainAlloc(), chimod_name), pool_name_(CHI_IPC->GetMainAlloc(), pool_name),
         chimod_params_(CHI_IPC->GetMainAlloc()), new_pool_id_(target_pool_id),
-        error_message_(CHI_IPC->GetMainAlloc()), is_admin_(IS_ADMIN), do_compose_(DO_COMPOSE) {
+        error_message_(CHI_IPC->GetMainAlloc()), is_admin_(IS_ADMIN), do_compose_(DO_COMPOSE),
+        client_(client) {
     // Initialize base task
     task_id_ = task_node;
     method_ = MethodId;
@@ -116,7 +122,7 @@ struct BaseCreateTask : public chi::Task {
         chimod_name_(CHI_IPC->GetMainAlloc(), pool_config.mod_name_),
         pool_name_(CHI_IPC->GetMainAlloc(), pool_config.pool_name_), chimod_params_(CHI_IPC->GetMainAlloc()),
         new_pool_id_(pool_config.pool_id_), error_message_(CHI_IPC->GetMainAlloc()),
-        is_admin_(IS_ADMIN), do_compose_(DO_COMPOSE) {
+        is_admin_(IS_ADMIN), do_compose_(DO_COMPOSE), client_(nullptr) {
     // Initialize base task
     task_id_ = task_node;
     method_ = MethodId;
@@ -200,6 +206,17 @@ struct BaseCreateTask : public chi::Task {
   void Aggregate(const hipc::FullPtr<BaseCreateTask> &other) {
     Task::Aggregate(other.template Cast<Task>());
     Copy(other);
+  }
+
+  /**
+   * Post-wait callback called after task completion
+   * Sets client_->pool_id_ and client_->return_code_ from task results
+   */
+  void PostWait() {
+    if (client_ != nullptr) {
+      client_->pool_id_ = new_pool_id_;
+      client_->return_code_ = return_code_;
+    }
   }
 };
 

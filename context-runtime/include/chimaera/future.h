@@ -29,12 +29,14 @@ class TaskResume {
    *
    * The promise_type defines how the coroutine behaves at various points:
    * - initial_suspend: suspend immediately (lazy start)
-   * - final_suspend: suspend at end (allow cleanup)
+   * - final_suspend: resume caller if exists, else suspend
    * - return_void: coroutines return void
    */
   struct promise_type {
     /** Pointer to the RunContext for this coroutine */
     RunContext* run_ctx_ = nullptr;
+    /** Handle to the caller coroutine (for nested coroutine support) */
+    std::coroutine_handle<> caller_handle_ = nullptr;
 
     /**
      * Create the TaskResume object from this promise
@@ -52,10 +54,32 @@ class TaskResume {
     std::suspend_always initial_suspend() noexcept { return {}; }
 
     /**
-     * Suspend at final suspension point (allows cleanup)
-     * @return Always suspend
+     * Awaiter for final_suspend that resumes the caller coroutine
+     * if one exists, enabling nested coroutine support.
      */
-    std::suspend_always final_suspend() noexcept { return {}; }
+    struct FinalAwaiter {
+      std::coroutine_handle<> caller_;
+
+      bool await_ready() noexcept { return false; }
+
+      /**
+       * Resume the caller coroutine if it exists, otherwise use noop
+       * @return Handle to resume (caller or noop)
+       */
+      std::coroutine_handle<> await_suspend(std::coroutine_handle<>) noexcept {
+        return caller_ ? caller_ : std::noop_coroutine();
+      }
+
+      void await_resume() noexcept {}
+    };
+
+    /**
+     * Suspend at final suspension point and resume caller if exists
+     * @return FinalAwaiter that handles resuming the caller
+     */
+    FinalAwaiter final_suspend() noexcept {
+      return FinalAwaiter{caller_handle_};
+    }
 
     /**
      * Handle void return from coroutine
@@ -78,6 +102,12 @@ class TaskResume {
      * @return Pointer to RunContext
      */
     RunContext* get_run_context() const { return run_ctx_; }
+
+    /**
+     * Set the caller coroutine handle
+     * @param caller Handle to the caller coroutine
+     */
+    void set_caller(std::coroutine_handle<> caller) { caller_handle_ = caller; }
   };
 
   using handle_type = std::coroutine_handle<promise_type>;
@@ -85,6 +115,8 @@ class TaskResume {
  private:
   /** The coroutine handle */
   handle_type handle_;
+  /** Stored caller handle for await_resume to update run_ctx */
+  std::coroutine_handle<> caller_handle_ = nullptr;
 
  public:
   /**
@@ -102,8 +134,10 @@ class TaskResume {
    * Move constructor
    * @param other TaskResume to move from
    */
-  TaskResume(TaskResume&& other) noexcept : handle_(other.handle_) {
+  TaskResume(TaskResume&& other) noexcept
+      : handle_(other.handle_), caller_handle_(other.caller_handle_) {
     other.handle_ = nullptr;
+    other.caller_handle_ = nullptr;
   }
 
   /**
@@ -117,7 +151,9 @@ class TaskResume {
         handle_.destroy();
       }
       handle_ = other.handle_;
+      caller_handle_ = other.caller_handle_;
       other.handle_ = nullptr;
+      other.caller_handle_ = nullptr;
     }
     return *this;
   }
@@ -182,6 +218,122 @@ class TaskResume {
     handle_type h = handle_;
     handle_ = nullptr;
     return h;
+  }
+
+  // ============================================================
+  // Awaiter interface - allows TaskResume to be used with co_await
+  // ============================================================
+
+  /**
+   * Check if the coroutine is already done
+   * @return True if coroutine completed, false otherwise
+   */
+  bool await_ready() const noexcept {
+    return handle_ && handle_.done();
+  }
+
+  /**
+   * Suspend the calling coroutine and run this one to completion or suspension
+   *
+   * This runs the inner coroutine (TaskResume) until it either:
+   * - Completes (co_return)
+   * - Suspends at a co_await (is_yielded_ is true)
+   *
+   * IMPORTANT: Propagates the RunContext from the caller to the inner coroutine
+   * so that nested co_await calls on Futures work correctly.
+   *
+   * When the inner coroutine suspends on a Future, the caller is also suspended.
+   * When the awaited Future completes, the inner coroutine's handle (stored in
+   * run_ctx->coro_handle_) is resumed. The await_resume of this TaskResume will
+   * then continue running the inner coroutine to completion.
+   *
+   * @tparam PromiseT The promise type of the calling coroutine
+   * @param caller_handle The coroutine handle of the caller
+   * @return True if we should suspend (inner suspended), false if inner completed
+   */
+  template<typename PromiseT>
+  bool await_suspend(std::coroutine_handle<PromiseT> caller_handle) noexcept {
+    if (!handle_) {
+      return false;  // Nothing to run, don't suspend
+    }
+
+    // Store caller handle for await_resume to use when updating run_ctx
+    caller_handle_ = caller_handle;
+
+    // CRITICAL: Propagate RunContext from caller to inner coroutine
+    // This allows nested co_await on Futures to properly suspend
+    RunContext* caller_run_ctx = caller_handle.promise().get_run_context();
+    if (caller_run_ctx) {
+      handle_.promise().set_run_context(caller_run_ctx);
+    }
+
+    // NOTE: We do NOT set caller_handle in inner's promise yet!
+    // If the inner coroutine completes synchronously during resume(),
+    // final_suspend would try to resume caller while we're still inside await_suspend,
+    // causing undefined behavior. We only set it after confirming suspension.
+
+    // Resume the inner coroutine
+    handle_.resume();
+
+    // Check if inner coroutine is done
+    if (handle_.done()) {
+      // Inner completed synchronously, destroy it
+      handle_.destroy();
+      handle_ = nullptr;
+      return false;  // Don't suspend caller
+    }
+
+    // Inner coroutine suspended (on co_await Future or yield)
+    // NOW it's safe to set caller_handle - the inner will complete asynchronously
+    // and final_suspend will properly resume the caller
+    handle_.promise().set_caller(caller_handle);
+
+    // The inner's handle is now stored in run_ctx->coro_handle_ by Future::await_suspend
+    // When the awaited Future completes, worker will resume inner via run_ctx->coro_handle_
+    // When inner eventually completes, final_suspend will resume the caller (this coroutine)
+    return true;
+  }
+
+  /**
+   * Resume after await - cleanup inner coroutine and update run_ctx
+   *
+   * This is called when the caller is resumed after the inner coroutine completes.
+   * The inner's final_suspend resumes the caller, which triggers this method.
+   * We need to:
+   * 1. Get run_ctx from inner's promise (before destroying)
+   * 2. Destroy inner's handle (it's done)
+   * 3. Update run_ctx->coro_handle_ to caller's handle so subsequent events
+   *    properly resume the caller (outer) coroutine
+   *
+   * Note: The implementation is in await_resume_impl<> to defer instantiation
+   * until RunContext is fully defined (avoiding circular include issues).
+   */
+  void await_resume() noexcept {
+    await_resume_impl<void>();
+  }
+
+ private:
+  /**
+   * Implementation of await_resume, templated to defer instantiation
+   * @tparam T Unused template parameter for deferred instantiation
+   */
+  template<typename T = void>
+  void await_resume_impl() noexcept {
+    // Get run_ctx from inner's promise before destroying
+    RunContext* run_ctx = nullptr;
+    if (handle_) {
+      run_ctx = handle_.promise().get_run_context();
+      // Inner coroutine is done (final_suspend just resumed us), destroy it
+      handle_.destroy();
+      handle_ = nullptr;
+    }
+
+    // Update run_ctx->coro_handle_ to caller's handle
+    // This ensures if caller suspends again on another co_await,
+    // or if caller completes, the worker can properly handle it
+    if (run_ctx && caller_handle_) {
+      run_ctx->coro_handle_ = caller_handle_;
+    }
   }
 };
 
@@ -607,11 +759,16 @@ class Future {
    *
    * Returns reference to this Future so caller can access the completed task.
    * Marks this Future as the owner if not already set (for await_ready=true case).
+   * Calls PostWait() on the task for post-completion actions.
    * @return Reference to this Future
    */
   Future<TaskT, AllocT>& await_resume() noexcept {
     // If await_ready returned true, await_suspend wasn't called, so set ownership here
     is_owner_ = true;
+    // Call PostWait() callback on the task for post-completion actions
+    if (!task_ptr_.IsNull()) {
+      task_ptr_->PostWait();
+    }
     return *this;
   }
 };

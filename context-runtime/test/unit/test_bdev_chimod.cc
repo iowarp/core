@@ -224,7 +224,6 @@ public:
                                const chi::PoolId& pool_id,
                                chimaera::bdev::BdevType bdev_type,
                                chi::u64 total_size = 0) {
-    auto* ipc_manager = CHI_IPC;
     auto create_task = client.AsyncCreate(pool_query, pool_name, pool_id,
                                            bdev_type, total_size);
     create_task.Wait();
@@ -232,9 +231,7 @@ public:
     client.pool_id_ = create_task->new_pool_id_;
     client.return_code_ = create_task->return_code_;
 
-    bool success = create_task->GetReturnCode() == 0;
-    ipc_manager->DelTask(create_task.GetTaskPtr());
-    return success;
+    return create_task->GetReturnCode() == 0;
   }
 
   /**
@@ -248,7 +245,6 @@ public:
       chimaera::bdev::Client& client,
       const chi::PoolQuery& pool_query,
       chi::u64 size) {
-    auto* ipc_manager = CHI_IPC;
     auto alloc_task = client.AsyncAllocateBlocks(pool_query, size);
     alloc_task.Wait();
 
@@ -256,7 +252,6 @@ public:
     for (size_t i = 0; i < alloc_task->blocks_.size(); ++i) {
       blocks.push_back(alloc_task->blocks_[i]);
     }
-    ipc_manager->DelTask(alloc_task.GetTaskPtr());
     return blocks;
   }
 
@@ -269,13 +264,11 @@ public:
   static chimaera::bdev::PerfMetrics GetStatsAsync(
       chimaera::bdev::Client& client,
       chi::u64& remaining_size) {
-    auto* ipc_manager = CHI_IPC;
     auto stats_task = client.AsyncGetStats();
     stats_task.Wait();
 
     chimaera::bdev::PerfMetrics metrics = stats_task->metrics_;
     remaining_size = stats_task->remaining_size_;
-    ipc_manager->DelTask(stats_task.GetTaskPtr());
     return metrics;
   }
 

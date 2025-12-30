@@ -41,8 +41,9 @@ class Client : public chi::ContainerClient {
     // Allocate CreateTask for admin container creation
     // Note: Admin uses BaseCreateTask pattern, not GetOrCreatePoolTask
     // The custom_pool_id is the ID for the pool being created (not the task pool)
+    // Pass 'this' as client pointer for PostWait callback
     auto task = ipc_manager->NewTask<CreateTask>(chi::CreateTaskId(),
-                                                 chi::kAdminPoolId, pool_query, "", pool_name, custom_pool_id);
+                                                 chi::kAdminPoolId, pool_query, "", pool_name, custom_pool_id, this);
 
     // Submit to runtime and return Future
     return ipc_manager->Send(task);

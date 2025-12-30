@@ -52,10 +52,6 @@ public:
     // Initialize Chimaera (client with embedded runtime)
     chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
 
-    // Initialize admin module
-    auto *module_manager = CHI_MODULE_MANAGER;
-    auto *ipc_manager = CHI_IPC;
-
     // Create admin pool
     admin_client_ =
         std::make_unique<chimaera::admin::Client>(chi::kAdminPoolId);
@@ -69,10 +65,9 @@ public:
 
     // Verify admin creation succeeded
     if (create_task->GetReturnCode() != 0) {
-      ipc_manager->DelTask(create_task.GetTaskPtr());
       throw std::runtime_error("Failed to create admin pool");
     }
-    ipc_manager->DelTask(create_task.GetTaskPtr());
+    // Task automatically freed when create_task goes out of scope
   }
 
   ~ChimaeraTestFixture() {
@@ -103,7 +98,8 @@ TEST_CASE("SaveTask and LoadTask - Admin CreateTask full flow",
   auto orig_task = ipc_manager->NewTask<chimaera::admin::CreateTask>(
       chi::TaskId(100, 200, 300, 0, 400), // Specific task ID
       chi::kAdminPoolId, chi::PoolQuery::Local(), "test_chimod_lib",
-      "test_pool_name", chi::PoolId(5000, 0));
+      "test_pool_name", chi::PoolId(5000, 0),
+      nullptr);  // No client for test task
 
   REQUIRE(!orig_task.IsNull());
 

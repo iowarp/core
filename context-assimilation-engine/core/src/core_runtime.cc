@@ -33,7 +33,7 @@ chi::u64 Runtime::GetWorkRemaining() const {
   return 0;
 }
 
-void Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task, chi::RunContext& ctx) {
+chi::TaskResume Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task, chi::RunContext& ctx) {
   HLOG(kInfo, "ParseOmni called with {} bytes of serialized data",
         task->serialized_ctx_.size());
 
@@ -48,7 +48,7 @@ void Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task, chi::RunContext& ctx)
     task->result_code_ = -1;
     task->error_message_ = e.what();
     task->num_tasks_scheduled_ = 0;
-    return;
+    co_return;
   }
 
   HLOG(kInfo, "ParseOmni: Processing {} assimilation contexts", assimilation_contexts.size());
@@ -72,18 +72,19 @@ void Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task, chi::RunContext& ctx)
       task->result_code_ = -2;
       task->error_message_ = "No assimilator found for source: " + assimilation_ctx.src;
       task->num_tasks_scheduled_ = tasks_scheduled;
-      return;
+      co_return;
     }
 
-    // Schedule the assimilation
-    int result = assimilator->Schedule(assimilation_ctx);
+    // Schedule the assimilation using co_await
+    int result = 0;
+    co_await assimilator->Schedule(assimilation_ctx, result);
     if (result != 0) {
       HLOG(kError, "ParseOmni: Assimilator failed for context {}/{} with error code: {}",
             i + 1, assimilation_contexts.size(), result);
       task->result_code_ = result;
       task->error_message_ = std::string("Assimilator failed");
       task->num_tasks_scheduled_ = tasks_scheduled;
-      return;
+      co_return;
     }
 
     tasks_scheduled++;
@@ -95,6 +96,7 @@ void Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task, chi::RunContext& ctx)
   task->num_tasks_scheduled_ = tasks_scheduled;
 
   HLOG(kInfo, "ParseOmni: Successfully scheduled {} assimilations", tasks_scheduled);
+  co_return;
 }
 
 }  // namespace wrp_cae::core

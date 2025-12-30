@@ -119,9 +119,6 @@ public:
       if (waitForTaskCompletion(task)) {
         INFO("MOD_NAME pool created successfully with ID: "
              << kTestModNamePoolId))
-
-        // Clean up task
-        CHI_IPC->DelTask(task);
         return true;
       } else {
         FAIL("Failed to create MOD_NAME pool - task did not complete");
@@ -246,9 +243,6 @@ TEST_CASE("MOD_NAME Async Task Execution", "[task][mod_name][async]") {
 
     INFO("Async task completed successfully");
     INFO("Result: " << output_data);
-
-    // Clean up task
-    CHI_IPC->DelTask(task);
   }
 }
 
@@ -321,11 +315,6 @@ TEST_CASE("Error Handling Tests", "[error][edge_cases]") {
 
     // The task may or may not complete in 50ms, but we shouldn't crash
     INFO("Task completed within timeout: " << completed);
-
-    // Clean up
-    if (!task.IsNull()) {
-      CHI_IPC->DelTask(task);
-    }
   }
 }
 
@@ -375,13 +364,6 @@ TEST_CASE("Concurrent Task Execution", "[concurrent][stress]") {
     INFO("Completed " << completed_tasks << " out of " << kNumTasks
                       << " tasks");
     REQUIRE(completed_tasks > 0); // At least some tasks should complete
-
-    // Clean up tasks
-    for (auto &task : tasks) {
-      if (!task.IsNull()) {
-        CHI_IPC->DelTask(task);
-      }
-    }
   }
 }
 
@@ -406,26 +388,20 @@ TEST_CASE("Memory Management", "[memory][cleanup]") {
     bool success = (create_task->return_code_ == 0);
     REQUIRE(success);
 
-    // Allocate many tasks to test memory management
+    // Allocate and complete many tasks to test memory management
     constexpr int kNumAllocations = 10;
-    std::vector<hipc::FullPtr<chimaera::MOD_NAME::CustomTask>> allocated_tasks;
 
     for (int i = 0; i < kNumAllocations; ++i) {
       auto task =
           mod_name_client.AsyncCustom(pool_query, "memory_test", i);
 
       REQUIRE_FALSE(task.IsNull());
-      allocated_tasks.push_back(task);
+      task.Wait();  // Wait completes the task and takes ownership
+      REQUIRE(task->return_code_ == 0);
     }
+    // Tasks automatically freed when each task Future goes out of scope
 
-    INFO("Allocated " << kNumAllocations << " tasks successfully");
-
-    // Clean up all tasks
-    for (auto &task : allocated_tasks) {
-      CHI_IPC->DelTask(task);
-    }
-
-    INFO("Deallocated all tasks successfully");
+    INFO("Allocated and completed " << kNumAllocations << " tasks successfully");
   }
 }
 

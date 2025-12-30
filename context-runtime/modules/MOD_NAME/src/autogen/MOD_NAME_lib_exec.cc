@@ -62,7 +62,7 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
     case Method::kWaitTest: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<WaitTestTask> typed_task = task_ptr.template Cast<WaitTestTask>();
-      WaitTest(typed_task, rctx);
+      co_await WaitTest(typed_task, rctx);
       break;
     }
     default: {

@@ -60,7 +60,8 @@ std::unique_ptr<chimaera::admin::CreateTask> CreateTestAdminTask() {
   auto alloc = GetTestAllocator();
   auto task = std::make_unique<chimaera::admin::CreateTask>(
       chi::TaskId(2, 2, 2, 0, 2), chi::PoolId(200, 0), chi::PoolQuery(),
-      "test_chimod", "test_pool", chi::PoolId(300, 0));
+      "test_chimod", "test_pool", chi::PoolId(300, 0),
+      nullptr);  // No client for test task
   task->return_code_ = 42;
   task->error_message_ = chi::priv::string("test error message", alloc);
   return task;

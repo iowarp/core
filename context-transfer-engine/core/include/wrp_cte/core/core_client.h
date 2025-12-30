@@ -25,6 +25,7 @@ public:
     auto *ipc_manager = CHI_IPC;
 
     // CRITICAL: CreateTask MUST use admin pool for GetOrCreatePool processing
+    // Pass 'this' as client pointer for PostWait callback
     auto task = ipc_manager->NewTask<CreateTask>(
         chi::CreateTaskId(),
         chi::kAdminPoolId, // Always use admin pool for CreateTask
@@ -32,6 +33,7 @@ public:
         CreateParams::chimod_lib_name, // ChiMod name from CreateParams
         pool_name,                     // Pool name from parameter
         custom_pool_id,                // Explicit pool ID from parameter
+        this,                          // Client pointer for PostWait
         params);                       // CreateParams with configuration
 
     // Submit to runtime

@@ -32,7 +32,7 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
     case Method::kCreate: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<CreateTask> typed_task = task_ptr.template Cast<CreateTask>();
-      Create(typed_task, rctx);
+      co_await Create(typed_task, rctx);
       break;
     }
     case Method::kDestroy: {
@@ -44,7 +44,7 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
     case Method::kRegisterTarget: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<RegisterTargetTask> typed_task = task_ptr.template Cast<RegisterTargetTask>();
-      RegisterTarget(typed_task, rctx);
+      co_await RegisterTarget(typed_task, rctx);
       break;
     }
     case Method::kUnregisterTarget: {
@@ -74,31 +74,31 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
     case Method::kPutBlob: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<PutBlobTask> typed_task = task_ptr.template Cast<PutBlobTask>();
-      PutBlob(typed_task, rctx);
+      co_await PutBlob(typed_task, rctx);
       break;
     }
     case Method::kGetBlob: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<GetBlobTask> typed_task = task_ptr.template Cast<GetBlobTask>();
-      GetBlob(typed_task, rctx);
+      co_await GetBlob(typed_task, rctx);
       break;
     }
     case Method::kReorganizeBlob: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<ReorganizeBlobTask> typed_task = task_ptr.template Cast<ReorganizeBlobTask>();
-      ReorganizeBlob(typed_task, rctx);
+      co_await ReorganizeBlob(typed_task, rctx);
       break;
     }
     case Method::kDelBlob: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<DelBlobTask> typed_task = task_ptr.template Cast<DelBlobTask>();
-      DelBlob(typed_task, rctx);
+      co_await DelBlob(typed_task, rctx);
       break;
     }
     case Method::kDelTag: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<DelTagTask> typed_task = task_ptr.template Cast<DelTagTask>();
-      DelTag(typed_task, rctx);
+      co_await DelTag(typed_task, rctx);
       break;
     }
     case Method::kGetTagSize: {

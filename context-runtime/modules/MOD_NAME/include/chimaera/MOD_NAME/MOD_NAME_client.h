@@ -36,13 +36,15 @@ class Client : public chi::ContainerClient {
     auto* ipc_manager = CHI_IPC;
 
     // CreateTask is a GetOrCreatePoolTask, which must be handled by admin pool
+    // Pass 'this' as client pointer for PostWait callback
     auto task = ipc_manager->NewTask<CreateTask>(
         chi::CreateTaskId(),
         chi::kAdminPoolId,  // Send to admin pool for GetOrCreatePool processing
         pool_query,
         CreateParams::chimod_lib_name,  // chimod name from CreateParams
         pool_name,                      // user-provided pool name
-        custom_pool_id                  // target pool ID to create
+        custom_pool_id,                 // target pool ID to create
+        this                            // Client pointer for PostWait
     );
 
     return ipc_manager->Send(task);

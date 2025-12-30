@@ -91,8 +91,9 @@ public:
 
   /**
    * Handle WaitTest task
+   * Returns TaskResume for coroutine-based async operations
    */
-  void WaitTest(hipc::FullPtr<WaitTestTask> task, chi::RunContext& rctx);
+  chi::TaskResume WaitTest(hipc::FullPtr<WaitTestTask> task, chi::RunContext& rctx);
 
   /**
    * Handle Destroy task - Alias for DestroyPool (DestroyTask = DestroyPoolTask)

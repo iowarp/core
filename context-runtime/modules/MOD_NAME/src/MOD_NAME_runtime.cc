@@ -136,8 +136,8 @@ void Runtime::CoRwLockTest(hipc::FullPtr<CoRwLockTestTask> task,
   HLOG(kDebug, "MOD_NAME: CoRwLockTest {} completed", task->test_id_);
 }
 
-void Runtime::WaitTest(hipc::FullPtr<WaitTestTask> task,
-                       chi::RunContext &rctx) {
+chi::TaskResume Runtime::WaitTest(hipc::FullPtr<WaitTestTask> task,
+                                  chi::RunContext &rctx) {
   HLOG(kDebug,
         "MOD_NAME: Executing WaitTest task {} (depth: {}, current_depth: {})",
         task->test_id_, task->depth_, task->current_depth_);
@@ -151,12 +151,12 @@ void Runtime::WaitTest(hipc::FullPtr<WaitTestTask> task,
           "MOD_NAME: WaitTest {} creating recursive subtask at depth {}",
           task->test_id_, task->current_depth_);
 
-    // Use the client API for recursive calls - this tests the Wait()
-    // functionality properly Create a subtask with remaining depth
+    // Use the client API for recursive calls - this tests the co_await
+    // functionality properly. Create a subtask with remaining depth
     chi::u32 remaining_depth = task->depth_ - task->current_depth_;
     auto subtask = client_.AsyncWaitTest(
         task->pool_query_, remaining_depth, task->test_id_);
-    subtask.Wait();
+    co_await subtask;
     chi::u32 origin_task_final_depth = subtask->current_depth_;
     (void)origin_task_final_depth;
 
@@ -172,6 +172,7 @@ void Runtime::WaitTest(hipc::FullPtr<WaitTestTask> task,
 
   HLOG(kDebug, "MOD_NAME: WaitTest {} completed at depth {}", task->test_id_,
         task->current_depth_);
+  co_return;
 }
 
 // Static member definitions

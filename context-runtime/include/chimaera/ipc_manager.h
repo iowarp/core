@@ -285,37 +285,33 @@ class IpcManager {
 
   /**
    * Receive task results (deserializes from completed Future)
-   * Polls for completion and deserializes task outputs into task
+   * Called after Future::Wait() has confirmed task completion
    *
    * Two execution paths:
-   * - Client mode (!IsRuntime): Poll and deserialize task outputs (full path)
-   * - Runtime mode (IsRuntime): Only poll for completion (no deserialization
-   * needed)
+   * - Client mode (!IsRuntime): Deserialize task outputs from FutureShm
+   * - Runtime mode (IsRuntime): No-op (task already has correct outputs)
    *
    * @param future Future containing completed task
    */
   template <typename TaskT>
   void Recv(Future<TaskT> &future) {
-    // 1. Wait for completion using Task::Wait() which checks is_complete atomic
-    auto &future_shm = future.GetFutureShm();
-    TaskT *task_ptr = future.get();
-    task_ptr->Wait(future_shm->is_complete_);
-
     if (!CHI_CHIMAERA_MANAGER->IsRuntime()) {
       // CLIENT PATH: Deserialize task outputs from FutureShm
+      auto &future_shm = future.GetFutureShm();
+      TaskT *task_ptr = future.get();
 
-      // 2. Get the serialized task data from FutureShm
+      // Get the serialized task data from FutureShm
       hipc::vector<char, CHI_MAIN_ALLOC_T> &serialized =
           future_shm->serialized_task_;
 
-      // 3. Convert hipc::vector to std::vector for LocalLoadTaskArchive
+      // Convert hipc::vector to std::vector for LocalLoadTaskArchive
       std::vector<char> buffer(serialized.begin(), serialized.end());
 
-      // 4. Create LocalLoadTaskArchive with kSerializeOut mode
+      // Create LocalLoadTaskArchive with kSerializeOut mode
       LocalLoadTaskArchive archive(buffer);
       archive.SetMsgType(LocalMsgType::kSerializeOut);
 
-      // 5. Deserialize task outputs into the Future's task pointer
+      // Deserialize task outputs into the Future's task pointer
       archive >> (*task_ptr);
     }
     // RUNTIME PATH: No deserialization needed - task already has correct
@@ -722,11 +718,23 @@ namespace chi {
 template <typename TaskT, typename AllocT>
 void Future<TaskT, AllocT>::Wait() {
   // Mark this Future as owner of the task (will be destroyed on Future destruction)
+  // Caller should NOT manually call DelTask() after Wait()
   is_owner_ = true;
 
   if (!task_ptr_.IsNull() && !future_shm_.IsNull()) {
-    // Call IpcManager::Recv() to poll for completion and deserialize results
+    // Wait for completion by polling is_complete atomic
+    // Busy-wait with thread yielding - works for both client and runtime contexts
+    // Coroutine contexts should use co_await Future instead
+    std::atomic<u32> &is_complete = future_shm_->is_complete_;
+    while (is_complete.load() == 0) {
+      HSHM_THREAD_MODEL->Yield();
+    }
+
+    // Call IpcManager::Recv() to deserialize results (client path only)
     CHI_IPC->Recv(*this);
+
+    // Call PostWait() callback on the task for post-completion actions
+    task_ptr_->PostWait();
 
     // Free the FutureShm object now that we're done with it
     auto *alloc = CHI_IPC->GetMainAlloc();

@@ -1155,11 +1155,14 @@ void Worker::ProcessBlockedQueue(std::queue<RunContext *> &queue,
       continue;
     }
 
-    // Always execute tasks from blocked queue
-    // (Event queue will handle subtask completion wakeup)
-    // Determine if this is a resume (task was started before) or first
-    // execution
+    // Determine if this is a resume (task was started before) or first execution
     bool is_started = run_ctx->task->task_flags_.Any(TASK_STARTED);
+
+    // Skip if task was started but coroutine already completed
+    // This can happen with orphan events from parallel subtasks
+    if (is_started && (!run_ctx->coro_handle_ || run_ctx->coro_handle_.done())) {
+      continue;
+    }
 
     run_ctx->yield_count_ = 0;
 
@@ -1232,6 +1235,16 @@ void Worker::ProcessEventQueue() {
   RunContext *run_ctx;
   while (event_queue_->Pop(run_ctx)) {
     if (!run_ctx || run_ctx->task.IsNull()) {
+      continue;
+    }
+
+    // Skip if coroutine handle is null or already completed
+    // This can legitimately happen when:
+    // 1. Multiple parallel subtasks complete and each posts an event to wake parent
+    //    Only the first event is needed; subsequent events are orphans
+    // 2. Parent already completed and was destroyed before events were processed
+    // 3. Coroutine completed synchronously (no suspension point hit)
+    if (!run_ctx->coro_handle_ || run_ctx->coro_handle_.done()) {
       continue;
     }
 

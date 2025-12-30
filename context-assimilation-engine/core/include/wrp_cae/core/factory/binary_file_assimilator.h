@@ -26,10 +26,12 @@ class BinaryFileAssimilator : public BaseAssimilator {
 
   /**
    * Schedule assimilation tasks for a binary file
+   * This is a coroutine that uses co_await for async CTE operations.
    * @param ctx Assimilation context with source, destination, and metadata
-   * @return 0 on success, non-zero error code on failure
+   * @param error_code Output: 0 on success, non-zero error code on failure
+   * @return TaskResume for coroutine suspension/resumption
    */
-  int Schedule(const AssimilationCtx& ctx) override;
+  chi::TaskResume Schedule(const AssimilationCtx& ctx, int& error_code) override;
 
  private:
   /**

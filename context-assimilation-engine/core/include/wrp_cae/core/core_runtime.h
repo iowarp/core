@@ -62,8 +62,10 @@ class Runtime : public chi::Container {
 
   /**
    * ParseOmni - Parse OMNI YAML file and schedule assimilation tasks (Method::kParseOmni)
+   * This is a coroutine that uses co_await for async assimilator operations.
+   * @return TaskResume for coroutine suspension/resumption
    */
-  void ParseOmni(hipc::FullPtr<ParseOmniTask> task, chi::RunContext& ctx);
+  chi::TaskResume ParseOmni(hipc::FullPtr<ParseOmniTask> task, chi::RunContext& ctx);
 
  private:
   Client client_;

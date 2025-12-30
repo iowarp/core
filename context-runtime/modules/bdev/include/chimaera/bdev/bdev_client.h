@@ -40,6 +40,7 @@ class Client : public chi::ContainerClient {
     chi::u32 safe_alignment =
         (alignment == 0) ? 4096 : alignment;  // Ensure non-zero alignment
 
+    // Pass 'this' as client pointer for PostWait callback
     auto task = ipc_manager->NewTask<chimaera::bdev::CreateTask>(
         chi::CreateTaskId(),
         chi::kAdminPoolId,  // Send to admin pool for GetOrCreatePool processing
@@ -48,6 +49,7 @@ class Client : public chi::ContainerClient {
         pool_name,  // user-provided pool name (file path for files, unique name
                     // for RAM)
         custom_pool_id,   // target pool ID to create (explicit from user)
+        this,             // Client pointer for PostWait
         // CreateParams arguments (perf_metrics is optional, defaults used if nullptr):
         bdev_type, total_size, io_depth, safe_alignment, perf_metrics);
 

@@ -133,13 +133,12 @@ TEST_CASE("Admin client Compose method", "[compose]") {
   const auto& compose_config = config_manager->GetComposeConfig();
   REQUIRE(!compose_config.pools_.empty());
 
-  // Call AsyncCompose for each pool
-  auto* ipc_manager = CHI_IPC;
+  // Call AsyncCompose for each pool - tasks auto-freed when Future goes out of scope
   for (const auto& pool_config : compose_config.pools_) {
     auto compose_task = admin_client->AsyncCompose(pool_config);
     compose_task.Wait();
     REQUIRE(compose_task->GetReturnCode() == 0);
-    ipc_manager->DelTask(compose_task.GetTaskPtr());
+    // Task automatically freed when compose_task goes out of scope
   }
 
   // Verify pool was created by checking if we can access it
@@ -154,7 +153,7 @@ TEST_CASE("Admin client Compose method", "[compose]") {
     blocks.push_back(alloc_task->blocks_[i]);
   }
   REQUIRE(alloc_task->GetReturnCode() == 0);
-  ipc_manager->DelTask(alloc_task.GetTaskPtr());
+  // Task automatically freed when alloc_task goes out of scope
 
   REQUIRE(blocks.size() > 0);
 
