@@ -100,6 +100,59 @@ bool Worker::GetTaskDidWork() const { return task_did_work_; }
 
 int Worker::GetEpollFd() const { return epoll_fd_; }
 
+bool Worker::RegisterEpollFd(int fd, u32 events, void *user_data) {
+  if (epoll_fd_ == -1 || fd < 0) {
+    return false;
+  }
+
+  struct epoll_event ev;
+  ev.events = events;
+  ev.data.ptr = user_data;
+
+  // Lock to protect epoll_ctl from concurrent access
+  hshm::ScopedMutex lock(epoll_mutex_, 0);
+  if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev) == -1) {
+    HLOG(kWarning, "Failed to register fd {} with worker {} epoll: {}",
+         fd, worker_id_, strerror(errno));
+    return false;
+  }
+  return true;
+}
+
+bool Worker::UnregisterEpollFd(int fd) {
+  if (epoll_fd_ == -1 || fd < 0) {
+    return false;
+  }
+
+  // Lock to protect epoll_ctl from concurrent access
+  hshm::ScopedMutex lock(epoll_mutex_, 0);
+  if (epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr) == -1) {
+    HLOG(kWarning, "Failed to unregister fd {} from worker {} epoll: {}",
+         fd, worker_id_, strerror(errno));
+    return false;
+  }
+  return true;
+}
+
+bool Worker::ModifyEpollFd(int fd, u32 events, void *user_data) {
+  if (epoll_fd_ == -1 || fd < 0) {
+    return false;
+  }
+
+  struct epoll_event ev;
+  ev.events = events;
+  ev.data.ptr = user_data;
+
+  // Lock to protect epoll_ctl from concurrent access
+  hshm::ScopedMutex lock(epoll_mutex_, 0);
+  if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev) == -1) {
+    HLOG(kWarning, "Failed to modify fd {} in worker {} epoll: {}",
+         fd, worker_id_, strerror(errno));
+    return false;
+  }
+  return true;
+}
+
 void Worker::Finalize() {
   if (!is_initialized_) {
     return;

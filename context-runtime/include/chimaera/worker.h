@@ -167,6 +167,34 @@ class Worker {
   int GetEpollFd() const;
 
   /**
+   * Register a file descriptor with this worker's epoll for monitoring
+   * Thread-safe: can be called from any thread
+   * @param fd File descriptor to register
+   * @param events Epoll events to monitor (e.g., EPOLLIN, EPOLLOUT)
+   * @param user_data User data to associate with the fd (returned in epoll_event.data.ptr)
+   * @return true if registration successful, false otherwise
+   */
+  bool RegisterEpollFd(int fd, u32 events, void *user_data);
+
+  /**
+   * Unregister a file descriptor from this worker's epoll
+   * Thread-safe: can be called from any thread
+   * @param fd File descriptor to unregister
+   * @return true if unregistration successful, false otherwise
+   */
+  bool UnregisterEpollFd(int fd);
+
+  /**
+   * Modify epoll events for an already registered file descriptor
+   * Thread-safe: can be called from any thread
+   * @param fd File descriptor to modify
+   * @param events New epoll events to monitor
+   * @param user_data New user data to associate with the fd
+   * @return true if modification successful, false otherwise
+   */
+  bool ModifyEpollFd(int fd, u32 events, void *user_data);
+
+  /**
    * Add run context to blocked queue based on block count
    * @param run_ctx_ptr Pointer to run context (task accessible via
    * run_ctx_ptr->task)
@@ -442,6 +470,10 @@ class Worker {
   int epoll_fd_;
   static constexpr u32 MAX_EPOLL_EVENTS = 256;
   struct epoll_event epoll_events_[MAX_EPOLL_EVENTS];
+
+  // Mutex to protect epoll_ctl operations from multiple threads
+  // Used when external code (e.g., bdev) registers FDs with this worker's epoll
+  hshm::Mutex epoll_mutex_;
 };
 
 }  // namespace chi

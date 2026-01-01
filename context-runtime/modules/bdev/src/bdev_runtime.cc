@@ -1,6 +1,9 @@
 #include <chimaera/bdev/bdev_runtime.h>
 #include <chimaera/comutex.h>
+#include <chimaera/worker.h>
+#include <chimaera/work_orchestrator.h>
 #include <errno.h>
+#include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 
@@ -9,6 +12,76 @@
 #include <thread>
 
 namespace chimaera::bdev {
+
+//===========================================================================
+// WorkerIOContext Implementation
+//===========================================================================
+
+bool WorkerIOContext::Init(const std::string &file_path, chi::u32 io_depth,
+                           chi::u32 worker_id) {
+  if (is_initialized_) {
+    return true;  // Already initialized
+  }
+
+  // Open file descriptor for this worker (O_DIRECT for direct I/O)
+  file_fd_ = open(file_path.c_str(), O_RDWR | O_DIRECT, 0644);
+  if (file_fd_ < 0) {
+    HLOG(kError, "Worker {} failed to open file: {}, errno: {}, strerror: {}",
+         worker_id, file_path, errno, strerror(errno));
+    return false;
+  }
+
+  // Initialize Linux AIO context
+  aio_ctx_ = 0;
+  int ret = io_setup(io_depth, &aio_ctx_);
+  if (ret < 0) {
+    HLOG(kError, "Worker {} failed to setup AIO context: errno: {}, strerror: {}",
+         worker_id, -ret, strerror(-ret));
+    close(file_fd_);
+    file_fd_ = -1;
+    return false;
+  }
+
+  // Create eventfd for I/O completion notification
+  event_fd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+  if (event_fd_ < 0) {
+    HLOG(kError, "Worker {} failed to create eventfd: errno: {}, strerror: {}",
+         worker_id, errno, strerror(errno));
+    io_destroy(aio_ctx_);
+    aio_ctx_ = 0;
+    close(file_fd_);
+    file_fd_ = -1;
+    return false;
+  }
+
+  is_initialized_ = true;
+  HLOG(kDebug, "Worker {} I/O context initialized: fd={}, aio_ctx={}, event_fd={}",
+       worker_id, file_fd_, reinterpret_cast<void*>(aio_ctx_), event_fd_);
+  return true;
+}
+
+void WorkerIOContext::Cleanup() {
+  if (!is_initialized_) {
+    return;
+  }
+
+  if (event_fd_ >= 0) {
+    close(event_fd_);
+    event_fd_ = -1;
+  }
+
+  if (aio_ctx_ != 0) {
+    io_destroy(aio_ctx_);
+    aio_ctx_ = 0;
+  }
+
+  if (file_fd_ >= 0) {
+    close(file_fd_);
+    file_fd_ = -1;
+  }
+
+  is_initialized_ = false;
+}
 
 // Block size constants (in bytes) - 4KB, 16KB, 32KB, 64KB, 128KB
 static const size_t kBlockSizes[] = {
@@ -84,6 +157,7 @@ void WorkerBlockMap::FreeBlock(Block block) {
 GlobalBlockMap::GlobalBlockMap() {}
 
 void GlobalBlockMap::Init(size_t num_workers) {
+  // Pre-allocate vectors for specified number of workers
   worker_maps_.resize(num_workers);
   worker_locks_.resize(num_workers);
 }
@@ -95,9 +169,11 @@ int GlobalBlockMap::FindBlockType(size_t io_size) {
 }
 
 bool GlobalBlockMap::AllocateBlock(int worker, size_t io_size, Block &block) {
-  if (worker < 0 || worker >= static_cast<int>(worker_maps_.size())) {
+  if (worker < 0 || static_cast<size_t>(worker) >= worker_maps_.size()) {
     return false;
   }
+
+  size_t worker_idx = static_cast<size_t>(worker);
 
   // Find the next block size that is larger than this
   int block_type = FindBlockType(io_size);
@@ -107,17 +183,17 @@ bool GlobalBlockMap::AllocateBlock(int worker, size_t io_size, Block &block) {
 
   // Acquire this worker's mutex using ScopedCoMutex
   {
-    chi::ScopedCoMutex lock(worker_locks_[worker]);
+    chi::ScopedCoMutex lock(worker_locks_[worker_idx]);
     // First attempt to allocate from this worker's map
-    if (worker_maps_[worker].AllocateBlock(block_type, block)) {
+    if (worker_maps_[worker_idx].AllocateBlock(block_type, block)) {
       return true;
     }
   }
 
   // If we fail, try up to 4 other workers (iterate linearly)
   size_t num_workers = worker_maps_.size();
-  for (int i = 1; i <= 4 && i < static_cast<int>(num_workers); ++i) {
-    int other_worker = (worker + i) % num_workers;
+  for (size_t i = 1; i <= 4 && i < num_workers; ++i) {
+    size_t other_worker = (worker_idx + i) % num_workers;
     chi::ScopedCoMutex lock(worker_locks_[other_worker]);
     if (worker_maps_[other_worker].AllocateBlock(block_type, block)) {
       return true;
@@ -128,13 +204,15 @@ bool GlobalBlockMap::AllocateBlock(int worker, size_t io_size, Block &block) {
 }
 
 bool GlobalBlockMap::FreeBlock(int worker, Block &block) {
-  if (worker < 0 || worker >= static_cast<int>(worker_maps_.size())) {
+  if (worker < 0 || static_cast<size_t>(worker) >= worker_maps_.size()) {
     return false;
   }
 
+  size_t worker_idx = static_cast<size_t>(worker);
+
   // Free on this worker's map (with lock for thread safety)
-  chi::ScopedCoMutex lock(worker_locks_[worker]);
-  worker_maps_[worker].FreeBlock(block);
+  chi::ScopedCoMutex lock(worker_locks_[worker_idx]);
+  worker_maps_[worker_idx].FreeBlock(block);
   return true;
 }
 
@@ -190,17 +268,69 @@ Runtime::~Runtime() {
   // Clean up libaio (only for file-based storage)
   if (bdev_type_ == BdevType::kFile) {
     CleanupAsyncIO();
+    CleanupWorkerIOContexts();
   }
 
   // Clean up storage backend
   if (bdev_type_ == BdevType::kFile && file_fd_ >= 0) {
     close(file_fd_);
+    file_fd_ = -1;
   } else if (bdev_type_ == BdevType::kRam && ram_buffer_ != nullptr) {
     free(ram_buffer_);
     ram_buffer_ = nullptr;
   }
 
   // Note: GlobalBlockMap and Heap destructors will clean up automatically
+}
+
+bool Runtime::InitializeWorkerIOContexts() {
+  // Pre-allocate vector based on actual number of workers
+  chi::WorkOrchestrator *work_orchestrator = CHI_WORK_ORCHESTRATOR;
+  size_t num_workers = work_orchestrator ? work_orchestrator->GetWorkerCount() : 16;
+  worker_io_contexts_.resize(num_workers);
+  // Contexts are lazily initialized when first accessed
+  return true;
+}
+
+void Runtime::CleanupWorkerIOContexts() {
+  for (auto &ctx : worker_io_contexts_) {
+    ctx.Cleanup();
+  }
+  worker_io_contexts_.clear();
+}
+
+WorkerIOContext *Runtime::GetWorkerIOContext(size_t worker_id) {
+  // Check bounds - vector is pre-allocated in InitializeWorkerIOContexts
+  if (worker_id >= worker_io_contexts_.size()) {
+    HLOG(kWarning, "Worker ID {} exceeds pre-allocated size {}",
+         worker_id, worker_io_contexts_.size());
+    return nullptr;
+  }
+
+  WorkerIOContext *ctx = &worker_io_contexts_[worker_id];
+
+  // Lazy initialization: initialize on first access
+  if (!ctx->is_initialized_) {
+    if (!ctx->Init(file_path_, io_depth_, static_cast<chi::u32>(worker_id))) {
+      HLOG(kError, "Failed to initialize I/O context for worker {}", worker_id);
+      return nullptr;
+    }
+
+    // Register the eventfd with the worker's epoll for completion notification
+    chi::Worker *worker = CHI_CUR_WORKER;
+    if (worker != nullptr && ctx->event_fd_ >= 0) {
+      // Store context pointer as user data for epoll event handling
+      if (!worker->RegisterEpollFd(ctx->event_fd_, EPOLLIN, ctx)) {
+        HLOG(kWarning, "Failed to register eventfd with worker {} epoll", worker_id);
+        // Continue anyway - we can fall back to polling
+      } else {
+        HLOG(kDebug, "Registered eventfd {} with worker {} epoll",
+             ctx->event_fd_, worker_id);
+      }
+    }
+  }
+
+  return ctx;
 }
 
 void Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx) {
@@ -222,7 +352,11 @@ void Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx) {
 
   // Initialize storage backend based on type
   if (bdev_type_ == BdevType::kFile) {
+    // Store file path for per-worker FD creation
+    file_path_ = pool_name;
+
     // File-based storage initialization - use pool_name as file path
+    // This FD is used for initial file setup (create/truncate) and as fallback
     file_fd_ = open(pool_name.c_str(), O_RDWR | O_CREAT | O_DIRECT, 0644);
     if (file_fd_ < 0) {
       HLOG(kError, "Failed to open file: {}, fd: {}, errno: {}, strerror: {}",
@@ -268,8 +402,14 @@ void Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx) {
     HLOG(kDebug, "Create: Final file_size_={}, initializing allocator",
          file_size_);
 
-    // Initialize async I/O for file backend
+    // Initialize async I/O for file backend (legacy POSIX AIO)
     InitializeAsyncIO();
+
+    // Initialize per-worker I/O contexts for parallel file access
+    if (!InitializeWorkerIOContexts()) {
+      HLOG(kWarning, "Failed to initialize per-worker I/O contexts, "
+                     "falling back to single FD");
+    }
 
   } else if (bdev_type_ == BdevType::kRam) {
     // RAM-based storage initialization
@@ -437,7 +577,7 @@ void Runtime::Write(hipc::FullPtr<WriteTask> task, chi::RunContext &ctx) {
 
   switch (bdev_type_) {
     case BdevType::kFile:
-      WriteToFile(task);
+      WriteToFile(task, ctx);
       break;
     case BdevType::kRam:
       WriteToRam(task);
@@ -455,7 +595,7 @@ void Runtime::Read(hipc::FullPtr<ReadTask> task, chi::RunContext &ctx) {
 
   switch (bdev_type_) {
     case BdevType::kFile:
-      ReadFromFile(task);
+      ReadFromFile(task, ctx);
       break;
     case BdevType::kRam:
       ReadFromRam(task);
@@ -490,8 +630,10 @@ void Runtime::Destroy(hipc::FullPtr<DestroyTask> task, chi::RunContext &ctx) {
 }
 
 void Runtime::InitializeAllocator() {
-  // Initialize global block map with number of workers
-  global_block_map_.Init(kMaxWorkers);
+  // Initialize global block map with actual number of workers
+  chi::WorkOrchestrator *work_orchestrator = CHI_WORK_ORCHESTRATOR;
+  size_t num_workers = work_orchestrator ? work_orchestrator->GetWorkerCount() : 16;
+  global_block_map_.Init(num_workers);
 
   // Initialize heap with total file size and alignment requirement
   heap_.Init(file_size_, alignment_);
@@ -506,14 +648,12 @@ size_t Runtime::GetBlockSize(int block_type) {
 }
 
 size_t Runtime::GetWorkerID(chi::RunContext &ctx) {
-  // Get current worker from thread-local storage
-  auto *worker =
-      HSHM_THREAD_MODEL->GetTls<chi::Worker>(chi::chi_cur_worker_key_);
+  // Get current worker from thread-local storage using CHI_CUR_WORKER macro
+  chi::Worker *worker = CHI_CUR_WORKER;
   if (worker == nullptr) {
     return 0;  // Fallback to worker 0 if not in worker context
   }
-  chi::u32 worker_id = worker->GetId();
-  return worker_id % kMaxWorkers;
+  return worker->GetId();
 }
 
 chi::u64 Runtime::AlignSize(chi::u64 size) {
@@ -530,17 +670,77 @@ void Runtime::UpdatePerformanceMetrics(bool is_write, chi::u64 bytes,
 }
 
 void Runtime::InitializeAsyncIO() {
-  // No initialization needed - will create aiocb on-demand
+  // No initialization needed for POSIX AIO fallback
 }
 
 void Runtime::CleanupAsyncIO() {
-  // No cleanup needed - aiocb created on stack
+  // No cleanup needed for POSIX AIO fallback
 }
 
-chi::u32 Runtime::PerformAsyncIO(bool is_write, chi::u64 offset, void *buffer,
-                                 chi::u64 size, chi::u64 &bytes_transferred,
+chi::u32 Runtime::PerformAsyncIO(WorkerIOContext *io_ctx, bool is_write,
+                                 chi::u64 offset, void *buffer, chi::u64 size,
+                                 chi::u64 &bytes_transferred,
                                  hipc::FullPtr<chi::Task> task) {
-  // Create aiocb on-demand
+  // Use Linux AIO if we have a valid per-worker I/O context
+  if (io_ctx != nullptr && io_ctx->is_initialized_) {
+    // Prepare Linux AIO iocb
+    struct iocb iocb_storage;
+    struct iocb *iocb = &iocb_storage;
+    memset(iocb, 0, sizeof(struct iocb));
+
+    if (is_write) {
+      io_prep_pwrite(iocb, io_ctx->file_fd_, buffer, size, offset);
+    } else {
+      io_prep_pread(iocb, io_ctx->file_fd_, buffer, size, offset);
+    }
+
+    // Set eventfd for completion notification
+    io_set_eventfd(iocb, io_ctx->event_fd_);
+
+    // Submit the I/O operation
+    struct iocb *iocbs[1] = {iocb};
+    int submitted = io_submit(io_ctx->aio_ctx_, 1, iocbs);
+    if (submitted != 1) {
+      HLOG(kError, "Failed to submit Linux AIO: ret={}, errno={}, strerror={}",
+           submitted, errno, strerror(errno));
+      return 2;  // Failed to submit I/O
+    }
+
+    // Wait for completion by polling io_getevents
+    struct io_event events[1];
+    while (true) {
+      struct timespec timeout = {0, 0};  // Non-blocking check
+      int completed = io_getevents(io_ctx->aio_ctx_, 0, 1, events, &timeout);
+
+      if (completed < 0) {
+        HLOG(kError, "io_getevents failed: ret={}, errno={}, strerror={}",
+             completed, errno, strerror(errno));
+        return 3;
+      }
+
+      if (completed > 0) {
+        // I/O completed
+        long result = static_cast<long>(events[0].res);
+        if (result < 0) {
+          HLOG(kError, "Linux AIO failed: result={}, strerror={}",
+               result, strerror(-result));
+          return 4;
+        }
+        bytes_transferred = static_cast<chi::u64>(result);
+        return 0;  // Success
+      }
+
+      // Clear the eventfd if it was signaled
+      uint64_t eventfd_val;
+      ssize_t ret = read(io_ctx->event_fd_, &eventfd_val, sizeof(eventfd_val));
+      (void)ret;  // Ignore if read fails (non-blocking)
+
+      // Operation still in progress, yield the thread
+      HSHM_THREAD_MODEL->Yield();
+    }
+  }
+
+  // Fallback to POSIX AIO with legacy single file descriptor
   struct aiocb aiocb_storage;
   struct aiocb *aiocb = &aiocb_storage;
 
@@ -549,7 +749,7 @@ chi::u32 Runtime::PerformAsyncIO(bool is_write, chi::u64 offset, void *buffer,
   aiocb->aio_fildes = file_fd_;
   aiocb->aio_buf = buffer;
   aiocb->aio_nbytes = size;
-  aiocb->aio_offset = offset;
+  aiocb->aio_offset = static_cast<off_t>(offset);
   aiocb->aio_lio_opcode = is_write ? LIO_WRITE : LIO_READ;
 
   // Submit the I/O operation
@@ -586,12 +786,16 @@ chi::u32 Runtime::PerformAsyncIO(bool is_write, chi::u64 offset, void *buffer,
     return 4;  // I/O operation failed
   }
 
-  bytes_transferred = bytes_result;
+  bytes_transferred = static_cast<chi::u64>(bytes_result);
   return 0;  // Success
 }
 
 // Backend-specific write operations
-void Runtime::WriteToFile(hipc::FullPtr<WriteTask> task) {
+void Runtime::WriteToFile(hipc::FullPtr<WriteTask> task, chi::RunContext &ctx) {
+  // Get per-worker I/O context for parallel file access
+  size_t worker_id = GetWorkerID(ctx);
+  WorkerIOContext *io_ctx = GetWorkerIOContext(worker_id);
+
   // Convert hipc::ShmPtr<> to hipc::FullPtr<char> for data access
   auto *ipc_mgr = CHI_IPC;
   hipc::FullPtr<char> data_ptr = ipc_mgr->ToFullPtr(task->data_).Cast<char>();
@@ -646,10 +850,10 @@ void Runtime::WriteToFile(hipc::FullPtr<WriteTask> task) {
       }
     }
 
-    // Perform async write using POSIX AIO
+    // Perform async write using per-worker I/O context (Linux AIO) or fallback
     chi::u64 bytes_written;
     chi::u32 result =
-        PerformAsyncIO(true, block.offset_, buffer_to_use, aligned_size,
+        PerformAsyncIO(io_ctx, true, block.offset_, buffer_to_use, aligned_size,
                        bytes_written, task.Cast<chi::Task>());
 
     if (needs_free) {
@@ -725,7 +929,11 @@ void Runtime::WriteToRam(hipc::FullPtr<WriteTask> task) {
 }
 
 // Backend-specific read operations
-void Runtime::ReadFromFile(hipc::FullPtr<ReadTask> task) {
+void Runtime::ReadFromFile(hipc::FullPtr<ReadTask> task, chi::RunContext &ctx) {
+  // Get per-worker I/O context for parallel file access
+  size_t worker_id = GetWorkerID(ctx);
+  WorkerIOContext *io_ctx = GetWorkerIOContext(worker_id);
+
   // Convert hipc::ShmPtr<> to hipc::FullPtr<char> for data access
   auto *ipc_mgr = CHI_IPC;
   hipc::FullPtr<char> data_ptr = ipc_mgr->ToFullPtr(task->data_).Cast<char>();
@@ -773,10 +981,10 @@ void Runtime::ReadFromFile(hipc::FullPtr<ReadTask> task) {
       buffer_to_use = aligned_buffer;
     }
 
-    // Perform async read using POSIX AIO
+    // Perform async read using per-worker I/O context (Linux AIO) or fallback
     chi::u64 bytes_read;
     chi::u32 result =
-        PerformAsyncIO(false, block.offset_, buffer_to_use, aligned_size,
+        PerformAsyncIO(io_ctx, false, block.offset_, buffer_to_use, aligned_size,
                        bytes_read, task.Cast<chi::Task>());
 
     if (result != 0) {

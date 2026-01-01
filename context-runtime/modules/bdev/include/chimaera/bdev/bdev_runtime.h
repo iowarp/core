@@ -6,9 +6,11 @@
 #include "bdev_client.h"
 #include "bdev_tasks.h"
 #include <sys/types.h>
+#include <sys/eventfd.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <aio.h>
+#include <libaio.h>
 #include <vector>
 #include <list>
 #include <atomic>
@@ -16,11 +18,44 @@
 
 /**
  * Runtime container for bdev ChiMod
- * 
+ *
  * Provides block device operations with async I/O and data allocation management
  */
 
 namespace chimaera::bdev {
+
+/**
+ * Per-worker I/O context for parallel file access
+ * Each worker has its own file descriptor and Linux AIO context
+ * for efficient parallel I/O without contention
+ */
+struct WorkerIOContext {
+  int file_fd_;          /**< File descriptor for this worker */
+  io_context_t aio_ctx_; /**< Linux AIO context for this worker */
+  int event_fd_;         /**< eventfd for I/O completion notification */
+  bool is_initialized_;  /**< Whether this context is initialized */
+
+  WorkerIOContext()
+      : file_fd_(-1), aio_ctx_(0), event_fd_(-1), is_initialized_(false) {}
+
+  /**
+   * Initialize the worker I/O context
+   * @param file_path Path to the file to open
+   * @param io_depth Maximum number of concurrent I/O operations
+   * @param worker_id Worker ID for logging
+   * @return true if initialization successful, false otherwise
+   */
+  bool Init(const std::string &file_path, chi::u32 io_depth, chi::u32 worker_id);
+
+  /**
+   * Cleanup and close all resources
+   */
+  void Cleanup();
+
+  ~WorkerIOContext() {
+    Cleanup();
+  }
+};
 
 
 /**
@@ -275,9 +310,11 @@ class Runtime : public chi::Container {
 
   // Storage backend configuration
   BdevType bdev_type_;                            // Backend type (file or RAM)
-  
+
   // File-based storage (kFile)
-  int file_fd_;                                    // File descriptor
+  std::string file_path_;                         // Path to the file (for per-worker FD creation)
+  int file_fd_;                                   // Legacy single file descriptor (for fallback)
+  std::vector<WorkerIOContext> worker_io_contexts_;  // Per-worker I/O contexts
   chi::u64 file_size_;                            // Total file size
   chi::u32 alignment_;                            // I/O alignment requirement
   chi::u32 io_depth_;                             // Max concurrent I/O operations
@@ -290,8 +327,7 @@ class Runtime : public chi::Container {
   // New allocator components
   GlobalBlockMap global_block_map_;              // Global block cache with per-worker locking
   Heap heap_;                                     // Heap allocator for new blocks
-  static constexpr size_t kMaxWorkers = 8;       // Maximum number of workers
-  
+
   // Performance tracking
   std::atomic<chi::u64> total_reads_;
   std::atomic<chi::u64> total_writes_;
@@ -320,7 +356,7 @@ class Runtime : public chi::Container {
   /**
    * Get worker ID from runtime context
    * @param ctx Runtime context containing worker information
-   * @return Worker ID (0 to kMaxWorkers-1)
+   * @return Worker ID
    */
   size_t GetWorkerID(chi::RunContext& ctx);
 
@@ -330,14 +366,43 @@ class Runtime : public chi::Container {
    * @return Size in bytes
    */
   static size_t GetBlockSize(int block_type);
-  
+
   /**
-   * Perform async I/O operation
+   * Get or create the worker I/O context for the given worker
+   * Lazily initializes per-worker file descriptors and AIO contexts
+   * @param worker_id Worker ID
+   * @return Pointer to the worker's I/O context, or nullptr if initialization fails
    */
-  chi::u32 PerformAsyncIO(bool is_write, chi::u64 offset, void* buffer, 
-                          chi::u64 size, chi::u64& bytes_transferred,
+  WorkerIOContext *GetWorkerIOContext(size_t worker_id);
+
+  /**
+   * Initialize per-worker I/O contexts
+   * Called during Create to set up worker-specific file descriptors
+   * @return true if initialization successful, false otherwise
+   */
+  bool InitializeWorkerIOContexts();
+
+  /**
+   * Cleanup all per-worker I/O contexts
+   */
+  void CleanupWorkerIOContexts();
+
+  /**
+   * Perform async I/O operation using per-worker context
+   * @param io_ctx Worker's I/O context
+   * @param is_write true for write, false for read
+   * @param offset File offset
+   * @param buffer Data buffer
+   * @param size Size of I/O operation
+   * @param bytes_transferred Output: bytes actually transferred
+   * @param task Task pointer for context
+   * @return 0 on success, non-zero error code on failure
+   */
+  chi::u32 PerformAsyncIO(WorkerIOContext *io_ctx, bool is_write,
+                          chi::u64 offset, void *buffer, chi::u64 size,
+                          chi::u64 &bytes_transferred,
                           hipc::FullPtr<chi::Task> task);
-  
+
   /**
    * Align size to required boundary
    */
@@ -346,13 +411,13 @@ class Runtime : public chi::Container {
   /**
    * Backend-specific write operations
    */
-  void WriteToFile(hipc::FullPtr<WriteTask> task);
+  void WriteToFile(hipc::FullPtr<WriteTask> task, chi::RunContext &ctx);
   void WriteToRam(hipc::FullPtr<WriteTask> task);
-  
+
   /**
    * Backend-specific read operations
    */
-  void ReadFromFile(hipc::FullPtr<ReadTask> task);
+  void ReadFromFile(hipc::FullPtr<ReadTask> task, chi::RunContext &ctx);
   void ReadFromRam(hipc::FullPtr<ReadTask> task);
   
   /**
