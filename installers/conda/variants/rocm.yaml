@@ -1,0 +1,12 @@
+# IOWarp Core - ROCm Variant
+# ROCm-enabled debug build using CMakePresets.json "rocm-debug" preset
+#
+# Usage: rattler-build build --recipe recipe/ --variant-config variants/rocm.yaml
+
+preset: rocm-debug
+python: "3.11"
+
+cuda_enabled: "OFF"
+rocm_enabled: "ON"
+mpi_enabled: "OFF"
+mpi_impl: nompi

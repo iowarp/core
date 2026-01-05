@@ -486,10 +486,7 @@ struct WriteTask : public chi::Task {
     if (task_flags_.Any(TASK_DATA_OWNER) && !data_.IsNull()) {
       auto *ipc_manager = CHI_IPC;
       if (ipc_manager) {
-        // Cast untyped ShmPtr<> to ShmPtr<char> for FreeBuffer
-        hipc::ShmPtr<char> buffer_ptr =
-            reinterpret_cast<const hipc::ShmPtr<char> &>(data_);
-        ipc_manager->FreeBuffer(buffer_ptr);
+        ipc_manager->FreeBuffer(data_.Cast<char>());
       }
     }
   }
@@ -569,10 +566,7 @@ struct ReadTask : public chi::Task {
     if (task_flags_.Any(TASK_DATA_OWNER) && !data_.IsNull()) {
       auto *ipc_manager = CHI_IPC;
       if (ipc_manager) {
-        // Cast untyped ShmPtr<> to ShmPtr<char> for FreeBuffer
-        hipc::ShmPtr<char> buffer_ptr =
-            reinterpret_cast<const hipc::ShmPtr<char> &>(data_);
-        ipc_manager->FreeBuffer(buffer_ptr);
+        ipc_manager->FreeBuffer(data_.Cast<char>());
       }
     }
   }

@@ -1,0 +1,13 @@
+# IOWarp Core - Release Variant
+# Standard release build using CMakePresets.json "release" preset
+#
+# Usage: rattler-build build --recipe recipe/ --variant-config variants/release.yaml
+
+preset: release
+python: "3.11"
+
+# These are automatically derived from the preset
+cuda_enabled: "OFF"
+rocm_enabled: "OFF"
+mpi_enabled: "OFF"
+mpi_impl: nompi

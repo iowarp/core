@@ -1,0 +1,12 @@
+# IOWarp Core - CUDA Variant
+# CUDA-enabled debug build using CMakePresets.json "cuda-debug" preset
+#
+# Usage: rattler-build build --recipe recipe/ --variant-config variants/cuda.yaml
+
+preset: cuda-debug
+python: "3.11"
+
+cuda_enabled: "ON"
+rocm_enabled: "OFF"
+mpi_enabled: "OFF"
+mpi_impl: nompi

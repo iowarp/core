@@ -1,63 +1,131 @@
 # IOWarp Core - Conda Package
 
-This directory contains the Conda recipe for building and distributing IOWarp Core.
+This directory contains the conda recipe for building IOWarp Core using [rattler-build](https://prefix-dev.github.io/rattler-build/).
 
 ## Quick Start
 
-### Building from Local Source (Recommended)
-
-The easiest way to build and install IOWarp Core from local source is using the `conda-local.sh` script:
-
 ```bash
-# From the repository root directory
-cd conda
+# Activate your conda environment
+conda activate myenv
 
-# Run the interactive build and install script
+# Build with default (release) variant
 ./conda-local.sh
+
+# Or specify a variant
+./conda-local.sh cuda
+./conda-local.sh mpi
+./conda-local.sh custom
 ```
 
-The script will:
-- Check for conda environment and conda-build installation
-- Verify and initialize git submodules if needed
-- Build the conda package from your local source
-- Offer to install the package interactively
-- Provide helpful installation options and troubleshooting steps
+## Installation Modes
 
-### Manual Build
+IOWarp Core supports two installation modes:
 
-If you prefer to build manually:
+### 1. Precompiled Binary (Recommended)
+
+Uses CMakePresets.json directly for reproducible builds:
 
 ```bash
-# Make sure submodules are initialized
-git submodule update --init --recursive
-
-# Build the package
-conda build conda/ -c conda-forge
-
-# Install
-conda install --use-local iowarp-core
+# Build with a specific preset
+./conda-local.sh release    # Standard release build
+./conda-local.sh debug      # Debug build with symbols
+./conda-local.sh conda      # Conda-optimized release build
+./conda-local.sh cuda       # CUDA-enabled build (Linux only)
+./conda-local.sh rocm       # ROCm-enabled build (Linux only)
 ```
 
-## Build System Configuration
+### 2. Custom Source Build
 
-IOWarp Core's CMake system is **optimized for Conda builds** with the following features:
+Allows fine-grained control over build options:
 
-### Automatic Conda Detection
+```bash
+# Use the custom variant as a template
+./conda-local.sh custom
 
-When building in a Conda environment, CMake automatically:
-- Detects `$CONDA_PREFIX` environment variable
-- Sets `CMAKE_INSTALL_PREFIX` to `$CONDA_PREFIX`
-- Prioritizes Conda packages in `CMAKE_PREFIX_PATH`
-- Configures `PKG_CONFIG_PATH` to find Conda libraries first
+# Or create your own variant file
+cp variants/custom.yaml variants/my-config.yaml
+# Edit my-config.yaml to your needs
+./conda-local.sh variants/my-config.yaml
+```
 
-### Conda-Optimized CMake Preset
+## Available Variants
 
-The build uses the `conda` preset (defined in `CMakePresets.json`):
-- Build type: Release
-- Python bindings: OFF (Conda manages Python packages separately)
-- Tests: OFF (for faster builds)
-- RPATH: ON (for relocatable installations)
-- All core components enabled (runtime, CTE, CAE, CEE)
+| Variant | Description | Preset Used |
+|---------|-------------|-------------|
+| `release` | Standard release build | `release` |
+| `debug` | Debug build with symbols | `debug` |
+| `conda` | Conda-optimized build | `conda` |
+| `cuda` | CUDA-enabled (Linux) | `cuda-debug` |
+| `rocm` | ROCm-enabled (Linux) | `rocm-debug` |
+| `mpi` | MPI-enabled build | `custom` |
+| `full` | All features enabled | `custom` |
+| `custom` | Template for custom builds | `custom` |
+
+## Custom Variant Options
+
+When using `preset: custom`, you can set these options:
+
+```yaml
+# Build configuration
+preset: custom
+python: "3.11"
+build_type: Release  # or Debug
+
+# GPU support (choose one or none)
+cuda_enabled: "OFF"
+rocm_enabled: "OFF"
+
+# Distributed computing
+mpi_enabled: "OFF"
+mpi_impl: nompi  # openmpi, mpich, msmpi (Windows)
+
+# Core components
+runtime_enabled: "ON"
+cte_enabled: "ON"
+cae_enabled: "ON"
+cee_enabled: "ON"
+
+# Optional features
+zmq_enabled: "ON"
+hdf5_enabled: "ON"
+elf_enabled: "OFF"
+```
+
+## Directory Structure
+
+```
+installers/conda/
+├── recipe.yaml              # Main recipe (rattler-build format)
+├── conda_build_config.yaml  # Variant definitions
+├── conda-forge.yml          # conda-forge CI configuration
+├── conda-local.sh           # Local build script
+├── variants/                # Predefined variant files
+│   ├── release.yaml
+│   ├── debug.yaml
+│   ├── conda.yaml
+│   ├── cuda.yaml
+│   ├── rocm.yaml
+│   ├── mpi.yaml
+│   ├── full.yaml
+│   └── custom.yaml
+└── README.md
+```
+
+## Manual Build Commands
+
+If you prefer to run rattler-build directly:
+
+```bash
+# From repository root
+rattler-build build \
+    --recipe installers/conda/ \
+    --variant-config installers/conda/variants/release.yaml \
+    --output-dir build/conda-output \
+    -c conda-forge
+
+# Install the built package
+conda install -c file://$(pwd)/build/conda-output -c conda-forge iowarp-core
+```
 
 ## Dependencies
 
@@ -65,57 +133,19 @@ The conda recipe automatically handles all dependencies:
 
 ### Build Dependencies
 - C/C++ compilers
-- CMake >= 3.15
-- Make
-- Git (for submodules)
+- CMake >= 3.20
+- Ninja
+- pkg-config
 
 ### Runtime Dependencies (from Conda)
+- Python
 - HDF5
 - ZeroMQ
-- Boost (fiber, context, system)
 - yaml-cpp
-- cereal (header-only)
-
-All dependencies are installed automatically via Conda during the build process.
-
-## Customizing the Build
-
-### Environment Variables
-
-You can customize the build by setting environment variables with specific prefixes:
-
-```bash
-# Example: Enable MPI support
-export WRP_CORE_ENABLE_MPI=ON
-conda build conda/ -c conda-forge
-
-# Example: Enable compression
-export WRP_CORE_ENABLE_COMPRESS=ON
-export HSHM_ENABLE_COMPRESS=ON
-conda build conda/ -c conda-forge
-```
-
-Supported prefixes (forwarded to CMake):
-- `WRP_CORE_ENABLE_*` - Core component options
-- `WRP_CTE_ENABLE_*` - Context Transfer Engine options
-- `WRP_CAE_ENABLE_*` - Context Assimilation Engine options
-- `WRP_CEE_ENABLE_*` - Context Exploration Engine options
-- `HSHM_ENABLE_*` - HSHM/transport primitives options
-- `WRP_RUNTIME_ENABLE_*` - Runtime options
-- `CHIMAERA_ENABLE_*` - Chimaera runtime options
-
-### Modifying the Recipe
-
-Edit `meta.yaml` to change:
-- Version number
-- Dependencies
-- Build number
-- Package metadata
-
-Edit `build.sh` to change:
-- CMake preset (default: `conda`)
-- Build flags
-- Post-install steps
+- cereal
+- nanobind (for Python bindings)
+- CUDA toolkit (optional, for GPU builds)
+- MPI (optional, openmpi/mpich)
 
 ## Installation Layout
 
@@ -133,6 +163,9 @@ $CONDA_PREFIX/
 │   ├── libhermes_shm_host.so
 │   ├── chimaera_admin_runtime.so
 │   └── ...
+├── lib/python3.X/site-packages/   # Python modules
+│   ├── wrp_cte/
+│   └── wrp_cee/
 ├── include/                       # C++ headers
 │   ├── chimaera/
 │   ├── hshm/
@@ -158,7 +191,16 @@ chimaera_start_runtime
 wrp_cte --help
 ```
 
-### 2. C++ Development
+### 2. Python
+
+```python
+import wrp_cte
+import wrp_cee
+
+# Use the Python bindings
+```
+
+### 3. C++ Development
 
 ```cmake
 # In your CMakeLists.txt
@@ -170,76 +212,62 @@ target_link_libraries(your_app
 )
 ```
 
-### 3. Environment Variables
+## conda-forge Submission
 
-The Conda environment automatically sets up paths for:
-- Libraries (`LD_LIBRARY_PATH`)
-- Headers (`CPATH`)
-- CMake configs (`CMAKE_PREFIX_PATH`)
+To submit to conda-forge:
+
+1. Fork [conda-forge/staged-recipes](https://github.com/conda-forge/staged-recipes)
+2. Copy `recipe.yaml` and `conda_build_config.yaml` to `recipes/iowarp-core/`
+3. Submit a pull request
+
+The CI will automatically build all variant combinations defined in `conda_build_config.yaml`.
 
 ## Troubleshooting
+
+### rattler-build not found
+
+```bash
+conda install rattler-build -c conda-forge
+```
+
+### Build fails with missing dependencies
+
+Ensure conda-forge channel is configured:
+
+```bash
+conda config --add channels conda-forge
+conda config --set channel_priority strict
+```
 
 ### Submodule Issues
 
 If you get errors about missing submodules:
 
 ```bash
-# Initialize submodules before building
 git submodule update --init --recursive
 ```
 
-### Dependency Conflicts
+### CUDA/ROCm builds fail
 
-If you encounter dependency version conflicts:
-
-```bash
-# Create a clean conda environment
-conda create -n iowarp-dev
-conda activate iowarp-dev
-
-# Build in the clean environment
-conda build conda/ -c conda-forge
-```
-
-### Build Failures
-
-Enable verbose output to diagnose issues:
+GPU builds are only supported on Linux. Check that you have the appropriate toolkit installed:
 
 ```bash
-# The build.sh already uses VERBOSE=1 for make
-# Check the build output for specific error messages
-conda build conda/ -c conda-forge
+# For CUDA
+conda install cuda-toolkit -c nvidia
+
+# For ROCm
+# Follow AMD's ROCm installation guide
 ```
 
-## Publishing to Anaconda.org
+## Requirements
 
-To publish the package to Anaconda.org:
-
-```bash
-# Build the package
-conda build conda/ -c conda-forge
-
-# Upload to your Anaconda.org channel
-anaconda upload $CONDA_PREFIX/conda-bld/linux-64/iowarp-core-*.tar.bz2
-
-# Or use conda-build's upload
-conda build conda/ --output-folder ./output
-anaconda upload ./output/linux-64/iowarp-core-*.tar.bz2
-```
-
-## Differences from Pip Install
-
-| Feature | Conda Build | Pip Install |
-|---------|-------------|-------------|
-| Dependency Management | Conda packages | System/bundled |
-| Python Bindings | Separate package | Included in wheel |
-| Installation Prefix | `$CONDA_PREFIX` | Virtual env or system |
-| RPATH | Enabled | Enabled |
-| Build Preset | `conda` | `minimalist` |
+- conda or mamba
+- rattler-build (`conda install rattler-build -c conda-forge`)
+- Git (for submodule initialization)
 
 ## More Information
 
-- Main README: `../README.md`
-- Build wheel guide: `../BUILD_WHEEL.md`
-- Contributing guide: `../docs/contributing.md`
-- CMake presets: `../CMakePresets.json`
+- Main README: `../../README.md`
+- Build wheel guide: `../../BUILD_WHEEL.md`
+- Contributing guide: `../../docs/contributing.md`
+- CMake presets: `../../CMakePresets.json`

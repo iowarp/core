@@ -365,8 +365,8 @@ struct OffsetPtrBase : public ShmPointer {
     return os;
   }
 
-  /** Default constructor */
-  OffsetPtrBase() = default;
+  /** Default constructor - initializes to null */
+  HSHM_INLINE_CROSS_FUN OffsetPtrBase() : off_((size_t)-1) {}
 
   /** Full constructor */
   HSHM_INLINE_CROSS_FUN explicit OffsetPtrBase(size_t off) : off_(off) {}
@@ -592,8 +592,10 @@ struct ShmPtrBase : public ShmPointer {
     return os;
   }
 
-  /** Default constructor */
-  ShmPtrBase() = default;
+  /** Default constructor - initializes to null */
+  HSHM_INLINE_CROSS_FUN ShmPtrBase() {
+    alloc_id_.SetNull();
+  }
 
   /** Full constructor */
   HSHM_INLINE_CROSS_FUN explicit ShmPtrBase(AllocatorId id, size_t off)
@@ -791,8 +793,8 @@ struct FullPtr : public ShmPointer {
     return os;
   }
 
-  /** Default constructor */
-  FullPtr() = default;
+  /** Default constructor - initializes to null */
+  HSHM_INLINE_CROSS_FUN FullPtr() : ptr_(nullptr) {}
 
   /** Full constructor */
   HSHM_INLINE_CROSS_FUN FullPtr(const T *ptr, const PointerT &shm)

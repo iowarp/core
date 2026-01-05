@@ -1,0 +1,60 @@
+# IOWarp Core - conda-forge Configuration
+#
+# This file configures conda-forge CI behavior for the iowarp-core feedstock.
+
+# Build platforms
+build_platform:
+  linux_aarch64: linux_64  # Cross-compile ARM on x86
+
+# Azure Pipelines settings
+azure:
+  store_build_artifacts: true
+  timeout_minutes: 360
+
+# GitHub Actions settings
+github:
+  timeout_minutes: 360
+
+# Skip certain CI providers if needed
+# provider:
+#   linux: azure
+#   osx: azure
+#   win: azure
+
+# Limit build matrix to reduce CI time
+# Max Python versions to build
+max_py_ver: "3.12"
+min_py_ver: "3.10"
+
+# Bot settings
+bot:
+  automerge: true
+  inspection: hint
+  abi_migration_branches:
+    - main
+
+# Channel priority
+channel_priority: strict
+
+# Additional channels (if needed)
+# channels:
+#   targets:
+#     - conda-forge
+#   sources:
+#     - conda-forge
+#     - defaults
+
+# Upload settings
+upload_on_branch: main
+
+# Build settings
+build:
+  # Skip building variants that fail
+  skip: false
+  # Number of build retries
+  number_of_build_retries: 1
+
+# Test settings
+test:
+  # Run tests during build
+  run: true

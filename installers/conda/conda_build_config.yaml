@@ -1,0 +1,87 @@
+# =============================================================================
+# IOWarp Core - Conda Build Variant Configuration
+# =============================================================================
+#
+# This file defines build variants for both preset-based binary builds
+# and custom source builds.
+#
+# PRESET MODE (Binary Builds):
+#   - preset variable maps directly to CMakePresets.json entries
+#   - All other settings are derived from the preset
+#
+# CUSTOM MODE (Source Builds):
+#   - preset=custom enables individual flag overrides
+#   - Each WRP_CORE_ENABLE_* flag can be set independently
+
+# =============================================================================
+# Python Versions (always applies)
+# =============================================================================
+python:
+  - "3.10"
+  - "3.11"
+  - "3.12"
+
+# =============================================================================
+# Preset Definitions
+# =============================================================================
+# These map directly to CMakePresets.json entries
+
+preset:
+  - release
+  - debug
+  - conda
+  - cuda-debug
+  - rocm-debug
+  - custom
+
+# =============================================================================
+# Feature Flags (derived from preset, or set manually for custom)
+# =============================================================================
+
+# GPU support
+cuda_enabled:
+  - "OFF"
+  - "ON"
+
+rocm_enabled:
+  - "OFF"
+  - "ON"
+
+# Distributed computing
+mpi_enabled:
+  - "OFF"
+  - "ON"
+
+mpi_impl:
+  - nompi
+  - openmpi
+  - mpich
+
+# Core components (typically always ON for binary builds)
+runtime_enabled:
+  - "ON"
+
+cte_enabled:
+  - "ON"
+
+cae_enabled:
+  - "ON"
+
+cee_enabled:
+  - "ON"
+
+# Optional features
+zmq_enabled:
+  - "ON"
+
+hdf5_enabled:
+  - "ON"
+
+elf_enabled:
+  - "OFF"
+  - "ON"
+
+# Build configuration
+build_type:
+  - Release
+  - Debug

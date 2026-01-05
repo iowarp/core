@@ -1,0 +1,71 @@
+# IOWarp Core - Conda Recipe (rattler-build format)
+#
+# This recipe supports two modes:
+#   1. Preset mode: Uses CMakePresets.json directly for reproducible binary builds
+#   2. Custom mode: Allows individual cmake flag overrides for source builds
+#
+# Usage:
+#   rattler-build build --recipe installers/conda/ --variant-config installers/conda/variants/release.yaml
+#   rattler-build build --recipe installers/conda/ --variant-config installers/conda/variants/cuda.yaml
+#   rattler-build build --recipe installers/conda/ --variant-config installers/conda/variants/custom.yaml
+
+context:
+  version: "1.0.0"
+
+package:
+  name: iowarp-core
+  version: ${{ version }}
+
+source:
+  path: ../..
+
+build:
+  number: 0
+  string: ${{ preset }}_py${{ python }}_h${{ hash }}
+  script:
+    env:
+      CMAKE_GENERATOR: Ninja
+      # Suppress GCC false positive warnings from aggressive inlining (GCC bugs #99578, #100611)
+      CXXFLAGS: "-Wno-array-bounds -Wno-maybe-uninitialized -Wno-stringop-overflow"
+    content:
+      - cmake --preset=${{ preset }} -DCMAKE_INSTALL_PREFIX=${{ PREFIX }}
+      - cmake --build build --parallel
+      - cmake --install build
+
+requirements:
+  build:
+    - ${{ compiler('cxx') }}
+    - cmake >=3.20
+    - ninja
+    - pkg-config
+  host:
+    - python
+    - nanobind
+    - zeromq
+    - yaml-cpp
+    - cereal
+    - hdf5
+    - catch2
+  run:
+    - python
+
+tests:
+  - script:
+      # Just verify the library files exist (chimaera_start_runtime is a daemon)
+      - test -f $PREFIX/lib/libchimaera_cxx.so || test -f $PREFIX/lib/libchimaera_cxx.dylib
+
+about:
+  homepage: https://www.iowarp.ai
+  license: BSD-3-Clause
+  license_file: LICENSE
+  summary: IOWarp Context Management Platform - AI-accelerated scientific workflow orchestration
+  description: |
+    IOWarp Core provides a unified framework for context-aware data management
+    in scientific workflows, including the Context Transfer Engine (CTE),
+    Context Assimilation Engine (CAE), and Context Exploration Engine (CEE).
+  repository: https://github.com/iowarp/iowarp-core
+  documentation: https://docs.iowarp.ai
+
+extra:
+  recipe-maintainers:
+    - lukemartinlogan

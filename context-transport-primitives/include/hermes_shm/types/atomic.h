@@ -203,13 +203,13 @@ struct nonatomic {
   /** Equality check (number) */
   template <typename U>
   HSHM_INLINE_CROSS_FUN bool operator==(U other) const {
-    return (other == x);
+    return (static_cast<T>(other) == x);
   }
 
   /** Inequality check (number) */
   template <typename U>
   HSHM_INLINE_CROSS_FUN bool operator!=(U other) const {
-    return (other != x);
+    return (static_cast<T>(other) != x);
   }
 
   /** Equality check */

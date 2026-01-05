@@ -1,0 +1,32 @@
+# IOWarp Core - Custom Variant (Source Build)
+# Use this template to create custom builds with specific feature combinations
+#
+# Usage: rattler-build build --recipe recipe/ --variant-config variants/custom.yaml
+#
+# When preset=custom, individual cmake flags are passed instead of using
+# a CMakePresets.json entry. Modify the values below as needed.
+
+preset: custom
+python: "3.11"
+
+# Build type
+build_type: Release
+
+# GPU support (choose one or none)
+cuda_enabled: "OFF"
+rocm_enabled: "OFF"
+
+# Distributed computing
+mpi_enabled: "OFF"
+mpi_impl: nompi  # Options: nompi, openmpi, mpich, msmpi (Windows)
+
+# Core components
+runtime_enabled: "ON"
+cte_enabled: "ON"
+cae_enabled: "ON"
+cee_enabled: "ON"
+
+# Optional features
+zmq_enabled: "ON"
+hdf5_enabled: "ON"
+elf_enabled: "OFF"
