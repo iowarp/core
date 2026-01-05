@@ -245,8 +245,13 @@ if [ "$BUILD_SUCCESS" = true ]; then
     echo ""
 
     # Install directly into current environment
+    # Index the local channel so conda can read package metadata
+    echo -e "${BLUE}>>> Indexing local channel...${NC}"
+    conda index "$OUTPUT_DIR" 2>/dev/null || python -m conda_index "$OUTPUT_DIR" 2>/dev/null || true
+
+    # Use local channel so conda properly resolves dependencies from conda-forge
     echo -e "${BLUE}>>> Installing iowarp-core into current environment...${NC}"
-    if conda install "$PACKAGE_PATH" -y; then
+    if conda install -c "$OUTPUT_DIR" -c conda-forge iowarp-core -y; then
         echo ""
         echo -e "${GREEN}======================================================================"
         echo -e "✓ IOWarp Core installed successfully!"
