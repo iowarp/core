@@ -305,10 +305,8 @@ class CTECoreFunctionalTestFixture {
   template <typename TaskType>
   bool WaitForTaskCompletion(chi::Future<TaskType> task,
                              int timeout_ms = 5000) {
-    auto start_time = std::chrono::steady_clock::now();
-
+    (void)timeout_ms;  // Parameter kept for API consistency
     task.Wait();
-
     INFO("Task completed successfully");
     return true;
   }

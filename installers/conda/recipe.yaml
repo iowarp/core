@@ -21,7 +21,7 @@ source:
 
 build:
   number: 0
-  string: ${{ preset }}_py${{ python }}_h${{ hash }}
+  string: ${{ preset }}_h${{ hash }}
   script:
     env:
       CMAKE_GENERATOR: Ninja
@@ -40,12 +40,12 @@ requirements:
     - pkg-config
   host:
     - python
-    - nanobind
     - zeromq
     - yaml-cpp
     - cereal
     - hdf5
     - catch2
+    - libaio
   run:
     - python
 

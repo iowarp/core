@@ -133,54 +133,28 @@ if [ "$BUILD_SUCCESS" = true ]; then
     echo "  $PACKAGE_PATH"
     echo ""
 
-    # Offer installation options
-    echo -e "${BLUE}Installation Options:${NC}"
-    echo ""
-    echo -e "${YELLOW}Option 1: Install from output directory${NC}"
-    echo "  conda install -c file://$OUTPUT_DIR -c conda-forge iowarp-core"
-    echo ""
-    echo -e "${YELLOW}Option 2: Install directly from package file${NC}"
-    echo "  conda install \"$PACKAGE_PATH\""
-    echo ""
-    echo -e "${YELLOW}Option 3: Create a new environment and install${NC}"
-    echo "  conda create -n iowarp-env -c file://$OUTPUT_DIR -c conda-forge iowarp-core"
-    echo "  conda activate iowarp-env"
-    echo ""
-
-    # Ask if user wants to install now
-    read -p "Would you like to install the package now? [y/N] " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    # Install directly into current environment
+    echo -e "${BLUE}Installing iowarp-core into current environment...${NC}"
+    if conda install "$PACKAGE_PATH" -y; then
         echo ""
-        echo -e "${BLUE}Installing iowarp-core...${NC}"
-        if conda install -c "file://$OUTPUT_DIR" -c conda-forge iowarp-core -y; then
-            echo ""
-            echo -e "${GREEN}Installation successful!${NC}"
-            echo ""
-            echo -e "${BLUE}Verify installation:${NC}"
-            echo "  conda list iowarp-core"
-            echo ""
-            echo -e "${BLUE}Test the installation:${NC}"
-            echo "  python -c 'import wrp_cte; print(wrp_cte.__file__)'"
-            echo "  chimaera_start_runtime --help"
-            echo ""
-        else
-            echo ""
-            echo -e "${RED}Installation failed. You can try installing manually:${NC}"
-            echo "  conda install -c file://$OUTPUT_DIR -c conda-forge iowarp-core"
-        fi
+        echo -e "${GREEN}========================================${NC}"
+        echo -e "${GREEN}Installation successful!${NC}"
+        echo -e "${GREEN}========================================${NC}"
+        echo ""
+        echo -e "${BLUE}Verify installation:${NC}"
+        echo "  conda list iowarp-core"
+        echo ""
+        echo -e "${BLUE}Remove package:${NC}"
+        echo "  conda remove iowarp-core"
+        echo ""
     else
         echo ""
-        echo -e "${YELLOW}Skipping installation. You can install later using:${NC}"
-        echo "  conda install -c file://$OUTPUT_DIR -c conda-forge iowarp-core"
+        echo -e "${RED}Installation failed.${NC}"
+        echo ""
+        echo -e "${YELLOW}You can try installing manually:${NC}"
+        echo "  conda install \"$PACKAGE_PATH\""
+        echo ""
     fi
-
-    echo ""
-    echo -e "${BLUE}Additional Information:${NC}"
-    echo "  Documentation: $RECIPE_DIR/README.md"
-    echo "  List packages: conda list iowarp-core"
-    echo "  Remove package: conda remove iowarp-core"
-    echo ""
 
 else
     echo -e "${RED}========================================${NC}"

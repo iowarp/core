@@ -4,7 +4,6 @@
 # Usage: rattler-build build --recipe recipe/ --variant-config variants/full.yaml
 
 preset: custom
-python: "3.11"
 
 build_type: Release
 

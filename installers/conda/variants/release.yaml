@@ -4,7 +4,6 @@
 # Usage: rattler-build build --recipe recipe/ --variant-config variants/release.yaml
 
 preset: release
-python: "3.11"
 
 # These are automatically derived from the preset
 cuda_enabled: "OFF"

@@ -4,7 +4,6 @@
 # Usage: rattler-build build --recipe recipe/ --variant-config variants/rocm.yaml
 
 preset: rocm-debug
-python: "3.11"
 
 cuda_enabled: "OFF"
 rocm_enabled: "ON"

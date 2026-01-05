@@ -95,12 +95,7 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 USER iowarp
 WORKDIR /home/iowarp
 
-# Create Python virtual environment in user's home directory
-RUN python3 -m venv /home/iowarp/venv \
-    && /home/iowarp/venv/bin/pip install --upgrade pip setuptools wheel \
-    && /home/iowarp/venv/bin/pip install pyyaml nanobind
-
-# Add CUDA paths and conda activation to bashrc
+# Add CUDA paths to bashrc
 # Note: conda is inherited from base image with all dev dependencies pre-installed
 RUN echo '' >> /home/iowarp/.bashrc \
     && echo '# CUDA environment variables for GPU execution' >> /home/iowarp/.bashrc \
@@ -108,12 +103,7 @@ RUN echo '' >> /home/iowarp/.bashrc \
     && echo 'export PATH=/usr/local/cuda-12.6/bin:$PATH' >> /home/iowarp/.bashrc \
     && echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.6/lib64:/usr/local/cuda-12.6/lib64/stubs:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH' >> /home/iowarp/.bashrc \
     && echo 'export NVIDIA_VISIBLE_DEVICES=all' >> /home/iowarp/.bashrc \
-    && echo 'export NVIDIA_DRIVER_CAPABILITIES=compute,utility' >> /home/iowarp/.bashrc \
-    && echo '' >> /home/iowarp/.bashrc \
-    && echo '# Python virtual environment' >> /home/iowarp/.bashrc \
-    && echo 'if [ -f /home/iowarp/venv/bin/activate ]; then' >> /home/iowarp/.bashrc \
-    && echo '    source /home/iowarp/venv/bin/activate' >> /home/iowarp/.bashrc \
-    && echo 'fi' >> /home/iowarp/.bashrc
+    && echo 'export NVIDIA_DRIVER_CAPABILITIES=compute,utility' >> /home/iowarp/.bashrc
 
 WORKDIR /workspace
 

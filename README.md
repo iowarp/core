@@ -134,498 +134,117 @@ Interactive tools and interfaces for exploring scientific data contents and meta
 
 **[Read more →](context-exploration-engine/README.md)**
 
-## Getting Started
+## Installation
 
-### Quick Start with uv (Fastest)
+### Native
 
-[uv](https://docs.astral.sh/uv/) is a fast Python package installer and runner. Once IOWarp Core is published to PyPI:
-
+The following command will install conda, rattler-build, and iowarp in a single script.
 ```bash
-# Install from PyPI (coming soon!)
-uv pip install iowarp-core
-
-# Or run the main tool directly without installation
-uvx iowarp-core --help
-
-# Run other tools (requires --from flag)
-uvx --from iowarp-core wrp_start --help
-uvx --from iowarp-core wrp_stop --help
-uvx --from iowarp-core wrp_compose --help
+bash install.sh release
 ```
 
-**After installation, all tools are available directly:**
-```bash
-# Main entry point
-iowarp-core --help
+Release corresponds to a variant stored in installers/conda/variants.
+Feel free to add a new variant for your specific machine there.
 
-# User-friendly aliases (recommended)
-wrp_start              # Start IOWarp runtime
-wrp_stop               # Stop IOWarp runtime
-wrp_compose            # Compose cluster configuration
-wrp_refresh            # Refresh repository
-wrp_cae                # CAE OMNI processor
+## Quickstart
 
-# Original names (backwards compatible)
-chimaera_start_runtime
-chimaera_stop_runtime
-chimaera_compose
-chi_refresh_repo
-wrp_cae_omni
+### Context Exploration Engine Python Example
+
+Here we show an example of how to use the context exploration engine to
+bundle and retrieve data.
+
+```python
+import wrp_cee as cee
+
+# Create ContextInterface (handles runtime initialization internally)
+ctx_interface = cee.ContextInterface()
+
+# Assimilate a file into IOWarp storage
+ctx = cee.AssimilationCtx(
+    src="file::/path/to/data.bin",      # Source: local file
+    dst="iowarp::my_dataset",            # Destination: IOWarp tag
+    format="binary"                      # Format: binary, hdf5, etc.
+)
+result = ctx_interface.context_bundle([ctx])
+print(f"Assimilation result: {result}")
+
+# Query for blobs matching a pattern
+blobs = ctx_interface.context_query(
+    "my_dataset",    # Tag name
+    ".*",            # Blob name regex (match all)
+    0                # Flags
+)
+print(f"Found blobs: {blobs}")
+
+# Retrieve blob data
+packed_data = ctx_interface.context_retrieve(
+    "my_dataset",    # Tag name
+    ".*",            # Blob name regex
+    0                # Flags
+)
+print(f"Retrieved {len(packed_data)} bytes")
+
+# Cleanup when done
+ctx_interface.context_destroy(["my_dataset"])
 ```
 
-**Note:** Build from source takes 10-30 minutes on first install (compiles C++ dependencies).
+### Context Transfer Engine C++ Example
 
-### Install Using Package Managers
-
-<details>
-<summary><b>🐍 Install with Conda (Recommended)</b></summary>
-
-Conda provides isolated environments and manages all dependencies automatically. This is the recommended method for most users.
-
-#### Install Conda
-
-If you don't have Conda installed, install Miniforge (recommended) or Miniconda:
-
-```bash
-# Linux/macOS - Install Miniforge (includes conda-forge by default)
-curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
-bash Miniforge3-$(uname)-$(uname -m).sh
-
-# Or install Miniconda
-# Linux
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-bash Miniconda3-latest-Linux-x86_64.sh
-
-# macOS
-curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
-bash Miniconda3-latest-MacOSX-x86_64.sh
-```
-
-#### Install IOWarp Core
-
-```bash
-# Clone the repository
-git clone https://github.com/iowarp/core.git
-cd core
-
-# Create a new conda environment with all dependencies
-conda env create -f environment.yml
-
-# Activate the environment
-conda activate iowarp
-
-# Install IOWarp Core
-./installers/conda/install.sh
-```
-
-**What Gets Installed:**
-
-All dependencies are managed by Conda:
-- Boost, HDF5, yaml-cpp, ZeroMQ, cereal, Catch2
-- Poco, nlohmann_json
-- Optional: MPI, compression libraries, encryption libraries
-
-**Environment Variables:**
-
-The Conda environment automatically configures paths. After activation, you can use IOWarp Core immediately:
-
-```bash
-conda activate iowarp
-# All tools and libraries are ready to use!
-```
-
-**Customization:**
-
-```bash
-# Install with tests and benchmarks
-WRP_CORE_ENABLE_TESTS=ON WRP_CORE_ENABLE_BENCHMARKS=ON ./installers/conda/install.sh
-
-# Enable MPI support
-WRP_CORE_ENABLE_MPI=ON ./installers/conda/install.sh
-
-# Custom conda prefix
-CONDA_PREFIX=$HOME/miniconda3/envs/my_iowarp ./installers/conda/install.sh
-```
-
-**Verify Installation:**
-```bash
-conda activate iowarp
-python -c "import wrp_cte; import wrp_cee; print('IOWarp Core successfully installed!')"
-```
-
-</details>
-
-<details>
-<summary><b>📦 Install with vcpkg</b></summary>
-
-vcpkg is a cross-platform C++ package manager that simplifies dependency management.
-
-#### Install vcpkg
-
-```bash
-# Clone vcpkg
-git clone https://github.com/microsoft/vcpkg.git
-cd vcpkg
-
-# Bootstrap vcpkg
-./bootstrap-vcpkg.sh  # Linux/macOS
-# or
-./bootstrap-vcpkg.bat  # Windows
-
-# Add to PATH (optional but recommended)
-export PATH="$PWD:$PATH"
-echo 'export PATH="/path/to/vcpkg:$PATH"' >> ~/.bashrc
-```
-
-#### Install IOWarp Core
-
-```bash
-# Clone the repository
-git clone https://github.com/iowarp/core.git
-cd core
-
-# Install dependencies using vcpkg
-./installers/vcpkg/install.sh
-```
-
-**What Gets Installed:**
-
-vcpkg manages all C++ dependencies:
-- Boost (context, fiber, system components)
-- HDF5, yaml-cpp, ZeroMQ
-- cereal, Catch2, Poco
-- nlohmann-json
-- Optional: MPI, compression libraries, encryption libraries
-
-**CMake Integration:**
-
-vcpkg automatically integrates with CMake. The installer sets up the toolchain file:
-
-```bash
-# CMake will automatically find vcpkg-installed packages
-cmake --preset=debug -DCMAKE_TOOLCHAIN_FILE=/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
-```
-
-**Customization:**
-
-```bash
-# Custom vcpkg installation path
-VCPKG_ROOT=/path/to/vcpkg ./installers/vcpkg/install.sh
-
-# Enable optional features
-WRP_CORE_ENABLE_TESTS=ON \
-WRP_CORE_ENABLE_MPI=ON \
-./installers/vcpkg/install.sh
-```
-
-**Environment Variables:**
-
-After installation, add to your `~/.bashrc` or `~/.zshrc`:
-
-```bash
-export VCPKG_ROOT=/path/to/vcpkg
-export CMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
-```
-
-</details>
-
-**Note:** First installation takes 10-15 minutes as dependencies build from source.
-
-### Alternative: Install Using install.sh
-
-For system-wide installations or when you need more control over the build configuration, use the install.sh script:
-
-**Install IOWarp Core:**
-```bash
-# Clone the repository
-git clone https://github.com/iowarp/core.git
-cd core
-
-# Install to /usr/local (requires sudo for final install step)
-./install.sh
-
-# Or install to custom location (no sudo required)
-INSTALL_PREFIX=$HOME/iowarp ./install.sh
-```
-
-**Customization with Environment Variables:**
-
-The install.sh script accepts environment variables to customize the build:
-
-```bash
-# Install with tests and benchmarks enabled
-WRP_CORE_ENABLE_TESTS=ON WRP_CORE_ENABLE_BENCHMARKS=ON ./install.sh
-
-# Install with MPI support (checks for MPI installation first)
-WRP_CORE_ENABLE_MPI=ON ./install.sh
-
-# Install only dependencies (useful for development)
-DEPS_ONLY=TRUE ./install.sh
-
-# Custom install prefix with parallel build jobs
-INSTALL_PREFIX=/opt/iowarp BUILD_JOBS=8 ./install.sh
-
-# Full customization example
-INSTALL_PREFIX=$HOME/iowarp \
-WRP_CORE_ENABLE_TESTS=ON \
-WRP_CORE_ENABLE_BENCHMARKS=ON \
-WRP_CORE_ENABLE_MPI=ON \
-BUILD_JOBS=16 \
-./install.sh
-```
-
-**install.sh-Specific Environment Variables:**
-- `INSTALL_PREFIX`: Installation directory (default: `/usr/local`)
-- `BUILD_JOBS`: Number of parallel build jobs (default: `$(nproc)`)
-- `DEPS_ONLY`: Only build dependencies, skip IOWarp Core (default: `FALSE`)
-- `WRP_CORE_ENABLE_TESTS`: Enable building tests (default: `OFF`)
-- `WRP_CORE_ENABLE_BENCHMARKS`: Enable building benchmarks (default: `OFF`)
-- `WRP_CORE_ENABLE_MPI`: Enable MPI support (default: `OFF`)
-
-**Available CMake Options:**
-
-All CMake build options can be used with install.sh as environment variables:
-
-*Component Control:*
-- `WRP_CORE_ENABLE_RUNTIME`: Enable runtime component (default: ON)
-- `WRP_CORE_ENABLE_CTE`: Enable Context Transfer Engine (default: ON)
-- `WRP_CORE_ENABLE_CAE`: Enable Context Assimilation Engine (default: ON)
-- `WRP_CORE_ENABLE_CEE`: Enable Context Exploration Engine (default: ON)
-
-*Build Features:*
-- `WRP_CORE_ENABLE_TESTS`: Enable tests (default: OFF)
-- `WRP_CORE_ENABLE_BENCHMARKS`: Enable benchmarks (default: OFF)
-- `WRP_CORE_ENABLE_PYTHON`: Enable Python bindings (default: OFF)
-
-*Distributed Computing:*
-- `WRP_CORE_ENABLE_MPI`: Enable MPI support (default: OFF)
-- `WRP_CORE_ENABLE_ZMQ`: Enable ZeroMQ transport (default: ON)
-- `WRP_CORE_ENABLE_LIBFABRIC`: Enable libfabric transport (default: OFF)
-- `WRP_CORE_ENABLE_THALLIUM`: Enable Thallium RPC (default: OFF)
-
-*Data Processing:*
-- `WRP_CORE_ENABLE_CEREAL`: Enable serialization (default: ON)
-- `WRP_CORE_ENABLE_COMPRESS`: Enable compression libraries (default: OFF)
-- `WRP_CORE_ENABLE_ENCRYPT`: Enable encryption (default: OFF)
-- `WRP_CORE_ENABLE_HDF5`: Enable HDF5 support (default: ON)
-
-*Performance:*
-- `WRP_CORE_ENABLE_OPENMP`: Enable OpenMP (default: OFF)
-- `WRP_CORE_ENABLE_CUDA`: Enable CUDA support (default: OFF)
-- `WRP_CORE_ENABLE_ROCM`: Enable ROCm support (default: OFF)
-
-*Development/Debugging:*
-- `WRP_CORE_ENABLE_ASAN`: Enable AddressSanitizer (default: OFF)
-- `WRP_CORE_ENABLE_COVERAGE`: Enable code coverage (default: OFF)
-- `WRP_CORE_ENABLE_DOXYGEN`: Enable documentation checks (default: OFF)
-
-**Examples:**
-
-```bash
-# Enable compression and encryption
-WRP_CORE_ENABLE_COMPRESS=ON WRP_CORE_ENABLE_ENCRYPT=ON ./install.sh
-
-# Disable specific components
-WRP_CORE_ENABLE_CAE=OFF WRP_CORE_ENABLE_CEE=OFF ./install.sh
-
-# Enable CUDA support
-WRP_CORE_ENABLE_CUDA=ON ./install.sh
-
-# Enable debugging tools
-WRP_CORE_ENABLE_ASAN=ON WRP_CORE_ENABLE_COVERAGE=ON ./install.sh
-
-# Combined example with both install.sh and CMake options
-INSTALL_PREFIX=$HOME/iowarp \
-BUILD_JOBS=16 \
-WRP_CORE_ENABLE_MPI=ON \
-WRP_CORE_ENABLE_COMPRESS=ON \
-WRP_CORE_ENABLE_CUDA=ON \
-WRP_CORE_ENABLE_OPENMP=ON \
-./install.sh
-```
-
-**Set Environment Variables After Installation:**
-
-After installation, add these to your `~/.bashrc` or `~/.zshrc`:
-
-```bash
-export INSTALL_PREFIX=/usr/local  # Or your custom path
-export CMAKE_PREFIX_PATH="$INSTALL_PREFIX:$CMAKE_PREFIX_PATH"
-export LD_LIBRARY_PATH="$INSTALL_PREFIX/lib:$LD_LIBRARY_PATH"
-export PKG_CONFIG_PATH="$INSTALL_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
-export PYTHONPATH="$INSTALL_PREFIX/lib/python$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')/site-packages:$PYTHONPATH"
-```
-
-**Note:** First installation takes 10-15 minutes as dependencies build from source.
-
-**For detailed installation instructions and troubleshooting, see [INSTALL.md](INSTALL.md) or [QUICKSTART.md](QUICKSTART.md).**
-
-### Prerequisites
-
-IOWarp Core requires the following dependencies:
-
-#### Required Dependencies
-
-These dependencies must be installed on your system:
-
-**Build Tools:**
-- C++17 compatible compiler (GCC >= 9, Clang >= 10)
-- CMake >= 3.20
-- pkg-config
-
-**Core Libraries:**
-- **Boost** >= 1.70 (components: context, fiber, system)
-- **libelf** (ELF binary parsing for adapter functionality)
-- **ZeroMQ (libzmq)** (distributed communication)
-- **yaml-cpp** - YAML configuration library (git submodule in external/yaml-cpp)
-- **cereal** - Serialization library (git submodule in external/cereal)
-- **Threads** (POSIX threads library)
-
-**Compression Libraries** (if `HSHM_ENABLE_COMPRESS=ON`):
-- bzip2
-- lzo2
-- libzstd
-- liblz4
-- zlib
-- liblzma
-- libbrotli (libbrotlicommon, libbrotlidec, libbrotlienc)
-- snappy
-- blosc2
-
-**Encryption Libraries** (if `HSHM_ENABLE_ENCRYPT=ON`):
-- libcrypto (OpenSSL)
-
-#### Optional Dependencies
-
-These dependencies enable additional features:
-
-**Testing:**
-- **Catch2** >= 3.0.1 (if `WRP_CORE_ENABLE_TESTS=ON`) - git submodule in external/Catch2
-
-**Documentation:**
-- **Doxygen** (if `HSHM_ENABLE_DOXYGEN=ON`)
-- **Perl** (required by Doxygen)
-
-**Distributed Computing:**
-- **MPI** (MPICH, OpenMPI, or compatible) (if `HSHM_ENABLE_MPI=ON`)
-- **libfabric** (high-performance networking) (if `HSHM_ENABLE_LIBFABRIC=ON`)
-- **Thallium** (RPC framework) (if `HSHM_ENABLE_THALLIUM=ON`)
-
-**Parallel Computing:**
-- **OpenMP** (if `HSHM_ENABLE_OPENMP=ON`)
-
-**GPU Support:**
-- **CUDA Toolkit** >= 11.0 (if `HSHM_ENABLE_CUDA=ON`)
-- **ROCm/HIP** >= 4.0 (if `HSHM_ENABLE_ROCM=ON`)
-
-**Context Assimilation Engine (CAE):**
-- **HDF5** with C components (if `CAE_ENABLE_HDF5=ON`, default: ON)
-- **POCO** (Net, NetSSL, Crypto, JSON components) (if `CAE_ENABLE_GLOBUS=ON`)
-- **nlohmann_json** (if `CAE_ENABLE_GLOBUS=ON`)
-
-**Python Bindings:**
-- **Python 3** with development headers (if `WRP_CORE_ENABLE_PYTHON=ON`)
-- **nanobind** - Python bindings library (git submodule in external/nanobind)
-
-#### Installation Commands
-
-**Ubuntu/Debian:**
-```bash
-# Required dependencies
-sudo apt-get update
-sudo apt-get install -y \
-  build-essential cmake pkg-config \
-  libboost-context-dev libboost-fiber-dev libboost-system-dev \
-  libelf-dev libzmq3-dev
-
-# Optional: Compression libraries
-sudo apt-get install -y \
-  libbz2-dev liblzo2-dev libzstd-dev liblz4-dev \
-  zlib1g-dev liblzma-dev libbrotli-dev libsnappy-dev libblosc2-dev
-
-# Optional: HDF5 support (for CAE)
-sudo apt-get install -y libhdf5-dev
-
-# Optional: MPI support
-sudo apt-get install -y libmpich-dev
-
-# Optional: Testing framework (git submodule, no need to install separately)
-
-# Optional: YAML library (git submodule, no need to install separately)
-
-# Optional: Serialization library (git submodule, no need to install separately)
-```
-
-**Docker Container (Recommended):**
-All dependencies are pre-installed in our Docker container:
-```bash
-docker pull iowarp/iowarp-build:latest
-```
-
-### Quick Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/iowarp/iowarp-core.git
-cd iowarp-core
-
-# Configure with CMake preset (debug mode)
-cmake --preset=debug
-
-# Build all components
-cmake --build build --parallel $(nproc)
-
-# Install to system or custom prefix
-cmake --install build --prefix /usr/local
-```
-
-### Component Build Options
-
-The unified build system provides options to enable/disable components:
-
-```bash
-cmake --preset=debug \
-  -DWRP_CORE_ENABLE_RUNTIME=ON \
-  -DWRP_CORE_ENABLE_CTE=ON \
-  -DWRP_CORE_ENABLE_CAE=ON \
-  -DWRP_CORE_ENABLE_CEE=ON
-```
-
-**Available Options:**
-- `WRP_CORE_ENABLE_RUNTIME`: Enable runtime component (default: ON)
-- `WRP_CORE_ENABLE_CTE`: Enable context-transfer-engine (default: ON)
-- `WRP_CORE_ENABLE_CAE`: Enable context-assimilation-engine (default: ON)
-- `WRP_CORE_ENABLE_CEE`: Enable context-exploration-engine (default: ON)
-
-### Quick Start Example
-
-Here's a simple example using the Chimaera runtime with the bdev ChiMod:
+Here is an example of the context transfer engine's C++ API.
 
 ```cpp
+#include <wrp_cte/core/core_client.h>
 #include <chimaera/chimaera.h>
-#include <chimaera/bdev/bdev_client.h>
-#include <chimaera/admin/admin_client.h>
 
 int main() {
-  // Initialize Chimaera (client mode with embedded runtime)
-  chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
+  // 1. Initialize Chimaera runtime
+  bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
+  if (!success) return 1;
 
-  // Create admin client (always required)
-  chimaera::admin::Client admin_client(chi::PoolId(7000, 0));
-  admin_client.Create(HSHM_MCTX, chi::PoolQuery::Local());
+  // 2. Initialize CTE subsystem
+  wrp_cte::core::WRP_CTE_CLIENT_INIT();
 
-  // Create bdev client for high-speed RAM storage
-  chimaera::bdev::Client bdev_client(chi::PoolId(8000, 0));
-  bdev_client.Create(HSHM_MCTX, chi::PoolQuery::Local(),
-                    chimaera::bdev::BdevType::kRam, "", 1024*1024*1024); // 1GB RAM
+  // 3. Create CTE client
+  wrp_cte::core::Client cte_client;
+  wrp_cte::core::CreateParams params;
+  cte_client.Create(HSHM_MCTX, chi::PoolQuery::Dynamic(),
+                    wrp_cte::core::kCtePoolName,
+                    wrp_cte::core::kCtePoolId, params);
 
-  // Allocate and use a block
-  auto block = bdev_client.Allocate(HSHM_MCTX, 4096);  // 4KB block
-  std::vector<hshm::u8> data(4096, 0xAB);
-  bdev_client.Write(HSHM_MCTX, block, data);
-  auto read_data = bdev_client.Read(HSHM_MCTX, block);
-  bdev_client.Free(HSHM_MCTX, block);
+  // 4. Register a storage target (100MB file-based)
+  cte_client.RegisterTarget(HSHM_MCTX, "/tmp/cte_storage",
+                            chimaera::bdev::BdevType::kFile,
+                            100 * 1024 * 1024);
 
+  // 5. Create a tag (container for blobs)
+  wrp_cte::core::TagId tag_id = cte_client.GetOrCreateTag(
+      HSHM_MCTX, "my_tag", wrp_cte::core::TagId::GetNull());
+
+  // 6. Store blob data
+  std::vector<char> data(4096, 'A');
+  hipc::FullPtr<char> shared_data = CHI_IPC->AllocateBuffer(data.size());
+  memcpy(shared_data.ptr_, data.data(), data.size());
+
+  cte_client.PutBlob(HSHM_MCTX, tag_id, "my_blob",
+                     0,                    // offset
+                     data.size(),          // size
+                     shared_data.shm_,     // shared memory pointer
+                     0.8f,                 // importance score
+                     0);                   // flags
+  CHI_IPC->FreeBuffer(shared_data);
+
+  // 7. Retrieve blob data
+  hipc::FullPtr<char> read_buf = CHI_IPC->AllocateBuffer(data.size());
+  cte_client.GetBlob(HSHM_MCTX, tag_id, "my_blob",
+                     0,                    // offset
+                     data.size(),          // size
+                     0,                    // flags
+                     read_buf.shm_);
+  // read_buf.ptr_ now contains the retrieved data
+  CHI_IPC->FreeBuffer(read_buf);
+
+  // 8. Cleanup
+  cte_client.DelTag(HSHM_MCTX, tag_id);
   return 0;
 }
 ```
@@ -636,12 +255,9 @@ int main() {
 find_package(iowarp-core REQUIRED)
 
 target_link_libraries(my_app
+  wrp_cte::core_client    # CTE client (for the example above)
   chimaera::admin_client  # Admin ChiMod (always available)
   chimaera::bdev_client   # Block device ChiMod (always available)
-  # Optional: Add hshm modular targets if needed
-  # hshm::configure    # For YAML configuration
-  # hshm::serialize    # For object serialization
-  # hshm::mpi          # For MPI support
 )
 ```
 
@@ -688,27 +304,6 @@ Comprehensive documentation is available for each component:
   - [CTE API Documentation](context-transfer-engine/docs/cte/cte.md): Complete API reference
 - **[Context Assimilation Engine](context-assimilation-engine/README.md)**: Data ingestion and processing
 - **[Context Exploration Engine](context-exploration-engine/README.md)**: Interactive data exploration
-
-## Docker Deployment
-
-IOWarp Core can be deployed using Docker containers for distributed deployments:
-
-```bash
-# Build and start 3-node cluster
-cd docker
-docker-compose up -d
-
-# Check status
-docker-compose ps
-
-# View logs
-docker-compose logs -f iowarp-node1
-
-# Stop cluster
-docker-compose down
-```
-
-See [CLAUDE.md](CLAUDE.md) for detailed Docker deployment configuration.
 
 ## Use Cases
 

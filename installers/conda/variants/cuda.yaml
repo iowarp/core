@@ -4,7 +4,6 @@
 # Usage: rattler-build build --recipe recipe/ --variant-config variants/cuda.yaml
 
 preset: cuda-debug
-python: "3.11"
 
 cuda_enabled: "ON"
 rocm_enabled: "OFF"

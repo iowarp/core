@@ -2,19 +2,46 @@
 
 This directory contains the conda recipe for building IOWarp Core using [rattler-build](https://prefix-dev.github.io/rattler-build/).
 
-## Quick Start
+## Quick Start (Recommended)
+
+The easiest way to install IOWarp Core is using the main install script at the repository root:
+
+```bash
+# Clone the repository
+git clone --recursive https://github.com/iowarp/iowarp-core.git
+cd iowarp-core
+
+# Install with default (release) variant
+./install.sh
+
+# Or specify a variant
+./install.sh debug
+./install.sh cuda
+./install.sh rocm
+```
+
+The install script will:
+1. Install Miniconda if conda is not detected
+2. Create and activate an `iowarp` conda environment (if not already in one)
+3. Install rattler-build if not present
+4. Build the conda package using the specified variant
+5. Install the package directly into the current environment
+
+## Alternative: Using conda-local.sh
+
+If you're already in a conda environment and want more control:
 
 ```bash
 # Activate your conda environment
 conda activate myenv
 
 # Build with default (release) variant
-./conda-local.sh
+./installers/conda/conda-local.sh
 
 # Or specify a variant
-./conda-local.sh cuda
-./conda-local.sh mpi
-./conda-local.sh custom
+./installers/conda/conda-local.sh cuda
+./installers/conda/conda-local.sh mpi
+./installers/conda/conda-local.sh custom
 ```
 
 ## Installation Modes
@@ -116,15 +143,21 @@ installers/conda/
 If you prefer to run rattler-build directly:
 
 ```bash
-# From repository root
+# Install rattler-build if not present
+conda install -y rattler-build -c conda-forge
+
+# From repository root, build the package
 rattler-build build \
     --recipe installers/conda/ \
     --variant-config installers/conda/variants/release.yaml \
     --output-dir build/conda-output \
     -c conda-forge
 
-# Install the built package
-conda install -c file://$(pwd)/build/conda-output -c conda-forge iowarp-core
+# Find the built package
+PACKAGE=$(find build/conda-output -name "iowarp-core-*.conda" | head -1)
+
+# Install directly from the package file
+conda install "$PACKAGE" -y
 ```
 
 ## Dependencies
