@@ -489,7 +489,15 @@ find_package(nlohmann_json QUIET)
 
 # ADIOS2 (optional - for Gray-Scott example)
 if(WRP_CORE_ENABLE_GRAY_SCOTT)
-    find_package(MPI REQUIRED COMPONENTS C CXX)
+    # Gray-Scott requires MPI - find it if not already found
+    if(NOT MPI_FOUND)
+        find_package(MPI REQUIRED COMPONENTS C CXX)
+        if(MPI_FOUND)
+            message(STATUS "found MPI for Gray-Scott at ${MPI_CXX_INCLUDE_DIRS}")
+        endif()
+    endif()
+
+    # Find ADIOS2
     find_package(ADIOS2 REQUIRED)
     if(ADIOS2_FOUND)
         message(STATUS "found ADIOS2 at ${ADIOS2_DIR}")
@@ -737,6 +745,14 @@ else()
     message(STATUS "Context-exploration-engine component disabled")
 endif()
 
+# Gray-Scott Example Application
+if(WRP_CORE_ENABLE_GRAY_SCOTT)
+    message(STATUS "Building Gray-Scott ADIOS2 example")
+    add_subdirectory(external/iowarp-gray-scott)
+else()
+    message(STATUS "Gray-Scott example disabled")
+endif()
+
 #------------------------------------------------------------------------------
 # Unified IOWarp Core Package Configuration
 #------------------------------------------------------------------------------
@@ -795,6 +811,9 @@ message(STATUS "    Runtime:                    ${WRP_CORE_ENABLE_RUNTIME}")
 message(STATUS "    Context Transfer Engine:    ${WRP_CORE_ENABLE_CTE}")
 message(STATUS "    Context Assimilation:       ${WRP_CORE_ENABLE_CAE}")
 message(STATUS "    Context Exploration:        ${WRP_CORE_ENABLE_CEE}")
+message(STATUS "  ")
+message(STATUS "  External Examples:")
+message(STATUS "    Gray-Scott (ADIOS2):        ${WRP_CORE_ENABLE_GRAY_SCOTT}")
 message(STATUS "  ")
 message(STATUS "  Global Options:")
 message(STATUS "    Enable Tests:               ${WRP_CORE_ENABLE_TESTS}")
