@@ -10,13 +10,17 @@
         "IOWARP_CORE_ROOT": "${localWorkspaceFolder}",
         "CONDA_DEFAULT_ENV": "base",
         "CONDA_AUTO_ACTIVATE_BASE": "true",
+        "CONDA_PREFIX": "/home/iowarp/miniconda3",
         "CUDA_HOME": "/usr/local/cuda-12.6",
-        "LD_LIBRARY_PATH": "/usr/local/cuda-12.6/lib64:/usr/local/cuda-12.6/lib64/stubs:/usr/lib/x86_64-linux-gnu",
+        "LD_LIBRARY_PATH": "/home/iowarp/miniconda3/lib:/usr/local/cuda-12.6/lib64:/usr/local/cuda-12.6/lib64/stubs:/usr/lib/x86_64-linux-gnu",
         "NVIDIA_VISIBLE_DEVICES": "all",
         "NVIDIA_DRIVER_CAPABILITIES": "compute,utility",
         "ASAN_OPTIONS": "protect_shadow_gap=0"
     },
     "mounts": [
+        "source=${localEnv:HOME}/.ssh,target=/tmp/host-ssh,type=bind,readonly",
+        "source=${localEnv:HOME}/.claude,target=/tmp/host-claude,type=bind,readonly",
+        "source=${localEnv:HOME}/.claude.json,target=/tmp/host-claude.json,type=bind,readonly",
         "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
     ],
     "runArgs": [
@@ -58,6 +62,6 @@
             }
         }
     },
-    "postCreateCommand": "bash -c 'git config --global --add safe.directory /workspace && sudo chmod 666 /var/run/docker.sock && sudo service ssh start && eval \"$(~/miniconda3/bin/conda shell.bash hook)\" && echo \"Dev container ready!\"'",
+    "postCreateCommand": "bash -c 'git config --global --add safe.directory /workspace && sudo rm -rf /home/iowarp/.ssh && sudo cp -r /tmp/host-ssh /home/iowarp/.ssh && sudo chown -R iowarp:iowarp /home/iowarp/.ssh && chmod 700 /home/iowarp/.ssh && chmod 600 /home/iowarp/.ssh/* && chmod 644 /home/iowarp/.ssh/*.pub 2>/dev/null || true && sudo cp -r /tmp/host-claude /home/iowarp/.claude && sudo cp /tmp/host-claude.json /home/iowarp/.claude.json && sudo chown -R iowarp:iowarp /home/iowarp/.claude /home/iowarp/.claude.json && sudo chmod 666 /var/run/docker.sock && sudo service ssh start && eval \"$(~/miniconda3/bin/conda shell.bash hook)\" && echo \"Conda initialized. Use: conda activate <env>\"'",
     "remoteUser": "iowarp"
 }

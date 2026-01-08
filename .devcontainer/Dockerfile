@@ -82,7 +82,9 @@ RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86
 # Set CUDA environment variables for runtime execution
 ENV CUDA_HOME=/usr/local/cuda-12.6
 ENV PATH=${CUDA_HOME}/bin:${PATH}
-ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs:/usr/lib/x86_64-linux-gnu
+# Set LD_LIBRARY_PATH to include Conda, CUDA, and system paths
+# Note: /home/iowarp/miniconda3 will be set after conda installation, but we set it early for consistency
+ENV LD_LIBRARY_PATH=/home/iowarp/miniconda3/lib:${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs:/usr/lib/x86_64-linux-gnu
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
@@ -92,10 +94,12 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 USER iowarp
 WORKDIR /home/iowarp
 
-# Install Miniconda
-RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh \
+# Install Miniconda (skip if already installed in base image)
+RUN if [ ! -d "/home/iowarp/miniconda3" ]; then \
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh \
     && bash /tmp/miniconda.sh -b -p /home/iowarp/miniconda3 \
-    && rm /tmp/miniconda.sh
+    && rm /tmp/miniconda.sh; \
+    fi
 
 # Initialize conda for bash
 RUN /home/iowarp/miniconda3/bin/conda init bash \
@@ -213,7 +217,7 @@ RUN echo '' >> /home/iowarp/.bashrc \
     && echo '# CUDA environment variables for GPU execution' >> /home/iowarp/.bashrc \
     && echo 'export CUDA_HOME=/usr/local/cuda-12.6' >> /home/iowarp/.bashrc \
     && echo 'export PATH=/usr/local/cuda-12.6/bin:$PATH' >> /home/iowarp/.bashrc \
-    && echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.6/lib64:/usr/local/cuda-12.6/lib64/stubs:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH' >> /home/iowarp/.bashrc \
+    && echo 'export LD_LIBRARY_PATH=/home/iowarp/miniconda3/lib:/usr/local/cuda-12.6/lib64:/usr/local/cuda-12.6/lib64/stubs:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH' >> /home/iowarp/.bashrc \
     && echo 'export NVIDIA_VISIBLE_DEVICES=all' >> /home/iowarp/.bashrc \
     && echo 'export NVIDIA_DRIVER_CAPABILITIES=compute,utility' >> /home/iowarp/.bashrc
 
