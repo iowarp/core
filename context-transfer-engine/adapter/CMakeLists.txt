@@ -53,6 +53,11 @@ else()
     message(STATUS "  To enable adapters, configure with -DWRP_CORE_ENABLE_ELF=ON")
 endif()
 
+# ADIOS2 adapter does not require ELF support (it's a plugin engine)
+if (WRP_CTE_ENABLE_ADIOS2_ADAPTER)
+    add_subdirectory(adios2)
+endif()
+
 #-----------------------------------------------------------------------------
 # Install adapter headers
 #-----------------------------------------------------------------------------

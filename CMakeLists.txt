@@ -132,6 +132,7 @@ option(WRP_CTE_ENABLE_STDIO_ADAPTER "Enable STDIO adapter" OFF)
 option(WRP_CTE_ENABLE_MPIIO_ADAPTER "Enable MPI-IO adapter" OFF)
 option(WRP_CTE_ENABLE_VFD "Enable HDF5 VFD adapter" OFF)
 option(WRP_CTE_ENABLE_NVIDIA_GDS_ADAPTER "Enable NVIDIA GDS adapter" OFF)
+option(WRP_CTE_ENABLE_ADIOS2_ADAPTER "Enable ADIOS2 adapter" OFF)
 
 #------------------------------------------------------------------------------
 # CAE (context-assimilation-engine) Options

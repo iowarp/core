@@ -135,7 +135,6 @@ RUN /home/iowarp/miniconda3/bin/conda tos accept --override-channels --channel h
     zfp \
     poco \
     nlohmann_json \
-    adios2 \
     && /home/iowarp/miniconda3/bin/conda clean -ya
 
 # Switch to root to install lossy compression libraries from source
@@ -173,6 +172,27 @@ RUN cd /tmp \
     && make install \
     && ldconfig \
     && cd /tmp && rm -rf sz3_src
+
+# Install ADIOS2 from source (conda version has broken headers)
+# Build with examples enabled to ensure full functionality
+RUN cd /tmp \
+    && git clone https://github.com/ornladios/ADIOS2.git ADIOS2 \
+    && mkdir -p adios2-build && cd adios2-build \
+    && cmake ../ADIOS2 \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DADIOS2_BUILD_EXAMPLES=ON \
+    -DBUILD_SHARED_LIBS=ON \
+    -DBUILD_TESTING=OFF \
+    -DADIOS2_USE_MPI=ON \
+    -DADIOS2_USE_HDF5=ON \
+    -DADIOS2_USE_ZeroMQ=ON \
+    -DADIOS2_USE_Python=OFF \
+    -DCMAKE_PREFIX_PATH="/home/iowarp/miniconda3" \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig \
+    && cd /tmp && rm -rf ADIOS2 adios2-build
 
 # Switch back to iowarp user
 USER iowarp
@@ -221,6 +241,8 @@ RUN echo 'export NVIDIA_DRIVER_CAPABILITIES=compute,utility' >> /home/iowarp/.ba
     && echo '' >> /home/iowarp/.bashrc
 
 WORKDIR /workspace
+
+RUN curl -fsSL https://claude.ai/install.sh | bash
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/bin/bash"]
