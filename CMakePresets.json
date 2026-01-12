@@ -83,6 +83,7 @@
                 "WRP_CORE_ENABLE_TESTS": "ON",
                 "WRP_CORE_ENABLE_ELF": "OFF",
                 "WRP_CORE_ENABLE_GRAY_SCOTT": "ON",
+                "WRP_CORE_ENABLE_CONDA": "ON",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "WRP_CORE_ENABLE_ASAN": "OFF",
                 "WRP_CORE_ENABLE_PYTHON": "ON",

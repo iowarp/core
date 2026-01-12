@@ -67,6 +67,10 @@ chi::TaskResume Runtime::GetOrCreatePool(
         chimaera::admin::GetOrCreatePoolTask<chimaera::admin::CreateParams>>
         task,
     chi::RunContext &rctx) {
+  // Debug: Log do_compose_ value
+  HLOG(kDebug, "Admin::GetOrCreatePool ENTRY: task->do_compose_={}, task->is_admin_={}",
+       task->do_compose_, task->is_admin_);
+
   // Get pool manager once - used by both dynamic scheduling and normal
   // execution
   auto *pool_manager = CHI_POOL_MANAGER;
