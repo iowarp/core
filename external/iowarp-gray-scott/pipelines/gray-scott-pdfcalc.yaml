@@ -40,7 +40,7 @@ pkgs:
     engine: bp5
     out_file: /workspace/external/iowarp-gray-scott/gs-output.bp
     db_path: /workspace/external/iowarp-gray-scott/metadata.db
-    run_async: false  # Temporarily disabled to test MPI detection
+    run_async: true  # Run in background for parallel execution
 
     # Checkpoint/Restart disabled for this test
     checkpoint: false
