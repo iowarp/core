@@ -148,6 +148,70 @@ Feel free to add a new variant for your specific machine there.
 
 ## Quickstart
 
+### Starting the Runtime
+
+Before running our code, start the Chimaera runtime:
+
+```bash
+# Start with custom configuration
+export CHI_SERVER_CONF=/workspace/docker/wrp_cte_bench/cte_config.yaml
+chimaera_start_runtime
+
+# Run in background
+chimaera_start_runtime &
+```
+
+**Environment Variables:**
+| Variable | Description |
+|----------|-------------|
+| `CHI_SERVER_CONF` | Primary path to Chimaera configuration file (checked first) |
+| `WRP_RUNTIME_CONF` | Fallback configuration path (used if CHI_SERVER_CONF not set) |
+
+### Chimaera Configuration
+
+Configuration uses YAML format. Example configuration:
+
+```yaml
+# Memory segment configuration
+memory:
+  main_segment_size: 1073741824           # 1GB main segment
+  client_data_segment_size: 536870912     # 512MB client data
+  runtime_data_segment_size: 536870912    # 512MB runtime data
+
+# Network configuration
+networking:
+  port: 5555                              # ZeroMQ port
+  neighborhood_size: 32                   # Max nodes for range queries
+
+# Runtime configuration
+runtime:
+  sched_threads: 4                        # Scheduler worker threads
+  slow_threads: 0                         # Slow worker threads (long tasks)
+  stack_size: 65536                       # 64KB per task
+  queue_depth: 10000                      # Maximum queue depth
+  lane_map_policy: "round_robin"          # Options: map_by_pid_tid, round_robin, random
+
+# Compose section for declarative pool creation
+compose:
+  - mod_name: wrp_cte_core
+    pool_name: wrp_cte
+    pool_query: local
+    pool_id: 512.0
+
+    targets:
+      neighborhood: 1
+      default_target_timeout_ms: 30000
+
+    storage:
+      - path: "ram::cte_storage"          # RAM-based storage
+        bdev_type: "ram"
+        capacity_limit: "16GB"
+        score: 1.0                        # Higher = faster tier (0.0-1.0)
+
+    dpe:
+      dpe_type: "max_bw"                  # Options: random, round_robin, max_bw
+```
+
 ### Context Exploration Engine Python Example
 
 Here we show an example of how to use the context exploration engine to
@@ -295,73 +359,6 @@ ctest -R omni               # Context assimilation engine tests
 ## Benchmarking
 
 IOWarp Core includes performance benchmarks for measuring runtime and I/O throughput.
-
-### Starting the Runtime
-
-Before running benchmarks, start the Chimaera runtime:
-
-```bash
-# Start with default configuration
-chimaera_start_runtime
-
-# Start with custom configuration
-export CHI_SERVER_CONF=/path/to/config.yaml
-chimaera_start_runtime
-
-# Run in background
-chimaera_start_runtime &
-```
-
-**Environment Variables:**
-| Variable | Description |
-|----------|-------------|
-| `CHI_SERVER_CONF` | Primary path to Chimaera configuration file (checked first) |
-| `WRP_RUNTIME_CONF` | Fallback configuration path (used if CHI_SERVER_CONF not set) |
-
-### Chimaera Configuration
-
-Configuration uses YAML format. Example configuration:
-
-```yaml
-# Memory segment configuration
-memory:
-  main_segment_size: 1073741824           # 1GB main segment
-  client_data_segment_size: 536870912     # 512MB client data
-  runtime_data_segment_size: 536870912    # 512MB runtime data
-
-# Network configuration
-networking:
-  port: 5555                              # ZeroMQ port
-  neighborhood_size: 32                   # Max nodes for range queries
-
-# Runtime configuration
-runtime:
-  sched_threads: 4                        # Scheduler worker threads
-  slow_threads: 0                         # Slow worker threads (long tasks)
-  stack_size: 65536                       # 64KB per task
-  queue_depth: 10000                      # Maximum queue depth
-  lane_map_policy: "round_robin"          # Options: map_by_pid_tid, round_robin, random
-
-# Compose section for declarative pool creation
-compose:
-  - mod_name: wrp_cte_core
-    pool_name: wrp_cte
-    pool_query: local
-    pool_id: 512.0
-
-    targets:
-      neighborhood: 1
-      default_target_timeout_ms: 30000
-
-    storage:
-      - path: "ram::cte_storage"          # RAM-based storage
-        bdev_type: "ram"
-        capacity_limit: "16GB"
-        score: 1.0                        # Higher = faster tier (0.0-1.0)
-
-    dpe:
-      dpe_type: "max_bw"                  # Options: random, round_robin, max_bw
-```
 
 ### Runtime Throughput Benchmark (wrp_run_thrpt_benchmark)
 
