@@ -22,7 +22,7 @@ pkgs:
 
   - pkg_type: builtin.adios2_gray_scott
     pkg_name: gsbench
-    nprocs: 2                            # Number of MPI processes
+    nprocs: 1                            # Number of MPI processes
     ppn: 2                               # Processes per node
     out_file: "/home/iowarp/gsbench.bp"
     engine: "iowarp"

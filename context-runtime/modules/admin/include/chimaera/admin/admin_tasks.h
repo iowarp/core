@@ -600,6 +600,68 @@ struct RecvTask : public chi::Task {
   }
 };
 
+/**
+ * HeartbeatTask - Runtime health check
+ * Used to verify runtime is alive and responding
+ * Returns 0 on success to indicate runtime is healthy
+ */
+struct HeartbeatTask : public chi::Task {
+  // Heartbeat response
+  OUT int32_t response_; ///< 0 = success, non-zero = error
+
+  /** SHM default constructor */
+  HeartbeatTask()
+      : chi::Task(), response_(-1) {}
+
+  /** Emplace constructor */
+  explicit HeartbeatTask(const chi::TaskId &task_node, const chi::PoolId &pool_id,
+                         const chi::PoolQuery &pool_query)
+      : chi::Task(task_node, pool_id, pool_query, Method::kHeartbeat),
+        response_(-1) {
+    // Initialize task
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kHeartbeat;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  /**
+   * Serialize IN and INOUT parameters for network transfer
+   * No additional parameters for HeartbeatTask
+   */
+  template <typename Archive> void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+    // No additional parameters to serialize for heartbeat
+  }
+
+  /**
+   * Serialize OUT and INOUT parameters for network transfer
+   * This includes: response_
+   */
+  template <typename Archive> void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(response_);
+  }
+
+  /**
+   * Copy from another HeartbeatTask (assumes this task is already constructed)
+   * @param other Pointer to the source task to copy from
+   */
+  void Copy(const hipc::FullPtr<HeartbeatTask> &other) {
+    // Copy base Task fields
+    Task::Copy(other.template Cast<Task>());
+    // Copy HeartbeatTask-specific fields
+    response_ = other->response_;
+  }
+
+  /** Aggregate replica results into this task */
+  void Aggregate(const hipc::FullPtr<HeartbeatTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
+};
+
 } // namespace chimaera::admin
 
 #endif // ADMIN_TASKS_H_
