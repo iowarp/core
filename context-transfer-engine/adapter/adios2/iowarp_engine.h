@@ -21,6 +21,15 @@
 #include <wrp_cte/core/core_client.h>
 #include <wrp_cte/core/core_tasks.h>
 
+// Compression support
+#include <hermes_shm/util/compress/compress.h>
+#if HSHM_ENABLE_COMPRESS
+#include <hermes_shm/util/compress/compress_factory.h>
+#include <hermes_shm/util/compress/zfp.h>
+#include <hermes_shm/util/compress/bitgrooming.h>
+#include <hermes_shm/util/compress/fpzip.h>
+#endif
+
 namespace coeus {
 
 class IowarpEngine : public adios2::plugin::PluginEngineInterface {
@@ -125,8 +134,39 @@ class IowarpEngine : public adios2::plugin::PluginEngineInterface {
   /** Vector of deferred put tasks for current step */
   std::vector<DeferredTask> deferred_tasks_;
 
+  /** Compressor instance (nullptr if compression disabled) */
+  std::unique_ptr<hshm::Compressor> compressor_;
+
+  /** Compression type name for logging */
+  std::string compress_type_;
+
   /** Increment the current step */
   void IncrementCurrentStep() { current_step_++; }
+
+  /** Initialize compression from COMPRESS_TYPE environment variable */
+  void InitCompression();
+
+  /**
+   * Compress data before Put operation
+   * @param input Input data buffer
+   * @param input_size Input data size in bytes
+   * @param output Output buffer (allocated by caller, must be large enough)
+   * @param output_size On input: max output buffer size; On output: actual compressed size
+   * @return true if compression successful or no compressor configured
+   */
+  bool CompressData(const void *input, size_t input_size, void *output,
+                    size_t &output_size);
+
+  /**
+   * Decompress data after Get operation
+   * @param input Compressed data buffer
+   * @param input_size Compressed data size in bytes
+   * @param output Output buffer (allocated by caller)
+   * @param output_size On input: expected decompressed size; On output: actual size
+   * @return true if decompression successful or no compressor configured
+   */
+  bool DecompressData(const void *input, size_t input_size, void *output,
+                      size_t &output_size);
 };
 
 }  // namespace coeus
