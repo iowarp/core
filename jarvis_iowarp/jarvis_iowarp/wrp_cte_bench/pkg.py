@@ -1,5 +1,5 @@
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, MpiExecInfo
+from jarvis_cd.shell import Exec, PsshExecInfo
 import os
 
 class WrpCteBench(Application):
@@ -179,7 +179,7 @@ class WrpCteBench(Application):
         if self.config['nprocs'] > 1:
             self.log(f"Running benchmark with MPI: {self.config['nprocs']} processes, {self.config['ppn']} per node")
 
-            exec_info = MpiExecInfo(
+            exec_info = PsshExecInfo(
                 env=self.mod_env,
                 hostfile=self.hostfile,
                 nprocs=self.config['nprocs'],

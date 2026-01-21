@@ -7,9 +7,6 @@ name: cte_benchmark_example
 pkgs:
   - pkg_type: jarvis_iowarp.wrp_runtime
     pkg_name: runtime
-    do_dbg: false
-    dbg_port: 4000
-    log_level: "info"
 
   - pkg_type: jarvis_iowarp.wrp_cte
     pkg_name: cte_core
@@ -25,10 +22,11 @@ pkgs:
 
   - pkg_type: builtin.adios2_gray_scott
     pkg_name: gsbench
-    nprocs: 8                           # Number of MPI processes
-    ppn: 8                               # Processes per node
+    L: 256
+    nprocs: 4                            # Number of MPI processes
+    ppn: 4                               # Processes per node
     out_file: "/home/iowarp/gsbench.bp"
-    engine: "iowarp"
+    engine: "bp5"
 
 # Environment configuration (optional)
 # env:

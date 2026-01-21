@@ -1,0 +1,77 @@
+name: gray-scott-pdfcalc-iowarp-workflow
+hostfile: null
+interceptors: []
+
+# IOWarp Engine Test Pipeline
+# Tests the gray-scott + pdf_calc workflow using the IOWarp ADIOS2 plugin engine
+# IMPORTANT: CHIMAERA_WITH_RUNTIME should be 0 (client mode only)
+
+environment:
+  PATH: /workspace/external/iowarp-gray-scott/build/bin:${PATH}
+  ADIOS2_PLUGIN_PATH: /workspace/build/bin  # Path to IOWarp engine plugin library
+  CHIMAERA_WITH_RUNTIME: '0'  # CRITICAL: IOWarp engine requires runtime=0 for clients
+
+# Container configuration (optional)
+container_base: iowarp/iowarp-build:latest
+container_build: ''
+container_engine: podman
+container_image: ''
+container_ssh_port: 2222
+
+pkgs:
+  # Gray-Scott Producer (runs in background)
+  - pkg_type: builtin.adios2_gray_scott
+
+    # Simulation Parameters
+    L: 64
+    steps: 100
+    plotgap: 5
+    dt: 2.0
+    noise: 0.01
+
+    # Chemical Reaction Parameters
+    Du: 0.2
+    Dv: 0.1
+    F: 0.01
+    k: 0.05
+
+    # MPI Configuration
+    nprocs: 2
+    ppn: 16
+
+    # I/O Configuration - Using IOWarp Engine
+    engine: iowarp
+    out_file: /workspace/external/iowarp-gray-scott/gs-output.bp
+    db_path: /workspace/external/iowarp-gray-scott/metadata.db
+    run_async: true  # Run in background for parallel execution
+
+    # Checkpoint/Restart disabled for this test
+    checkpoint: false
+    restart: false
+
+    # ADIOS2 Advanced Options
+    adios_span: false
+    adios_memory_selection: false
+    mesh_type: image
+
+    # Workflow Control
+    full_run: false
+    limit: 0
+    Execution_order: '1'
+
+  # PDF Calc Consumer (runs after gray-scott starts)
+  - pkg_type: builtin.adios2_pdf_calc
+
+    # MPI Configuration
+    nprocs: 2
+    ppn: 16
+
+    # I/O Configuration
+    input_file: /workspace/external/iowarp-gray-scott/gs-output.bp
+    output_file: /workspace/external/iowarp-gray-scott/pdf-output.bp
+
+    # Analysis Parameters
+    nbins: 100
+    output_inputdata: NO
+    wait_for_producer: true  # Wait for gray-scott to create output file
+    engine: iowarp

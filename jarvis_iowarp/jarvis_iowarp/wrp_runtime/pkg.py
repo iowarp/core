@@ -127,12 +127,16 @@ class WrpRuntime(Service):
         # This is what both RuntimeInit and ClientInit check
         self.setenv('CHI_SERVER_CONF', self.config_file)
 
+        # Set HSHM_LOG_LEVEL for debug logging
+        self.setenv('HSHM_LOG_LEVEL', self.config['log_level'])
+
         # Generate chimaera configuration
         self._generate_config()
 
         self.log(f"IOWarp runtime configured")
         self.log(f"  Config file: {self.config_file}")
         self.log(f"  CHI_SERVER_CONF: {self.config_file}")
+        self.log(f"  HSHM_LOG_LEVEL: {self.config['log_level']}")
 
     def _generate_config(self):
         """Generate Chimaera runtime configuration file"""

@@ -1,8 +1,8 @@
 {
-    "name": "IOWarp Core",
+    "name": "IOWarp Core (CPU-only)",
     "build": {
         "dockerfile": "Dockerfile",
-        "context": "."
+        "context": "../.."
     },
     "workspaceFolder": "/workspace",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
@@ -11,11 +11,7 @@
         "CONDA_DEFAULT_ENV": "base",
         "CONDA_AUTO_ACTIVATE_BASE": "true",
         "CONDA_PREFIX": "/home/iowarp/miniconda3",
-        "CUDA_HOME": "/usr/local/cuda-12.6",
-        "LD_LIBRARY_PATH": "/home/iowarp/miniconda3/lib:/usr/local/cuda-12.6/lib64:/usr/local/cuda-12.6/lib64/stubs:/usr/lib/x86_64-linux-gnu",
-        "NVIDIA_VISIBLE_DEVICES": "all",
-        "NVIDIA_DRIVER_CAPABILITIES": "compute,utility",
-        "ASAN_OPTIONS": "protect_shadow_gap=0"
+        "LD_LIBRARY_PATH": "/home/iowarp/miniconda3/lib:/usr/lib/x86_64-linux-gnu"
     },
     "mounts": [
         "source=${localEnv:HOME}/.ssh,target=/tmp/host-ssh,type=bind,readonly",
@@ -25,14 +21,8 @@
     ],
     "runArgs": [
         "--privileged",
-        "--shm-size=2gb",
-        "--gpus=all"
+        "--shm-size=2gb"
     ],
-    // NOTE: If container fails to start with GPU error, run on host:
-    //   sudo apt-get install -y nvidia-container-toolkit
-    //   sudo nvidia-ctk runtime configure --runtime=docker
-    //   sudo systemctl restart docker
-    // Then rebuild the devcontainer.
     "customizations": {
         "vscode": {
             "extensions": [
@@ -46,8 +36,7 @@
                 "ms-azuretools.vscode-docker",
                 "ms-python.python",
                 "ms-python.vscode-pylance",
-                "ms-python.debugpy",
-                "nvidia.nsight-vscode-edition"
+                "ms-python.debugpy"
             ],
             "settings": {
                 "cmake.configureOnOpen": false,
