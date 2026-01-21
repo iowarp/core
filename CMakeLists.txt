@@ -319,33 +319,86 @@ find_package(Threads REQUIRED)
 # Compression libraries (conditional)
 if(WRP_CORE_ENABLE_COMPRESS)
     message(STATUS "WRP_CORE_ENABLE_COMPRESS is ON")
-    pkg_check_modules(bzip2 REQUIRED bzip2)
-    message(STATUS "found bz2.h at ${bzip2_INCLUDE_DIRS}")
 
-    pkg_check_modules(lzo2 REQUIRED lzo2)
-    message(STATUS "found lzo2.h at ${lzo2_INCLUDE_DIRS}")
-    get_filename_component(lzo2_dir "${lzo2_INCLUDE_DIRS}" DIRECTORY)
+    # Verify conda environment is enabled for compression libraries
+    if(NOT WRP_CORE_ENABLE_CONDA OR NOT IN_CONDA_BUILD)
+        message(FATAL_ERROR "WRP_CORE_ENABLE_COMPRESS requires WRP_CORE_ENABLE_CONDA=ON. Please enable conda or install compression libraries manually.")
+    endif()
 
+    # Libraries with pkg-config support - verify they're from conda
     pkg_check_modules(libzstd REQUIRED libzstd)
+    if(NOT libzstd_INCLUDE_DIRS MATCHES "$ENV{CONDA_PREFIX}")
+        message(FATAL_ERROR "libzstd not from conda: ${libzstd_INCLUDE_DIRS} (expected in $ENV{CONDA_PREFIX})")
+    endif()
     message(STATUS "found zstd.h at ${libzstd_INCLUDE_DIRS}")
 
     pkg_check_modules(liblz4 REQUIRED liblz4)
+    if(NOT liblz4_INCLUDE_DIRS MATCHES "$ENV{CONDA_PREFIX}")
+        message(FATAL_ERROR "liblz4 not from conda: ${liblz4_INCLUDE_DIRS} (expected in $ENV{CONDA_PREFIX})")
+    endif()
     message(STATUS "found lz4.h at ${liblz4_INCLUDE_DIRS}")
 
     pkg_check_modules(zlib REQUIRED zlib)
+    if(NOT zlib_INCLUDE_DIRS MATCHES "$ENV{CONDA_PREFIX}")
+        message(FATAL_ERROR "zlib not from conda: ${zlib_INCLUDE_DIRS} (expected in $ENV{CONDA_PREFIX})")
+    endif()
     message(STATUS "found zlib.h at ${zlib_INCLUDE_DIRS}")
 
     pkg_check_modules(liblzma REQUIRED liblzma)
+    if(NOT liblzma_INCLUDE_DIRS MATCHES "$ENV{CONDA_PREFIX}")
+        message(FATAL_ERROR "liblzma not from conda: ${liblzma_INCLUDE_DIRS} (expected in $ENV{CONDA_PREFIX})")
+    endif()
     message(STATUS "found liblzma.h at ${liblzma_INCLUDE_DIRS}")
 
     pkg_check_modules(libbrotlicommon REQUIRED libbrotlicommon libbrotlidec libbrotlienc)
+    if(NOT libbrotlicommon_INCLUDE_DIRS MATCHES "$ENV{CONDA_PREFIX}")
+        message(FATAL_ERROR "libbrotlicommon not from conda: ${libbrotlicommon_INCLUDE_DIRS} (expected in $ENV{CONDA_PREFIX})")
+    endif()
     message(STATUS "found libbrotli.h at ${libbrotlicommon_INCLUDE_DIRS}")
 
-    pkg_check_modules(snappy REQUIRED snappy)
-    message(STATUS "found snappy.h at ${snappy_INCLUDE_DIRS}")
-
     pkg_check_modules(blosc2 REQUIRED blosc2)
+    if(NOT blosc2_INCLUDE_DIRS MATCHES "$ENV{CONDA_PREFIX}")
+        message(FATAL_ERROR "blosc2 not from conda: ${blosc2_INCLUDE_DIRS} (expected in $ENV{CONDA_PREFIX})")
+    endif()
     message(STATUS "found blosc2.h at ${blosc2_INCLUDE_DIRS}")
+
+    # Libraries without pkg-config - use conda paths directly
+    # bzip2
+    find_path(bzip2_INCLUDE_DIR bzlib.h PATHS $ENV{CONDA_PREFIX}/include NO_DEFAULT_PATH REQUIRED)
+    find_library(bzip2_LIBRARY bz2 PATHS $ENV{CONDA_PREFIX}/lib NO_DEFAULT_PATH REQUIRED)
+    if(bzip2_INCLUDE_DIR AND bzip2_LIBRARY)
+        set(bzip2_INCLUDE_DIRS ${bzip2_INCLUDE_DIR})
+        set(bzip2_LIBRARIES bz2)
+        set(bzip2_LIBRARY_DIRS $ENV{CONDA_PREFIX}/lib)
+        message(STATUS "found bz2.h at ${bzip2_INCLUDE_DIRS}")
+    else()
+        message(FATAL_ERROR "bzip2 not found in conda environment. Install with: conda install bzip2")
+    endif()
+
+    # lzo
+    find_path(lzo2_INCLUDE_DIR lzo/lzo1x.h PATHS $ENV{CONDA_PREFIX}/include NO_DEFAULT_PATH REQUIRED)
+    find_library(lzo2_LIBRARY lzo2 PATHS $ENV{CONDA_PREFIX}/lib NO_DEFAULT_PATH REQUIRED)
+    if(lzo2_INCLUDE_DIR AND lzo2_LIBRARY)
+        set(lzo2_INCLUDE_DIRS ${lzo2_INCLUDE_DIR})
+        set(lzo2_LIBRARIES lzo2)
+        set(lzo2_LIBRARY_DIRS $ENV{CONDA_PREFIX}/lib)
+        get_filename_component(lzo2_dir "${lzo2_INCLUDE_DIRS}" DIRECTORY)
+        message(STATUS "found lzo2.h at ${lzo2_INCLUDE_DIRS}")
+    else()
+        message(FATAL_ERROR "lzo not found in conda environment. Install with: conda install lzo")
+    endif()
+
+    # snappy
+    find_path(snappy_INCLUDE_DIR snappy.h PATHS $ENV{CONDA_PREFIX}/include NO_DEFAULT_PATH REQUIRED)
+    find_library(snappy_LIBRARY snappy PATHS $ENV{CONDA_PREFIX}/lib NO_DEFAULT_PATH REQUIRED)
+    if(snappy_INCLUDE_DIR AND snappy_LIBRARY)
+        set(snappy_INCLUDE_DIRS ${snappy_INCLUDE_DIR})
+        set(snappy_LIBRARIES snappy)
+        set(snappy_LIBRARY_DIRS $ENV{CONDA_PREFIX}/lib)
+        message(STATUS "found snappy.h at ${snappy_INCLUDE_DIRS}")
+    else()
+        message(FATAL_ERROR "snappy not found in conda environment. Install with: conda install snappy")
+    endif()
 
     # LibPressio - try find_package first (CMake-based), fall back to pkg-config
     # Make it optional since libpressio may not be installed
