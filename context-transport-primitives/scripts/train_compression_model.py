@@ -97,11 +97,12 @@ def prepare_features(df):
     print("FEATURE ENGINEERING")
     print("=" * 80)
 
-    # Select relevant columns (include CPU utilization as feature)
+    # Select relevant columns (include CPU utilization and chunk size as features)
     feature_cols = [
         'Library',
         'Data Type',
-        'Target CPU Util (%)',  # NEW: CPU load affects compression time
+        'Chunk Size (bytes)',      # NEW: Chunk size affects compression performance
+        'Target CPU Util (%)',     # CPU load affects compression time
         'Shannon Entropy (bits/byte)',
         'MAD',
         'Second Derivative Mean'

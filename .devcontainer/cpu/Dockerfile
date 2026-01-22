@@ -51,43 +51,6 @@ RUN echo '#!/bin/bash\n\
 RUN echo "iowarp ALL=(ALL) NOPASSWD: /bin/chmod 666 /var/run/docker.sock" >> /etc/sudoers.d/docker-socket \
     && chmod 0440 /etc/sudoers.d/docker-socket
 
-# Install NVIDIA Container Toolkit repository
-RUN curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg \
-    && curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-    tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-
-# Install CUDA from NVIDIA's official repository
-# This installs the complete CUDA toolkit + runtime libraries for actual GPU execution
-RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb \
-    && dpkg -i cuda-keyring_1.1-1_all.deb \
-    && rm cuda-keyring_1.1-1_all.deb \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-    cuda-toolkit-12-6 \
-    cuda-cudart-12-6 \
-    cuda-libraries-12-6 \
-    cuda-nvrtc-12-6 \
-    cuda-nvml-dev-12-6 \
-    libcublas-12-6 \
-    libcufft-12-6 \
-    libcurand-12-6 \
-    libcusolver-12-6 \
-    libcusparse-12-6 \
-    libnpp-12-6 \
-    libnvidia-container-tools \
-    libnvidia-container1 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set CUDA environment variables for runtime execution
-ENV CUDA_HOME=/usr/local/cuda-12.6
-ENV PATH=${CUDA_HOME}/bin:${PATH}
-# Set LD_LIBRARY_PATH to include Conda, CUDA, and system paths
-# Note: /home/iowarp/miniconda3 will be set after conda installation, but we set it early for consistency
-ENV LD_LIBRARY_PATH=/home/iowarp/miniconda3/lib:${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs:/usr/lib/x86_64-linux-gnu
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
-
 # Switch to iowarp user for venv setup
 # Note: conda is already installed in the base image (iowarp/iowarp-deps:latest)
 # with all development dependencies (boost, hdf5, yaml-cpp, zeromq, etc.)
@@ -113,10 +76,10 @@ RUN /home/iowarp/miniconda3/bin/conda init bash \
 #   - Core libraries: boost, hdf5, yaml-cpp, zeromq, cppzmq, cereal
 #   - Testing: catch2, pytest
 #   - Network: libcurl, openssl
-#   - Compression libraries: zlib, bzip2, lzo, zstd, lz4, xz (lzma), brotli, snappy
+#   - Compression libraries: zlib, bzip2, lzo, zstd, lz4, xz (lzma), brotli, snappy, c-blosc2
 #   - Lossy compression: sz3, zfp (scientific compressors, available via conda)
 #   - Optional: poco (for Globus support), nlohmann_json
-#   - GPU: CUDA installed from NVIDIA repos (see below)
+#   - GPU: Not installed in CPU-only variant (use nvidia-gpu devcontainer for GPU support)
 RUN /home/iowarp/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main \
     && /home/iowarp/miniconda3/bin/conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r \
     && /home/iowarp/miniconda3/bin/conda install -y \
@@ -141,6 +104,7 @@ RUN /home/iowarp/miniconda3/bin/conda tos accept --override-channels --channel h
     xz \
     brotli \
     snappy \
+    c-blosc2 \
     zfp \
     poco \
     nlohmann_json \
@@ -211,15 +175,10 @@ USER iowarp
 # Note: LibPressio is not installed by default due to dependency issues (requires std_compat)
 # It can be installed separately if needed for advanced compression plugin support
 
-# Add conda activation and CUDA paths to bashrc
+# Add conda activation to bashrc
 # Conda base environment is auto-activated to ensure all conda dependencies are available
 RUN echo '' >> /home/iowarp/.bashrc \
-    && echo '# CUDA environment variables for GPU execution' >> /home/iowarp/.bashrc \
-    && echo 'export CUDA_HOME=/usr/local/cuda-12.6' >> /home/iowarp/.bashrc \
-    && echo 'export PATH=/usr/local/cuda-12.6/bin:$PATH' >> /home/iowarp/.bashrc \
-    && echo 'export LD_LIBRARY_PATH=/home/iowarp/miniconda3/lib:/usr/local/cuda-12.6/lib64:/usr/local/cuda-12.6/lib64/stubs:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH' >> /home/iowarp/.bashrc \
-    && echo 'export NVIDIA_VISIBLE_DEVICES=all' >> /home/iowarp/.bashrc \
-    && echo 'export NVIDIA_DRIVER_CAPABILITIES=compute,utility' >> /home/iowarp/.bashrc
+    && echo 'export LD_LIBRARY_PATH=/home/iowarp/miniconda3/lib:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH' >> /home/iowarp/.bashrc
 
 # Install libaio for Linux AIO support (required by bdev ChiMod)
 SHELL ["/bin/bash", "-c"]
@@ -239,12 +198,11 @@ RUN cd /home/iowarp \
     && jarvis rg build
 
 # Add conda initialization and environment info to bashrc
-RUN echo 'export NVIDIA_DRIVER_CAPABILITIES=compute,utility' >> /home/iowarp/.bashrc \
-    && echo '' >> /home/iowarp/.bashrc \
+RUN echo '' >> /home/iowarp/.bashrc \
     && echo '# >>> conda initialize >>>' >> /home/iowarp/.bashrc \
     && echo '# Conda base environment is auto-activated with all dev dependencies' >> /home/iowarp/.bashrc \
     && echo '# This includes: boost, hdf5, yaml-cpp, zeromq, cereal, catch2, pytest, etc.' >> /home/iowarp/.bashrc \
-    && echo '# Compression libraries: zlib, bzip2, lzo, zstd, lz4, xz, brotli, snappy (via conda)' >> /home/iowarp/.bashrc \
+    && echo '# Compression libraries: zlib, bzip2, lzo, zstd, lz4, xz, brotli, snappy, c-blosc2 (via conda)' >> /home/iowarp/.bashrc \
     && echo '# Lossy compression: ZFP (via conda), SZ3, FPZIP (built from source)' >> /home/iowarp/.bashrc \
     && echo '# ADIOS2: Built from source (installed in /usr/local)' >> /home/iowarp/.bashrc \
     && echo '# Create custom environments if needed: conda create -n myenv' >> /home/iowarp/.bashrc \

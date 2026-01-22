@@ -957,9 +957,16 @@ TEST_CASE("Lossy Compression Parameter Study") {
     // Set CPU affinity to core 0 for reproducible results
     SetCPUAffinity();
 
-    // Fixed chunk size: 64KB for faster testing and focused parameter analysis
+    // Multiple chunk sizes for comprehensive analysis
+    // Tests compression behavior across different data scales
     const std::vector<size_t> chunk_sizes = {
-        64 * 1024      // 64KB only
+        4UL * 1024,       // 4KB
+        16UL * 1024,      // 16KB
+        64UL * 1024,      // 64KB
+        256UL * 1024,     // 256KB
+        1024UL * 1024,    // 1MB
+        4UL * 1024 * 1024,    // 4MB
+        16UL * 1024 * 1024    // 16MB
     };
 
     // Target CPU utilization levels to test

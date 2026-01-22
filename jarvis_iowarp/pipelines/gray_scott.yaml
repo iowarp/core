@@ -1,0 +1,19 @@
+# CTE Benchmark Example Pipeline
+# Purpose: Demonstrate CTE core functionality with the CTE benchmark application
+# Requirements: chimaera_start_runtime and chimaera_stop_runtime in PATH, wrp_cte_bench executable in PATH
+
+name: cte_benchmark_example
+
+pkgs: 
+  - pkg_type: builtin.adios2_gray_scott
+    pkg_name: gsbench
+    L: 384
+    nprocs: 4                            # Number of MPI processes
+    ppn: 4                               # Processes per node
+    out_file: "/home/iowarp/gsbench.bp"
+    engine: "bp5"
+
+# Environment configuration (optional)
+# env:
+#   WRP_CTE_LOG_LEVEL: "info"
+#   CTE_DEBUG: "0"
