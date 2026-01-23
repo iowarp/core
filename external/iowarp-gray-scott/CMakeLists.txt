@@ -13,7 +13,9 @@ option(USE_TIMERS "Use profiling timers" OFF)
 option(ENABLE_VTK "Build VTK visualization apps" OFF)
 
 # Find required packages
-find_package(MPI REQUIRED)
+if(NOT MPI_FOUND)
+  find_package(MPI REQUIRED)
+endif()
 if(NOT ADIOS2_FOUND)
   find_package(ADIOS2 REQUIRED)
 endif()
@@ -92,6 +94,7 @@ add_executable(gray-scott
     simulation/writer.cpp
 )
 
+target_include_directories(gray-scott PRIVATE ${MPI_C_INCLUDE_DIRS})
 target_link_libraries(gray-scott
     PRIVATE
         adios2::adios2
@@ -110,6 +113,7 @@ add_executable(pdf_calc
     analysis/pdf_calc.cpp
 )
 
+target_include_directories(pdf_calc PRIVATE ${MPI_C_INCLUDE_DIRS})
 target_link_libraries(pdf_calc
     PRIVATE
         adios2::adios2
@@ -136,6 +140,7 @@ if(ENABLE_VTK OR VTK_ROOT)
     if(VTK_FOUND)
         message(STATUS "  Building isosurface (VTK ${VTK_VERSION})")
         add_executable(isosurface analysis/isosurface.cpp)
+        target_include_directories(isosurface PRIVATE ${MPI_C_INCLUDE_DIRS})
         target_link_libraries(isosurface
             PRIVATE
                 adios2::adios2
@@ -158,6 +163,7 @@ if(ENABLE_VTK OR VTK_ROOT)
     if(VTK_FOUND)
         message(STATUS "  Building find_blobs (VTK ${VTK_VERSION})")
         add_executable(find_blobs analysis/find_blobs.cpp)
+        target_include_directories(find_blobs PRIVATE ${MPI_C_INCLUDE_DIRS})
         target_link_libraries(find_blobs
             PRIVATE
                 adios2::adios2
@@ -179,6 +185,7 @@ if(ENABLE_VTK OR VTK_ROOT)
     if(VTK_FOUND)
         message(STATUS "  Building compute_curvature (VTK ${VTK_VERSION})")
         add_executable(compute_curvature analysis/curvature.cpp)
+        target_include_directories(compute_curvature PRIVATE ${MPI_C_INCLUDE_DIRS})
         target_link_libraries(compute_curvature
             PRIVATE
                 adios2::adios2
@@ -201,6 +208,7 @@ if(ENABLE_VTK OR VTK_ROOT)
     if(VTK_FOUND)
         message(STATUS "  Building render_isosurface (VTK ${VTK_VERSION})")
         add_executable(render_isosurface plot/render_isosurface.cpp)
+        target_include_directories(render_isosurface PRIVATE ${MPI_C_INCLUDE_DIRS})
         target_link_libraries(render_isosurface
             PRIVATE
                 adios2::adios2

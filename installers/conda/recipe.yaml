@@ -54,7 +54,6 @@ requirements:
     - hdf5
     - catch2
     - libaio
-    - openmpi
   run:
     - python
     - zeromq
@@ -63,7 +62,6 @@ requirements:
     - hdf5
     - catch2
     - libaio
-    - openmpi
 
 tests:
   - script:
