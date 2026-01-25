@@ -11,13 +11,12 @@
 #include <vector>
 
 #include "chimaera/chimaera_manager.h"
-#include "chimaera/task.h"
 #include "chimaera/local_task_archives.h"
+#include "chimaera/scheduler/scheduler.h"
 #include "chimaera/task.h"
 #include "chimaera/task_queue.h"
 #include "chimaera/types.h"
 #include "chimaera/worker.h"
-#include "chimaera/scheduler/scheduler.h"
 #include "hermes_shm/memory/backend/posix_shm_mmap.h"
 
 namespace chi {
@@ -26,8 +25,8 @@ namespace chi {
  * Network queue priority levels for send operations
  */
 enum class NetQueuePriority : u32 {
-  kSendIn = 0,   ///< Priority 0: SendIn operations (sending task inputs)
-  kSendOut = 1   ///< Priority 1: SendOut operations (sending task outputs)
+  kSendIn = 0,  ///< Priority 0: SendIn operations (sending task inputs)
+  kSendOut = 1  ///< Priority 1: SendOut operations (sending task outputs)
 };
 
 /**
@@ -49,8 +48,8 @@ struct IpcSharedHeader {
   TaskQueue worker_queues;  // Multi-lane worker task queue in shared memory
   u32 num_workers;          // Number of workers for which queues are allocated
   u32 num_sched_queues;     // Number of scheduling queues for task distribution
-  u64 node_id;  // 64-bit hash of the hostname for node identification
-  pid_t runtime_pid;        // PID of the runtime process (for tgkill)
+  u64 node_id;        // 64-bit hash of the hostname for node identification
+  pid_t runtime_pid;  // PID of the runtime process (for tgkill)
 };
 
 /**
@@ -232,7 +231,6 @@ class IpcManager {
       // Convert Future<TaskT> to Future<Task> for the queue
       Future<Task> task_future = queue_future.template Cast<Task>();
       lane_ref.Push(task_future);
-      HLOG(kInfo, "Send: Pushed task (method={}) to lane {}", task_ptr->method_, lane_id);
 
       // 7. Awaken worker for this lane
       AwakenWorker(&lane_ref);
@@ -524,7 +522,7 @@ class IpcManager {
    * @param port Port number to connect to
    * @return Pointer to the ZeroMQ client (owned by the pool)
    */
-  hshm::lbm::Client* GetOrCreateClient(const std::string& addr, int port);
+  hshm::lbm::Client *GetOrCreateClient(const std::string &addr, int port);
 
   /**
    * Clear all cached client connections
@@ -545,13 +543,13 @@ class IpcManager {
    * @param future Output parameter for the popped Future
    * @return true if a Future was popped, false if queue is empty
    */
-  bool TryPopNetTask(NetQueuePriority priority, Future<Task>& future);
+  bool TryPopNetTask(NetQueuePriority priority, Future<Task> &future);
 
   /**
    * Get the network queue for direct access
    * @return Pointer to the network queue or nullptr if not initialized
    */
-  NetQueue* GetNetQueue() { return net_queue_.ptr_; }
+  NetQueue *GetNetQueue() { return net_queue_.ptr_; }
 
  private:
   /**
@@ -561,18 +559,17 @@ class IpcManager {
    * @return true if task is a Send or Recv admin task
    */
   template <typename TaskT>
-  bool IsNetworkTask(const hipc::FullPtr<TaskT>& task_ptr) const {
+  bool IsNetworkTask(const hipc::FullPtr<TaskT> &task_ptr) const {
     if (task_ptr.IsNull()) {
       return false;
     }
     // Admin kSend = 14, kRecv = 15
     constexpr u32 kAdminSend = 14;
     constexpr u32 kAdminRecv = 15;
-    const Task* task = task_ptr.ptr_;
+    const Task *task = task_ptr.ptr_;
     return task->pool_id_ == kAdminPoolId &&
            (task->method_ == kAdminSend || task->method_ == kAdminRecv);
   }
-
 
   /**
    * Initialize memory segments for server
@@ -688,14 +685,14 @@ namespace chi {
 
 template <typename TaskT, typename AllocT>
 void Future<TaskT, AllocT>::Wait() {
-  // Mark this Future as owner of the task (will be destroyed on Future destruction)
-  // Caller should NOT manually call DelTask() after Wait()
+  // Mark this Future as owner of the task (will be destroyed on Future
+  // destruction) Caller should NOT manually call DelTask() after Wait()
   is_owner_ = true;
 
   if (!task_ptr_.IsNull() && !future_shm_.IsNull()) {
     // Wait for completion by polling is_complete atomic
-    // Busy-wait with thread yielding - works for both client and runtime contexts
-    // Coroutine contexts should use co_await Future instead
+    // Busy-wait with thread yielding - works for both client and runtime
+    // contexts Coroutine contexts should use co_await Future instead
     hipc::atomic<u32> &is_complete = future_shm_->is_complete_;
     while (is_complete.load() == 0) {
       HSHM_THREAD_MODEL->Yield();

@@ -363,7 +363,6 @@ u32 Worker::ProcessNewTasks() {
     Future<Task> future;
     // Pop Future<Task> from assigned lane
     if (assigned_lane_->Pop(future)) {
-      HLOG(kInfo, "Worker {}: Popped task from queue", worker_id_);
       tasks_processed++;
       SetCurrentRunContext(nullptr);
 
@@ -387,8 +386,6 @@ u32 Worker::ProcessNewTasks() {
         future_shm->is_complete_.store(1);
         continue;
       }
-      HLOG(kInfo, "Worker {}: Found container for pool_id={}, method={}",
-           worker_id_, pool_id, method_id);
 
       // Check if Future has null task pointer (indicates task needs to be
       // loaded)
@@ -397,15 +394,10 @@ u32 Worker::ProcessNewTasks() {
 
       if (task_full_ptr.IsNull()) {
         // CLIENT PATH: Load task from serialized data in FutureShm
-        HLOG(kInfo, "Worker {}: Loading task from serialized data (method={})",
-             worker_id_, method_id);
         std::vector<char> serialized_data(future_shm->serialized_task_.begin(),
                                           future_shm->serialized_task_.end());
         LocalLoadTaskArchive archive(serialized_data);
-        HLOG(kInfo, "Worker {}: About to call LocalAllocLoadTask", worker_id_);
         task_full_ptr = container->LocalAllocLoadTask(method_id, archive);
-        HLOG(kInfo, "Worker {}: LocalAllocLoadTask completed, task IsNull={}",
-             worker_id_, task_full_ptr.IsNull());
 
         // Update the Future's task pointer
         future.GetTaskPtr() = task_full_ptr;
@@ -528,8 +520,6 @@ void Worker::SuspendMe() {
     }
 
     // Wait for signal using epoll_wait
-    HLOG(kDebug, "Worker {}: Entering epoll_wait (timeout_ms={})", worker_id_,
-         timeout_ms);
     int nfds =
         epoll_wait(epoll_fd_, epoll_events_, MAX_EPOLL_EVENTS, timeout_ms);
 
@@ -542,11 +532,9 @@ void Worker::SuspendMe() {
       int signal_fd = assigned_lane_->GetSignalFd();
       struct signalfd_siginfo si;
       ssize_t bytes_read = read(signal_fd, &si, sizeof(si));
-      HLOG(kDebug, "Worker {}: Read {} bytes from signalfd, signal={}",
-           worker_id_, bytes_read, si.ssi_signo);
+      (void)bytes_read;  // Suppress unused variable warning
     } else if (nfds == 0) {
       // Timeout occurred
-      HLOG(kDebug, "Worker {}: epoll_wait timeout", worker_id_);
       sleep_count_++;
     } else {
       // Error occurred

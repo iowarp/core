@@ -53,13 +53,9 @@ void DefaultScheduler::AdjustPolling(RunContext *run_ctx) {
   // Maximum polling interval in microseconds (100ms)
   const double kMaxPollingIntervalUs = 100000.0;
 
-  double old_interval = run_ctx->yield_time_us_;
-
   if (run_ctx->did_work_) {
     // Task did work - use the true (responsive) period
     run_ctx->yield_time_us_ = run_ctx->true_period_ns_ / 1000.0;
-    HLOG(kDebug, "AdjustPolling: task did work, reset to true period: {}us -> {}us",
-         old_interval, run_ctx->yield_time_us_);
   } else {
     // Task didn't do work - increase polling interval (exponential backoff)
     double current_interval = run_ctx->yield_time_us_;
@@ -78,8 +74,6 @@ void DefaultScheduler::AdjustPolling(RunContext *run_ctx) {
     }
 
     run_ctx->yield_time_us_ = new_interval;
-    HLOG(kDebug, "AdjustPolling: no work, backing off: {}us -> {}us (true_period={}ns)",
-         old_interval, run_ctx->yield_time_us_, run_ctx->true_period_ns_);
   }
 }
 
