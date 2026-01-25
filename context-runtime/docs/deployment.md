@@ -121,7 +121,7 @@ logging:
 runtime:
   stack_size: 65536  # 64KB per task
   queue_depth: 10000
-  lane_map_policy: "round_robin"  # Options: map_by_pid_tid, round_robin (default), random
+  local_sched: "default"  # Local task scheduler (default: "default")
   heartbeat_interval: 1000  # milliseconds
 ```
 
@@ -189,13 +189,11 @@ runtime:
 |-----------|------|---------|-------------|
 | `stack_size` | integer | 65536 | Stack size per task in bytes (64KB default) |
 | `queue_depth` | integer | 10000 | Maximum depth of task queues |
-| `lane_map_policy` | string | "round_robin" | Task lane assignment policy |
+| `local_sched` | string | "default" | Local task scheduler (default: "default") |
 | `heartbeat_interval` | integer | 1000 | Heartbeat interval in milliseconds |
 
-**Lane mapping policies:**
-- `round_robin` (default): Distribute tasks evenly across lanes
-- `map_by_pid_tid`: Map tasks based on process/thread ID for affinity
-- `random`: Random lane assignment
+**Local scheduler options:**
+- `default`: Default task scheduler with factory-based task dispatching
 
 #### Connection Retry During System Boot
 
@@ -405,7 +403,7 @@ logging:
 runtime:
   stack_size: 65536
   queue_depth: 20000
-  lane_map_policy: "round_robin"
+  local_sched: "default"
   heartbeat_interval: 1000
 
 compose:

@@ -189,7 +189,7 @@ runtime:
   slow_threads: 0                         # Slow worker threads (long tasks)
   stack_size: 65536                       # 64KB per task
   queue_depth: 10000                      # Maximum queue depth
-  lane_map_policy: "round_robin"          # Options: map_by_pid_tid, round_robin, random
+  local_sched: "default"                  # Local task scheduler (default: "default")
 
 # Compose section for declarative pool creation
 compose:

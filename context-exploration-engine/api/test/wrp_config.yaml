@@ -28,7 +28,7 @@ logging:
 runtime:
   stack_size: 65536
   queue_depth: 5000
-  lane_map_policy: round_robin
+  local_sched: "default"  # Local task scheduler (default: "default")
   heartbeat_interval: 1000
 
 # Target management settings

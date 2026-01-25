@@ -123,7 +123,7 @@ logging:
 runtime:
   stack_size: 65536
   queue_depth: 10000
-  lane_map_policy: round_robin
+  local_sched: "default"  # Local task scheduler (default: "default")
   heartbeat_interval: 1000
 ```
 
@@ -338,7 +338,7 @@ logging:
 runtime:
   stack_size: 65536
   queue_depth: 10000
-  lane_map_policy: round_robin
+  local_sched: "default"
   heartbeat_interval: 1000
 
 compose:

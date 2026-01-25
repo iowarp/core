@@ -31,7 +31,7 @@ logging:
 runtime:
   stack_size: 65536  # 64KB per task
   queue_depth: 10000
-  lane_map_policy: "round_robin"  # Options: map_by_pid_tid, round_robin (default), random
+  local_sched: "default"  # Local task scheduler (default: "default")
   heartbeat_interval: 1000  # milliseconds
 
 # Modules to compose

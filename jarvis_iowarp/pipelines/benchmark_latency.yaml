@@ -26,7 +26,7 @@ pkgs:
     log_level: "info"
     stack_size: 65536
     queue_depth: 10000
-    lane_map_policy: "round_robin"
+    local_sched: "default"
     heartbeat_interval: 1000
     sleep: 1
 
