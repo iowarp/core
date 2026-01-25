@@ -10,6 +10,7 @@
 
 #include "chimaera/container.h"
 #include "chimaera/singletons.h"
+#include "chimaera/scheduler/scheduler_factory.h"
 
 // Global pointer variable definition for Work Orchestrator singleton
 HSHM_DEFINE_GLOBAL_PTR_VAR_CC(chi::WorkOrchestrator, g_work_orchestrator);
@@ -66,6 +67,11 @@ bool WorkOrchestrator::Init() {
   if (!CreateWorker(kNetWorker)) {
     return false;
   }
+
+  // Create scheduler using factory
+  std::string sched_name = config->GetLocalSched();
+  scheduler_ = SchedulerFactory::Get(sched_name);
+  HLOG(kDebug, "WorkOrchestrator: Scheduler initialized: {}", sched_name);
 
   is_initialized_ = true;
   return true;
@@ -207,6 +213,8 @@ bool WorkOrchestrator::SpawnWorkerThreads() {
   // Map lanes to sched workers (only sched workers process tasks from worker
   // queues)
   u32 num_sched_workers = static_cast<u32>(sched_workers_.size());
+  HLOG(kInfo, "WorkOrchestrator: num_sched_workers={}, num_lanes={}",
+        num_sched_workers, num_lanes);
   if (num_sched_workers == 0) {
     HLOG(kError,
           "WorkOrchestrator: No sched workers available for lane mapping");
@@ -228,10 +236,11 @@ bool WorkOrchestrator::SpawnWorkerThreads() {
       // Mark the lane with the assigned worker ID
       lane->SetAssignedWorkerId(worker->GetId());
 
-      HLOG(kDebug,
-            "WorkOrchestrator: Mapped sched worker {} (ID {}) to worker "
-            "queue lane {}",
+      HLOG(kInfo,
+            "WorkOrchestrator: Mapped worker {} (ID {}) to lane {}",
             worker_idx, worker->GetId(), lane_id);
+    } else {
+      HLOG(kWarning, "WorkOrchestrator: Worker at index {} is null", worker_idx);
     }
   }
 
@@ -250,6 +259,13 @@ bool WorkOrchestrator::SpawnWorkerThreads() {
         worker_threads_.emplace_back(std::move(thread));
       }
     }
+
+    // Call scheduler to divide workers after spawning
+    if (scheduler_) {
+      scheduler_->DivideWorkers(this);
+      HLOG(kDebug, "WorkOrchestrator: Scheduler DivideWorkers called");
+    }
+
     return true;
   } catch (const std::exception &e) {
     return false;

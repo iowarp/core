@@ -8,6 +8,7 @@
 #include "chimaera/task_queue.h"
 #include "chimaera/types.h"
 #include "chimaera/worker.h"
+#include "chimaera/scheduler/scheduler.h"
 
 namespace chi {
 
@@ -178,6 +179,9 @@ class WorkOrchestrator {
   // HSHM threads (will be filled during initialization)
   std::vector<hshm::thread::Thread> worker_threads_;
   hshm::thread::ThreadGroup thread_group_;
+
+  // Scheduler for worker division and task routing
+  std::unique_ptr<Scheduler> scheduler_;
 
 };
 

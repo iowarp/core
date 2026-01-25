@@ -445,44 +445,8 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Apply lane policy override if specified
-  if (!config.lane_policy.empty()) {
-    auto *ipc_manager = CHI_IPC;
-    if (ipc_manager) {
-      chi::LaneMapPolicy policy;
-      if (config.lane_policy == "map_by_pid_tid") {
-        policy = chi::LaneMapPolicy::kMapByPidTid;
-      } else if (config.lane_policy == "round_robin") {
-        policy = chi::LaneMapPolicy::kRoundRobin;
-      } else if (config.lane_policy == "random") {
-        policy = chi::LaneMapPolicy::kRandom;
-      } else {
-        std::cerr << "ERROR: Unknown lane policy: " << config.lane_policy
-                  << "\n";
-        return 1;
-      }
-      ipc_manager->SetLaneMapPolicy(policy);
-      std::cout << "Lane policy: " << config.lane_policy << " (override)\n";
-    }
-  } else {
-    auto *ipc_manager = CHI_IPC;
-    if (ipc_manager) {
-      auto policy = ipc_manager->GetLaneMapPolicy();
-      const char *policy_name = "unknown";
-      switch (policy) {
-      case chi::LaneMapPolicy::kMapByPidTid:
-        policy_name = "map_by_pid_tid";
-        break;
-      case chi::LaneMapPolicy::kRoundRobin:
-        policy_name = "round_robin";
-        break;
-      case chi::LaneMapPolicy::kRandom:
-        policy_name = "random";
-        break;
-      }
-      std::cout << "Lane policy: " << policy_name << " (from config)\n";
-    }
-  }
+  // Lane mapping always uses PID+TID hash
+  std::cout << "Lane policy: map_by_pid_tid (default)\n";
 
   // Create pool based on test case
   chi::PoolId test_pool_id;

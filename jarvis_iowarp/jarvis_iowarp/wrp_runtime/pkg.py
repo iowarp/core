@@ -86,11 +86,10 @@ class WrpRuntime(Service):
                 'default': 10000
             },
             {
-                'name': 'lane_map_policy',
-                'msg': 'Lane mapping policy',
+                'name': 'local_sched',
+                'msg': 'Local task scheduler',
                 'type': str,
-                'choices': ['map_by_pid_tid', 'round_robin', 'random'],
-                'default': 'round_robin'
+                'default': 'default'
             },
             {
                 'name': 'heartbeat_interval',
@@ -162,7 +161,7 @@ class WrpRuntime(Service):
                 # Task execution configuration
                 'stack_size': self.config['stack_size'],
                 'queue_depth': self.config['queue_depth'],
-                'lane_map_policy': self.config['lane_map_policy'],
+                'local_sched': self.config['local_sched'],
                 'heartbeat_interval': self.config['heartbeat_interval'],
                 # Worker sleep configuration
                 'first_busy_wait': self.config['first_busy_wait'],

@@ -17,6 +17,7 @@
 #include "chimaera/task.h"
 #include "chimaera/task_queue.h"
 #include "chimaera/types.h"
+#include "chimaera/scheduler/scheduler.h"
 
 namespace chi {
 
@@ -50,6 +51,7 @@ struct WorkerStats {
   u32 suspend_period_us_;    /**< Time in microseconds before the worker would suspend */
   u32 idle_iterations_;      /**< Number of consecutive idle iterations */
   bool is_running_;          /**< Whether the worker is currently running */
+  bool is_active_;           /**< Whether the worker's lane is currently active (processing tasks) */
   u32 worker_id_;            /**< Worker identifier */
 
   /** Default constructor */
@@ -61,20 +63,21 @@ struct WorkerStats {
         suspend_period_us_(0),
         idle_iterations_(0),
         is_running_(false),
+        is_active_(false),
         worker_id_(0) {}
 
   template <typename Archive>
   void save(Archive& ar) const {
     ar(num_tasks_processed_, num_queued_tasks_, num_blocked_tasks_,
        num_periodic_tasks_, suspend_period_us_, idle_iterations_,
-       is_running_, worker_id_);
+       is_running_, is_active_, worker_id_);
   }
 
   template <typename Archive>
   void load(Archive& ar) {
     ar(num_tasks_processed_, num_queued_tasks_, num_blocked_tasks_,
        num_periodic_tasks_, suspend_period_us_, idle_iterations_,
-       is_running_, worker_id_);
+       is_running_, is_active_, worker_id_);
   }
 };
 
@@ -526,6 +529,9 @@ class Worker {
   // Mutex to protect epoll_ctl operations from multiple threads
   // Used when external code (e.g., bdev) registers FDs with this worker's epoll
   hshm::Mutex epoll_mutex_;
+
+  // Scheduler for runtime task routing
+  std::unique_ptr<Scheduler> scheduler_;
 };
 
 }  // namespace chi

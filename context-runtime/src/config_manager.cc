@@ -126,10 +126,6 @@ std::string ConfigManager::GetHostfilePath() const {
 
 bool ConfigManager::IsValid() const { return is_initialized_; }
 
-LaneMapPolicy ConfigManager::GetLaneMapPolicy() const {
-  return lane_map_policy_;
-}
-
 void ConfigManager::LoadDefault() {
   // Set default configuration values
   sched_workers_ = 4;
@@ -150,9 +146,6 @@ void ConfigManager::LoadDefault() {
 
   // Set default hostfile path (empty means no networking/distributed mode)
   hostfile_path_ = "";
-
-  // Set default lane mapping policy
-  lane_map_policy_ = LaneMapPolicy::kRoundRobin;
 
   // Set default network retry configuration
   wait_for_restart_timeout_ = 30;      // 30 seconds
@@ -180,19 +173,9 @@ void ConfigManager::ParseYAML(YAML::Node &yaml_conf) {
       process_reaper_workers_ = runtime["process_reaper_threads"].as<u32>();
     }
 
-    // Lane mapping policy
-    if (runtime["lane_map_policy"]) {
-      std::string policy_str = runtime["lane_map_policy"].as<std::string>();
-      if (policy_str == "map_by_pid_tid") {
-        lane_map_policy_ = LaneMapPolicy::kMapByPidTid;
-      } else if (policy_str == "round_robin") {
-        lane_map_policy_ = LaneMapPolicy::kRoundRobin;
-      } else if (policy_str == "random") {
-        lane_map_policy_ = LaneMapPolicy::kRandom;
-      } else {
-        HLOG(kWarning, "Unknown lane_map_policy '{}', using default (round_robin)", policy_str);
-        lane_map_policy_ = LaneMapPolicy::kRoundRobin;
-      }
+    // Local task scheduler
+    if (runtime["local_sched"]) {
+      local_sched_ = runtime["local_sched"].as<std::string>();
     }
 
     // Worker sleep configuration

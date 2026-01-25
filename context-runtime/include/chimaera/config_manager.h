@@ -152,10 +152,10 @@ class ConfigManager : public hshm::BaseConfig {
   bool IsValid() const;
 
   /**
-   * Get lane mapping policy for task distribution
-   * @return Lane mapping policy
+   * Get local task scheduler name
+   * @return Scheduler name (default: "default")
    */
-  LaneMapPolicy GetLaneMapPolicy() const;
+  std::string GetLocalSched() const { return local_sched_; }
 
   /**
    * Get compose configuration
@@ -221,8 +221,8 @@ class ConfigManager : public hshm::BaseConfig {
   // Networking configuration
   std::string hostfile_path_ = "";
 
-  // Task distribution policy
-  LaneMapPolicy lane_map_policy_ = LaneMapPolicy::kRoundRobin;
+  // Local task scheduler
+  std::string local_sched_ = "default";
 
   // Network retry configuration for system boot
   u32 wait_for_restart_timeout_ = 30;        // Default: 30 seconds

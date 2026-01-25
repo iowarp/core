@@ -6,6 +6,7 @@
 
 #include "chimaera/config_manager.h"
 #include "chimaera/task_queue.h"
+#include "chimaera/scheduler/scheduler_factory.h"
 #include <arpa/inet.h>
 #include <cstdlib>
 #include <cstring>
@@ -77,12 +78,12 @@ bool IpcManager::ClientInit() {
   HSHM_THREAD_MODEL->SetTls(chi_cur_worker_key_,
                             static_cast<Worker *>(nullptr));
 
-  // Read lane mapping policy from configuration
+  // Create scheduler using factory
   auto *config = CHI_CONFIG_MANAGER;
   if (config && config->IsValid()) {
-    lane_map_policy_ = config->GetLaneMapPolicy();
-    HLOG(kDebug, "Lane mapping policy set to: {}",
-          static_cast<int>(lane_map_policy_));
+    std::string sched_name = config->GetLocalSched();
+    scheduler_ = SchedulerFactory::Get(sched_name);
+    HLOG(kDebug, "Scheduler initialized: {}", sched_name);
   }
 
   is_initialized_ = true;
@@ -125,12 +126,12 @@ bool IpcManager::ServerInit() {
   // runtime)
   HSHM_THREAD_MODEL->CreateTls<TaskCounter>(chi_task_counter_key_, nullptr);
 
-  // Read lane mapping policy from configuration
+  // Create scheduler using factory
   auto *config = CHI_CONFIG_MANAGER;
   if (config && config->IsValid()) {
-    lane_map_policy_ = config->GetLaneMapPolicy();
-    HLOG(kDebug, "Lane mapping policy set to: {}",
-          static_cast<int>(lane_map_policy_));
+    std::string sched_name = config->GetLocalSched();
+    scheduler_ = SchedulerFactory::Get(sched_name);
+    HLOG(kDebug, "Scheduler initialized: {}", sched_name);
   }
 
   is_initialized_ = true;
@@ -185,18 +186,38 @@ u32 IpcManager::GetWorkerCount() {
   return shared_header_->num_workers;
 }
 
+u32 IpcManager::GetNumSchedQueues() const {
+  if (!shared_header_) {
+    return 0;
+  }
+  return shared_header_->num_sched_queues;
+}
+
 void IpcManager::AwakenWorker(TaskLane* lane) {
   if (!lane) {
+    HLOG(kWarning, "AwakenWorker: lane is null");
     return;
   }
 
-  // Only send signal if worker is inactive (blocked in epoll_wait)
-  if (!lane->IsActive()) {
-    pid_t tid = lane->GetTid();
-    if (tid > 0) {
-      // Send SIGUSR1 to the worker thread
-      syscall(SYS_tgkill, getpid(), tid, SIGUSR1);
+  // Always send signal to ensure worker wakes up
+  // The worker may transition from active->inactive between our check and signal send
+  // Sending signal when already active is safe - it's a no-op if worker is processing
+  pid_t tid = lane->GetTid();
+  if (tid > 0) {
+    // Get runtime PID from shared header (client's getpid() won't work for runtime threads)
+    pid_t runtime_pid = shared_header_ ? shared_header_->runtime_pid : getpid();
+
+    // Send SIGUSR1 to the worker thread in the runtime process
+    int result = syscall(SYS_tgkill, runtime_pid, tid, SIGUSR1);
+    if (result == 0) {
+      HLOG(kDebug, "AwakenWorker: Sent SIGUSR1 to runtime_pid={}, tid={} (active={}) - SUCCESS",
+            runtime_pid, tid, lane->IsActive());
+    } else {
+      HLOG(kError, "AwakenWorker: Failed to send SIGUSR1 to runtime_pid={}, tid={} (active={}) - errno={}",
+            runtime_pid, tid, lane->IsActive(), errno);
     }
+  } else {
+    HLOG(kWarning, "AwakenWorker: tid={} (invalid), cannot send signal", tid);
   }
 }
 
@@ -334,6 +355,7 @@ bool IpcManager::ServerInitQueues() {
 
     // Initialize shared header
     shared_header_->node_id = 0; // Will be set after host identification
+    shared_header_->runtime_pid = getpid(); // Store runtime's PID for client tgkill
 
     // Get worker counts from ConfigManager
     ConfigManager *config = CHI_CONFIG_MANAGER;
@@ -700,58 +722,6 @@ const std::string &IpcManager::GetCurrentHostname() const {
   return this_host_.ip_address;
 }
 
-void IpcManager::SetLaneMapPolicy(LaneMapPolicy policy) {
-  lane_map_policy_ = policy;
-}
-
-LaneMapPolicy IpcManager::GetLaneMapPolicy() const { return lane_map_policy_; }
-
-LaneId IpcManager::MapByPidTid(u32 num_lanes) {
-  // Use HSHM_SYSTEM_INFO to get both PID and TID for lane hashing
-  auto *sys_info = HSHM_SYSTEM_INFO;
-  pid_t pid = sys_info->pid_;
-  auto tid = HSHM_THREAD_MODEL->GetTid();
-
-  // Combine PID and TID for hashing to ensure different processes/threads use
-  // different lanes
-  size_t combined_hash =
-      std::hash<pid_t>{}(pid) ^ (std::hash<void *>{}(&tid) << 1);
-  return static_cast<LaneId>(combined_hash % num_lanes);
-}
-
-LaneId IpcManager::MapRoundRobin(u32 num_lanes) {
-  // Use atomic counter for round-robin distribution
-  u32 counter = round_robin_counter_.fetch_add(1, std::memory_order_relaxed);
-  return static_cast<LaneId>(counter % num_lanes);
-}
-
-LaneId IpcManager::MapRandom(u32 num_lanes) {
-  // Use thread-local random number generator for efficiency
-  thread_local std::mt19937 rng(std::random_device{}());
-  std::uniform_int_distribution<u32> dist(0, num_lanes - 1);
-  return static_cast<LaneId>(dist(rng));
-}
-
-LaneId IpcManager::MapTaskToLane(u32 num_lanes) {
-  if (num_lanes == 0) {
-    return 0; // Avoid division by zero
-  }
-
-  switch (lane_map_policy_) {
-  case LaneMapPolicy::kMapByPidTid:
-    return MapByPidTid(num_lanes);
-
-  case LaneMapPolicy::kRoundRobin:
-    return MapRoundRobin(num_lanes);
-
-  case LaneMapPolicy::kRandom:
-    return MapRandom(num_lanes);
-
-  default:
-    // Fallback to round-robin
-    return MapRoundRobin(num_lanes);
-  }
-}
 
 bool IpcManager::TryStartMainServer(const std::string &hostname) {
   ConfigManager *config = CHI_CONFIG_MANAGER;

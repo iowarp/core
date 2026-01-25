@@ -24,14 +24,6 @@ namespace {
 volatile bool g_keep_running = true;
 
 /**
- * Signal handler for graceful shutdown
- */
-void SignalHandler(int signal) {
-  (void)signal;
-  g_keep_running = false;
-}
-
-/**
  * Print usage information
  */
 void PrintUsage(const char* program_name) {
@@ -135,18 +127,20 @@ void PrintStats(const chimaera::admin::MonitorTask& task) {
   std::cout << "Worker Details:" << std::endl;
   std::cout << std::setw(6) << "ID"
             << std::setw(10) << "Running"
+            << std::setw(10) << "Active"
             << std::setw(12) << "Idle Iters"
             << std::setw(10) << "Queued"
             << std::setw(10) << "Blocked"
             << std::setw(10) << "Periodic"
             << std::setw(15) << "Suspend (us)"
             << std::endl;
-  std::cout << std::string(73, '-') << std::endl;
+  std::cout << std::string(83, '-') << std::endl;
 
   // Print worker statistics
   for (const auto& stats : task.info_) {
     std::cout << std::setw(6) << stats.worker_id_
               << std::setw(10) << (stats.is_running_ ? "Yes" : "No")
+              << std::setw(10) << (stats.is_active_ ? "Yes" : "No")
               << std::setw(12) << stats.idle_iterations_
               << std::setw(10) << stats.num_queued_tasks_
               << std::setw(10) << stats.num_blocked_tasks_
@@ -168,9 +162,9 @@ int main(int argc, char* argv[]) {
     return (argc > 1) ? 1 : 0;  // Return 0 if help was requested, 1 for errors
   }
 
-  // Install signal handler for graceful shutdown
-  std::signal(SIGINT, SignalHandler);
-  std::signal(SIGTERM, SignalHandler);
+  // Don't install signal handler - allow default Ctrl+C behavior to terminate immediately
+  // std::signal(SIGINT, SignalHandler);
+  // std::signal(SIGTERM, SignalHandler);
 
   if (opts.verbose) {
     HLOG(kInfo, "Initializing Chimaera client...");
@@ -231,6 +225,7 @@ int main(int argc, char* argv[]) {
           std::cout << "{"
                     << "\"worker_id\":" << stats.worker_id_ << ","
                     << "\"is_running\":" << (stats.is_running_ ? "true" : "false") << ","
+                    << "\"is_active\":" << (stats.is_active_ ? "true" : "false") << ","
                     << "\"idle_iterations\":" << stats.idle_iterations_ << ","
                     << "\"num_queued_tasks\":" << stats.num_queued_tasks_ << ","
                     << "\"num_blocked_tasks\":" << stats.num_blocked_tasks_ << ","

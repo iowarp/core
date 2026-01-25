@@ -23,6 +23,7 @@
 #include "chimaera/admin/admin_client.h"
 #include "chimaera/container.h"
 #include "chimaera/pool_manager.h"
+#include "chimaera/scheduler/scheduler_factory.h"
 #include "chimaera/singletons.h"
 #include "chimaera/task.h"
 #include "chimaera/task_archives.h"
@@ -89,6 +90,15 @@ bool Worker::Init() {
     return false;
   }
 
+  // Create scheduler using factory
+  auto *config = CHI_CONFIG_MANAGER;
+  if (config && config->IsValid()) {
+    std::string sched_name = config->GetLocalSched();
+    scheduler_ = SchedulerFactory::Get(sched_name);
+    HLOG(kDebug, "Worker {}: Scheduler initialized: {}", worker_id_,
+         sched_name);
+  }
+
   is_initialized_ = true;
   return true;
 }
@@ -107,8 +117,10 @@ WorkerStats Worker::GetWorkerStats() const {
 
   // Calculate number of queued tasks (tasks waiting in the assigned lane)
   stats.num_queued_tasks_ = 0;
+  stats.is_active_ = false;
   if (assigned_lane_) {
     stats.num_queued_tasks_ = assigned_lane_->Size();
+    stats.is_active_ = assigned_lane_->IsActive();
   }
 
   // Count blocked tasks across all blocked queues
@@ -124,7 +136,9 @@ WorkerStats Worker::GetWorkerStats() const {
   }
 
   // Get suspend period (time until next periodic task or 0 if none)
-  stats.suspend_period_us_ = static_cast<u32>(GetSuspendPeriod());
+  double suspend_period = GetSuspendPeriod();
+  stats.suspend_period_us_ =
+      (suspend_period < 0) ? 0 : static_cast<u32>(suspend_period);
 
   // Note: num_tasks_processed_ would require adding a counter to the worker
   // For now, set to 0 - can be added later if needed
@@ -259,10 +273,11 @@ void Worker::Run() {
   // Create signalfd
   int signal_fd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
   if (signal_fd == -1) {
-    HLOG(kError, "Worker {}: Failed to create signalfd", worker_id_);
+    HLOG(kError, "Worker {}: Failed to create signalfd - errno={}", worker_id_, errno);
     is_running_ = false;
     return;
   }
+  HLOG(kInfo, "Worker {}: Created signalfd={}, tid={}", worker_id_, signal_fd, tid);
 
   // Store signal_fd in TaskLane
   assigned_lane_->SetSignalFd(signal_fd);
@@ -272,12 +287,15 @@ void Worker::Run() {
   ev.events = EPOLLIN;
   ev.data.fd = signal_fd;
   if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, signal_fd, &ev) == -1) {
-    HLOG(kError, "Worker {}: Failed to add signal_fd to epoll", worker_id_);
+    HLOG(kError, "Worker {}: Failed to add signal_fd={} to epoll_fd={} - errno={}",
+          worker_id_, signal_fd, epoll_fd_, errno);
     close(signal_fd);
     assigned_lane_->SetSignalFd(-1);
     is_running_ = false;
     return;
   }
+  HLOG(kInfo, "Worker {}: Added signalfd={} to epoll_fd={} successfully",
+        worker_id_, signal_fd, epoll_fd_);
 
   // Main worker loop - process tasks from assigned lane
   while (is_running_) {
@@ -356,11 +374,13 @@ u32 Worker::ProcessNewTasks() {
 
       if (!container) {
         // Container not found - mark as complete with error
-        HLOG(kError, "Worker {}: Container not found for pool_id={}, method={}", worker_id_, pool_id, method_id);
+        HLOG(kError, "Worker {}: Container not found for pool_id={}, method={}",
+             worker_id_, pool_id, method_id);
         future_shm->is_complete_.store(1);
         continue;
       }
-      HLOG(kInfo, "Worker {}: Found container for pool_id={}, method={}", worker_id_, pool_id, method_id);
+      HLOG(kInfo, "Worker {}: Found container for pool_id={}, method={}",
+           worker_id_, pool_id, method_id);
 
       // Check if Future has null task pointer (indicates task needs to be
       // loaded)
@@ -369,13 +389,15 @@ u32 Worker::ProcessNewTasks() {
 
       if (task_full_ptr.IsNull()) {
         // CLIENT PATH: Load task from serialized data in FutureShm
-        HLOG(kInfo, "Worker {}: Loading task from serialized data (method={})", worker_id_, method_id);
+        HLOG(kInfo, "Worker {}: Loading task from serialized data (method={})",
+             worker_id_, method_id);
         std::vector<char> serialized_data(future_shm->serialized_task_.begin(),
                                           future_shm->serialized_task_.end());
         LocalLoadTaskArchive archive(serialized_data);
         HLOG(kInfo, "Worker {}: About to call LocalAllocLoadTask", worker_id_);
         task_full_ptr = container->LocalAllocLoadTask(method_id, archive);
-        HLOG(kInfo, "Worker {}: LocalAllocLoadTask completed, task IsNull={}", worker_id_, task_full_ptr.IsNull());
+        HLOG(kInfo, "Worker {}: LocalAllocLoadTask completed, task IsNull={}",
+             worker_id_, task_full_ptr.IsNull());
 
         // Update the Future's task pointer
         future.GetTaskPtr() = task_full_ptr;
@@ -451,7 +473,8 @@ double Worker::GetSuspendPeriod() const {
     }
   }
 
-  return found_task ? min_remaining_time_us : 0;
+  // Return -1 if no periodic tasks (means wait indefinitely in epoll_wait)
+  return found_task ? min_remaining_time_us : -1;
 }
 
 void Worker::SuspendMe() {
@@ -489,16 +512,21 @@ void Worker::SuspendMe() {
     // Mark worker as inactive (blocked in epoll_wait)
     assigned_lane_->SetActive(false);
 
-    // Calculate epoll timeout from periodic tasks, or use max_sleep as fallback
+    // Calculate epoll timeout from periodic tasks
+    // -1 = no periodic tasks, wait indefinitely
+    // >0 = time until next periodic task should wake
     double suspend_period_us = GetSuspendPeriod();
     int timeout_ms;
-    if (suspend_period_us > 0) {
-      timeout_ms = static_cast<int>(suspend_period_us / 1000);
+    if (suspend_period_us < 0) {
+      // No periodic tasks - wait indefinitely (-1)
+      timeout_ms = -1;
     } else {
-      timeout_ms = static_cast<int>(max_sleep / 1000);
+      // Have periodic tasks - wait until next task should execute
+      timeout_ms = static_cast<int>(suspend_period_us / 1000);
     }
 
     // Wait for signal using epoll_wait
+    HLOG(kDebug, "Worker {}: Entering epoll_wait (timeout_ms={})", worker_id_, timeout_ms);
     int nfds =
         epoll_wait(epoll_fd_, epoll_events_, MAX_EPOLL_EVENTS, timeout_ms);
 
@@ -507,15 +535,20 @@ void Worker::SuspendMe() {
 
     if (nfds > 0) {
       // Events received - read and discard all signal info
-      HLOG(kDebug, "Worker {}: epoll_wait returned nfds={}", worker_id_, nfds);
+      HLOG(kInfo, "Worker {}: epoll_wait returned nfds={} - SIGNAL RECEIVED", worker_id_, nfds);
       for (int i = 0; i < nfds; ++i) {
         struct signalfd_siginfo si;
         ssize_t bytes_read = read(epoll_events_[i].data.fd, &si, sizeof(si));
-        (void)bytes_read;
+        HLOG(kInfo, "Worker {}: Read {} bytes from signalfd, signal={}",
+              worker_id_, bytes_read, si.ssi_signo);
       }
     } else if (nfds == 0) {
       // Timeout occurred
+      HLOG(kDebug, "Worker {}: epoll_wait timeout", worker_id_);
       sleep_count_++;
+    } else {
+      // Error occurred
+      HLOG(kError, "Worker {}: epoll_wait error: errno={}", worker_id_, errno);
     }
   }
 }
@@ -677,20 +710,35 @@ bool Worker::RouteLocal(Future<Task> &future, TaskLane *lane,
   // Get task pointer from future
   FullPtr<Task> task_ptr = future.GetTaskPtr();
 
-  // Check task execution time estimate
-  // Tasks with EstCpuTime >= 50us are considered slow
-  size_t est_cpu_time = task_ptr->EstCpuTime();
+  // Use scheduler to determine target worker for this task
+  u32 target_worker_id = worker_id_;  // Default to current worker
+  if (scheduler_) {
+    target_worker_id = scheduler_->RuntimeMapTask(future);
+  }
 
-  // Route slow tasks to kSlow workers if we're not already a slow worker
-  //   if ((est_cpu_time >= 50 || task_ptr->stat_.io_size_ > 0) &&
-  //       thread_type_ != kSlow) {
-  //     // This is a slow task and we're a fast worker - route to slow workers
-  //     auto *work_orchestrator = CHI_WORK_ORCHESTRATOR;
-  //     work_orchestrator->AssignToWorkerType(kSlow, task_ptr);
-  //     return false; // Task routed to slow workers, don't execute here
-  //   }
+  // If scheduler routed task to a different worker, forward it
+  if (target_worker_id != worker_id_) {
+    auto *work_orchestrator = CHI_WORK_ORCHESTRATOR;
+    Worker *target_worker = work_orchestrator->GetWorker(target_worker_id);
 
-  // Fast tasks (< 50us) stay on any worker, slow tasks stay on kSlow workers
+    if (target_worker && target_worker->GetLane()) {
+      // Get the target worker's assigned lane and push the task
+      TaskLane *target_lane = target_worker->GetLane();
+      target_lane->Push(future);
+
+      HLOG(kDebug, "Worker {}: Routed task to worker {} via scheduler",
+           worker_id_, target_worker_id);
+      return false;  // Task routed to another worker, don't execute here
+    } else {
+      // Fallback: execute locally if target worker not available
+      HLOG(kWarning,
+           "Worker {}: Scheduler routed to worker {} but worker unavailable, "
+           "executing locally",
+           worker_id_, target_worker_id);
+    }
+  }
+
+  // Execute task locally
   // Get the container for execution
   auto *pool_manager = CHI_POOL_MANAGER;
   container = pool_manager->GetContainer(task_ptr->pool_id_);
@@ -1206,9 +1254,6 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     return;
   }
 
-  // Local task completion using Future
-  // 1. Serialize outputs using container->LocalSaveTask (only if task will be
-  // destroyed)
   if (run_ctx->destroy_in_end_task_) {
     LocalSaveTaskArchive archive(LocalMsgType::kSerializeOut);
     if (run_ctx->container != nullptr) {
@@ -1224,6 +1269,7 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   }
 
   // 2. Mark task as complete
+  auto &future_shm = run_ctx->future_.GetFutureShm();
   run_ctx->future_.SetComplete();
 
   // 2.5. Wake up parent task if waiting for this subtask
