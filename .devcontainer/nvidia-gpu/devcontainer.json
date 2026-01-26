@@ -2,7 +2,10 @@
     "name": "IOWarp Core (NVIDIA GPU)",
     "build": {
         "dockerfile": "Dockerfile",
-        "context": "../.."
+        "context": "../..",
+        "options": [
+            "--tag=iowarp/iowarp-deps:latest"
+        ]
     },
     "workspaceFolder": "/workspace",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
