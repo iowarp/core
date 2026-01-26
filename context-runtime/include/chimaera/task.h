@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <coroutine>
+#include <memory>
 #include <sstream>
 #include <vector>
 
@@ -71,7 +72,7 @@ class Task {
   IN MethodId method_;      /**< Method identifier for task type */
   IN ibitfield task_flags_; /**< Task properties and flags */
   IN double period_ns_;     /**< Period in nanoseconds for periodic tasks */
-  IN RunContext* run_ctx_; /**< Pointer to runtime context for task execution */
+  IN std::unique_ptr<RunContext> run_ctx_; /**< Runtime context owned by task (RAII) */
   OUT hipc::atomic<u32>
       return_code_; /**< Task return code (0=success, non-zero=error) */
   OUT hipc::atomic<ContainerId>
@@ -95,7 +96,7 @@ class Task {
     task_flags_.SetBits(0);
     pool_query_ = pool_query;
     period_ns_ = 0.0;
-    run_ctx_ = nullptr;
+    // run_ctx_ is initialized by its default constructor
     return_code_.store(0);  // Initialize as success
     completer_.store(0);    // Initialize as null (0 is invalid container ID)
   }
@@ -115,7 +116,8 @@ class Task {
     method_ = other->method_;
     task_flags_ = other->task_flags_;
     period_ns_ = other->period_ns_;
-    run_ctx_ = other->run_ctx_;
+    // Note: run_ctx_ is not copied - each task maintains its own RunContext
+    // The RunContext will be initialized when the task is executed
     return_code_.store(other->return_code_.load());
     completer_.store(other->completer_.load());
     stat_ = other->stat_;
@@ -131,7 +133,7 @@ class Task {
     method_ = 0;
     task_flags_.Clear();
     period_ns_ = 0.0;
-    run_ctx_ = nullptr;
+    run_ctx_.reset();  // Reset the unique_ptr (destroys RunContext if allocated)
     return_code_.store(0);  // Initialize as success
     completer_.store(0);    // Initialize as null (0 is invalid container ID)
     stat_.io_size_ = 0;
@@ -836,20 +838,18 @@ typedef hipc::multi_mpsc_ring_buffer<Future<Task>, CHI_MAIN_ALLOC_T> TaskQueue;
 struct RunContext {
   /** Coroutine handle for C++20 stackless coroutines */
   std::coroutine_handle<> coro_handle_;
-  ThreadType thread_type;
-  u32 worker_id;
-  FullPtr<Task> task; /**< Task being executed by this context */
-  bool is_yielded_;   /**< Task is waiting for completion */
-  double
-      est_load; /**< Estimated time until task should wake up (microseconds) */
-  double yield_time_us_;       /**< Time in microseconds for task to yield */
-  hshm::Timepoint block_start; /**< Time when task was blocked (real time) */
-  Container* container;        /**< Current container being executed */
-  TaskLane* lane;              /**< Current lane being processed */
-  ExecMode exec_mode; /**< Execution mode (kExec or kDynamicSchedule) */
-  void* event_queue_; /**< Pointer to worker's event queue */
+  ThreadType thread_type_;      /**< Type of worker thread executing this task */
+  u32 worker_id_;               /**< Worker ID executing this task */
+  FullPtr<Task> task_;          /**< Task being executed by this context */
+  bool is_yielded_;             /**< Task is waiting for completion */
+  double yield_time_us_;        /**< Time in microseconds for task to yield */
+  hshm::Timepoint block_start_; /**< Time when task was blocked (real time) */
+  Container* container_;        /**< Current container being executed */
+  TaskLane* lane_;              /**< Current lane being processed */
+  ExecMode exec_mode_;          /**< Execution mode (kExec or kDynamicSchedule) */
+  void* event_queue_;           /**< Pointer to worker's event queue */
   std::vector<PoolQuery>
-      pool_queries; /**< Pool queries for task distribution */
+      pool_queries_;            /**< Pool queries for task distribution */
   std::vector<FullPtr<Task>> subtasks_; /**< Replica tasks for this execution */
   u32 completed_replicas_;              /**< Count of completed replicas */
   u32 yield_count_;                     /**< Number of times task has yielded */
@@ -864,15 +864,14 @@ struct RunContext {
 
   RunContext()
       : coro_handle_(nullptr),
-        thread_type(kSchedWorker),
-        worker_id(0),
+        thread_type_(kSchedWorker),
+        worker_id_(0),
         is_yielded_(false),
-        est_load(0.0),
         yield_time_us_(0.0),
-        block_start(),
-        container(nullptr),
-        lane(nullptr),
-        exec_mode(ExecMode::kExec),
+        block_start_(),
+        container_(nullptr),
+        lane_(nullptr),
+        exec_mode_(ExecMode::kExec),
         event_queue_(nullptr),
         completed_replicas_(0),
         yield_count_(0),
@@ -886,18 +885,17 @@ struct RunContext {
    */
   RunContext(RunContext&& other) noexcept
       : coro_handle_(other.coro_handle_),
-        thread_type(other.thread_type),
-        worker_id(other.worker_id),
-        task(std::move(other.task)),
+        thread_type_(other.thread_type_),
+        worker_id_(other.worker_id_),
+        task_(std::move(other.task_)),
         is_yielded_(other.is_yielded_),
-        est_load(other.est_load),
         yield_time_us_(other.yield_time_us_),
-        block_start(other.block_start),
-        container(other.container),
-        lane(other.lane),
-        exec_mode(other.exec_mode),
+        block_start_(other.block_start_),
+        container_(other.container_),
+        lane_(other.lane_),
+        exec_mode_(other.exec_mode_),
         event_queue_(other.event_queue_),
-        pool_queries(std::move(other.pool_queries)),
+        pool_queries_(std::move(other.pool_queries_)),
         subtasks_(std::move(other.subtasks_)),
         completed_replicas_(other.completed_replicas_),
         yield_count_(other.yield_count_),
@@ -916,18 +914,17 @@ struct RunContext {
   RunContext& operator=(RunContext&& other) noexcept {
     if (this != &other) {
       coro_handle_ = other.coro_handle_;
-      thread_type = other.thread_type;
-      worker_id = other.worker_id;
-      task = std::move(other.task);
+      thread_type_ = other.thread_type_;
+      worker_id_ = other.worker_id_;
+      task_ = std::move(other.task_);
       is_yielded_ = other.is_yielded_;
-      est_load = other.est_load;
       yield_time_us_ = other.yield_time_us_;
-      block_start = other.block_start;
-      container = other.container;
-      lane = other.lane;
-      exec_mode = other.exec_mode;
+      block_start_ = other.block_start_;
+      container_ = other.container_;
+      lane_ = other.lane_;
+      exec_mode_ = other.exec_mode_;
       event_queue_ = other.event_queue_;
-      pool_queries = std::move(other.pool_queries);
+      pool_queries_ = std::move(other.pool_queries_);
       subtasks_ = std::move(other.subtasks_);
       completed_replicas_ = other.completed_replicas_;
       yield_count_ = other.yield_count_;
@@ -951,12 +948,11 @@ struct RunContext {
    * Does not touch pointers or primitive types
    */
   void Clear() {
-    pool_queries.clear();
+    pool_queries_.clear();
     subtasks_.clear();
     completed_replicas_ = 0;
-    est_load = 0.0;
     yield_time_us_ = 0.0;
-    block_start = hshm::Timepoint();
+    block_start_ = hshm::Timepoint();
     yield_count_ = 0;
     is_notified_.store(false);
     true_period_ns_ = 0.0;

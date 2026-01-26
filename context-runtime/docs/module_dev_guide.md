@@ -501,7 +501,7 @@ The execution mode is accessible through the `RunContext` parameter passed to al
 ```cpp
 void YourMethod(hipc::FullPtr<YourTask> task, chi::RunContext& rctx) {
   // Check execution mode
-  if (rctx.exec_mode == chi::ExecMode::kDynamicSchedule) {
+  if (rctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
     // Dynamic scheduling logic - modify task routing
     task->pool_query_ = chi::PoolQuery::Broadcast();
     return;  // Return early - task will be re-routed
@@ -554,7 +554,7 @@ void Runtime::GetOrCreatePool(
   std::string pool_name = task->pool_name_.str();
 
   // PHASE 1: Dynamic scheduling - determine routing
-  if (rctx.exec_mode == chi::ExecMode::kDynamicSchedule) {
+  if (rctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
     // Check if pool exists locally first
     chi::PoolId existing_pool_id = pool_manager->FindPoolByName(pool_name);
 
@@ -614,7 +614,7 @@ client.Create(pool_query, "my_pool_name", pool_id);
 
 **What happens internally:**
 1. Worker recognizes `Dynamic()` pool query
-2. Sets `rctx.exec_mode = ExecMode::kDynamicSchedule`
+2. Sets `rctx.exec_mode_ = ExecMode::kDynamicSchedule`
 3. Routes task to local node first
 4. Task method checks cache and updates `pool_query_`
 5. Worker re-routes with updated query
@@ -630,7 +630,7 @@ client.Create(pool_query, "my_pool_name", pool_id);
 **Cache Optimization Pattern:**
 ```cpp
 // Check local cache first
-if (rctx.exec_mode == chi::ExecMode::kDynamicSchedule) {
+if (rctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
   if (LocalCacheHas(resource_id)) {
     task->pool_query_ = chi::PoolQuery::Local();  // Found locally
   } else {
@@ -646,7 +646,7 @@ auto resource = GetResource(resource_id);
 **State-Dependent Routing:**
 ```cpp
 // Route based on runtime conditions
-if (rctx.exec_mode == chi::ExecMode::kDynamicSchedule) {
+if (rctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
   if (ShouldExecuteDistributed(task)) {
     task->pool_query_ = chi::PoolQuery::Broadcast();
   } else {
@@ -659,7 +659,7 @@ if (rctx.exec_mode == chi::ExecMode::kDynamicSchedule) {
 #### Implementation Guidelines
 
 **DO:**
-- ✅ Check `rctx.exec_mode` at the start of your method
+- ✅ Check `rctx.exec_mode_` at the start of your method
 - ✅ Return early after modifying `pool_query_` in dynamic mode
 - ✅ Keep dynamic scheduling logic lightweight (fast checks only)
 - ✅ Use dynamic scheduling for cache optimization patterns
@@ -676,7 +676,7 @@ The worker automatically handles dynamic scheduling:
 
 ```cpp
 // Worker::ExecTask() logic
-if (run_ctx->exec_mode == ExecMode::kDynamicSchedule) {
+if (run_ctx->exec_mode_ == ExecMode::kDynamicSchedule) {
   // After task returns, call RerouteDynamicTask instead of EndTask
   RerouteDynamicTask(task_ptr, run_ctx);
   return;

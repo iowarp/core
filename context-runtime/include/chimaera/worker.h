@@ -28,17 +28,8 @@ using WorkQueue =
 // Forward declarations
 class Task;
 
-/**
- * Structure to hold a cached RunContext for reuse
- * With C++20 stackless coroutines, we don't need stack allocations
- */
-struct CachedContext {
-  RunContext *run_ctx;       /**< Pointer to the RunContext */
-
-  CachedContext() : run_ctx(nullptr) {}
-
-  explicit CachedContext(RunContext *ctx) : run_ctx(ctx) {}
-};
+// Note: CachedContext is no longer needed since RunContext is now embedded
+// directly in the Task object. Context caching has been eliminated.
 
 /**
  * Structure to hold worker statistics for monitoring
@@ -142,6 +133,13 @@ class Worker {
    * @return Type of worker thread
    */
   ThreadType GetThreadType() const;
+
+  /**
+   * Set worker thread type
+   * Used by scheduler to assign worker types during DivideWorkers()
+   * @param thread_type New thread type for this worker
+   */
+  void SetThreadType(ThreadType thread_type);
 
   /**
    * Check if worker is running
@@ -380,20 +378,6 @@ class Worker {
 
  private:
   /**
-   * Allocate RunContext for task execution
-   * With C++20 stackless coroutines, no stack allocation is needed
-   * @return RunContext pointer
-   */
-  RunContext *AllocateContext();
-
-  /**
-   * Deallocate task execution RunContext
-   * Returns context to cache for reuse
-   * @param run_ctx_ptr Pointer to RunContext to deallocate
-   */
-  void DeallocateContext(RunContext *run_ctx_ptr);
-
-  /**
    * Begin task execution
    * @param future Future object containing the task and completion state
    * @param container Container for the task
@@ -476,9 +460,7 @@ class Worker {
   // Single lane assigned to this worker (one lane per worker)
   TaskLane *assigned_lane_;
 
-  // RunContext cache for efficient reuse
-  // With C++20 stackless coroutines, we only cache RunContext objects
-  std::queue<CachedContext> context_cache_;
+  // Note: RunContext cache removed - RunContext is now embedded in Task
 
   // Blocked queue system for cooperative tasks (waiting for subtasks):
   // - Queue[0]: Tasks blocked <=2 times (checked every % 2 iterations)
@@ -530,8 +512,8 @@ class Worker {
   // Used when external code (e.g., bdev) registers FDs with this worker's epoll
   hshm::Mutex epoll_mutex_;
 
-  // Scheduler for runtime task routing
-  std::unique_ptr<Scheduler> scheduler_;
+  // Scheduler pointer (owned by IpcManager, not Worker)
+  Scheduler *scheduler_;
 };
 
 }  // namespace chi

@@ -47,10 +47,11 @@ class Scheduler {
    * Determines which worker to initially map a task to from runtime.
    * Called in RouteTask.
    *
+   * @param worker The worker that called this method
    * @param task The task to be scheduled
    * @return Worker ID to assign the task to
    */
-  virtual u32 RuntimeMapTask(const Future<Task> &task) = 0;
+  virtual u32 RuntimeMapTask(Worker *worker, const Future<Task> &task) = 0;
 
   /**
    * Either steal or delegate tasks on a worker to balance load.

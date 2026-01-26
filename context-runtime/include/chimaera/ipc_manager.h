@@ -244,19 +244,19 @@ class IpcManager {
       // 1. Create Future with allocator and task_ptr (task pointer is set)
       Future<TaskT> future(alloc, task_ptr);
 
-      // 2. Set the parent task RunContext from current worker (if available and
+      // 2. Get current worker (needed for scheduler and parent task tracking)
+      Worker *worker = CHI_CUR_WORKER;
+
+      // 3. Set the parent task RunContext from current worker (if available and
       // awake_event is true)
-      if (awake_event) {
-        Worker *worker = CHI_CUR_WORKER;
-        if (worker) {
-          RunContext *run_ctx = worker->GetCurrentRunContext();
-          if (run_ctx) {
-            future.SetParentTask(run_ctx);
-          }
+      if (awake_event && worker != nullptr) {
+        RunContext *run_ctx = worker->GetCurrentRunContext();
+        if (run_ctx != nullptr) {
+          future.SetParentTask(run_ctx);
         }
       }
 
-      // 3. Map task to lane using scheduler
+      // 4. Map task to lane using scheduler
       // Route Send/Recv tasks to net worker's lane
       LaneId lane_id;
       if (IsNetworkTask(task_ptr)) {
@@ -265,7 +265,7 @@ class IpcManager {
       } else {
         // Convert Future<TaskT> to Future<Task> for scheduler
         Future<Task> task_future = future.template Cast<Task>();
-        lane_id = scheduler_->RuntimeMapTask(task_future);
+        lane_id = scheduler_->RuntimeMapTask(worker, task_future);
       }
 
       // 4. Enqueue the Future object to the worker queue
@@ -550,6 +550,14 @@ class IpcManager {
    * @return Pointer to the network queue or nullptr if not initialized
    */
   NetQueue *GetNetQueue() { return net_queue_.ptr_; }
+
+  /**
+   * Get the scheduler instance
+   * IpcManager is the single owner of the scheduler.
+   * WorkOrchestrator and Worker should use this method to get the scheduler.
+   * @return Pointer to the scheduler or nullptr if not initialized
+   */
+  Scheduler *GetScheduler() { return scheduler_.get(); }
 
  private:
   /**

@@ -87,7 +87,7 @@ chi::TaskResume Runtime::GetOrCreatePool(
   std::string pool_name = task->pool_name_.str();
 
   // Check if this is dynamic scheduling mode
-  if (rctx.exec_mode == chi::ExecMode::kDynamicSchedule) {
+  if (rctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
     // Dynamic routing with cache optimization
     // Check if pool exists locally first to avoid unnecessary broadcast
     HLOG(kDebug,
@@ -332,14 +332,14 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
   send_map_[send_map_key] = origin_task;
 
   // Get pool_queries from task's RunContext
-  chi::RunContext *origin_task_rctx = origin_task->run_ctx_;
-  if (origin_task_rctx == nullptr) {
+  if (!origin_task->run_ctx_) {
     HLOG(kError, "SendIn: origin_task has no RunContext");
     return;
   }
+  chi::RunContext *origin_task_rctx = origin_task->run_ctx_.get();
 
   const std::vector<chi::PoolQuery> &pool_queries =
-      origin_task_rctx->pool_queries;
+      origin_task_rctx->pool_queries_;
   size_t num_replicas = pool_queries.size();
 
   // Reserve space for all replicas in subtasks vector BEFORE the loop
@@ -691,7 +691,12 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
       return;
     }
     hipc::FullPtr<chi::Task> origin_task = *send_it;
-    chi::RunContext *origin_rctx = origin_task->run_ctx_;
+    if (!origin_task->run_ctx_) {
+      HLOG(kError, "Admin: origin_task has no RunContext");
+      task->SetReturnCode(6);
+      return;
+    }
+    chi::RunContext *origin_rctx = origin_task->run_ctx_.get();
 
     // Locate replica in origin's run_ctx using replica_id
     chi::u32 replica_id = task_info.task_id_.replica_id_;
@@ -741,7 +746,11 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
       continue;
     }
     hipc::FullPtr<chi::Task> origin_task = *send_it;
-    chi::RunContext *origin_rctx = origin_task->run_ctx_;
+    if (!origin_task->run_ctx_) {
+      HLOG(kError, "Admin: origin_task has no RunContext");
+      continue;
+    }
+    chi::RunContext *origin_rctx = origin_task->run_ctx_.get();
 
     // Locate replica in origin's run_ctx using replica_id
     chi::u32 replica_id = task_info.task_id_.replica_id_;

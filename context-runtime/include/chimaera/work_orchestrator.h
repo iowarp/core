@@ -116,17 +116,11 @@ class WorkOrchestrator {
   bool HasWorkRemaining(u64& total_work_remaining) const;
 
   /**
-   * Assign a task to a specific worker type using round-robin scheduling
-   * @param thread_type Worker type to assign the task to (kSchedWorker or kSlow)
-   * @param task_ptr Full pointer to task to assign to the worker type
+   * Get the total worker count (all types)
+   * Used by scheduler to determine how to partition workers
+   * @return Total number of workers
    */
-  void AssignToWorkerType(ThreadType thread_type, const FullPtr<Task>& task_ptr);
-
-  /**
-   * Get the dedicated network worker
-   * @return Pointer to the network worker
-   */
-  Worker* GetNetWorker() const { return net_worker_; }
+  u32 GetTotalWorkerCount() const { return static_cast<u32>(all_workers_.size()); }
 
  private:
   /**
@@ -165,11 +159,6 @@ class WorkOrchestrator {
   // All workers for easy access
   std::vector<Worker*> all_workers_;
 
-  // Worker groups for task routing based on execution characteristics
-  std::vector<Worker*> scheduler_workers_; ///< Fast task workers (EstCpuTime < 50us)
-  std::vector<Worker*> slow_workers_;      ///< Slow task workers (EstCpuTime >= 50us)
-  Worker* net_worker_;                     ///< Dedicated network worker for Send/Recv tasks
-
   // Active lanes pointer to IPC Manager worker queues
   void* active_lanes_;
 
@@ -180,8 +169,8 @@ class WorkOrchestrator {
   std::vector<hshm::thread::Thread> worker_threads_;
   hshm::thread::ThreadGroup thread_group_;
 
-  // Scheduler for worker division and task routing
-  std::unique_ptr<Scheduler> scheduler_;
+  // Scheduler pointer (owned by IpcManager, not WorkOrchestrator)
+  Scheduler *scheduler_;
 
 };
 
