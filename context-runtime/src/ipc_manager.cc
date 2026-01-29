@@ -5,6 +5,8 @@
 #include "chimaera/ipc_manager.h"
 
 #include "chimaera/config_manager.h"
+#include "chimaera/chimaera_manager.h"
+#include "chimaera/admin/admin_client.h"
 #include "chimaera/task_queue.h"
 #include "chimaera/scheduler/scheduler_factory.h"
 #include <arpa/inet.h>
@@ -57,6 +59,12 @@ bool IpcManager::ClientInit() {
     return false;
   }
 
+  // Create per-process shared memory for client allocations
+  if (!IncreaseMemory(kDefaultClientShmSize)) {
+    HLOG(kError, "IpcManager::ClientInit: Failed to create per-process shared memory");
+    return false;
+  }
+
   // Retrieve node ID from shared header and store in this_host_
   if (shared_header_) {
     this_host_.node_id = shared_header_->node_id;
@@ -84,6 +92,13 @@ bool IpcManager::ClientInit() {
     std::string sched_name = config->GetLocalSched();
     scheduler_ = SchedulerFactory::Get(sched_name);
     HLOG(kDebug, "Scheduler initialized: {}", sched_name);
+  }
+
+  // Initialize per-process shared memory for this client
+  // Allocate initial 1GB segment
+  if (!IncreaseMemory(kDefaultClientShmSize)) {
+    HLOG(kWarning, "Failed to create initial per-process shared memory");
+    // Continue anyway - legacy shared memory segments may still work
   }
 
   is_initialized_ = true;
@@ -134,6 +149,12 @@ bool IpcManager::ServerInit() {
     HLOG(kDebug, "Scheduler initialized: {}", sched_name);
   }
 
+  // Create per-process shared memory for runtime allocations
+  if (!IncreaseMemory(kDefaultClientShmSize)) {
+    HLOG(kError, "IpcManager::ServerInit: Failed to create per-process shared memory");
+    return false;
+  }
+
   is_initialized_ = true;
   return true;
 }
@@ -164,10 +185,8 @@ void IpcManager::ServerFinalize() {
   // Only the last process to detach will actually destroy shared data
   shared_header_ = nullptr;
 
-  // Clear cached allocator pointers
+  // Clear main allocator pointer
   main_allocator_ = nullptr;
-  client_data_allocator_ = nullptr;
-  runtime_data_allocator_ = nullptr;
 
   is_initialized_ = false;
 }
@@ -225,21 +244,14 @@ bool IpcManager::ServerInitShm() {
   ConfigManager *config = CHI_CONFIG_MANAGER;
 
   try {
-    // Set allocator IDs for each segment
+    // Set allocator ID for main segment
     main_allocator_id_ = hipc::AllocatorId::Get(1, 0);
-    client_data_allocator_id_ = hipc::AllocatorId::Get(2, 0);
-    runtime_data_allocator_id_ = hipc::AllocatorId::Get(3, 0);
 
-    // Get configurable segment names
+    // Get configurable segment name
     std::string main_segment_name =
         config->GetSharedMemorySegmentName(kMainSegment);
-    std::string client_data_segment_name =
-        config->GetSharedMemorySegmentName(kClientDataSegment);
-    std::string runtime_data_segment_name =
-        config->GetSharedMemorySegmentName(kRuntimeDataSegment);
 
     // Initialize main backend with custom header size
-    size_t custom_header_size = sizeof(IpcSharedHeader);
     if (!main_backend_.shm_init(
             main_allocator_id_,
             hshm::Unit<size_t>::Bytes(config->GetMemorySegmentSize(kMainSegment)),
@@ -247,39 +259,16 @@ bool IpcManager::ServerInitShm() {
       return false;
     }
 
-    // Initialize client data backend
-    if (!client_data_backend_.shm_init(
-            client_data_allocator_id_,
-            hshm::Unit<size_t>::Bytes(
-                config->GetMemorySegmentSize(kClientDataSegment)),
-            client_data_segment_name)) {
-      return false;
-    }
-
-    // Initialize runtime data backend
-    if (!runtime_data_backend_.shm_init(
-            runtime_data_allocator_id_,
-            hshm::Unit<size_t>::Bytes(
-                config->GetMemorySegmentSize(kRuntimeDataSegment)),
-            runtime_data_segment_name)) {
-      return false;
-    }
-
-    // Create allocators using backend's MakeAlloc method
+    // Create main allocator using backend's MakeAlloc method
     main_allocator_ = main_backend_.MakeAlloc<CHI_MAIN_ALLOC_T>();
     if (!main_allocator_) {
       return false;
     }
 
-    client_data_allocator_ = client_data_backend_.MakeAlloc<CHI_CDATA_ALLOC_T>();
-    if (!client_data_allocator_) {
-      return false;
-    }
-
-    runtime_data_allocator_ = runtime_data_backend_.MakeAlloc<CHI_RDATA_ALLOC_T>();
-    if (!runtime_data_allocator_) {
-      return false;
-    }
+    // Add main allocator to alloc_map_ for ToFullPtr lookup
+    u64 alloc_key = (static_cast<u64>(main_allocator_id_.major_) << 32) |
+                    static_cast<u64>(main_allocator_id_.minor_);
+    alloc_map_[alloc_key] = reinterpret_cast<hipc::MultiProcessAllocator*>(main_allocator_);
 
     return true;
   } catch (const std::exception &e) {
@@ -291,47 +280,28 @@ bool IpcManager::ClientInitShm() {
   ConfigManager *config = CHI_CONFIG_MANAGER;
 
   try {
-    // Set allocator IDs (must match server)
+    // Set allocator ID (must match server)
     main_allocator_id_ = hipc::AllocatorId(1, 0);
-    client_data_allocator_id_ = hipc::AllocatorId(2, 0);
-    runtime_data_allocator_id_ = hipc::AllocatorId(3, 0);
 
-    // Get configurable segment names with environment variable expansion
+    // Get configurable segment name with environment variable expansion
     std::string main_segment_name =
         config->GetSharedMemorySegmentName(kMainSegment);
-    std::string client_data_segment_name =
-        config->GetSharedMemorySegmentName(kClientDataSegment);
-    std::string runtime_data_segment_name =
-        config->GetSharedMemorySegmentName(kRuntimeDataSegment);
 
-    // Attach to existing shared memory segments created by server
+    // Attach to existing main shared memory segment created by server
     if (!main_backend_.shm_attach(main_segment_name)) {
       return false;
     }
 
-    if (!client_data_backend_.shm_attach(client_data_segment_name)) {
-      return false;
-    }
-
-    if (!runtime_data_backend_.shm_attach(runtime_data_segment_name)) {
-      return false;
-    }
-
-    // Attach to allocators using backend's AttachAlloc method
+    // Attach to main allocator using backend's AttachAlloc method
     main_allocator_ = main_backend_.AttachAlloc<CHI_MAIN_ALLOC_T>();
     if (!main_allocator_) {
       return false;
     }
 
-    client_data_allocator_ = client_data_backend_.AttachAlloc<CHI_CDATA_ALLOC_T>();
-    if (!client_data_allocator_) {
-      return false;
-    }
-
-    runtime_data_allocator_ = runtime_data_backend_.AttachAlloc<CHI_RDATA_ALLOC_T>();
-    if (!runtime_data_allocator_) {
-      return false;
-    }
+    // Add main allocator to alloc_map_ for ToFullPtr lookup
+    u64 alloc_key = (static_cast<u64>(main_allocator_id_.major_) << 32) |
+                    static_cast<u64>(main_allocator_id_.minor_);
+    alloc_map_[alloc_key] = reinterpret_cast<hipc::MultiProcessAllocator*>(main_allocator_);
 
     return true;
   } catch (const std::exception &e) {
@@ -807,35 +777,47 @@ void *IpcManager::GetHeartbeatSocket() const {
 const Host &IpcManager::GetThisHost() const { return this_host_; }
 
 FullPtr<char> IpcManager::AllocateBuffer(size_t size) {
-  auto *chimaera_manager = CHI_CHIMAERA_MANAGER;
-
-  // Determine which allocator to use
-  CHI_RDATA_ALLOC_T *allocator = nullptr;
-  if (chimaera_manager && chimaera_manager->IsRuntime()) {
-    // Runtime uses rdata segment
-    if (!runtime_data_allocator_) {
-      return FullPtr<char>::GetNull();
-    }
-    allocator = runtime_data_allocator_;
-  } else {
-    // Client uses cdata segment
-    if (!client_data_allocator_) {
-      return FullPtr<char>::GetNull();
-    }
-    allocator = reinterpret_cast<CHI_RDATA_ALLOC_T *>(client_data_allocator_);
-  }
-
-  // Loop until allocation succeeds
-  FullPtr<char> buffer = FullPtr<char>::GetNull();
-  while (buffer.IsNull()) {
-    buffer = allocator->AllocateObjs<char>(size);
-    if (buffer.IsNull()) {
-      // Allocation failed - yield to allow other tasks to run
-      HSHM_THREAD_MODEL->Yield();
+  // Use per-process shared memory allocation strategy for both client and runtime
+  // 1. Check last accessed allocator first (fast path)
+  if (last_alloc_ != nullptr) {
+    FullPtr<char> buffer = last_alloc_->AllocateObjs<char>(size);
+    if (!buffer.IsNull()) {
+      return buffer;
     }
   }
 
-  return buffer;
+  // 2. Check all allocators in alloc_vector_
+  {
+    std::lock_guard<std::mutex> lock(shm_mutex_);
+    for (auto *alloc : alloc_vector_) {
+      if (alloc != nullptr && alloc != last_alloc_) {
+        FullPtr<char> buffer = alloc->AllocateObjs<char>(size);
+        if (!buffer.IsNull()) {
+          last_alloc_ = alloc;  // Update last accessed
+          return buffer;
+        }
+      }
+    }
+  }
+
+  // 3. All existing allocators are full - create new shared memory segment
+  // Allocate at least the requested size or 1GB, whichever is larger
+  size_t new_size = std::max(size, kDefaultClientShmSize);
+  if (!IncreaseMemory(new_size)) {
+    HLOG(kError, "AllocateBuffer: Failed to increase memory for {} bytes", size);
+    return FullPtr<char>::GetNull();
+  }
+
+  // 4. Retry allocation from the newly created allocator (last_alloc_)
+  if (last_alloc_ != nullptr) {
+    FullPtr<char> buffer = last_alloc_->AllocateObjs<char>(size);
+    if (!buffer.IsNull()) {
+      return buffer;
+    }
+  }
+
+  HLOG(kError, "AllocateBuffer: Failed to allocate {} bytes even after increasing memory", size);
+  return FullPtr<char>::GetNull();
 }
 
 void IpcManager::FreeBuffer(FullPtr<char> buffer_ptr) {
@@ -843,16 +825,31 @@ void IpcManager::FreeBuffer(FullPtr<char> buffer_ptr) {
     return;
   }
 
-  // Try runtime data allocator first, then client data allocator
-  auto *rdata_alloc = CHI_IPC->GetRdataAlloc();
-  if (rdata_alloc && buffer_ptr.shm_.alloc_id_ == runtime_data_allocator_id_) {
-    rdata_alloc->Free(buffer_ptr);
-  } else {
-    auto *cdata_alloc = CHI_IPC->GetDataAlloc();
-    if (cdata_alloc) {
-      cdata_alloc->Free(buffer_ptr);
-    }
+  // Check if allocator ID is null (private memory - use free())
+  if (buffer_ptr.shm_.alloc_id_ == hipc::AllocatorId::GetNull()) {
+    // Private memory - use free
+    char *raw_ptr = reinterpret_cast<char *>(buffer_ptr.shm_.off_.load());
+    free(raw_ptr);
+    return;
   }
+
+  // Check main allocator
+  if (main_allocator_ && buffer_ptr.shm_.alloc_id_ == main_allocator_id_) {
+    main_allocator_->Free(buffer_ptr);
+    return;
+  }
+
+  // Check per-process shared memory allocators via alloc_map_
+  u64 alloc_key = (static_cast<u64>(buffer_ptr.shm_.alloc_id_.major_) << 32) |
+                  static_cast<u64>(buffer_ptr.shm_.alloc_id_.minor_);
+  auto it = alloc_map_.find(alloc_key);
+  if (it != alloc_map_.end()) {
+    it->second->Free(buffer_ptr);
+    return;
+  }
+
+  HLOG(kWarning, "FreeBuffer: Could not find allocator for alloc_id ({}.{})",
+       buffer_ptr.shm_.alloc_id_.major_, buffer_ptr.shm_.alloc_id_.minor_);
 }
 
 hshm::lbm::Client* IpcManager::GetOrCreateClient(const std::string& addr,
@@ -919,12 +916,165 @@ bool IpcManager::TryPopNetTask(NetQueuePriority priority, Future<Task>& future) 
   auto& lane = net_queue_->GetLane(0, priority_idx);
 
   if (lane.Pop(future)) {
-    // Fix the allocator pointer after popping
-    future.SetAllocator(main_allocator_);
+    // Fix the allocator pointer after popping using IpcManager::ToFullPtr
+    future.SetAllocator();
     return true;
   }
 
   return false;
+}
+
+//==============================================================================
+// Per-Process Shared Memory Management
+//==============================================================================
+
+bool IpcManager::IncreaseMemory(size_t size) {
+  std::lock_guard<std::mutex> lock(shm_mutex_);
+
+  pid_t pid = getpid();
+  u32 index = shm_count_.fetch_add(1, std::memory_order_relaxed);
+
+  // Create shared memory name: chimaera_{pid}_{index}
+  std::string shm_name = "chimaera_" + std::to_string(pid) + "_" + std::to_string(index);
+
+  // Add 32MB metadata overhead
+  size_t total_size = size + kShmMetadataOverhead;
+
+  HLOG(kInfo, "IpcManager::IncreaseMemory: Creating {} with size {} ({} + {} overhead)",
+       shm_name, total_size, size, kShmMetadataOverhead);
+
+  try {
+    // Create the shared memory backend
+    auto backend = std::make_unique<hipc::PosixShmMmap>();
+
+    // Create allocator ID: major = pid, minor = index
+    hipc::AllocatorId alloc_id(static_cast<u32>(pid), index);
+
+    // Initialize shared memory using backend's shm_init method
+    if (!backend->shm_init(alloc_id,
+                           hshm::Unit<size_t>::Bytes(total_size),
+                           shm_name)) {
+      HLOG(kError, "IpcManager::IncreaseMemory: Failed to create shm for {}",
+           shm_name);
+      shm_count_.fetch_sub(1, std::memory_order_relaxed);
+      return false;
+    }
+
+    // Create allocator using backend's MakeAlloc method
+    hipc::MultiProcessAllocator *allocator =
+        backend->MakeAlloc<hipc::MultiProcessAllocator>();
+
+    if (allocator == nullptr) {
+      HLOG(kError, "IpcManager::IncreaseMemory: Failed to create allocator for {}",
+           shm_name);
+      shm_count_.fetch_sub(1, std::memory_order_relaxed);
+      return false;
+    }
+
+    // Add to our tracking structures
+    u64 alloc_key = (static_cast<u64>(alloc_id.major_) << 32) |
+                    static_cast<u64>(alloc_id.minor_);
+    alloc_map_[alloc_key] = allocator;
+    alloc_vector_.push_back(allocator);
+    client_backends_.push_back(std::move(backend));
+    last_alloc_ = allocator;
+
+    HLOG(kInfo, "IpcManager::IncreaseMemory: Created allocator {} with ID ({}.{})",
+         shm_name, alloc_id.major_, alloc_id.minor_);
+
+    // Note: Registration with runtime is now done lazily in SetAllocator()
+    // when the worker first encounters a FutureShm from this client's memory
+
+    return true;
+
+  } catch (const std::exception &e) {
+    HLOG(kError, "IpcManager::IncreaseMemory: Exception creating {}: {}",
+         shm_name, e.what());
+    shm_count_.fetch_sub(1, std::memory_order_relaxed);
+    return false;
+  }
+}
+
+bool IpcManager::RegisterMemory(const hipc::AllocatorId &alloc_id, size_t shm_size) {
+  std::lock_guard<std::mutex> lock(shm_mutex_);
+
+  // Derive shm_name from alloc_id: chimaera_{pid}_{index}
+  pid_t owner_pid = static_cast<pid_t>(alloc_id.major_);
+  u32 shm_index = alloc_id.minor_;
+  std::string shm_name = "chimaera_" + std::to_string(owner_pid) + "_" + std::to_string(shm_index);
+
+  HLOG(kInfo, "IpcManager::RegisterMemory: Registering {} (size={}) from pid {}",
+       shm_name, shm_size, owner_pid);
+
+  // Check if already registered
+  u64 alloc_key = (static_cast<u64>(alloc_id.major_) << 32) |
+                  static_cast<u64>(alloc_id.minor_);
+  if (alloc_map_.find(alloc_key) != alloc_map_.end()) {
+    HLOG(kInfo,
+         "IpcManager::RegisterMemory: {} already registered, skipping",
+         shm_name);
+    return true;  // Already registered
+  }
+
+  try {
+    // Attach to the shared memory backend (already created by client)
+    auto backend = std::make_unique<hipc::PosixShmMmap>();
+    if (!backend->shm_attach(shm_name)) {
+      HLOG(kError,
+           "IpcManager::RegisterMemory: Failed to attach to shm {}",
+           shm_name);
+      return false;
+    }
+
+    // Attach to the existing allocator in the backend
+    hipc::MultiProcessAllocator *allocator =
+        backend->AttachAlloc<hipc::MultiProcessAllocator>();
+
+    if (allocator == nullptr) {
+      HLOG(kError,
+           "IpcManager::RegisterMemory: Failed to attach allocator for {}",
+           shm_name);
+      return false;
+    }
+
+    // Add to our tracking structures
+    alloc_map_[alloc_key] = allocator;
+    // Note: Don't add to alloc_vector_ since this is not our memory
+    // (we don't allocate from it, just need to resolve ShmPtrs)
+    client_backends_.push_back(std::move(backend));
+
+    HLOG(kInfo, "IpcManager::RegisterMemory: Successfully registered {}",
+         shm_name);
+
+    return true;
+
+  } catch (const std::exception &e) {
+    HLOG(kError, "IpcManager::RegisterMemory: Exception registering {}: {}",
+         shm_name, e.what());
+    return false;
+  }
+}
+
+ClientShmInfo IpcManager::GetClientShmInfo(u32 index) const {
+  std::lock_guard<std::mutex> lock(shm_mutex_);
+
+  if (index >= alloc_vector_.size()) {
+    return ClientShmInfo();  // Return empty info
+  }
+
+  pid_t pid = getpid();
+  std::string shm_name = "chimaera_" + std::to_string(pid) + "_" + std::to_string(index);
+
+  hipc::MultiProcessAllocator *allocator = alloc_vector_[index];
+  hipc::AllocatorId alloc_id = allocator->GetId();
+
+  // Get size from backend if available, otherwise use 0
+  size_t size = 0;
+  if (index < client_backends_.size() && client_backends_[index]) {
+    size = client_backends_[index]->backend_size_;
+  }
+
+  return ClientShmInfo(shm_name, pid, index, size, alloc_id);
 }
 
 } // namespace chi

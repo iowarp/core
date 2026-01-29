@@ -352,9 +352,23 @@ u32 Worker::ProcessNewTasks() {
       tasks_processed++;
       SetCurrentRunContext(nullptr);
 
-      // Fix the allocator pointer after popping from ring buffer
+      // Check if allocator needs to be registered (lazy registration for client memory)
       auto *ipc_manager = CHI_IPC;
-      future.SetAllocator(ipc_manager->GetMainAlloc());
+      auto &future_shm_full = future.GetFutureShm();
+      hipc::AllocatorId alloc_id = future_shm_full.shm_.alloc_id_;
+
+      // Only register if not null allocator and not already registered
+      if (alloc_id != hipc::AllocatorId::GetNull()) {
+        auto test_ptr = ipc_manager->ToFullPtr(future_shm_full.shm_);
+        if (test_ptr.IsNull()) {
+          // Allocator not registered - register it now
+          // shm_size will be determined by shm_attach
+          ipc_manager->RegisterMemory(alloc_id, 0);
+        }
+      }
+
+      // Fix the allocator pointer after registration
+      future.SetAllocator();
 
       // Get pool_id and method_id from FutureShm
       auto &future_shm = future.GetFutureShm();

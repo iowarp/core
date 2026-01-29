@@ -911,6 +911,97 @@ struct SubmitBatchTask : public chi::Task {
   }
 };
 
+/**
+ * RegisterMemoryTask - Register a client's per-process shared memory with the runtime
+ * This task is sent by clients when they create new shared memory segments
+ * The runtime will attach to the shared memory and register it in its alloc_map_
+ */
+struct RegisterMemoryTask : public chi::Task {
+  // Shared memory registration info
+  IN chi::priv::string shm_name_;      ///< Shared memory segment name
+  IN pid_t owner_pid_;                 ///< PID of the owning process
+  IN chi::u32 shm_index_;              ///< Index within owner's segments
+  IN size_t shm_size_;                 ///< Size of the shared memory
+  IN chi::u32 alloc_major_;            ///< Allocator ID major component
+  IN chi::u32 alloc_minor_;            ///< Allocator ID minor component
+
+  // Results
+  OUT chi::priv::string error_message_; ///< Error description if registration failed
+
+  /** SHM default constructor */
+  RegisterMemoryTask()
+      : chi::Task(), shm_name_(CHI_IPC->GetMainAlloc()),
+        owner_pid_(0), shm_index_(0), shm_size_(0),
+        alloc_major_(0), alloc_minor_(0),
+        error_message_(CHI_IPC->GetMainAlloc()) {}
+
+  /** Emplace constructor */
+  explicit RegisterMemoryTask(const chi::TaskId &task_node,
+                              const chi::PoolId &pool_id,
+                              const chi::PoolQuery &pool_query,
+                              const chi::ClientShmInfo &info)
+      : chi::Task(task_node, pool_id, pool_query, Method::kRegisterMemory),
+        shm_name_(CHI_IPC->GetMainAlloc(), info.shm_name),
+        owner_pid_(info.owner_pid), shm_index_(info.shm_index),
+        shm_size_(info.size), alloc_major_(info.alloc_id.major_),
+        alloc_minor_(info.alloc_id.minor_),
+        error_message_(CHI_IPC->GetMainAlloc()) {
+    // Initialize task
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kRegisterMemory;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  /**
+   * Get ClientShmInfo from task fields
+   */
+  chi::ClientShmInfo GetShmInfo() const {
+    return chi::ClientShmInfo(
+        shm_name_.str(), owner_pid_, shm_index_, shm_size_,
+        hipc::AllocatorId(alloc_major_, alloc_minor_));
+  }
+
+  /**
+   * Serialize IN and INOUT parameters for network transfer
+   */
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+    ar(shm_name_, owner_pid_, shm_index_, shm_size_, alloc_major_, alloc_minor_);
+  }
+
+  /**
+   * Serialize OUT and INOUT parameters for network transfer
+   */
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(error_message_);
+  }
+
+  /**
+   * Copy from another RegisterMemoryTask
+   */
+  void Copy(const hipc::FullPtr<RegisterMemoryTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    shm_name_ = other->shm_name_;
+    owner_pid_ = other->owner_pid_;
+    shm_index_ = other->shm_index_;
+    shm_size_ = other->shm_size_;
+    alloc_major_ = other->alloc_major_;
+    alloc_minor_ = other->alloc_minor_;
+    error_message_ = other->error_message_;
+  }
+
+  /** Aggregate replica results into this task */
+  void Aggregate(const hipc::FullPtr<RegisterMemoryTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
+};
+
 } // namespace chimaera::admin
 
 #endif // ADMIN_TASKS_H_

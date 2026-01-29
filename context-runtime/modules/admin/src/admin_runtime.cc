@@ -1033,6 +1033,52 @@ chi::TaskResume Runtime::SubmitBatch(hipc::FullPtr<SubmitBatchTask> task,
   co_return;
 }
 
+chi::TaskResume Runtime::RegisterMemory(hipc::FullPtr<RegisterMemoryTask> task,
+                                        chi::RunContext &rctx) {
+  HLOG(kInfo, "Admin: Executing RegisterMemory task - shm_name={}, owner_pid={}",
+       task->shm_name_.str(), task->owner_pid_);
+
+  auto *ipc_manager = CHI_IPC;
+
+  // Initialize output values
+  task->error_message_ = "";
+
+  try {
+    // Get alloc_id from task fields
+    hipc::AllocatorId alloc_id(task->alloc_major_, task->alloc_minor_);
+
+    // Register the shared memory with IpcManager
+    // shm_name is derived from alloc_id (chimaera_{pid}_{index})
+    if (!ipc_manager->RegisterMemory(alloc_id, task->shm_size_)) {
+      task->SetReturnCode(1);
+      auto *alloc = ipc_manager->GetMainAlloc();
+      std::string shm_name = "chimaera_" + std::to_string(task->alloc_major_) +
+                             "_" + std::to_string(task->alloc_minor_);
+      task->error_message_ = chi::priv::string(
+          alloc, "Failed to register shared memory: " + shm_name);
+      HLOG(kError, "Admin: RegisterMemory failed for {}", shm_name);
+      co_return;
+    }
+
+    task->SetReturnCode(0);
+    std::string shm_name = "chimaera_" + std::to_string(task->alloc_major_) +
+                           "_" + std::to_string(task->alloc_minor_);
+    HLOG(kInfo, "Admin: RegisterMemory completed successfully for {}",
+         shm_name);
+
+  } catch (const std::exception &e) {
+    task->SetReturnCode(99);
+    auto *alloc = ipc_manager->GetMainAlloc();
+    std::string error_msg =
+        std::string("Exception during memory registration: ") + e.what();
+    task->error_message_ = chi::priv::string(alloc, error_msg);
+    HLOG(kError, "Admin: RegisterMemory failed with exception: {}", e.what());
+  }
+
+  (void)rctx;
+  co_return;
+}
+
 chi::u64 Runtime::GetWorkRemaining() const {
   // Note: No lock needed - single net worker processes all Send/Recv tasks
   return send_map_.size() + recv_map_.size();

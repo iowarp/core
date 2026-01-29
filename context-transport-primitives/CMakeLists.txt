@@ -207,6 +207,10 @@ if(HSHM_ENABLE_COMPRESS)
     target_link_libraries(compress INTERFACE ${COMPRESS_LIBS})
     target_link_directories(compress INTERFACE ${COMPRESS_LIB_DIRS})
     target_include_directories(compress INTERFACE ${COMPRESS_INCLUDES})
+    # Link qtable_predictor if it was built
+    if(TARGET qtable_predictor)
+        target_link_libraries(compress INTERFACE qtable_predictor)
+    endif()
 endif()
 target_compile_definitions(compress INTERFACE
     HSHM_ENABLE_COMPRESS=$<BOOL:${HSHM_ENABLE_COMPRESS}>

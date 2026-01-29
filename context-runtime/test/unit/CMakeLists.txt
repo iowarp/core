@@ -76,6 +76,12 @@ set(LOCAL_TASK_ARCHIVE_TEST_SOURCES
   test_local_task_archive.cc
 )
 
+# Per-Process Shared Memory test executable (test for IncreaseMemory, AllocateBuffer >1GB)
+set(PER_PROCESS_SHM_TEST_TARGET chimaera_per_process_shm_tests)
+set(PER_PROCESS_SHM_TEST_SOURCES
+  test_per_process_shm.cc
+)
+
 add_executable(${COMPOSE_TEST_TARGET} ${COMPOSE_TEST_SOURCES})
 
 # Include directories for compose tests
@@ -387,6 +393,33 @@ set_target_properties(${LOCAL_TASK_ARCHIVE_TEST_TARGET} PROPERTIES
 
 # Copy Local Task Archive test executable to bin directory
 set_target_properties(${LOCAL_TASK_ARCHIVE_TEST_TARGET} PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+# Create Per-Process Shared Memory test executable
+add_executable(${PER_PROCESS_SHM_TEST_TARGET} ${PER_PROCESS_SHM_TEST_SOURCES})
+
+# Include directories for Per-Process Shared Memory tests
+target_include_directories(${PER_PROCESS_SHM_TEST_TARGET} PRIVATE
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+)
+
+# Link against required libraries for Per-Process Shared Memory tests
+target_link_libraries(${PER_PROCESS_SHM_TEST_TARGET}
+  chimaera_cxx               # Main Chimaera library
+  hshm::cxx                  # HermesShm library
+  ${CMAKE_THREAD_LIBS_INIT}  # Threading support
+)
+
+# Set C++ standard for Per-Process Shared Memory tests
+set_target_properties(${PER_PROCESS_SHM_TEST_TARGET} PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+)
+
+# Copy Per-Process Shared Memory test executable to bin directory
+set_target_properties(${PER_PROCESS_SHM_TEST_TARGET} PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
@@ -1028,6 +1061,91 @@ if(CHIMAERA_ENABLE_TESTS)
   #   ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   # )
 
+  # Per-Process Shared Memory Tests
+  add_test(
+    NAME cr_per_process_shm_increase_memory_tests
+    COMMAND ${PER_PROCESS_SHM_TEST_TARGET} "[ipc][per_process_shm][increase_memory]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_per_process_shm_increase_memory_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+  )
+
+  add_test(
+    NAME cr_per_process_shm_medium_alloc_tests
+    COMMAND ${PER_PROCESS_SHM_TEST_TARGET} "[ipc][per_process_shm][allocate][medium]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_per_process_shm_medium_alloc_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+  )
+
+  add_test(
+    NAME cr_per_process_shm_large_alloc_tests
+    COMMAND ${PER_PROCESS_SHM_TEST_TARGET} "[ipc][per_process_shm][allocate][large]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_per_process_shm_large_alloc_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+    TIMEOUT 300  # 5 minute timeout for large allocation test
+  )
+
+  add_test(
+    NAME cr_per_process_shm_multiple_large_tests
+    COMMAND ${PER_PROCESS_SHM_TEST_TARGET} "[ipc][per_process_shm][allocate][multiple_large]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_per_process_shm_multiple_large_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+    TIMEOUT 300
+  )
+
+  add_test(
+    NAME cr_per_process_shm_patterns_tests
+    COMMAND ${PER_PROCESS_SHM_TEST_TARGET} "[ipc][per_process_shm][allocate][patterns]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_per_process_shm_patterns_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+    TIMEOUT 300
+  )
+
+  add_test(
+    NAME cr_per_process_shm_free_tests
+    COMMAND ${PER_PROCESS_SHM_TEST_TARGET} "[ipc][per_process_shm][free]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_per_process_shm_free_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+  )
+
+  add_test(
+    NAME cr_per_process_shm_tofullptr_tests
+    COMMAND ${PER_PROCESS_SHM_TEST_TARGET} "[ipc][per_process_shm][tofullptr]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_per_process_shm_tofullptr_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+  )
+
+  add_test(
+    NAME cr_per_process_shm_stress_tests
+    COMMAND ${PER_PROCESS_SHM_TEST_TARGET} "[ipc][per_process_shm][stress]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_per_process_shm_stress_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+    TIMEOUT 600  # 10 minute timeout for stress test
+  )
+
+  add_test(
+    NAME cr_per_process_shm_info_tests
+    COMMAND ${PER_PROCESS_SHM_TEST_TARGET} "[ipc][per_process_shm][shm_info]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_per_process_shm_info_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+  )
 
   # Add a comprehensive test that runs all tests
   add_test(
@@ -1272,6 +1390,28 @@ add_custom_target(test_comutex_performance
   COMMENT "Running Chimaera synchronization performance tests"
 )
 
+# Custom targets for per-process shared memory tests
+add_custom_target(test_per_process_shm
+  COMMAND ${PER_PROCESS_SHM_TEST_TARGET}
+  DEPENDS ${PER_PROCESS_SHM_TEST_TARGET}
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  COMMENT "Running Chimaera per-process shared memory tests"
+)
+
+add_custom_target(test_per_process_shm_large
+  COMMAND ${PER_PROCESS_SHM_TEST_TARGET} "[ipc][per_process_shm][allocate][large]"
+  DEPENDS ${PER_PROCESS_SHM_TEST_TARGET}
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  COMMENT "Running Chimaera per-process shared memory large allocation tests (>1GB)"
+)
+
+add_custom_target(test_per_process_shm_stress
+  COMMAND ${PER_PROCESS_SHM_TEST_TARGET} "[ipc][per_process_shm][stress]"
+  DEPENDS ${PER_PROCESS_SHM_TEST_TARGET}
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  COMMENT "Running Chimaera per-process shared memory stress tests"
+)
+
 # Custom target to run all unit tests
 add_custom_target(test_all_unit
   COMMAND ${TEST_TARGET}
@@ -1281,7 +1421,7 @@ add_custom_target(test_all_unit
 )
 
 # Install test executables (optional)
-install(TARGETS ${TEST_TARGET} ${TASK_ARCHIVE_TEST_TARGET} ${FLUSH_TEST_TARGET} ${BDEV_TEST_TARGET} ${COMUTEX_TEST_TARGET} ${WAIT_FUNCTIONALITY_TEST_TARGET} ${IPC_ALLOCATE_BUFFER_TEST_TARGET} ${UNORDERED_MAP_LL_TEST_TARGET} ${SAVE_LOAD_TASK_TEST_TARGET} ${COMPOSE_TEST_TARGET} ${LOCAL_TASK_ARCHIVE_TEST_TARGET}
+install(TARGETS ${TEST_TARGET} ${TASK_ARCHIVE_TEST_TARGET} ${FLUSH_TEST_TARGET} ${BDEV_TEST_TARGET} ${COMUTEX_TEST_TARGET} ${WAIT_FUNCTIONALITY_TEST_TARGET} ${IPC_ALLOCATE_BUFFER_TEST_TARGET} ${UNORDERED_MAP_LL_TEST_TARGET} ${SAVE_LOAD_TASK_TEST_TARGET} ${COMPOSE_TEST_TARGET} ${LOCAL_TASK_ARCHIVE_TEST_TARGET} ${PER_PROCESS_SHM_TEST_TARGET}
   RUNTIME DESTINATION bin
 )
 
@@ -1308,5 +1448,7 @@ message(STATUS "  Save/Load Task test target: ${SAVE_LOAD_TASK_TEST_TARGET}")
 message(STATUS "  Save/Load Task test sources: ${SAVE_LOAD_TASK_TEST_SOURCES}")
 message(STATUS "  Compose test target: ${COMPOSE_TEST_TARGET}")
 message(STATUS "  Compose test sources: ${COMPOSE_TEST_SOURCES}")
+message(STATUS "  Per-Process SHM test target: ${PER_PROCESS_SHM_TEST_TARGET}")
+message(STATUS "  Per-Process SHM test sources: ${PER_PROCESS_SHM_TEST_SOURCES}")
 message(STATUS "  CTest enabled: ${CHIMAERA_ENABLE_TESTS}")
 message(STATUS "  Output directory: ${CMAKE_BINARY_DIR}/bin")

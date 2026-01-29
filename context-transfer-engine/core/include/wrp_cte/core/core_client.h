@@ -344,9 +344,11 @@ class Tag {
    * @param data Raw data pointer
    * @param data_size Size of data
    * @param off Offset within blob (default 0)
+   * @param score Blob score for placement decisions (default 1.0)
+   * @param context Compression context for workflow-aware decisions (default empty)
    */
   void PutBlob(const std::string &blob_name, const char *data, size_t data_size,
-               size_t off = 0);
+               size_t off = 0, float score = 1.0f, const Context &context = Context());
 
   /**
    * PutBlob (SHM) - Direct shared memory version
@@ -355,9 +357,11 @@ class Tag {
    * @param data_size Size of data
    * @param off Offset within blob (default 0)
    * @param score Blob score for placement decisions (default 1.0)
+   * @param context Compression context for workflow-aware decisions (default empty)
    */
   void PutBlob(const std::string &blob_name, const hipc::ShmPtr<> &data,
-               size_t data_size, size_t off = 0, float score = 1.0f);
+               size_t data_size, size_t off = 0, float score = 1.0f,
+               const Context &context = Context());
 
   /**
    * Asynchronous PutBlob (SHM) - Caller must manage shared memory lifecycle
@@ -367,6 +371,7 @@ class Tag {
    * @param data_size Size of data
    * @param off Offset within blob (default 0)
    * @param score Blob score for placement decisions (default 1.0)
+   * @param context Compression context for workflow-aware decisions (default empty)
    * @return Task pointer for async operation
    * @note For raw data, caller must allocate shared memory using
    * CHI_IPC->AllocateBuffer<void>() and keep the FullPtr alive until the async
@@ -375,7 +380,8 @@ class Tag {
   chi::Future<PutBlobTask> AsyncPutBlob(const std::string &blob_name,
                                         const hipc::ShmPtr<> &data,
                                         size_t data_size, size_t off = 0,
-                                        float score = 1.0f);
+                                        float score = 1.0f,
+                                        const Context &context = Context());
 
   /**
    * GetBlob - Allocates shared memory, retrieves blob data, copies to output

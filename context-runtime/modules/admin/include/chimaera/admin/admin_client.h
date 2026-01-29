@@ -254,6 +254,33 @@ class Client : public chi::ContainerClient {
     // Submit to runtime and return Future
     return ipc_manager->Send(task);
   }
+
+  /**
+   * Register a client's per-process shared memory with the runtime (asynchronous)
+   * Called when a client creates a new shared memory segment that needs to be
+   * accessible by the runtime for cross-process communication
+   *
+   * @param pool_query Query for routing this task
+   * @param shm_info Information about the shared memory segment to register
+   * @return Future for RegisterMemoryTask with registration results
+   */
+  chi::Future<RegisterMemoryTask> AsyncRegisterMemory(
+      const chi::PoolQuery& pool_query,
+      const chi::ClientShmInfo& shm_info) {
+    auto* ipc_manager = CHI_IPC;
+
+    HLOG(kInfo, "AsyncRegisterMemory: Creating RegisterMemoryTask for {}",
+         shm_info.shm_name);
+
+    // Allocate RegisterMemoryTask with shared memory info
+    auto task = ipc_manager->NewTask<RegisterMemoryTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, shm_info);
+
+    HLOG(kInfo, "AsyncRegisterMemory: Task created, sending to runtime");
+
+    // Submit to runtime and return Future
+    return ipc_manager->Send(task);
+  }
 };
 
 }  // namespace chimaera::admin

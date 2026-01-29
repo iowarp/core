@@ -175,6 +175,15 @@ public:
   chi::TaskResume SubmitBatch(hipc::FullPtr<SubmitBatchTask> task, chi::RunContext &rctx);
 
   /**
+   * Handle RegisterMemory - Register a client's per-process shared memory
+   * Called when a client creates new shared memory and needs to register it
+   * with the runtime for cross-process access
+   * @param task The RegisterMemoryTask containing shared memory info
+   * @param rctx Runtime context for the current worker
+   */
+  chi::TaskResume RegisterMemory(hipc::FullPtr<RegisterMemoryTask> task, chi::RunContext &rctx);
+
+  /**
    * Helper: Receive task inputs from remote node
    */
   void RecvIn(hipc::FullPtr<RecvTask> task, chi::LoadTaskArchive& archive, hshm::lbm::Server* lbm_server);

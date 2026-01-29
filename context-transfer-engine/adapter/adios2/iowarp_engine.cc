@@ -234,7 +234,7 @@ void IowarpEngine::DoPutSync_(const adios2::core::Variable<T> &variable,
   // Put blob to CTE synchronously
   try {
     current_tag_->PutBlob(blob_name, reinterpret_cast<const char *>(values),
-                          data_size, 0, 1.0F, context);
+                          data_size, 0, 1.0f, context);
   } catch (const std::exception &e) {
     throw std::runtime_error(
         std::string("IowarpEngine::DoPutSync_: Failed to put blob: ") +
@@ -308,11 +308,11 @@ void IowarpEngine::DoPutDeferred_(const adios2::core::Variable<T> &variable,
     auto context = CreateCompressionContext();
 
     auto task = current_tag_->AsyncPutBlob(
-        blob_name, buffer.shm_.template Cast<void>(), data_size, 0, 1.0F, context);
+        blob_name, buffer.shm_.template Cast<void>(), data_size, 0, 1.0f, context);
 
     // Store task and buffer in deferred_tasks_ vector
     // Buffer will be kept alive until EndStep processes the task
-    deferred_tasks_.push_back({std::move(task), std::move(buffer)});
+    deferred_tasks_.emplace_back(DeferredTask{std::move(task), std::move(buffer)});
   } catch (const std::exception &e) {
     throw std::runtime_error(
         std::string("IowarpEngine::DoPutDeferred_: Failed to put blob: ") +
