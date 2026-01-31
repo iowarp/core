@@ -21,6 +21,10 @@
 #include <wrp_cte/core/core_client.h>
 #include <wrp_cte/core/core_tasks.h>
 
+#ifdef WRP_CTE_ENABLE_COMPRESS
+#include <wrp_cte/compressor/compressor_client.h>
+#endif
+
 namespace coeus {
 
 class IowarpEngine : public adios2::plugin::PluginEngineInterface {
@@ -139,6 +143,11 @@ class IowarpEngine : public adios2::plugin::PluginEngineInterface {
 
   /** Wall clock start time */
   std::chrono::high_resolution_clock::time_point wall_clock_start_;
+
+#ifdef WRP_CTE_ENABLE_COMPRESS
+  /** Compressor client for dynamic compression scheduling */
+  std::unique_ptr<wrp_cte::compressor::Client> compressor_client_;
+#endif
 
   /** Increment the current step */
   void IncrementCurrentStep() { current_step_++; }

@@ -439,9 +439,24 @@ class WrpCte(Service):
             }
         }
 
+        # Build compose list starting with core module
+        compose_list = [compose_entry]
+
+        # Conditionally add compressor module when compression is enabled
+        iowarp_compress = self.config.get('iowarp_compress', 'none').lower()
+        if iowarp_compress not in ['none', 'off', '']:
+            compressor_entry = {
+                'mod_name': 'wrp_cte_compressor',
+                'pool_name': 'wrp_cte_compressor',
+                'pool_query': self.config.get('pool_query', 'local'),
+                'pool_id': self.config.get('pool_id', 512.0) + 1
+            }
+            compose_list.append(compressor_entry)
+            self.log(f"Compression enabled ({iowarp_compress}), adding wrp_cte::compressor to compose")
+
         # Build complete compose configuration
         config = {
-            'compose': [compose_entry]
+            'compose': compose_list
         }
 
         return config

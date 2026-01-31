@@ -389,6 +389,80 @@ struct StatTargetsTask : public chi::Task {
 };
 
 /**
+ * GetTargetInfo task - Get information about a specific target
+ * Returns target score, remaining space, and performance metrics
+ */
+struct GetTargetInfoTask : public chi::Task {
+  IN chi::priv::string target_name_;  // Name of target to query
+  OUT float target_score_;             // Target score (0-1, normalized log bandwidth)
+  OUT chi::u64 remaining_space_;       // Remaining allocatable space in bytes
+  OUT chi::u64 bytes_read_;            // Bytes read from target
+  OUT chi::u64 bytes_written_;         // Bytes written to target
+  OUT chi::u64 ops_read_;              // Read operations
+  OUT chi::u64 ops_written_;           // Write operations
+
+  // SHM constructor
+  GetTargetInfoTask()
+      : chi::Task(), target_name_(HSHM_MALLOC), target_score_(0.0f), remaining_space_(0),
+        bytes_read_(0), bytes_written_(0), ops_read_(0), ops_written_(0) {}
+
+  // Emplace constructor
+  explicit GetTargetInfoTask(const chi::TaskId &task_id,
+                             const chi::PoolId &pool_id,
+                             const chi::PoolQuery &pool_query,
+                             const std::string &target_name)
+      : chi::Task(task_id, pool_id, pool_query, Method::kGetTargetInfo),
+        target_name_(HSHM_MALLOC, target_name), target_score_(0.0f), remaining_space_(0),
+        bytes_read_(0), bytes_written_(0), ops_read_(0), ops_written_(0) {
+    task_id_ = task_id;
+    pool_id_ = pool_id;
+    method_ = Method::kGetTargetInfo;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  /**
+   * Serialize IN and INOUT parameters
+   */
+  template <typename Archive> void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+    ar(target_name_);
+  }
+
+  /**
+   * Serialize OUT and INOUT parameters
+   */
+  template <typename Archive> void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(target_score_, remaining_space_, bytes_read_, bytes_written_,
+       ops_read_, ops_written_);
+  }
+
+  /**
+   * Copy from another GetTargetInfoTask
+   */
+  void Copy(const hipc::FullPtr<GetTargetInfoTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    target_name_ = other->target_name_;
+    target_score_ = other->target_score_;
+    remaining_space_ = other->remaining_space_;
+    bytes_read_ = other->bytes_read_;
+    bytes_written_ = other->bytes_written_;
+    ops_read_ = other->ops_read_;
+    ops_written_ = other->ops_written_;
+  }
+
+  /**
+   * Aggregate replica results
+   */
+  void Aggregate(const hipc::FullPtr<GetTargetInfoTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    // For target info, just copy (should be same across replicas)
+    Copy(other);
+  }
+};
+
+/**
  * TagId type definition
  * Uses chi::UniqueId with node_id as major and atomic counter as minor
  */
@@ -628,57 +702,6 @@ struct CteTelemetry {
     }
   }
 };
-
-#ifdef WRP_CORE_ENABLE_COMPRESS
-/**
- * Compression telemetry data structure for performance monitoring
- * Tracks compression decisions and actual performance
- */
-struct CompressionTelemetry {
-  CteOp op_;                     // Operation type (kPutBlob or kGetBlob)
-  int compress_lib_;             // Compression library used (0 = none)
-  chi::u64 original_size_;       // Original data size in bytes
-  chi::u64 compressed_size_;     // Compressed data size in bytes
-  double compress_time_ms_;      // Actual compression time in milliseconds
-  double decompress_time_ms_;    // Actual decompression time in milliseconds
-  double psnr_db_;               // Actual PSNR for lossy compression
-  Timestamp timestamp_;          // When operation occurred
-  std::uint64_t logical_time_;   // Logical time for ordering
-
-  CompressionTelemetry()
-      : op_(CteOp::kPutBlob), compress_lib_(0), original_size_(0),
-        compressed_size_(0), compress_time_ms_(0.0), decompress_time_ms_(0.0),
-        psnr_db_(0.0), timestamp_(std::chrono::steady_clock::now()),
-        logical_time_(0) {}
-
-  CompressionTelemetry(CteOp op, int lib, chi::u64 orig_size, chi::u64 comp_size,
-                       double comp_time, double decomp_time, double psnr,
-                       const Timestamp &ts, std::uint64_t logical_time = 0)
-      : op_(op), compress_lib_(lib), original_size_(orig_size),
-        compressed_size_(comp_size), compress_time_ms_(comp_time),
-        decompress_time_ms_(decomp_time), psnr_db_(psnr),
-        timestamp_(ts), logical_time_(logical_time) {}
-
-  // Calculate compression ratio
-  double GetCompressionRatio() const {
-    if (compressed_size_ == 0) return 1.0;
-    return static_cast<double>(original_size_) / static_cast<double>(compressed_size_);
-  }
-
-  // Serialization support for cereal
-  template <class Archive> void serialize(Archive &ar) {
-    // Convert timestamps to duration counts for serialization
-    auto ts_count = timestamp_.time_since_epoch().count();
-    ar(op_, compress_lib_, original_size_, compressed_size_,
-       compress_time_ms_, decompress_time_ms_, psnr_db_,
-       ts_count, logical_time_);
-    // Note: On deserialization, timestamps will be reconstructed from counts
-    if (Archive::is_loading::value) {
-      timestamp_ = Timestamp(Timestamp::duration(ts_count));
-    }
-  }
-};
-#endif  // WRP_CORE_ENABLE_COMPRESS
 
 /**
  * GetOrCreateTag task - Get or create a tag for blob grouping

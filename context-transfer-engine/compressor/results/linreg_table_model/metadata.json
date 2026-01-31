@@ -1,0 +1,42 @@
+{
+  "model_type": "linreg_table",
+  "version": "1.1",
+  "created": "2026-01-30 10:40:39",
+  "num_models": 180,
+  "total_samples": 50400,
+  "libraries": [
+    "BROTLI",
+    "BZIP2",
+    "Blosc2",
+    "LZ4",
+    "LZMA",
+    "SNAPPY",
+    "ZLIB",
+    "ZSTD"
+  ],
+  "configurations": [
+    "balanced",
+    "best",
+    "default",
+    "fast"
+  ],
+  "data_types": [
+    "char",
+    "float",
+    "int"
+  ],
+  "distributions": [
+    "gamma",
+    "normal",
+    "uniform"
+  ],
+  "features": [
+    "data_size"
+  ],
+  "targets": [
+    "compress_time_ms",
+    "decompress_time_ms",
+    "compression_ratio"
+  ],
+  "lossless_only": true
+}

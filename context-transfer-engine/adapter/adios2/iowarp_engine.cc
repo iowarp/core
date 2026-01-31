@@ -46,6 +46,29 @@ IowarpEngine::IowarpEngine(adios2::core::IO &io, const std::string &name,
   // Read compression environment variables
   ReadCompressionEnvVars();
 
+#ifdef WRP_CTE_ENABLE_COMPRESS
+  // Initialize compressor client if compression is enabled
+  if (compress_mode_ != 0) {
+    compressor_client_ = std::make_unique<wrp_cte::compressor::Client>();
+    // Create the compressor pool
+    auto create_task = compressor_client_->AsyncCreate(
+        chi::PoolQuery::Local(),
+        "wrp_cte_compressor",
+        chi::PoolId(513));
+    create_task.Wait();
+    if (create_task->GetReturnCode() != 0) {
+      if (rank_ == 0) {
+        std::cerr << "[IowarpEngine] Warning: Failed to create compressor pool, "
+                  << "compression may not work correctly" << std::endl;
+      }
+    } else {
+      if (rank_ == 0) {
+        std::cerr << "[IowarpEngine] Compressor client initialized" << std::endl;
+      }
+    }
+  }
+#endif
+
   // Start wall clock timer
   wall_clock_start_ = std::chrono::high_resolution_clock::now();
 
@@ -396,6 +419,15 @@ void IowarpEngine::DoPutSync_(const adios2::core::Variable<T> &variable,
   // Create compression context from environment variables
   auto context = CreateCompressionContext();
 
+#ifdef WRP_CTE_ENABLE_COMPRESS
+  // Call compressor for dynamic scheduling if compression is enabled
+  if (compressor_client_ && compress_mode_ == 2) {
+    compressor_client_->DynamicSchedule(
+        data_size, const_cast<void*>(reinterpret_cast<const void*>(values)),
+        context, chi::PoolQuery::Local());
+  }
+#endif
+
   // Put blob to CTE synchronously
   try {
     current_tag_->PutBlob(blob_name, reinterpret_cast<const char *>(values),
@@ -471,6 +503,14 @@ void IowarpEngine::DoPutDeferred_(const adios2::core::Variable<T> &variable,
 
     // Create compression context from environment variables
     auto context = CreateCompressionContext();
+
+#ifdef WRP_CTE_ENABLE_COMPRESS
+    // Call compressor for dynamic scheduling if compression is enabled
+    if (compressor_client_ && compress_mode_ == 2) {
+      compressor_client_->DynamicSchedule(
+          data_size, buffer.ptr_, context, chi::PoolQuery::Local());
+    }
+#endif
 
     auto task = current_tag_->AsyncPutBlob(
         blob_name, buffer.shm_.template Cast<void>(), data_size, 0, 1.0f, context);

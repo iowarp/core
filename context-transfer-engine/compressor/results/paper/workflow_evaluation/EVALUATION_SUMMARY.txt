@@ -1,0 +1,30 @@
+================================================================================
+WORKFLOW EVALUATION SUMMARY
+================================================================================
+
+Configuration:
+  - Gray-Scott: 192 ranks (8 nodes × 24 ranks/node)
+  - Data per rank: 2 MB
+  - Total data per iteration: 384 MB
+  - PFS bandwidth: 500 MB/s total (62.5 MB/s per node)
+  - NVMe bandwidth: 1000 MB/s
+  - DRAM bandwidth: 10000 MB/s
+  - Network bandwidth: 5000 MB/s (40 Gbps)
+  - Simulation baseline: 1000 ms
+  - I/O interference factor: 15.0%
+
+Results:
+              scenario  data_size_mb  compressed_size_mb  compress_time_ms  io_time_ms  sim_time_ms  consumer_compress_time_ms  total_time_ms  compression_ratio  offload_compression
+          PFS-Lossless           384              153.60           57600.0      2457.6       1150.0                        0.0        61207.6               0.40                False
+        PFS-FPZip-Best           384               96.00             768.0      1536.0       1150.0                        0.0         3454.0               0.25                False
+             HCompress           384              211.20           40320.0       211.2       1150.0                        0.0        41681.2               0.55                False
+   DTSchedule-Lossless           384              211.20               0.0        76.8       1000.0                    40320.0         1076.8               0.55                 True
+DTSchedule-Lossy-500db           384               38.40               0.0        76.8       1000.0                      768.0         1076.8               0.10                 True
+DTSchedule-Lossy-150db           384               11.52               0.0        76.8       1000.0                      768.0         1076.8               0.03                 True
+
+Offload Analysis:
+{
+  "speedup": 38.70839524517088,
+  "time_saved_ms": 40604.399999999994,
+  "worthwhile": true
+}

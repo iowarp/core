@@ -1,5 +1,5 @@
-#ifndef WRP_CTE_CORE_AUTOGEN_METHODS_H_
-#define WRP_CTE_CORE_AUTOGEN_METHODS_H_
+#ifndef CORE_AUTOGEN_METHODS_H_
+#define CORE_AUTOGEN_METHODS_H_
 
 #include <chimaera/chimaera.h>
 
@@ -32,6 +32,7 @@ GLOBAL_CONST chi::u32 kGetBlobSize = 23;
 GLOBAL_CONST chi::u32 kGetContainedBlobs = 24;
 GLOBAL_CONST chi::u32 kTagQuery = 30;
 GLOBAL_CONST chi::u32 kBlobQuery = 31;
+GLOBAL_CONST chi::u32 kGetTargetInfo = 32;
 }  // namespace Method
 
 }  // namespace wrp_cte::core

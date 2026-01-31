@@ -1,0 +1,27 @@
+{
+  "target_data_gb": 20,
+  "compute_time_s": 255.0,
+  "pfs_io_uncompressed_s": 320.0,
+  "lossless_interference": 0.15,
+  "lossy_interference": 0.0,
+  "nvme_interference": 0.08,
+  "lossy_offload_compression_speedup": 0.65,
+  "lossy_offload_sim_speedup": 0.84,
+  "compression_params": {
+    "ZSTD-best": {
+      "time_per_chunk_ms": 15.0,
+      "ratio": 0.45,
+      "desc": "Medium lossless"
+    },
+    "FPZIP": {
+      "time_per_chunk_ms": 2.0,
+      "ratio": 0.25,
+      "desc": "Fast lossy"
+    },
+    "SZ3-aggressive": {
+      "time_per_chunk_ms": 3.0,
+      "ratio": 0.1,
+      "desc": "Aggressive lossy"
+    }
+  }
+}

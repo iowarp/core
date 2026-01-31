@@ -1,0 +1,73 @@
+% Workflow Evaluation Table for Paper
+% Gray-Scott: 192 ranks (8 nodes × 24 ranks/node), 2MB per rank = 384MB total
+
+\begin{table}[t]
+\centering
+\caption{Workflow Time Breakdown: Produce → Consume → Archive (384MB Gray-Scott data, 192 ranks)}
+\label{tab:workflow_evaluation}
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{Strategy} & \textbf{CR} & \textbf{Sim} & \textbf{Compress} & \textbf{I/O} & \textbf{Total} & \textbf{Speedup} \\
+ & & \textbf{(ms)} & \textbf{(ms)} & \textbf{(ms)} & \textbf{(ms)} & vs. Baseline \\
+\midrule
+PFS-Lossless & 40\% & 1,150 & 57,600 & 2,458 & 61,208 & 1.00× \\
+PFS-FPZip-Best & 25\% & 1,150 & 768 & 1,536 & 3,454 & 17.72× \\
+HCompress & 55\% & 1,150 & 40,320 & 211 & 41,681 & 1.47× \\
+\midrule
+DTSchedule-Lossless\textsuperscript{\textdagger} & 55\% & 1,000 & 0 & 77 & 1,077 & 56.84× \\
+DTSchedule-Lossy-500dB\textsuperscript{\textdagger} & 10\% & 1,000 & 0 & 77 & 1,077 & 56.84× \\
+DTSchedule-Lossy-150dB\textsuperscript{\textdagger} & 3\% & 1,000 & 0 & 77 & 1,077 & 56.84× \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.3em}
+\footnotesize
+\textsuperscript{\textdagger}Compression offloaded to consumer (not shown in producer times).\\
+\textbf{Configuration:} PFS: 500 MB/s total, NVMe: 1 GB/s, Network: 40 Gbps (5 GB/s).\\
+\textbf{CR:} Compression ratio (compressed size / original size). Lower is better.\\
+\textbf{Sim:} Simulation time with I/O interference (15\% slowdown for inline compression).\\
+\textbf{Compress:} Compression time at producer (0 for DTSchedule = offloaded).\\
+\textbf{I/O:} Data transfer/write time at producer.
+\end{table}
+
+
+% Alternative: More detailed breakdown showing consumer compression time
+\begin{table}[t]
+\centering
+\caption{Detailed Workflow Evaluation with Consumer Compression Times}
+\label{tab:workflow_detailed}
+\begin{tabular}{lrrrrrrr}
+\toprule
+\textbf{Strategy} & \textbf{CR} & \textbf{Sim} & \textbf{Comp} & \textbf{I/O} & \textbf{Total} & \textbf{Consumer} & \textbf{Speedup} \\
+ & & \textbf{(ms)} & \textbf{(ms)} & \textbf{(ms)} & \textbf{(ms)} & \textbf{Comp (ms)} & \\
+\midrule
+PFS-Lossless & 40\% & 1,150 & 57,600 & 2,458 & 61,208 & --- & 1.00× \\
+PFS-FPZip-Best & 25\% & 1,150 & 768 & 1,536 & 3,454 & --- & 17.72× \\
+HCompress & 55\% & 1,150 & 40,320 & 211 & 41,681 & --- & 1.47× \\
+\midrule
+DTSchedule-Lossless & 55\% & 1,000 & 0 & 77 & 1,077 & 40,320 & 56.84× \\
+DTSchedule-Lossy-500dB & 10\% & 1,000 & 0 & 77 & 1,077 & 768 & 56.84× \\
+DTSchedule-Lossy-150dB & 3\% & 1,000 & 0 & 77 & 1,077 & 768 & 56.84× \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.3em}
+\footnotesize
+\textbf{Key Insight:} DTSchedule offloads compression to consumer, eliminating producer interference.\\
+Even with uncompressed data transfer (77ms), total producer time (1,077ms) is 38.7× faster than\\
+HCompress (41,681ms) due to eliminated compression overhead and I/O interference.
+\end{table}
+
+
+% Key findings for paper text
+% \begin{enumerate}
+% \item \textbf{Compression offloading is highly worthwhile:} DTSchedule-Lossless achieves 38.7× speedup over HCompress by offloading compression to the consumer, despite transferring uncompressed data over the network.
+%
+% \item \textbf{Network bandwidth advantage:} The 40 Gbps interconnect (5 GB/s) enables fast uncompressed data transfer (77ms for 384MB) that is significantly faster than compression time (40,320ms for lossless).
+%
+% \item \textbf{Elimination of I/O interference:} DTSchedule reduces simulation time from 1,150ms to 1,000ms (13% improvement) by eliminating I/O operations at the producer.
+%
+% \item \textbf{Lossy compression flexibility:} DTSchedule with lossy compression achieves the same producer time (1,077ms) while offering different compression ratios (10% for 500dB, 3% for 150dB) to match quality requirements.
+%
+% \item \textbf{PFS bottleneck:} PFS-Lossless is 56.8× slower than DTSchedule due to slow network bandwidth (500 MB/s) and expensive compression overhead (57,600ms).
+% \end{enumerate}

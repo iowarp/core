@@ -1,0 +1,7 @@
+scenario,data_size_mb,compressed_size_mb,compress_time_ms,io_time_ms,sim_time_ms,consumer_compress_time_ms,total_time_ms,compression_ratio,offload_compression
+PFS-Lossless,384,153.6000,57600.0000,2457.6000,1150.0000,0.0000,61207.6000,0.4000,False
+PFS-FPZip-Best,384,96.0000,768.0000,1536.0000,1150.0000,0.0000,3454.0000,0.2500,False
+HCompress,384,211.2000,40320.0000,211.2000,1150.0000,0.0000,41681.2000,0.5500,False
+DTSchedule-Lossless,384,211.2000,0.0000,76.8000,1000.0000,40320.0000,1076.8000,0.5500,True
+DTSchedule-Lossy-500db,384,38.4000,0.0000,76.8000,1000.0000,768.0000,1076.8000,0.1000,True
+DTSchedule-Lossy-150db,384,11.5200,0.0000,76.8000,1000.0000,768.0000,1076.8000,0.0300,True

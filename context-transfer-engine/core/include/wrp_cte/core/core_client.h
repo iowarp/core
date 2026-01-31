@@ -95,6 +95,18 @@ class Client : public chi::ContainerClient {
   }
 
   /**
+   * Asynchronous get target info - returns target score, capacity, and stats
+   */
+  chi::Future<GetTargetInfoTask> AsyncGetTargetInfo(const std::string &target_name) {
+    auto *ipc_manager = CHI_IPC;
+
+    auto task = ipc_manager->NewTask<GetTargetInfoTask>(
+        chi::CreateTaskId(), pool_id_, chi::PoolQuery::Dynamic(), target_name);
+
+    return ipc_manager->Send(task);
+  }
+
+  /**
    * Asynchronous get or create tag - returns immediately
    */
   chi::Future<GetOrCreateTagTask<CreateParams>> AsyncGetOrCreateTag(

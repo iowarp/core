@@ -1,0 +1,43 @@
+{
+  "model_type": "linreg_table",
+  "version": "1.1",
+  "lossless_only": true,
+  "libraries": [
+    "BROTLI",
+    "BZIP2",
+    "Blosc2",
+    "LZ4",
+    "LZMA",
+    "SNAPPY",
+    "ZLIB",
+    "ZSTD"
+  ],
+  "configurations": [
+    "balanced",
+    "best",
+    "default",
+    "fast"
+  ],
+  "data_types": [
+    "char",
+    "float",
+    "int"
+  ],
+  "num_distributions": 3,
+  "num_models": 180,
+  "total_samples": 40306,
+  "test_results": {
+    "compress_time_ms": {
+      "mean_r2": 0.17522550433899123,
+      "mean_mae": 4.465332313675351
+    },
+    "decompress_time_ms": {
+      "mean_r2": -0.6399700604904216,
+      "mean_mae": 0.28571595575752146
+    },
+    "compression_ratio": {
+      "mean_r2": -0.8063439156597128,
+      "mean_mae": 19.97099959461709
+    }
+  }
+}
