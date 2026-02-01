@@ -242,19 +242,24 @@ RUN cd /tmp \
 
 # Install ADIOS2 from source with HDF5 and ZeroMQ support
 # Uses conda's HDF5 and ZeroMQ libraries (CMAKE_PREFIX_PATH points to conda)
+# NOTE: SST is disabled because the DILL library has ARM64 Linux compatibility issues
+#       (sys_icache_invalidate is an Apple-specific function not available on ARM64 Linux)
+# NOTE: Using a specific release tag for reproducible builds
 RUN cd /tmp \
-    && git clone https://github.com/ornladios/ADIOS2.git ADIOS2 \
+    && git clone --depth 1 --branch v2.10.2 https://github.com/ornladios/ADIOS2.git ADIOS2 \
     && mkdir -p adios2-build && cd adios2-build \
     && cmake ../ADIOS2 \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr/local \
-    -DADIOS2_BUILD_EXAMPLES=ON \
+    -DADIOS2_BUILD_EXAMPLES=OFF \
     -DBUILD_SHARED_LIBS=ON \
     -DBUILD_TESTING=OFF \
     -DADIOS2_USE_MPI=ON \
     -DADIOS2_USE_HDF5=ON \
     -DADIOS2_USE_ZeroMQ=ON \
     -DADIOS2_USE_Python=OFF \
+    -DADIOS2_USE_SST=OFF \
+    -DADIOS2_USE_Fortran=OFF \
     -DCMAKE_PREFIX_PATH="/home/iowarp/miniconda3" \
     && make -j$(nproc) \
     && make install \
