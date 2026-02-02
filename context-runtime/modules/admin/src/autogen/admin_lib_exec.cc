@@ -85,11 +85,8 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
     }
     case Method::kMonitor: {
       // Cast task FullPtr to specific type
-      HLOG(kInfo, "Admin Run: Dispatching Monitor task (method {})", method);
       hipc::FullPtr<MonitorTask> typed_task = task_ptr.template Cast<MonitorTask>();
-      HLOG(kInfo, "Admin Run: Calling Monitor handler");
       co_await Monitor(typed_task, rctx);
-      HLOG(kInfo, "Admin Run: Monitor handler returned");
       break;
     }
     case Method::kSubmitBatch: {
@@ -246,7 +243,6 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
 
 void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
                         hipc::FullPtr<chi::Task> task_ptr) {
-  HLOG(kInfo, "Admin LoadTask: method={}", method);
   switch (method) {
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
@@ -294,10 +290,8 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
       break;
     }
     case Method::kMonitor: {
-      HLOG(kInfo, "Admin LoadTask: Deserializing MonitorTask");
       auto typed_task = task_ptr.template Cast<MonitorTask>();
       archive >> *typed_task.ptr_;
-      HLOG(kInfo, "Admin LoadTask: MonitorTask deserialized successfully");
       break;
     }
     case Method::kSubmitBatch: {
@@ -646,7 +640,7 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       break;
     }
   }
-
+  
   (void)deep;    // Deep copy parameter reserved for future use
   return hipc::FullPtr<chi::Task>();
 }

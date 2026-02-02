@@ -16,6 +16,7 @@ struct CustomTask;
 struct CoMutexTestTask;
 struct CoRwLockTestTask;
 struct WaitTestTask;
+struct TestLargeOutputTask;
 
 /**
  * Runtime implementation for MOD_NAME container
@@ -98,6 +99,12 @@ public:
    * Returns TaskResume for coroutine-based async operations
    */
   chi::TaskResume WaitTest(hipc::FullPtr<WaitTestTask> task, chi::RunContext& rctx);
+
+  /**
+   * Handle TestLargeOutput task
+   * Returns TaskResume for coroutine-based async operations
+   */
+  chi::TaskResume TestLargeOutput(hipc::FullPtr<TestLargeOutputTask> task, chi::RunContext& rctx);
 
   /**
    * Handle Destroy task - Alias for DestroyPool (DestroyTask = DestroyPoolTask)

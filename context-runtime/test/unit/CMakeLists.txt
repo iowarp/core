@@ -46,6 +46,12 @@ set(PER_PROCESS_SHM_TEST_SOURCES
   test_per_process_shm.cc
 )
 
+# Output Streaming test executable
+set(STREAMING_TEST_TARGET chimaera_output_streaming_tests)
+set(STREAMING_TEST_SOURCES
+  test_streaming.cc
+)
+
 # Create core test executable
 add_executable(${TEST_TARGET} ${TEST_SOURCES})
 
@@ -185,6 +191,32 @@ set_target_properties(${PER_PROCESS_SHM_TEST_TARGET} PROPERTIES
 )
 
 set_target_properties(${PER_PROCESS_SHM_TEST_TARGET} PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+# Create Streaming test executable
+add_executable(${STREAMING_TEST_TARGET} ${STREAMING_TEST_SOURCES})
+
+target_include_directories(${STREAMING_TEST_TARGET} PRIVATE
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/MOD_NAME/include  # For MOD_NAME client and tasks
+)
+
+target_link_libraries(${STREAMING_TEST_TARGET}
+  chimaera_cxx               # Main Chimaera library
+  chimaera_MOD_NAME_client   # MOD_NAME client
+  chimaera_MOD_NAME_runtime  # MOD_NAME runtime
+  hshm::cxx                  # HermesShm library
+  ${CMAKE_THREAD_LIBS_INIT}  # Threading support
+)
+
+set_target_properties(${STREAMING_TEST_TARGET} PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+)
+
+set_target_properties(${STREAMING_TEST_TARGET} PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
@@ -423,6 +455,47 @@ if(CHIMAERA_ENABLE_TESTS)
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
+  # Streaming Tests
+  add_test(
+    NAME cr_streaming_small_output_tests
+    COMMAND ${STREAMING_TEST_TARGET} "[streaming][small]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_streaming_small_output_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+    TIMEOUT 60
+  )
+
+  add_test(
+    NAME cr_streaming_large_output_tests
+    COMMAND ${STREAMING_TEST_TARGET} "[streaming][large]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_streaming_large_output_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+    TIMEOUT 60
+  )
+
+  add_test(
+    NAME cr_streaming_bitfield_tests
+    COMMAND ${STREAMING_TEST_TARGET} "[streaming][bitfield]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_streaming_bitfield_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+    TIMEOUT 60
+  )
+
+  add_test(
+    NAME cr_all_streaming_tests
+    COMMAND ${STREAMING_TEST_TARGET}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_all_streaming_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+    TIMEOUT 180
+  )
+
   # Set test properties for timeout and environment
   set_tests_properties(
     cr_runtime_initialization_tests
@@ -513,6 +586,7 @@ install(TARGETS
   ${SAVE_LOAD_TASK_TEST_TARGET}
   ${LOCAL_TASK_ARCHIVE_TEST_TARGET}
   ${PER_PROCESS_SHM_TEST_TARGET}
+  ${STREAMING_TEST_TARGET}
   RUNTIME DESTINATION bin
 )
 

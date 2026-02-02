@@ -957,8 +957,7 @@ bool IpcManager::IncreaseMemory(size_t size) {
   std::lock_guard<std::mutex> lock(shm_mutex_);
   // Acquire writer lock on allocator_map_lock_ during memory increase
   // This ensures exclusive access to the allocator_map_ structures
-  allocator_map_lock_.WriteLock();
-  auto lock_guard = hshm::ScopeGuard([this]() { allocator_map_lock_.WriteUnlock(); });
+  allocator_map_lock_.WriteLock(0);
 
   pid_t pid = getpid();
   u32 index = shm_count_.fetch_add(1, std::memory_order_relaxed);
@@ -1011,12 +1010,16 @@ bool IpcManager::IncreaseMemory(size_t size) {
     HLOG(kInfo, "IpcManager::IncreaseMemory: Created allocator {} with ID ({}.{})",
          shm_name, alloc_id.major_, alloc_id.minor_);
 
+    // Release the lock before returning
+    allocator_map_lock_.WriteUnlock();
+
     // Note: Registration with runtime is now done lazily in SetAllocator()
     // when the worker first encounters a FutureShm from this client's memory
 
     return true;
 
   } catch (const std::exception &e) {
+    allocator_map_lock_.WriteUnlock();
     HLOG(kError, "IpcManager::IncreaseMemory: Exception creating {}: {}",
          shm_name, e.what());
     shm_count_.fetch_sub(1, std::memory_order_relaxed);
@@ -1027,8 +1030,7 @@ bool IpcManager::IncreaseMemory(size_t size) {
 bool IpcManager::RegisterMemory(const hipc::AllocatorId &alloc_id, size_t shm_size) {
   std::lock_guard<std::mutex> lock(shm_mutex_);
   // Acquire writer lock on allocator_map_lock_ during memory registration
-  allocator_map_lock_.WriteLock();
-  auto lock_guard = hshm::ScopeGuard([this]() { allocator_map_lock_.WriteUnlock(); });
+  allocator_map_lock_.WriteLock(0);
 
   // Derive shm_name from alloc_id: chimaera_{pid}_{index}
   pid_t owner_pid = static_cast<pid_t>(alloc_id.major_);
@@ -1045,6 +1047,7 @@ bool IpcManager::RegisterMemory(const hipc::AllocatorId &alloc_id, size_t shm_si
     HLOG(kInfo,
          "IpcManager::RegisterMemory: {} already registered, skipping",
          shm_name);
+    allocator_map_lock_.WriteUnlock();
     return true;  // Already registered
   }
 
@@ -1078,9 +1081,13 @@ bool IpcManager::RegisterMemory(const hipc::AllocatorId &alloc_id, size_t shm_si
     HLOG(kInfo, "IpcManager::RegisterMemory: Successfully registered {}",
          shm_name);
 
+    // Release the lock before returning
+    allocator_map_lock_.WriteUnlock();
+
     return true;
 
   } catch (const std::exception &e) {
+    allocator_map_lock_.WriteUnlock();
     HLOG(kError, "IpcManager::RegisterMemory: Exception registering {}: {}",
          shm_name, e.what());
     return false;
@@ -1112,8 +1119,7 @@ ClientShmInfo IpcManager::GetClientShmInfo(u32 index) const {
 size_t IpcManager::WreapDeadIpcs() {
   std::lock_guard<std::mutex> lock(shm_mutex_);
   // Acquire writer lock on allocator_map_lock_ during reaping
-  allocator_map_lock_.WriteLock();
-  auto lock_guard = hshm::ScopeGuard([this]() { allocator_map_lock_.WriteUnlock(); });
+  allocator_map_lock_.WriteLock(0);
 
   pid_t current_pid = getpid();
   size_t reaped_count = 0;
@@ -1200,14 +1206,16 @@ size_t IpcManager::WreapDeadIpcs() {
          reaped_count);
   }
 
+  // Release the lock before returning
+  allocator_map_lock_.WriteUnlock();
+
   return reaped_count;
 }
 
 size_t IpcManager::WreapAllIpcs() {
   std::lock_guard<std::mutex> lock(shm_mutex_);
   // Acquire writer lock on allocator_map_lock_ during cleanup
-  allocator_map_lock_.WriteLock();
-  auto lock_guard = hshm::ScopeGuard([this]() { allocator_map_lock_.WriteUnlock(); });
+  allocator_map_lock_.WriteLock(0);
 
   size_t reaped_count = 0;
 
@@ -1284,6 +1292,9 @@ size_t IpcManager::WreapAllIpcs() {
 
   HLOG(kInfo, "WreapAllIpcs: Reaped {} shared memory segments", reaped_count);
 
+  // Release the lock before returning
+  allocator_map_lock_.WriteUnlock();
+
   return reaped_count;
 }
 
@@ -1343,37 +1354,87 @@ size_t IpcManager::ClearUserIpcs() {
 
 Future<Task> IpcManager::MakeFuture(hipc::FullPtr<Task> task_ptr,
                                     bool force_copy) {
+  HLOG(kInfo, "MakeFuture: called with task_ptr={}, force_copy={}",
+       task_ptr.IsNull() ? "null" : "valid", force_copy);
   if (!CHI_CHIMAERA_MANAGER->IsRuntime() || force_copy) {
     // CLIENT PATH or FORCE COPY: Serialize the task into Future
-    // Get allocator from per-process shared memory
-    CHI_MAIN_ALLOC_T *alloc = last_alloc_;
+    HLOG(kInfo, "MakeFuture: CLIENT PATH");
+    // Get shm_size from allocator for lazy registration
     size_t shm_size = 0;
-    if (alloc != nullptr) {
-      shm_size = alloc->GetBackend().backend_size_;
+    if (last_alloc_ != nullptr) {
+      shm_size = last_alloc_->GetBackend().backend_size_;
     }
 
-    // Create Future with allocator and task_ptr
-    Future<Task> future(alloc, task_ptr);
+    // Get copy space size from task
+    size_t copy_space_size = task_ptr.IsNull() ? 4096 : task_ptr->GetCopySpaceSize();
+
+    // Allocate FutureShm with copy_space using AllocateBuffer
+    size_t alloc_size = sizeof(FutureShm<CHI_MAIN_ALLOC_T>) + copy_space_size;
+    hipc::FullPtr<char> buffer = AllocateBuffer(alloc_size);
+    if (buffer.IsNull()) {
+      return Future<Task>();  // Return null future on allocation failure
+    }
+
+    // Construct FutureShm in-place using placement new
+    FutureShm<CHI_MAIN_ALLOC_T>* future_shm_ptr =
+        new (buffer.ptr_) FutureShm<CHI_MAIN_ALLOC_T>();
+
+    // Initialize FutureShm fields
+    if (!task_ptr.IsNull()) {
+      future_shm_ptr->pool_id_ = task_ptr->pool_id_;
+      future_shm_ptr->method_id_ = task_ptr->method_;
+    }
+    future_shm_ptr->capacity_.store(copy_space_size);
+    future_shm_ptr->shm_size_ = shm_size;
+
+    // Create Future with ShmPtr and task_ptr
+    hipc::ShmPtr<FutureShm<CHI_MAIN_ALLOC_T>> future_shm_shmptr = buffer.shm_.template Cast<FutureShm<CHI_MAIN_ALLOC_T>>();
+    Future<Task> future(future_shm_shmptr, task_ptr);
 
     // Serialize task using LocalSaveTaskArchive with kSerializeIn mode
     LocalSaveTaskArchive archive(LocalMsgType::kSerializeIn);
     archive << (*task_ptr.ptr_);
 
-    // Get serialized data and copy to FutureShm's hipc::vector
+    // Get serialized data and copy to FutureShm's copy_space
     const std::vector<char> &serialized = archive.GetData();
-    auto &future_shm = future.GetFutureShm();
-    future_shm->serialized_task_.resize(serialized.size());
-    memcpy(future_shm->serialized_task_.data(), serialized.data(),
-           serialized.size());
+    size_t serialized_size = serialized.size();
+    if (serialized_size > copy_space_size) {
+      HLOG(kWarning, "Serialized task size {} exceeds copy space {}, truncating",
+           serialized_size, copy_space_size);
+      serialized_size = copy_space_size;
+    }
+    memcpy(future_shm_ptr->copy_space, serialized.data(), serialized_size);
+    future_shm_ptr->input_size_.store(serialized_size);
 
-    // Set shm_size for lazy registration by worker
-    future_shm->shm_size_ = shm_size;
-
+    HLOG(kInfo, "MakeFuture: CLIENT PATH complete, returning future");
     return future;
   } else {
     // RUNTIME PATH: Create Future with task pointer directly (no serialization)
-    CHI_MAIN_ALLOC_T *alloc = last_alloc_;
-    Future<Task> future(alloc, task_ptr);
+    HLOG(kInfo, "MakeFuture: RUNTIME PATH");
+    // Get copy space size from task
+    size_t copy_space_size = task_ptr.IsNull() ? 4096 : task_ptr->GetCopySpaceSize();
+
+    // Allocate FutureShm with copy_space using AllocateBuffer
+    size_t alloc_size = sizeof(FutureShm<CHI_MAIN_ALLOC_T>) + copy_space_size;
+    hipc::FullPtr<char> buffer = AllocateBuffer(alloc_size);
+    if (buffer.IsNull()) {
+      return Future<Task>();  // Return null future on allocation failure
+    }
+
+    // Construct FutureShm in-place using placement new
+    FutureShm<CHI_MAIN_ALLOC_T>* future_shm_ptr =
+        new (buffer.ptr_) FutureShm<CHI_MAIN_ALLOC_T>();
+
+    // Initialize FutureShm fields
+    if (!task_ptr.IsNull()) {
+      future_shm_ptr->pool_id_ = task_ptr->pool_id_;
+      future_shm_ptr->method_id_ = task_ptr->method_;
+    }
+    future_shm_ptr->capacity_.store(copy_space_size);
+
+    // Create Future with ShmPtr and task_ptr (no serialization needed)
+    hipc::ShmPtr<FutureShm<CHI_MAIN_ALLOC_T>> future_shm_shmptr = buffer.shm_.template Cast<FutureShm<CHI_MAIN_ALLOC_T>>();
+    Future<Task> future(future_shm_shmptr, task_ptr);
     return future;
   }
 }

@@ -310,6 +310,65 @@ struct WaitTestTask : public chi::Task {
 };
 
 /**
+ * TestLargeOutputTask - Test large output streaming (1MB)
+ * Tests streaming mechanism for large output data
+ */
+struct TestLargeOutputTask : public chi::Task {
+  // Task-specific data
+  OUT std::vector<uint8_t> data_;  // Output: 1MB of test data
+
+  /** SHM default constructor */
+  TestLargeOutputTask()
+      : chi::Task() {}
+
+  /** Emplace constructor */
+  explicit TestLargeOutputTask(
+      const chi::TaskId &task_node,
+      const chi::PoolId &pool_id,
+      const chi::PoolQuery &pool_query)
+      : chi::Task(task_node, pool_id, pool_query, 24) {
+    // Initialize task
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kTestLargeOutput;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template<typename Archive>
+  void SerializeIn(Archive& ar) {
+    Task::SerializeIn(ar);
+    // No input parameters for this task
+  }
+
+  template<typename Archive>
+  void SerializeOut(Archive& ar) {
+    Task::SerializeOut(ar);
+    ar(data_);  // Return the 1MB output data
+  }
+
+  /**
+   * Copy from another TestLargeOutputTask (assumes this task is already constructed)
+   * @param other Pointer to the source task to copy from
+   */
+  void Copy(const hipc::FullPtr<TestLargeOutputTask> &other) {
+    // Copy base Task fields
+    Task::Copy(other.template Cast<Task>());
+    // Copy TestLargeOutputTask-specific fields
+    this->data_ = other->data_;
+  }
+
+  /**
+   * Aggregate replica results into this task
+   * @param other Pointer to the replica task to aggregate from
+   */
+  void Aggregate(const hipc::FullPtr<TestLargeOutputTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
+};
+
+/**
  * Standard DestroyTask for MOD_NAME
  * All ChiMods should use the same DestroyTask structure from admin
  */

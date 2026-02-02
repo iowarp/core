@@ -65,6 +65,12 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       co_await WaitTest(typed_task, rctx);
       break;
     }
+    case Method::kTestLargeOutput: {
+      // Cast task FullPtr to specific type
+      hipc::FullPtr<TestLargeOutputTask> typed_task = task_ptr.template Cast<TestLargeOutputTask>();
+      co_await TestLargeOutput(typed_task, rctx);
+      break;
+    }
     default: {
       // Unknown method - do nothing
       break;
@@ -101,6 +107,10 @@ void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
     }
     case Method::kWaitTest: {
       ipc_manager->DelTask(task_ptr.template Cast<WaitTestTask>());
+      break;
+    }
+    case Method::kTestLargeOutput: {
+      ipc_manager->DelTask(task_ptr.template Cast<TestLargeOutputTask>());
       break;
     }
     default: {
@@ -144,6 +154,11 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
       archive << *typed_task.ptr_;
       break;
     }
+    case Method::kTestLargeOutput: {
+      auto typed_task = task_ptr.template Cast<TestLargeOutputTask>();
+      archive << *typed_task.ptr_;
+      break;
+    }
     default: {
       // Unknown method - do nothing
       break;
@@ -181,6 +196,11 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
     }
     case Method::kWaitTest: {
       auto typed_task = task_ptr.template Cast<WaitTestTask>();
+      archive >> *typed_task.ptr_;
+      break;
+    }
+    case Method::kTestLargeOutput: {
+      auto typed_task = task_ptr.template Cast<TestLargeOutputTask>();
       archive >> *typed_task.ptr_;
       break;
     }
@@ -238,6 +258,12 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
       typed_task.ptr_->SerializeIn(archive);
       break;
     }
+    case Method::kTestLargeOutput: {
+      auto typed_task = task_ptr.template Cast<TestLargeOutputTask>();
+      // Call SerializeIn - task will call Task::SerializeIn for base fields
+      typed_task.ptr_->SerializeIn(archive);
+      break;
+    }
     default: {
       // Unknown method - do nothing
       break;
@@ -288,6 +314,12 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
     }
     case Method::kWaitTest: {
       auto typed_task = task_ptr.template Cast<WaitTestTask>();
+      // Call SerializeOut - task will call Task::SerializeOut for base fields
+      typed_task.ptr_->SerializeOut(archive);
+      break;
+    }
+    case Method::kTestLargeOutput: {
+      auto typed_task = task_ptr.template Cast<TestLargeOutputTask>();
       // Call SerializeOut - task will call Task::SerializeOut for base fields
       typed_task.ptr_->SerializeOut(archive);
       break;
@@ -372,6 +404,17 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       }
       break;
     }
+    case Method::kTestLargeOutput: {
+      // Allocate new task
+      auto new_task_ptr = ipc_manager->NewTask<TestLargeOutputTask>();
+      if (!new_task_ptr.IsNull()) {
+        // Copy task fields (includes base Task fields)
+        auto task_typed = orig_task_ptr.template Cast<TestLargeOutputTask>();
+        new_task_ptr->Copy(task_typed);
+        return new_task_ptr.template Cast<chi::Task>();
+      }
+      break;
+    }
     default: {
       // For unknown methods, create base Task copy
       auto new_task_ptr = ipc_manager->NewTask<chi::Task>();
@@ -416,6 +459,10 @@ hipc::FullPtr<chi::Task> Runtime::NewTask(chi::u32 method) {
     }
     case Method::kWaitTest: {
       auto new_task_ptr = ipc_manager->NewTask<WaitTestTask>();
+      return new_task_ptr.template Cast<chi::Task>();
+    }
+    case Method::kTestLargeOutput: {
+      auto new_task_ptr = ipc_manager->NewTask<TestLargeOutputTask>();
       return new_task_ptr.template Cast<chi::Task>();
     }
     default: {
@@ -472,6 +519,14 @@ void Runtime::Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> origin_task_pt
       // Get typed tasks for Aggregate call
       auto typed_origin = origin_task_ptr.template Cast<WaitTestTask>();
       auto typed_replica = replica_task_ptr.template Cast<WaitTestTask>();
+      // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
+      typed_origin.ptr_->Aggregate(typed_replica);
+      break;
+    }
+    case Method::kTestLargeOutput: {
+      // Get typed tasks for Aggregate call
+      auto typed_origin = origin_task_ptr.template Cast<TestLargeOutputTask>();
+      auto typed_replica = replica_task_ptr.template Cast<TestLargeOutputTask>();
       // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
       typed_origin.ptr_->Aggregate(typed_replica);
       break;

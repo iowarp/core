@@ -18,3 +18,4 @@ kCustom: 10             # Custom operation method
 kCoMutexTest: 20        # CoMutex synchronization testing method
 kCoRwLockTest: 21       # CoRwLock reader-writer synchronization testing method
 kWaitTest: 23           # Wait test method
+kTestLargeOutput: 24    # Test large output streaming (1MB)

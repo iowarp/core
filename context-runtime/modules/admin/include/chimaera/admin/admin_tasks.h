@@ -101,20 +101,26 @@ struct BaseCreateTask : public chi::Task {
         chimod_params_(HSHM_MALLOC), new_pool_id_(target_pool_id),
         error_message_(HSHM_MALLOC), is_admin_(IS_ADMIN), do_compose_(DO_COMPOSE),
         client_(client) {
+    HLOG(kInfo, "BaseCreateTask: ENTRY pool_name={}", pool_name);
     // Initialize base task
     task_id_ = task_node;
     method_ = MethodId;
     task_flags_.Clear();
     pool_query_ = pool_query;
 
+    HLOG(kInfo, "BaseCreateTask: Base initialization complete, do_compose_={}", do_compose_);
     // In compose mode, skip CreateParams construction - PoolConfig will be set
     // via SetParams
     if (!do_compose_) {
+      HLOG(kInfo, "BaseCreateTask: Creating CreateParams...");
       // Create and serialize the CreateParams with provided arguments
       CreateParamsT params(
           std::forward<CreateParamsArgs>(create_params_args)...);
+      HLOG(kInfo, "BaseCreateTask: Calling Serialize...");
       chi::Task::Serialize(HSHM_MALLOC, chimod_params_, params);
+      HLOG(kInfo, "BaseCreateTask: Serialize complete");
     }
+    HLOG(kInfo, "BaseCreateTask: EXIT");
   }
 
   /** Compose constructor - takes PoolConfig directly */

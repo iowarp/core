@@ -241,7 +241,9 @@ void Worker::Run() {
   // Set up signalfd and store in TaskLane
   // Get current thread ID
   pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
-  assigned_lane_->SetTid(tid);
+  if (assigned_lane_) {
+    assigned_lane_->SetTid(tid);
+  }
 
   // Create signal mask for custom user signal (SIGUSR1)
   sigset_t mask;
@@ -267,7 +269,9 @@ void Worker::Run() {
        tid);
 
   // Store signal_fd in TaskLane
-  assigned_lane_->SetSignalFd(signal_fd);
+  if (assigned_lane_) {
+    assigned_lane_->SetSignalFd(signal_fd);
+  }
 
   // Add signal_fd to epoll
   struct epoll_event ev;
@@ -278,7 +282,9 @@ void Worker::Run() {
          "Worker {}: Failed to add signal_fd={} to epoll_fd={} - errno={}",
          worker_id_, signal_fd, epoll_fd_, errno);
     close(signal_fd);
-    assigned_lane_->SetSignalFd(-1);
+    if (assigned_lane_) {
+      assigned_lane_->SetSignalFd(-1);
+    }
     is_running_ = false;
     return;
   }
@@ -328,10 +334,12 @@ void Worker::Run() {
   }
 
   // Cleanup signalfd when worker exits
-  int cleanup_signal_fd = assigned_lane_->GetSignalFd();
-  if (cleanup_signal_fd != -1) {
-    close(cleanup_signal_fd);
-    assigned_lane_->SetSignalFd(-1);
+  if (assigned_lane_) {
+    int cleanup_signal_fd = assigned_lane_->GetSignalFd();
+    if (cleanup_signal_fd != -1) {
+      close(cleanup_signal_fd);
+      assigned_lane_->SetSignalFd(-1);
+    }
   }
 }
 
@@ -340,7 +348,9 @@ void Worker::Stop() { is_running_ = false; }
 void Worker::SetLane(TaskLane *lane) {
   assigned_lane_ = lane;
   // Mark lane as active when assigned to worker
-  assigned_lane_->SetActive(true);
+  if (assigned_lane_) {
+    assigned_lane_->SetActive(true);
+  }
 }
 
 TaskLane *Worker::GetLane() const { return assigned_lane_; }
@@ -349,6 +359,11 @@ u32 Worker::ProcessNewTasks() {
   // Process up to 16 tasks from this worker's lane per iteration
   const u32 MAX_TASKS_PER_ITERATION = 16;
   u32 tasks_processed = 0;
+
+  // Network workers don't have lanes and don't process tasks this way
+  if (!assigned_lane_) {
+    return 0;
+  }
 
   while (tasks_processed < MAX_TASKS_PER_ITERATION) {
     Future<Task> future;
@@ -359,7 +374,7 @@ u32 Worker::ProcessNewTasks() {
 
       // Check if allocator needs to be registered (lazy registration for client memory)
       auto *ipc_manager = CHI_IPC;
-      auto &future_shm_full = future.GetFutureShm();
+      auto future_shm_full = future.GetFutureShm();
       hipc::AllocatorId alloc_id = future_shm_full.shm_.alloc_id_;
 
       // Only register if not null allocator and not already registered
@@ -368,7 +383,14 @@ u32 Worker::ProcessNewTasks() {
         if (test_ptr.IsNull()) {
           // Allocator not registered - register it now
           // shm_size will be determined by shm_attach
-          ipc_manager->RegisterMemory(alloc_id, 0);
+          bool registered = ipc_manager->RegisterMemory(alloc_id, 0);
+          if (!registered) {
+            // Registration failed - mark task as error and skip
+            HLOG(kError, "Worker {}: Failed to register memory for alloc_id ({}.{})",
+                 worker_id_, alloc_id.major_, alloc_id.minor_);
+            future_shm_full->is_complete_.SetBits(1);
+            continue;
+          }
         }
       }
 
@@ -376,7 +398,11 @@ u32 Worker::ProcessNewTasks() {
       future.SetAllocator();
 
       // Get pool_id and method_id from FutureShm
-      auto &future_shm = future.GetFutureShm();
+      auto future_shm = future.GetFutureShm();
+      if (future_shm.IsNull()) {
+        HLOG(kError, "Worker {}: Failed to get FutureShm (null pointer)", worker_id_);
+        continue;
+      }
       PoolId pool_id = future_shm->pool_id_;
       u32 method_id = future_shm->method_id_;
 
@@ -388,7 +414,7 @@ u32 Worker::ProcessNewTasks() {
         // Container not found - mark as complete with error
         HLOG(kError, "Worker {}: Container not found for pool_id={}, method={}",
              worker_id_, pool_id, method_id);
-        future_shm->is_complete_.store(1);
+        future_shm->is_complete_.SetBits(1);
         continue;
       }
 
@@ -398,9 +424,10 @@ u32 Worker::ProcessNewTasks() {
       bool destroy_in_end_task = false;
 
       if (task_full_ptr.IsNull()) {
-        // CLIENT PATH: Load task from serialized data in FutureShm
-        std::vector<char> serialized_data(future_shm->serialized_task_.begin(),
-                                          future_shm->serialized_task_.end());
+        // CLIENT PATH: Load task from serialized data in FutureShm copy_space
+        size_t input_size = future_shm->input_size_.load();
+        std::vector<char> serialized_data(future_shm->copy_space,
+                                          future_shm->copy_space + input_size);
         LocalLoadTaskArchive archive(serialized_data);
         task_full_ptr = container->LocalAllocLoadTask(method_id, archive);
 
@@ -505,7 +532,9 @@ void Worker::SuspendMe() {
     }
 
     // Mark worker as inactive (blocked in epoll_wait)
-    assigned_lane_->SetActive(false);
+    if (assigned_lane_) {
+      assigned_lane_->SetActive(false);
+    }
 
     // Calculate epoll timeout from periodic tasks
     // -1 = no periodic tasks, wait indefinitely
@@ -529,7 +558,9 @@ void Worker::SuspendMe() {
         epoll_wait(epoll_fd_, epoll_events_, MAX_EPOLL_EVENTS, timeout_ms);
 
     // Mark worker as active again
-    assigned_lane_->SetActive(true);
+    if (assigned_lane_) {
+      assigned_lane_->SetActive(true);
+    }
 
     if (nfds > 0) {
       // Events received - should be SIGUSR1 signal on signalfd
@@ -1233,17 +1264,17 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
 
     // Get serialized outputs and future shm
     const std::vector<char> &serialized = archive.GetData();
-    auto &future_shm = run_ctx->future_.GetFutureShm();
+    auto future_shm = run_ctx->future_.GetFutureShm();
 
     // Set output_size_ to track the actual serialized data size
-    future_shm->output_size_ = serialized.size();
+    future_shm->output_size_.store(serialized.size());
 
     // Check if serialized data fits in preallocated copy space
-    if (serialized.size() <= future_shm->serialized_task_.capacity()) {
-      // Path 1 (fits): Copy directly into serialized_task_
-      future_shm->serialized_task_.resize(serialized.size());
-      std::memcpy(future_shm->serialized_task_.data(), serialized.data(),
-                  serialized.size());
+    size_t copy_space_capacity = future_shm->capacity_.load();
+    if (serialized.size() <= copy_space_capacity) {
+      // Path 1 (fits): Copy directly into copy_space
+      std::memcpy(future_shm->copy_space, serialized.data(), serialized.size());
+      future_shm->input_size_.store(serialized.size());
     } else {
       // Path 2 (doesn't fit): Queue for streaming via client_copy_
       // The task will be processed by CopyTaskOutputToClient in Worker::Run
@@ -1254,7 +1285,7 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   }
 
   // 2. Mark task as complete (only if not streaming)
-  auto &future_shm = run_ctx->future_.GetFutureShm();
+  auto future_shm = run_ctx->future_.GetFutureShm();
   if (!needs_streaming) {
     run_ctx->future_.SetComplete();
   }
@@ -1655,35 +1686,36 @@ void Worker::CopyTaskOutputToClient() {
       continue;
     }
 
-    auto &future_shm = task_future.GetFutureShm();
+    auto future_shm = task_future.GetFutureShm();
     if (future_shm.IsNull()) {
       client_copy_.pop();
       continue;
     }
 
     // Acquire reader lock on allocator_map_lock_
-    CHI_IPC->allocator_map_lock_.ReadLock();
-    auto lock_guard = hshm::ScopeGuard([](){ CHI_IPC->allocator_map_lock_.ReadUnlock(); });
+    CHI_IPC->allocator_map_lock_.ReadLock(0);
 
     // Check if FUTURE_NEW_DATA is already set
-    if (!future_shm->is_complete_.Test(FutureShm<>::FUTURE_NEW_DATA)) {
+    if (!future_shm->is_complete_.Any(FutureShm<>::FUTURE_NEW_DATA)) {
       // Data not yet consumed by client - serialize and copy output to copy space
 
       // The serialized data should be available - copy it to copy space
-      // The copy space size is the capacity of serialized_task_
-      if (future_shm->output_size_ > 0 && future_shm->output_size_ > future_shm->serialized_task_.capacity()) {
+      // The copy space size is the capacity_
+      size_t output_size = future_shm->output_size_.load();
+      size_t copy_space_capacity = future_shm->capacity_.load();
+      if (output_size > 0 && output_size > copy_space_capacity) {
         // FIXME: This is a streaming scenario - need to implement the serialization
         // For now, just mark as having data
         // TODO: Implement streaming serialization here
       }
 
       // Mark that new data is available in copy space
-      future_shm->is_complete_.Set(FutureShm<>::FUTURE_NEW_DATA);
+      future_shm->is_complete_.SetBits(FutureShm<>::FUTURE_NEW_DATA);
 
       // Wait up to 1ms for client to consume the data
       hshm::Timepoint wait_start;
       wait_start.Now();
-      while (future_shm->is_complete_.Test(FutureShm<>::FUTURE_NEW_DATA)) {
+      while (future_shm->is_complete_.Any(FutureShm<>::FUTURE_NEW_DATA)) {
         double wait_us = wait_start.GetUsecFromStart();
         if (wait_us > 1000.0) {  // 1ms timeout
           // Client hasn't consumed data in time - push to back of queue
@@ -1699,9 +1731,9 @@ void Worker::CopyTaskOutputToClient() {
       }
 
       // Check if data was consumed
-      if (!future_shm->is_complete_.Test(FutureShm<>::FUTURE_NEW_DATA)) {
+      if (!future_shm->is_complete_.Any(FutureShm<>::FUTURE_NEW_DATA)) {
         // Data was consumed - mark complete and remove from queue
-        future_shm->is_complete_.Set(FutureShm<>::FUTURE_COMPLETE);
+        future_shm->is_complete_.SetBits(FutureShm<>::FUTURE_COMPLETE);
         client_copy_.pop();
         HLOG(kDebug, "CopyTaskOutputToClient: Task streaming complete");
         continue;
@@ -1712,6 +1744,9 @@ void Worker::CopyTaskOutputToClient() {
       client_copy_.pop();
       client_copy_.push(std::move(task));
     }
+
+    // Release the lock before continuing
+    CHI_IPC->allocator_map_lock_.ReadUnlock();
   }
 }
 

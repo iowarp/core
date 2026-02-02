@@ -19,6 +19,12 @@ set(WAIT_FUNCTIONALITY_TEST_SOURCES
   test_wait_functionality.cc
 )
 
+# Streaming test executable
+set(STREAMING_TEST_TARGET chimaera_streaming_tests)
+set(STREAMING_TEST_SOURCES
+  test_streaming.cc
+)
+
 # Create flush correctness test executable
 add_executable(${FLUSH_TEST_TARGET} ${FLUSH_TEST_SOURCES})
 
@@ -103,6 +109,34 @@ set_target_properties(${WAIT_FUNCTIONALITY_TEST_TARGET} PROPERTIES
 )
 
 set_target_properties(${WAIT_FUNCTIONALITY_TEST_TARGET} PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+# Create Streaming test executable
+add_executable(${STREAMING_TEST_TARGET} ${STREAMING_TEST_SOURCES})
+
+target_include_directories(${STREAMING_TEST_TARGET} PRIVATE
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/admin/include  # For admin tasks
+  ${CHIMAERA_ROOT}/modules/MOD_NAME/include  # For MOD_NAME tasks and client
+)
+
+target_link_libraries(${STREAMING_TEST_TARGET}
+  chimaera_admin_runtime          # Admin module runtime
+  chimaera_admin_client           # Admin module client
+  chimaera_MOD_NAME_runtime       # MOD_NAME module runtime for streaming tasks
+  chimaera_MOD_NAME_client        # MOD_NAME module client
+  hshm::cxx                       # HermesShm library
+  ${CMAKE_THREAD_LIBS_INIT}       # Threading support
+)
+
+set_target_properties(${STREAMING_TEST_TARGET} PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+)
+
+set_target_properties(${STREAMING_TEST_TARGET} PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
@@ -294,6 +328,44 @@ if(CHIMAERA_ENABLE_TESTS)
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
   )
 
+  # Streaming Tests
+  add_test(
+    NAME cr_streaming_small_tests
+    COMMAND ${STREAMING_TEST_TARGET} "[streaming][small]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_streaming_small_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+  )
+
+  add_test(
+    NAME cr_streaming_large_tests
+    COMMAND ${STREAMING_TEST_TARGET} "[streaming][large]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_streaming_large_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+  )
+
+  add_test(
+    NAME cr_streaming_concurrent_tests
+    COMMAND ${STREAMING_TEST_TARGET} "[streaming][concurrent]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_streaming_concurrent_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+  )
+
+  # Comprehensive Streaming test
+  add_test(
+    NAME cr_all_streaming_tests
+    COMMAND ${STREAMING_TEST_TARGET}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_all_streaming_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+  )
+
   # Set test properties
   set_tests_properties(
     cr_flush_basic_tests
@@ -316,6 +388,10 @@ if(CHIMAERA_ENABLE_TESTS)
     cr_wait_test_async_tests
     cr_wait_test_edge_cases_tests
     cr_all_wait_functionality_tests
+    cr_streaming_small_tests
+    cr_streaming_large_tests
+    cr_streaming_concurrent_tests
+    cr_all_streaming_tests
     PROPERTIES
       TIMEOUT 180
       ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;CHIMAERA_TEST_MODE=1"
@@ -386,8 +462,36 @@ add_custom_target(test_comutex_performance
   COMMENT "Running Chimaera synchronization performance tests"
 )
 
+add_custom_target(test_streaming
+  COMMAND ${STREAMING_TEST_TARGET}
+  DEPENDS ${STREAMING_TEST_TARGET}
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  COMMENT "Running Chimaera output streaming tests"
+)
+
+add_custom_target(test_streaming_small
+  COMMAND ${STREAMING_TEST_TARGET} "[streaming][small]"
+  DEPENDS ${STREAMING_TEST_TARGET}
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  COMMENT "Running Chimaera small output tests"
+)
+
+add_custom_target(test_streaming_large
+  COMMAND ${STREAMING_TEST_TARGET} "[streaming][large]"
+  DEPENDS ${STREAMING_TEST_TARGET}
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  COMMENT "Running Chimaera large output streaming tests"
+)
+
+add_custom_target(test_streaming_concurrent
+  COMMAND ${STREAMING_TEST_TARGET} "[streaming][concurrent]"
+  DEPENDS ${STREAMING_TEST_TARGET}
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  COMMENT "Running Chimaera concurrent streaming tests"
+)
+
 # Install test executables
-install(TARGETS ${FLUSH_TEST_TARGET} ${COMUTEX_TEST_TARGET} ${WAIT_FUNCTIONALITY_TEST_TARGET}
+install(TARGETS ${FLUSH_TEST_TARGET} ${COMUTEX_TEST_TARGET} ${WAIT_FUNCTIONALITY_TEST_TARGET} ${STREAMING_TEST_TARGET}
   RUNTIME DESTINATION bin
 )
 
@@ -395,3 +499,4 @@ message(STATUS "MOD_NAME module tests configured:")
 message(STATUS "  Flush test target: ${FLUSH_TEST_TARGET}")
 message(STATUS "  CoMutex test target: ${COMUTEX_TEST_TARGET}")
 message(STATUS "  Wait Functionality test target: ${WAIT_FUNCTIONALITY_TEST_TARGET}")
+message(STATUS "  Streaming test target: ${STREAMING_TEST_TARGET}")

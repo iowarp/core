@@ -124,6 +124,21 @@ class Client : public chi::ContainerClient {
 
     return ipc_manager->Send(task);
   }
+
+  /**
+   * Submit TestLargeOutput task (asynchronous)
+   * Tests large output streaming functionality with 1MB output
+   * @param pool_query Pool routing information
+   * @return Future for the TestLargeOutputTask
+   */
+  chi::Future<TestLargeOutputTask> AsyncTestLargeOutput(const chi::PoolQuery& pool_query) {
+    auto* ipc_manager = CHI_IPC;
+
+    auto task = ipc_manager->NewTask<TestLargeOutputTask>(
+        chi::CreateTaskId(), pool_id_, pool_query);
+
+    return ipc_manager->Send(task);
+  }
 };
 
 }  // namespace chimaera::MOD_NAME

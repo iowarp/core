@@ -372,9 +372,20 @@ enum class ExecMode : u32 {
  * - FUTURE_COMPLETE = 1: Task execution completed
  * - FUTURE_NEW_DATA = 2: New output data available in copy space
  */
+/**
+ * FutureShm - Fixed-size shared memory structure for task futures
+ *
+ * This structure contains metadata and a copy space buffer for task serialization.
+ * The copy space is a flexible array member allocated as part of the structure.
+ *
+ * Memory layout:
+ * - Fixed-size header fields (pool_id, method_id, etc.)
+ * - Flexible array: char copy_space[]
+ *
+ * Allocation: AllocateBuffer(sizeof(FutureShm) + copy_space_size)
+ */
 template <typename AllocT = CHI_MAIN_ALLOC_T>
-class FutureShm : public hipc::ShmContainer<AllocT> {
- public:
+struct FutureShm {
   // Bitfield flags for is_complete_
   static constexpr u32 FUTURE_COMPLETE = 1;      /**< Task execution is complete */
   static constexpr u32 FUTURE_NEW_DATA = 2;      /**< New output data available */
@@ -385,29 +396,37 @@ class FutureShm : public hipc::ShmContainer<AllocT> {
   /** Method ID for the task */
   u32 method_id_;
 
-  /** Size of the output data (0 if fits in serialized_task_) */
-  size_t output_size_;
+  /** Size of the output data (0 if fits in copy_space) */
+  std::atomic<size_t> output_size_;
 
-  /** Serialized task data (or copy space for streaming) */
-  hipc::vector<char, AllocT> serialized_task_;
+  /** Actual size of data currently in copy_space */
+  std::atomic<size_t> input_size_;
+
+  /** Total capacity of copy_space buffer */
+  std::atomic<size_t> capacity_;
 
   /** Atomic bitfield for completion and data availability flags */
-  hipc::abitfield32_t is_complete_;
+  hshm::abitfield32_t is_complete_;
 
   /** Size of the shared memory segment containing this FutureShm
    *  Used for lazy registration - shm_name derived from alloc_id (pid.count)
    */
   size_t shm_size_;
 
+  /** Copy space for serialized task data (flexible array member) */
+  char copy_space[];
+
   /**
-   * SHM default constructor
+   * Default constructor - initializes fields
+   * Note: copy_space is allocated as part of the buffer, not separately
    */
-  explicit FutureShm(AllocT* alloc)
-      : hipc::ShmContainer<AllocT>(alloc), serialized_task_(alloc) {
+  FutureShm() {
     pool_id_ = PoolId::GetNull();
     method_id_ = 0;
-    output_size_ = 0;
-    is_complete_.Store(0);
+    output_size_.store(0);
+    input_size_.store(0);
+    capacity_.store(0);
+    is_complete_.SetBits(0);
     shm_size_ = 0;
   }
 };
@@ -435,8 +454,8 @@ class Future {
   /** FullPtr to the task (wraps private memory with null allocator) */
   hipc::FullPtr<TaskT> task_ptr_;
 
-  /** FullPtr to the shared FutureShm object */
-  hipc::FullPtr<FutureT> future_shm_;
+  /** ShmPtr to the shared FutureShm object */
+  hipc::ShmPtr<FutureT> future_shm_;
 
   /** Parent task RunContext pointer (nullptr if no parent waiting) */
   RunContext* parent_task_;
@@ -452,33 +471,12 @@ class Future {
 
  public:
   /**
-   * Constructor with allocator - allocates new FutureShm
-   * @param alloc Allocator to use for FutureShm allocation
-   * @param task_ptr FullPtr to the task (wraps private memory with null allocator)
-   */
-  Future(AllocT* alloc, hipc::FullPtr<TaskT> task_ptr)
-      : task_ptr_(task_ptr), parent_task_(nullptr), is_owner_(false) {
-    // Allocate FutureShm object (null check for safety)
-    if (alloc != nullptr) {
-      future_shm_ =
-          alloc->template NewObj<FutureT>(alloc).template Cast<FutureT>();
-      // Copy pool_id to FutureShm
-      if (!task_ptr_.IsNull() && !future_shm_.IsNull()) {
-        future_shm_->pool_id_ = task_ptr_->pool_id_;
-        future_shm_->method_id_ = task_ptr_->method_;
-        // Preallocate serialized_task_ vector with copy space size
-        future_shm_->serialized_task_.reserve(task_ptr_->GetCopySpaceSize());
-      }
-    }
-  }
-
-  /**
-   * Constructor from FullPtr<FutureShm> and FullPtr<Task>
-   * @param future_shm FullPtr to existing FutureShm object
+   * Constructor from ShmPtr<FutureShm> and FullPtr<Task>
+   * @param future_shm ShmPtr to existing FutureShm object
    * @param task_ptr FullPtr to the task (wraps private memory with null
    * allocator)
    */
-  Future(hipc::FullPtr<FutureT> future_shm, hipc::FullPtr<TaskT> task_ptr)
+  Future(hipc::ShmPtr<FutureT> future_shm, hipc::FullPtr<TaskT> task_ptr)
       : task_ptr_(task_ptr),
         future_shm_(future_shm),
         parent_task_(nullptr),
@@ -497,7 +495,7 @@ class Future {
    * @param future_shm_ptr ShmPtr to FutureShm object
    */
   explicit Future(const hipc::ShmPtr<FutureT>& future_shm_ptr)
-      : future_shm_(nullptr, future_shm_ptr),
+      : future_shm_(future_shm_ptr),
         parent_task_(nullptr),
         is_owner_(false) {
     // Task pointer starts null - will be set in ProcessNewTasks
@@ -627,7 +625,11 @@ class Future {
     if (future_shm_.IsNull()) {
       return false;
     }
-    return future_shm_->is_complete_.Test(FutureT::FUTURE_COMPLETE);
+    auto future_shm = GetFutureShm();
+    if (future_shm.IsNull()) {
+      return false;
+    }
+    return future_shm->is_complete_.Any(FutureT::FUTURE_COMPLETE);
   }
 
   /**
@@ -641,7 +643,10 @@ class Future {
    */
   void Complete() {
     if (!future_shm_.IsNull()) {
-      future_shm_->is_complete_.Set(FutureT::FUTURE_COMPLETE);
+      auto future_shm = GetFutureShm();
+      if (!future_shm.IsNull()) {
+        future_shm->is_complete_.SetBits(FutureT::FUTURE_COMPLETE);
+      }
     }
   }
 
@@ -657,16 +662,20 @@ class Future {
   bool IsNull() const { return task_ptr_.IsNull(); }
 
   /**
-   * Get the FutureShm FullPtr
-   * @return FullPtr to the FutureShm object
+   * Get the internal ShmPtr to FutureShm (for internal use)
+   * @return ShmPtr to the FutureShm object
    */
-  hipc::FullPtr<FutureT>& GetFutureShm() { return future_shm_; }
+  hipc::ShmPtr<FutureT> GetFutureShmPtr() const {
+    return future_shm_;
+  }
 
   /**
-   * Get the FutureShm FullPtr (const version)
+   * Get the FutureShm FullPtr (for access to copy_space and is_complete_)
+   * Converts the internal ShmPtr to FullPtr using IpcManager
    * @return FullPtr to the FutureShm object
+   * Note: Implementation provided in ipc_manager.h where CHI_IPC is defined
    */
-  const hipc::FullPtr<FutureT>& GetFutureShm() const { return future_shm_; }
+  hipc::FullPtr<FutureT> GetFutureShm() const;
 
   /**
    * Get the pool ID from the FutureShm
@@ -676,7 +685,11 @@ class Future {
     if (future_shm_.IsNull()) {
       return PoolId::GetNull();
     }
-    return future_shm_->pool_id_;
+    auto future_shm = GetFutureShm();
+    if (future_shm.IsNull()) {
+      return PoolId::GetNull();
+    }
+    return future_shm->pool_id_;
   }
 
   /**
@@ -685,7 +698,10 @@ class Future {
    */
   void SetPoolId(const PoolId& pool_id) {
     if (!future_shm_.IsNull()) {
-      future_shm_->pool_id_ = pool_id;
+      auto future_shm = GetFutureShm();
+      if (!future_shm.IsNull()) {
+        future_shm->pool_id_ = pool_id;
+      }
     }
   }
 

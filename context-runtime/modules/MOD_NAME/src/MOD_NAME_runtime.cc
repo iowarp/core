@@ -185,6 +185,25 @@ chi::TaskResume Runtime::WaitTest(hipc::FullPtr<WaitTestTask> task,
   co_return;
 }
 
+chi::TaskResume Runtime::TestLargeOutput(hipc::FullPtr<TestLargeOutputTask> task,
+                                         chi::RunContext &rctx) {
+  HLOG(kDebug, "MOD_NAME: Executing TestLargeOutput task");
+
+  // Allocate 1MB vector (1024 * 1024 bytes)
+  constexpr size_t kOutputSize = 1024 * 1024;
+  task->data_.resize(kOutputSize);
+
+  // Fill with pattern: data[i] = i % 256
+  for (size_t i = 0; i < kOutputSize; ++i) {
+    task->data_[i] = static_cast<uint8_t>(i % 256);
+  }
+
+  HLOG(kDebug, "MOD_NAME: TestLargeOutput completed with {}KB output",
+       kOutputSize / 1024);
+  (void)rctx;
+  co_return;
+}
+
 // Static member definitions
 chi::CoMutex Runtime::test_comutex_;
 chi::CoRwLock Runtime::test_corwlock_;
