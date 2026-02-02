@@ -147,8 +147,8 @@ TEST_CASE("FutureShm Bitfield Operations", "[streaming][bitfield]") {
 
   // After completion, FUTURE_COMPLETE should be set
   INFO("Testing FUTURE_COMPLETE flag after Wait()");
-  using FutureShm = chi::FutureShm<CHI_MAIN_ALLOC_T>;
-  REQUIRE(future_shm->is_complete_.Any(FutureShm::FUTURE_COMPLETE));
+  using FutureShm = chi::FutureShm;
+  REQUIRE(future_shm->flags_.Any(FutureShm::FUTURE_COMPLETE));
 
   // Test manual flag operations on a separate bitfield
   hshm::abitfield32_t test_flags;

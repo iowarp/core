@@ -170,7 +170,6 @@ class IpcManager {
   template <typename TaskT>
   void DelTask(hipc::FullPtr<TaskT> task_ptr) {
     if (task_ptr.IsNull()) return;
-
     delete task_ptr.ptr_;
   }
 
@@ -236,9 +235,17 @@ class IpcManager {
    */
   template <typename TaskT>
   Future<TaskT> Send(hipc::FullPtr<TaskT> task_ptr, bool awake_event = true, bool force_copy = false) {
+    // Check if TASK_FORCE_NET is set - if so, force serialization/copy path
+    if (!task_ptr.IsNull() && task_ptr->task_flags_.Any(TASK_FORCE_NET)) {
+      HLOG(kInfo, "Send: TASK_FORCE_NET detected, setting force_copy=true");
+      force_copy = true;
+    }
+
     // 1. Create Future using MakeFuture (handles both client and runtime paths)
+    // In CLIENT mode: MakeFuture serializes task and sets FUTURE_COPY_FROM_CLIENT flag
+    // In RUNTIME mode: MakeFuture wraps task pointer directly without serialization
     Future<Task> task_future = MakeFuture(task_ptr.template Cast<Task>(), force_copy);
-    Future<TaskT> user_future = task_future.template Cast<TaskT>();
+    Future<TaskT> future = task_future.template Cast<TaskT>();
 
     // 2. Get current worker (needed for runtime parent task tracking)
     Worker *worker = CHI_CUR_WORKER;
@@ -248,28 +255,17 @@ class IpcManager {
     if (is_runtime && awake_event && worker != nullptr) {
       RunContext *run_ctx = worker->GetCurrentRunContext();
       if (run_ctx != nullptr) {
-        user_future.SetParentTask(run_ctx);
+        future.SetParentTask(run_ctx);
       }
     }
 
-    // 4. Create queue future with null task pointer for client mode
-    // In runtime mode, we use the user_future directly
-    Future<TaskT> queue_future;
-    if (is_runtime) {
-      queue_future = user_future;
-    } else {
-      hipc::FullPtr<TaskT> null_task_ptr;
-      null_task_ptr.SetNull();
-      queue_future = Future<TaskT>(user_future.GetFutureShmPtr(), null_task_ptr);
-    }
-
-    // 5. Map task to lane using scheduler
+    // 4. Map task to lane using scheduler
     LaneId lane_id;
     if (IsNetworkTask(task_ptr)) {
       // Route Send/Recv tasks to net worker's lane (last lane)
       lane_id = shared_header_->num_workers - 1;
     } else {
-      Future<Task> task_future_for_sched = queue_future.template Cast<Task>();
+      Future<Task> task_future_for_sched = future.template Cast<Task>();
       if (is_runtime) {
         lane_id = scheduler_->RuntimeMapTask(worker, task_future_for_sched);
       } else {
@@ -277,16 +273,16 @@ class IpcManager {
       }
     }
 
-    // 6. Enqueue the Future object to the worker queue
+    // 5. Enqueue the Future object to the worker queue
     auto &lane_ref = worker_queues_->GetLane(lane_id, 0);
-    Future<Task> task_future_for_queue = queue_future.template Cast<Task>();
+    Future<Task> task_future_for_queue = future.template Cast<Task>();
     lane_ref.Push(task_future_for_queue);
 
-    // 7. Awaken worker for this lane
+    // 6. Awaken worker for this lane
     AwakenWorker(&lane_ref);
 
-    // 8. Return the Future with task pointer set for the user
-    return user_future;
+    // 7. Return the same Future (no separate user_future/queue_future)
+    return future;
   }
 
   /**
@@ -316,7 +312,7 @@ class IpcManager {
 
       if (output_size == 0 || output_size <= copy_space_capacity) {
         // Path 1: Data fits in copy space - deserialize directly from copy_space
-        buffer.assign(future_shm->copy_space, future_shm->copy_space + input_size);
+        buffer.assign(future_shm->copy_space, future_shm->copy_space + output_size);
       } else {
         // Path 2: Data larger than copy space - assemble from streaming
         // Preallocate vector with output_size_
@@ -328,7 +324,7 @@ class IpcManager {
           // Wait for FUTURE_NEW_DATA to be set (worker has data in copy space)
           hshm::Timepoint start_time;
           start_time.Now();
-          while (!future_shm->is_complete_.Any(FutureShm<CHI_MAIN_ALLOC_T>::FUTURE_NEW_DATA)) {
+          while (!future_shm->flags_.Any(FutureShm::FUTURE_NEW_DATA)) {
             // Check timeout (avoid infinite wait)
             double elapsed_us = start_time.GetUsecFromStart();
             if (elapsed_us > 5000000.0) {  // 5 second timeout
@@ -346,7 +342,7 @@ class IpcManager {
           bytes_received += bytes_to_copy;
 
           // Unset FUTURE_NEW_DATA to signal worker that we consumed the data
-          future_shm->is_complete_.UnsetBits(FutureShm<CHI_MAIN_ALLOC_T>::FUTURE_NEW_DATA);
+          future_shm->flags_.UnsetBits(FutureShm::FUTURE_NEW_DATA);
 
           // Continue to next chunk if needed
           if (bytes_received < output_size) {
@@ -893,17 +889,17 @@ void Future<TaskT, AllocT>::Wait() {
   is_owner_ = true;
 
   if (!task_ptr_.IsNull() && !future_shm_.IsNull()) {
-    // Wait for completion by polling is_complete bitfield
+    // Wait for completion by polling flags bitfield
     // Busy-wait with thread yielding - works for both client and runtime
     // contexts Coroutine contexts should use co_await Future instead
-    // Convert ShmPtr to FullPtr to access is_complete_
-    hipc::FullPtr<FutureShm<AllocT>> future_full = CHI_IPC->ToFullPtr(future_shm_);
+    // Convert ShmPtr to FullPtr to access flags_
+    hipc::FullPtr<FutureShm> future_full = CHI_IPC->ToFullPtr(future_shm_);
     if (future_full.IsNull()) {
       HLOG(kError, "Future::Wait: ToFullPtr returned null for future_shm_");
       return;
     }
-    hshm::abitfield32_t &is_complete = future_full->is_complete_;
-    while (!is_complete.Any(FutureShm<AllocT>::FUTURE_COMPLETE)) {
+    hshm::abitfield32_t &flags = future_full->flags_;
+    while (!flags.Any(FutureShm::FUTURE_COMPLETE)) {
       HSHM_THREAD_MODEL->Yield();
     }
 
@@ -936,12 +932,6 @@ void Future<TaskT, AllocT>::Destroy() {
     future_shm_.SetNull();
   }
   is_owner_ = false;
-}
-
-template <typename TaskT, typename AllocT>
-void Future<TaskT, AllocT>::SetAllocator() {
-  // No-op: future_shm_ is now a ShmPtr which already contains allocator ID
-  // Allocator resolution is done lazily via ToFullPtr() when needed (in GetFutureShm())
 }
 
 }  // namespace chi

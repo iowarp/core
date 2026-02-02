@@ -345,7 +345,7 @@ class Task {
    * Default is 4KB (4096 bytes) for most tasks
    * @return Size in bytes for the serialized_task_ capacity
    */
-  HSHM_CROSS_FUN virtual size_t GetCopySpaceSize() const {
+  HSHM_CROSS_FUN size_t GetCopySpaceSize() const {
     return 4096;  // Default 4KB for most tasks
   }
 };
@@ -368,7 +368,7 @@ enum class ExecMode : u32 {
  * This container holds the serialized task data and completion status
  * for asynchronous task operations.
  *
- * Bitfield flags for is_complete_:
+ * Bitfield flags for flags_:
  * - FUTURE_COMPLETE = 1: Task execution completed
  * - FUTURE_NEW_DATA = 2: New output data available in copy space
  */
@@ -384,11 +384,12 @@ enum class ExecMode : u32 {
  *
  * Allocation: AllocateBuffer(sizeof(FutureShm) + copy_space_size)
  */
-template <typename AllocT = CHI_MAIN_ALLOC_T>
 struct FutureShm {
-  // Bitfield flags for is_complete_
+  // Bitfield flags for flags_
   static constexpr u32 FUTURE_COMPLETE = 1;      /**< Task execution is complete */
   static constexpr u32 FUTURE_NEW_DATA = 2;      /**< New output data available */
+  static constexpr u32 FUTURE_COPY_FROM_CLIENT = 4; /**< Task needs to be copied from client serialization */
+  static constexpr u32 FUTURE_WAS_COPIED = 8;    /**< Task was already copied from client (don't re-copy) */
 
   /** Pool ID for the task */
   PoolId pool_id_;
@@ -406,7 +407,7 @@ struct FutureShm {
   hipc::atomic<size_t> capacity_;
 
   /** Atomic bitfield for completion and data availability flags */
-  hshm::abitfield32_t is_complete_;
+  hshm::abitfield32_t flags_;
 
   /** Copy space for serialized task data (flexible array member) */
   char copy_space[];
@@ -421,7 +422,7 @@ struct FutureShm {
     output_size_.store(0);
     input_size_.store(0);
     capacity_.store(0);
-    is_complete_.SetBits(0);
+    flags_.SetBits(0);
   }
 };
 
@@ -437,7 +438,7 @@ struct FutureShm {
 template <typename TaskT, typename AllocT = CHI_MAIN_ALLOC_T>
 class Future {
  public:
-  using FutureT = FutureShm<AllocT>;
+  using FutureT = FutureShm;
 
   // Allow all Future instantiations to access each other's private members
   // This enables the Cast method to work across different task types
@@ -495,13 +496,6 @@ class Future {
     // Task pointer starts null - will be set in ProcessNewTasks
     task_ptr_.SetNull();
   }
-
-  /**
-   * Fix the allocator pointer after construction from ShmPtr
-   * Call this immediately after popping from ring buffer
-   * Uses IpcManager::ToFullPtr to resolve the allocator from the ShmPtr
-   */
-  void SetAllocator();
 
   /**
    * Destructor - destroys the task if this Future owns it
@@ -623,7 +617,7 @@ class Future {
     if (future_shm.IsNull()) {
       return false;
     }
-    return future_shm->is_complete_.Any(FutureT::FUTURE_COMPLETE);
+    return future_shm->flags_.Any(FutureT::FUTURE_COMPLETE);
   }
 
   /**
@@ -639,7 +633,7 @@ class Future {
     if (!future_shm_.IsNull()) {
       auto future_shm = GetFutureShm();
       if (!future_shm.IsNull()) {
-        future_shm->is_complete_.SetBits(FutureT::FUTURE_COMPLETE);
+        future_shm->flags_.SetBits(FutureT::FUTURE_COMPLETE);
       }
     }
   }
@@ -664,7 +658,7 @@ class Future {
   }
 
   /**
-   * Get the FutureShm FullPtr (for access to copy_space and is_complete_)
+   * Get the FutureShm FullPtr (for access to copy_space and flags_)
    * Converts the internal ShmPtr to FullPtr using IpcManager
    * @return FullPtr to the FutureShm object
    * Note: Implementation provided in ipc_manager.h where CHI_IPC is defined
@@ -879,8 +873,6 @@ struct RunContext {
   u32 yield_count_;                     /**< Number of times task has yielded */
   Future<Task, CHI_MAIN_ALLOC_T>
       future_;               /**< Future for async completion tracking */
-  bool destroy_in_end_task_; /**< Flag to indicate if task should be destroyed
-                                in EndTask */
   std::atomic<bool> is_notified_; /**< Atomic flag to prevent duplicate event
                                      queue additions */
   double true_period_ns_;       /**< Original period from task->period_ns_ */
@@ -899,7 +891,6 @@ struct RunContext {
         event_queue_(nullptr),
         completed_replicas_(0),
         yield_count_(0),
-        destroy_in_end_task_(false),
         is_notified_(false),
         true_period_ns_(0.0),
         did_work_(false) {}
@@ -924,7 +915,6 @@ struct RunContext {
         completed_replicas_(other.completed_replicas_),
         yield_count_(other.yield_count_),
         future_(std::move(other.future_)),
-        destroy_in_end_task_(other.destroy_in_end_task_),
         is_notified_(other.is_notified_.load()),
         true_period_ns_(other.true_period_ns_),
         did_work_(other.did_work_) {
@@ -953,7 +943,6 @@ struct RunContext {
       completed_replicas_ = other.completed_replicas_;
       yield_count_ = other.yield_count_;
       future_ = std::move(other.future_);
-      destroy_in_end_task_ = other.destroy_in_end_task_;
       is_notified_.store(other.is_notified_.load());
       true_period_ns_ = other.true_period_ns_;
       did_work_ = other.did_work_;

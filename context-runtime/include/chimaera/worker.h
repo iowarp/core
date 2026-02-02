@@ -382,6 +382,31 @@ class Worker {
                    const std::vector<PoolQuery> &pool_queries);
 
   /**
+   * Begin client transfer for task outputs
+   * @param task_ptr Task to serialize
+   * @param run_ctx Runtime context
+   * @param container Container for serialization
+   * @return true if task is complete, false if queued for streaming
+   */
+  bool EndTaskBeginClientTransfer(const FullPtr<Task> &task_ptr,
+                                   RunContext *run_ctx, Container *container);
+
+  /**
+   * Signal parent task that subtask completed
+   * @param run_ctx Runtime context
+   */
+  void EndTaskSignalParent(RunContext *run_ctx);
+
+  /**
+   * Delete task created from serialized client data
+   * @param task_ptr Task to delete
+   * @param run_ctx Runtime context
+   * @param container Container for deletion
+   */
+  void EndTaskClient(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
+                     Container *container);
+
+  /**
    * End task execution and perform cleanup
    * @param task_ptr Full pointer to task to end
    * @param run_ctx Pointer to RunContext for task
@@ -396,11 +421,8 @@ class Worker {
    * @param future Future object containing the task and completion state
    * @param container Container for the task
    * @param lane Lane for the task (can be nullptr)
-   * @param destroy_in_end_task Flag indicating if task should be destroyed in
-   * EndTask
    */
-  void BeginTask(Future<Task> &future, Container *container, TaskLane *lane,
-                 bool destroy_in_end_task);
+  void BeginTask(Future<Task> &future, Container *container, TaskLane *lane);
 
   /**
    * Continue processing blocked tasks that are ready to resume
@@ -529,6 +551,10 @@ class Worker {
   // Client copy queue - tasks waiting to stream output data to clients
   // Queue of Future<Task> objects that need their output copied to copy space
   std::queue<Future<Task>> client_copy_;
+
+  // Streaming buffers - stores serialized data for tasks being streamed to clients
+  // Map: FutureShm pointer -> (serialized_data, bytes_sent)
+  std::unordered_map<FutureShm*, std::pair<std::vector<char>, size_t>> streaming_buffers_;
 
   // Scheduler pointer (owned by IpcManager, not Worker)
   Scheduler *scheduler_;

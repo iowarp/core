@@ -941,8 +941,6 @@ bool IpcManager::TryPopNetTask(NetQueuePriority priority, Future<Task>& future) 
   auto& lane = net_queue_->GetLane(0, priority_idx);
 
   if (lane.Pop(future)) {
-    // Fix the allocator pointer after popping using IpcManager::ToFullPtr
-    future.SetAllocator();
     return true;
   }
 
@@ -1363,15 +1361,15 @@ Future<Task> IpcManager::MakeFuture(hipc::FullPtr<Task> task_ptr,
     size_t copy_space_size = task_ptr.IsNull() ? 4096 : task_ptr->GetCopySpaceSize();
 
     // Allocate FutureShm with copy_space using AllocateBuffer
-    size_t alloc_size = sizeof(FutureShm<CHI_MAIN_ALLOC_T>) + copy_space_size;
+    size_t alloc_size = sizeof(FutureShm) + copy_space_size;
     hipc::FullPtr<char> buffer = AllocateBuffer(alloc_size);
     if (buffer.IsNull()) {
       return Future<Task>();  // Return null future on allocation failure
     }
 
     // Construct FutureShm in-place using placement new
-    FutureShm<CHI_MAIN_ALLOC_T>* future_shm_ptr =
-        new (buffer.ptr_) FutureShm<CHI_MAIN_ALLOC_T>();
+    FutureShm* future_shm_ptr =
+        new (buffer.ptr_) FutureShm();
 
     // Initialize FutureShm fields
     if (!task_ptr.IsNull()) {
@@ -1380,9 +1378,8 @@ Future<Task> IpcManager::MakeFuture(hipc::FullPtr<Task> task_ptr,
     }
     future_shm_ptr->capacity_.store(copy_space_size);
 
-    // Create Future with ShmPtr and task_ptr
-    hipc::ShmPtr<FutureShm<CHI_MAIN_ALLOC_T>> future_shm_shmptr = buffer.shm_.template Cast<FutureShm<CHI_MAIN_ALLOC_T>>();
-    Future<Task> future(future_shm_shmptr, task_ptr);
+    // Set FUTURE_COPY_FROM_CLIENT flag - worker will need to deserialize from copy_space
+    future_shm_ptr->flags_.SetBits(FutureShm::FUTURE_COPY_FROM_CLIENT);
 
     // Serialize task using LocalSaveTaskArchive with kSerializeIn mode
     LocalSaveTaskArchive archive(LocalMsgType::kSerializeIn);
@@ -1399,26 +1396,53 @@ Future<Task> IpcManager::MakeFuture(hipc::FullPtr<Task> task_ptr,
     memcpy(future_shm_ptr->copy_space, serialized.data(), serialized_size);
     future_shm_ptr->input_size_.store(serialized_size);
 
+    // Delete the client's task object - we've serialized it and no longer need it
+    // The worker will deserialize and create a new task object from the serialized data
+    delete task_ptr.ptr_;
+
+    // Create Future with ShmPtr but NULL task_ptr (worker will deserialize and set it)
+    hipc::ShmPtr<FutureShm> future_shm_shmptr = buffer.shm_.template Cast<FutureShm>();
+    hipc::FullPtr<Task> null_task_ptr;  // Default constructor creates null pointer
+    Future<Task> future(future_shm_shmptr, null_task_ptr);
+
     HLOG(kInfo, "MakeFuture: CLIENT PATH complete, returning future");
     return future;
   } else {
     // RUNTIME PATH: Create Future with task pointer directly (no serialization)
-    HLOG(kInfo, "MakeFuture: RUNTIME PATH");
+    HLOG(kInfo, "MakeFuture: RUNTIME PATH - entry");
+
+    // Check task_ptr validity
+    bool is_null = task_ptr.IsNull();
+    HLOG(kInfo, "MakeFuture: RUNTIME PATH - IsNull returned: {}", is_null);
+
     // Get copy space size from task
-    size_t copy_space_size = task_ptr.IsNull() ? 4096 : task_ptr->GetCopySpaceSize();
+    size_t copy_space_size;
+    if (is_null) {
+      HLOG(kInfo, "MakeFuture: RUNTIME PATH - task_ptr is null, using default 4096");
+      copy_space_size = 4096;
+    } else {
+      HLOG(kInfo, "MakeFuture: RUNTIME PATH - task_ptr is valid, calling GetCopySpaceSize()");
+      copy_space_size = task_ptr->GetCopySpaceSize();
+      HLOG(kInfo, "MakeFuture: RUNTIME PATH - GetCopySpaceSize() returned {}", copy_space_size);
+    }
 
     // Allocate FutureShm with copy_space using AllocateBuffer
-    size_t alloc_size = sizeof(FutureShm<CHI_MAIN_ALLOC_T>) + copy_space_size;
+    size_t alloc_size = sizeof(FutureShm) + copy_space_size;
+    HLOG(kInfo, "MakeFuture: RUNTIME PATH - about to AllocateBuffer({})", alloc_size);
     hipc::FullPtr<char> buffer = AllocateBuffer(alloc_size);
+    HLOG(kInfo, "MakeFuture: RUNTIME PATH - AllocateBuffer returned, IsNull={}", buffer.IsNull());
     if (buffer.IsNull()) {
       return Future<Task>();  // Return null future on allocation failure
     }
 
     // Construct FutureShm in-place using placement new
-    FutureShm<CHI_MAIN_ALLOC_T>* future_shm_ptr =
-        new (buffer.ptr_) FutureShm<CHI_MAIN_ALLOC_T>();
+    HLOG(kInfo, "MakeFuture: RUNTIME PATH - about to placement new FutureShm");
+    FutureShm* future_shm_ptr =
+        new (buffer.ptr_) FutureShm();
+    HLOG(kInfo, "MakeFuture: RUNTIME PATH - placement new complete");
 
     // Initialize FutureShm fields
+    HLOG(kInfo, "MakeFuture: RUNTIME PATH - initializing FutureShm fields");
     if (!task_ptr.IsNull()) {
       future_shm_ptr->pool_id_ = task_ptr->pool_id_;
       future_shm_ptr->method_id_ = task_ptr->method_;
@@ -1426,8 +1450,10 @@ Future<Task> IpcManager::MakeFuture(hipc::FullPtr<Task> task_ptr,
     future_shm_ptr->capacity_.store(copy_space_size);
 
     // Create Future with ShmPtr and task_ptr (no serialization needed)
-    hipc::ShmPtr<FutureShm<CHI_MAIN_ALLOC_T>> future_shm_shmptr = buffer.shm_.template Cast<FutureShm<CHI_MAIN_ALLOC_T>>();
+    HLOG(kInfo, "MakeFuture: RUNTIME PATH - creating Future object");
+    hipc::ShmPtr<FutureShm> future_shm_shmptr = buffer.shm_.template Cast<FutureShm>();
     Future<Task> future(future_shm_shmptr, task_ptr);
+    HLOG(kInfo, "MakeFuture: RUNTIME PATH - returning future");
     return future;
   }
 }

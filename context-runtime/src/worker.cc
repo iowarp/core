@@ -22,8 +22,8 @@
 // resolution
 #include "chimaera/admin/admin_client.h"
 #include "chimaera/container.h"
-#include "chimaera/pool_manager.h"
 #include "chimaera/ipc_manager.h"
+#include "chimaera/pool_manager.h"
 #include "chimaera/singletons.h"
 #include "chimaera/task.h"
 #include "chimaera/task_archives.h"
@@ -73,13 +73,13 @@ bool Worker::Init() {
   // Note: assigned_lane_ will be set by WorkOrchestrator during external queue
   // initialization
 
-  // Allocate and initialize event queue from malloc allocator (temporary runtime data)
-  event_queue_ =
-      HSHM_MALLOC
-          ->template NewObj<
-              hshm::ipc::mpsc_ring_buffer<RunContext *, hshm::ipc::MallocAllocator>>(
-              HSHM_MALLOC, EVENT_QUEUE_DEPTH)
-          .ptr_;
+  // Allocate and initialize event queue from malloc allocator (temporary
+  // runtime data)
+  event_queue_ = HSHM_MALLOC
+                     ->template NewObj<hshm::ipc::mpsc_ring_buffer<
+                         RunContext *, hshm::ipc::MallocAllocator>>(
+                         HSHM_MALLOC, EVENT_QUEUE_DEPTH)
+                     .ptr_;
 
   // Create epoll file descriptor for efficient worker suspension
   epoll_fd_ = epoll_create1(0);
@@ -306,8 +306,9 @@ void Worker::Run() {
     // Check blocked queue for completed tasks at end of each iteration
     ContinueBlockedTasks(false);
 
-    // Copy task output data to copy space for streaming (low-priority operation)
-    // Only do this when worker would otherwise idle, with minimal time budget
+    // Copy task output data to copy space for streaming (low-priority
+    // operation) Only do this when worker would otherwise idle, with minimal
+    // time budget
     if (!did_work_) {
       CopyTaskOutputToClient();
     }
@@ -372,7 +373,8 @@ u32 Worker::ProcessNewTasks() {
       tasks_processed++;
       SetCurrentRunContext(nullptr);
 
-      // Check if allocator needs to be registered (lazy registration for client memory)
+      // Check if allocator needs to be registered (lazy registration for client
+      // memory)
       auto *ipc_manager = CHI_IPC;
       auto future_shm_full = future.GetFutureShm();
       hipc::AllocatorId alloc_id = future_shm_full.shm_.alloc_id_;
@@ -386,21 +388,20 @@ u32 Worker::ProcessNewTasks() {
           bool registered = ipc_manager->RegisterMemory(alloc_id, 0);
           if (!registered) {
             // Registration failed - mark task as error and skip
-            HLOG(kError, "Worker {}: Failed to register memory for alloc_id ({}.{})",
+            HLOG(kError,
+                 "Worker {}: Failed to register memory for alloc_id ({}.{})",
                  worker_id_, alloc_id.major_, alloc_id.minor_);
-            future_shm_full->is_complete_.SetBits(1);
+            future_shm_full->flags_.SetBits(1);
             continue;
           }
         }
       }
 
-      // Fix the allocator pointer after registration
-      future.SetAllocator();
-
       // Get pool_id and method_id from FutureShm
       auto future_shm = future.GetFutureShm();
       if (future_shm.IsNull()) {
-        HLOG(kError, "Worker {}: Failed to get FutureShm (null pointer)", worker_id_);
+        HLOG(kError, "Worker {}: Failed to get FutureShm (null pointer)",
+             worker_id_);
         continue;
       }
       PoolId pool_id = future_shm->pool_id_;
@@ -414,17 +415,18 @@ u32 Worker::ProcessNewTasks() {
         // Container not found - mark as complete with error
         HLOG(kError, "Worker {}: Container not found for pool_id={}, method={}",
              worker_id_, pool_id, method_id);
-        future_shm->is_complete_.SetBits(1);
+        future_shm->flags_.SetBits(1);
         continue;
       }
 
-      // Check if Future has null task pointer (indicates task needs to be
-      // loaded)
+      // Check FUTURE_COPY_FROM_CLIENT flag to determine if task needs to be
+      // loaded
       FullPtr<Task> task_full_ptr = future.GetTaskPtr();
-      bool destroy_in_end_task = false;
 
-      if (task_full_ptr.IsNull()) {
+      if (future_shm->flags_.Any(FutureShm::FUTURE_COPY_FROM_CLIENT) &&
+          !future_shm->flags_.Any(FutureShm::FUTURE_WAS_COPIED)) {
         // CLIENT PATH: Load task from serialized data in FutureShm copy_space
+        // Only copy if not already copied (FUTURE_WAS_COPIED not set)
         size_t input_size = future_shm->input_size_.load();
         std::vector<char> serialized_data(future_shm->copy_space,
                                           future_shm->copy_space + input_size);
@@ -434,16 +436,15 @@ u32 Worker::ProcessNewTasks() {
         // Update the Future's task pointer
         future.GetTaskPtr() = task_full_ptr;
 
-        destroy_in_end_task =
-            true;  // Task was created from serialized data, should be destroyed
-      } else {
-        // RUNTIME PATH: Task pointer is already set, no need to load
-        destroy_in_end_task = false;  // Task should not be destroyed
+        // Mark as copied to prevent re-copying if task migrates between workers
+        future_shm->flags_.SetBits(FutureShm::FUTURE_WAS_COPIED);
       }
+      // RUNTIME PATH or ALREADY COPIED: Task pointer is already set in future,
+      // no need to load
 
       // Allocate stack and RunContext before routing
       if (!task_full_ptr->IsRouted()) {
-        BeginTask(future, container, assigned_lane_, destroy_in_end_task);
+        BeginTask(future, container, assigned_lane_);
       }
 
       // Route task using consolidated routing function
@@ -479,7 +480,8 @@ double Worker::GetSuspendPeriod() const {
       continue;
     }
 
-    // Check just the front task of each queue (representative of the queue's period)
+    // Check just the front task of each queue (representative of the queue's
+    // period)
     RunContext *run_ctx = queue.front();
 
     if (!run_ctx || run_ctx->task_.IsNull()) {
@@ -583,7 +585,9 @@ u32 Worker::GetId() const { return worker_id_; }
 
 ThreadType Worker::GetThreadType() const { return thread_type_; }
 
-void Worker::SetThreadType(ThreadType thread_type) { thread_type_ = thread_type; }
+void Worker::SetThreadType(ThreadType thread_type) {
+  thread_type_ = thread_type;
+}
 
 bool Worker::IsRunning() const { return is_running_; }
 
@@ -1034,7 +1038,7 @@ std::vector<PoolQuery> Worker::ResolvePhysicalQuery(
 // for separate allocation/deallocation and context caching
 
 void Worker::BeginTask(Future<Task> &future, Container *container,
-                       TaskLane *lane, bool destroy_in_end_task) {
+                       TaskLane *lane) {
   FullPtr<Task> task_ptr = future.GetTaskPtr();
   if (task_ptr.IsNull()) {
     return;
@@ -1048,13 +1052,12 @@ void Worker::BeginTask(Future<Task> &future, Container *container,
   run_ctx->thread_type_ = thread_type_;
   run_ctx->worker_id_ = worker_id_;
   run_ctx->task_ = task_ptr;        // Store task in RunContext
-  run_ctx->is_yielded_ = false;    // Initially not blocked
+  run_ctx->is_yielded_ = false;     // Initially not blocked
   run_ctx->container_ = container;  // Store container for CHI_CUR_CONTAINER
   run_ctx->lane_ = lane;            // Store lane for CHI_CUR_LANE
   run_ctx->event_queue_ = event_queue_;  // Set pointer to worker's event queue
-  run_ctx->destroy_in_end_task_ = destroy_in_end_task;  // Set destroy flag
-  run_ctx->future_ = future;        // Store future in RunContext
-  run_ctx->coro_handle_ = nullptr;  // Coroutine not started yet
+  run_ctx->future_ = future;             // Store future in RunContext
+  run_ctx->coro_handle_ = nullptr;       // Coroutine not started yet
 
   // Initialize adaptive polling fields for periodic tasks
   if (task_ptr->IsPeriodic()) {
@@ -1231,8 +1234,89 @@ void Worker::ExecTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   EndTask(task_ptr, run_ctx, true);
 }
 
+bool Worker::EndTaskBeginClientTransfer(const FullPtr<Task> &task_ptr,
+                                        RunContext *run_ctx,
+                                        Container *container) {
+  auto future_shm = run_ctx->future_.GetFutureShm();
+  auto future_shm_ptr = future_shm.ptr_;
+  size_t copy_space_capacity = future_shm->capacity_.load();
+
+  // Serialize task outputs
+  LocalSaveTaskArchive archive(LocalMsgType::kSerializeOut);
+  container->LocalSaveTask(task_ptr->method_, archive, task_ptr);
+
+  // Get serialized outputs
+  const std::vector<char> &serialized = archive.GetData();
+
+  // Set output_size_ to track the actual serialized data size
+  future_shm->output_size_.store(serialized.size());
+
+  // Check if serialized data fits in preallocated copy space
+  if (serialized.size() <= copy_space_capacity) {
+    // Path 1 (fits): Copy directly into copy_space
+    std::memcpy(future_shm->copy_space, serialized.data(), serialized.size());
+    future_shm->input_size_.store(serialized.size());
+    return true;  // Task is complete
+  }
+
+  // Path 2 (doesn't fit): Store serialized data and queue for streaming
+  // Copy first chunk to copy_space
+  size_t first_chunk_size = copy_space_capacity;
+  std::memcpy(future_shm->copy_space, serialized.data(), first_chunk_size);
+  future_shm->input_size_.store(first_chunk_size);
+
+  // Store remaining data in streaming_buffers_ for later chunks
+  streaming_buffers_[future_shm_ptr] = {serialized, first_chunk_size};
+
+  // Set FUTURE_NEW_DATA flag to signal first chunk is ready
+  future_shm->flags_.SetBits(FutureShm::FUTURE_NEW_DATA);
+
+  // Queue for streaming
+  client_copy_.push(run_ctx->future_);
+  return false;  // Task will complete later after streaming
+}
+
+void Worker::EndTaskSignalParent(RunContext *run_ctx) {
+  // Wake up parent task if waiting for this subtask
+  RunContext *parent_task = run_ctx->future_.GetParentTask();
+  if (parent_task == nullptr || parent_task->event_queue_ == nullptr ||
+      !parent_task->coro_handle_ || parent_task->coro_handle_.done()) {
+    return;
+  }
+
+  // Use atomic compare_exchange to ensure only one subtask notifies the parent
+  // (prevents duplicate event queue additions causing SIGILL)
+  bool expected = false;
+  if (parent_task->is_notified_.compare_exchange_strong(expected, true)) {
+    auto *parent_event_queue = reinterpret_cast<
+        hipc::mpsc_ring_buffer<RunContext *, CHI_MAIN_ALLOC_T> *>(
+        parent_task->event_queue_);
+    parent_event_queue->Emplace(parent_task);
+
+    // Awaken parent worker in case it's sleeping
+    if (parent_task->lane_ != nullptr) {
+      CHI_IPC->AwakenWorker(parent_task->lane_);
+    }
+  }
+}
+
+void Worker::EndTaskClient(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
+                           Container *container) {
+  // Delete task created from serialized client data
+  container->DelTask(task_ptr->method_, task_ptr);
+  // Null out the Future's task_ptr to prevent double-free in Future::Destroy()
+  run_ctx->future_.GetTaskPtr().SetNull();
+}
+
 void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
                      bool can_resched) {
+  // Check container once at the beginning
+  Container *container = run_ctx->container_;
+  if (container == nullptr) {
+    HLOG(kError, "EndTask: container is null");
+    return;
+  }
+
   // Get task properties at the start
   bool is_remote = task_ptr->IsRemote();
   bool is_periodic = task_ptr->IsPeriodic();
@@ -1244,83 +1328,42 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   }
 
   // Decrement work remaining for non-periodic tasks
-  if (!is_periodic && run_ctx->container_ != nullptr) {
-    run_ctx->container_->UpdateWork(task_ptr, *run_ctx, -1);
+  if (!is_periodic) {
+    container->UpdateWork(task_ptr, *run_ctx, -1);
   }
 
-  // If task is remote, enqueue to net_queue_ for SendOut and return immediately
+  // If task is remote, enqueue to net_queue_ for SendOut
   if (is_remote) {
-    auto *ipc_manager = CHI_IPC;
-    ipc_manager->EnqueueNetTask(run_ctx->future_, NetQueuePriority::kSendOut);
+    CHI_IPC->EnqueueNetTask(run_ctx->future_, NetQueuePriority::kSendOut);
     return;
   }
 
-  bool needs_streaming = false;
-  if (run_ctx->destroy_in_end_task_) {
-    LocalSaveTaskArchive archive(LocalMsgType::kSerializeOut);
-    if (run_ctx->container_ != nullptr) {
-      run_ctx->container_->LocalSaveTask(task_ptr->method_, archive, task_ptr);
-    }
+  // Copy variables from future_shm to stack BEFORE any SetComplete() call
+  // This prevents use-after-free since client may free future_shm after
+  // SetComplete()
+  auto future_shm = run_ctx->future_.GetFutureShm();
+  bool copy_from_client =
+      future_shm->flags_.Any(FutureShm::FUTURE_COPY_FROM_CLIENT);
+  bool was_copied = future_shm->flags_.Any(FutureShm::FUTURE_WAS_COPIED);
 
-    // Get serialized outputs and future shm
-    const std::vector<char> &serialized = archive.GetData();
-    auto future_shm = run_ctx->future_.GetFutureShm();
-
-    // Set output_size_ to track the actual serialized data size
-    future_shm->output_size_.store(serialized.size());
-
-    // Check if serialized data fits in preallocated copy space
-    size_t copy_space_capacity = future_shm->capacity_.load();
-    if (serialized.size() <= copy_space_capacity) {
-      // Path 1 (fits): Copy directly into copy_space
-      std::memcpy(future_shm->copy_space, serialized.data(), serialized.size());
-      future_shm->input_size_.store(serialized.size());
-    } else {
-      // Path 2 (doesn't fit): Queue for streaming via client_copy_
-      // The task will be processed by CopyTaskOutputToClient in Worker::Run
-      client_copy_.push(run_ctx->future_);
-      needs_streaming = true;
-      // Don't mark complete yet - will be done when streaming finishes
-    }
+  // Handle client transfer if needed
+  bool is_complete = true;
+  if (copy_from_client) {
+    is_complete = EndTaskBeginClientTransfer(task_ptr, run_ctx, container);
   }
 
-  // 2. Mark task as complete (only if not streaming)
-  auto future_shm = run_ctx->future_.GetFutureShm();
-  if (!needs_streaming) {
+  // Mark complete if not queued for streaming
+  if (is_complete) {
     run_ctx->future_.SetComplete();
   }
 
-  // 2.5. Wake up parent task if waiting for this subtask
-  // Only wake parent if:
-  // 1. Parent exists and has valid event queue and coroutine handle
-  // 2. Parent hasn't already been notified by another subtask
-  //    (prevents duplicate event queue additions causing SIGILL)
-  RunContext *parent_task = run_ctx->future_.GetParentTask();
-  if (parent_task != nullptr && parent_task->event_queue_ != nullptr &&
-      parent_task->coro_handle_ && !parent_task->coro_handle_.done()) {
-    // Use atomic compare_exchange to ensure only one subtask notifies the
-    // parent
-    bool expected = false;
-    if (parent_task->is_notified_.compare_exchange_strong(expected, true)) {
-      auto *parent_event_queue = reinterpret_cast<
-          hipc::mpsc_ring_buffer<RunContext *, CHI_MAIN_ALLOC_T> *>(
-          parent_task->event_queue_);
-      parent_event_queue->Emplace(parent_task);
-      // Awaken parent worker in case it's sleeping
-      if (parent_task->lane_ != nullptr) {
-        CHI_IPC->AwakenWorker(parent_task->lane_);
-      }
-    }
-  }
+  // Signal parent task
+  EndTaskSignalParent(run_ctx);
 
-  // 3. Delete task using container->DelTask (only if destroy_in_end_task is
-  // true)
-  if (run_ctx->destroy_in_end_task_) {
-    run_ctx->container_->DelTask(task_ptr->method_, task_ptr);
+  // Delete task if we created it from serialized client data
+  if (was_copied && !copy_from_client) {
+    EndTaskClient(task_ptr, run_ctx, container);
   }
-
-  // Note: RunContext is now embedded in Task, no need to deallocate separately
-  // The RunContext will be cleaned up when the Task is destroyed
 }
 
 void Worker::RerouteDynamicTask(const FullPtr<Task> &task_ptr,
@@ -1409,7 +1452,8 @@ void Worker::ProcessPeriodicQueue(std::queue<RunContext *> &queue,
   size_t actual_limit = std::min(queue_size, check_limit);
 
   // Capture SINGLE timestamp for ALL tasks processed in this batch
-  // This prevents timestamp desynchronization between tasks with same yield_time
+  // This prevents timestamp desynchronization between tasks with same
+  // yield_time
   hshm::Timepoint batch_timestamp;
   batch_timestamp.Now();
 
@@ -1428,7 +1472,8 @@ void Worker::ProcessPeriodicQueue(std::queue<RunContext *> &queue,
     }
 
     // Check if the time threshold has been surpassed using batch timestamp
-    // Add 2ms tolerance to account for timing variance and ms/us precision mismatch
+    // Add 2ms tolerance to account for timing variance and ms/us precision
+    // mismatch
     double elapsed_us = run_ctx->block_start_.GetUsecFromStart(batch_timestamp);
     if (elapsed_us + 2000.0 >= run_ctx->yield_time_us_) {
       // Time threshold reached (within tolerance) - execute the task
@@ -1601,7 +1646,8 @@ void Worker::AddToBlockedQueue(RunContext *run_ctx, bool wait_for_task) {
       // Timestamp is stale or uninitialized - set it now
       run_ctx->block_start_.Now();
     }
-    // else: timestamp is fresh (< 10ms old), keep it to maintain synchronization
+    // else: timestamp is fresh (< 10ms old), keep it to maintain
+    // synchronization
 
     // Determine which periodic queue based on yield_time_us_:
     // Queue[0]: yield_time_us_ <= 50us
@@ -1673,7 +1719,8 @@ void Worker::CopyTaskOutputToClient() {
     // Check time budget
     double elapsed_us = start_time.GetUsecFromStart();
     if (elapsed_us > 10000.0) {  // 10ms timeout
-      HLOG(kDebug, "CopyTaskOutputToClient: Time budget exceeded ({} us)", elapsed_us);
+      HLOG(kDebug, "CopyTaskOutputToClient: Time budget exceeded ({} us)",
+           elapsed_us);
       break;
     }
 
@@ -1695,58 +1742,77 @@ void Worker::CopyTaskOutputToClient() {
     // Acquire reader lock on allocator_map_lock_
     CHI_IPC->allocator_map_lock_.ReadLock(0);
 
-    // Check if FUTURE_NEW_DATA is already set
-    if (!future_shm->is_complete_.Any(FutureShm<>::FUTURE_NEW_DATA)) {
-      // Data not yet consumed by client - serialize and copy output to copy space
+    auto future_shm_ptr = future_shm.ptr_;
 
-      // The serialized data should be available - copy it to copy space
-      // The copy space size is the capacity_
-      size_t output_size = future_shm->output_size_.load();
-      size_t copy_space_capacity = future_shm->capacity_.load();
-      if (output_size > 0 && output_size > copy_space_capacity) {
-        // FIXME: This is a streaming scenario - need to implement the serialization
-        // For now, just mark as having data
-        // TODO: Implement streaming serialization here
-      }
-
-      // Mark that new data is available in copy space
-      future_shm->is_complete_.SetBits(FutureShm<>::FUTURE_NEW_DATA);
-
-      // Wait up to 1ms for client to consume the data
+    // Check if FUTURE_NEW_DATA is already set (client hasn't consumed previous
+    // chunk)
+    if (future_shm->flags_.Any(FutureShm::FUTURE_NEW_DATA)) {
+      // Client hasn't consumed previous chunk - wait up to 100us
       hshm::Timepoint wait_start;
       wait_start.Now();
-      while (future_shm->is_complete_.Any(FutureShm<>::FUTURE_NEW_DATA)) {
+      bool timeout_occurred = false;
+      while (future_shm->flags_.Any(FutureShm::FUTURE_NEW_DATA)) {
         double wait_us = wait_start.GetUsecFromStart();
-        if (wait_us > 1000.0) {  // 1ms timeout
-          // Client hasn't consumed data in time - push to back of queue
-          HLOG(kDebug, "CopyTaskOutputToClient: Client not consuming data, pushing to back of queue");
-          // Pop from front and push to back
+        if (wait_us > 100.0) {  // 100us timeout
+          // Client not consuming fast enough - push to back of queue
           Future<Task> task = std::move(client_copy_.front());
           client_copy_.pop();
           client_copy_.push(std::move(task));
+          CHI_IPC->allocator_map_lock_.ReadUnlock();
+          timeout_occurred = true;
           break;
         }
-        // Yield to give client time to consume
         HSHM_THREAD_MODEL->Yield();
       }
-
-      // Check if data was consumed
-      if (!future_shm->is_complete_.Any(FutureShm<>::FUTURE_NEW_DATA)) {
-        // Data was consumed - mark complete and remove from queue
-        future_shm->is_complete_.SetBits(FutureShm<>::FUTURE_COMPLETE);
-        client_copy_.pop();
-        HLOG(kDebug, "CopyTaskOutputToClient: Task streaming complete");
-        continue;
+      if (timeout_occurred) {
+        continue;  // Try next task
       }
-    } else {
-      // FUTURE_NEW_DATA is set but data not yet consumed - move to back of queue
-      Future<Task> task = std::move(client_copy_.front());
-      client_copy_.pop();
-      client_copy_.push(std::move(task));
+      // If no timeout, client consumed data - proceed to send next chunk
     }
 
-    // Release the lock before continuing
+    // FUTURE_NEW_DATA is not set - client consumed previous chunk
+    // Check if this task has a streaming buffer
+    auto it = streaming_buffers_.find(future_shm_ptr);
+    if (it == streaming_buffers_.end()) {
+      // No streaming buffer - this task is done or wasn't streaming
+      client_copy_.pop();
+      CHI_IPC->allocator_map_lock_.ReadUnlock();
+      continue;
+    }
+
+    // Get streaming state
+    std::vector<char> &serialized_data = it->second.first;
+    size_t &bytes_sent = it->second.second;
+    size_t output_size = future_shm->output_size_.load();
+    size_t copy_space_capacity = future_shm->capacity_.load();
+
+    // Check if all data has been sent
+    if (bytes_sent >= output_size) {
+      // All chunks sent and consumed - mark complete
+      future_shm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
+      streaming_buffers_.erase(it);
+      client_copy_.pop();
+      CHI_IPC->allocator_map_lock_.ReadUnlock();
+      HLOG(kDebug, "CopyTaskOutputToClient: Task streaming complete ({} bytes)",
+           output_size);
+      continue;
+    }
+
+    // Copy next chunk to copy_space
+    size_t remaining = output_size - bytes_sent;
+    size_t chunk_size = std::min(remaining, copy_space_capacity);
+    std::memcpy(future_shm->copy_space, serialized_data.data() + bytes_sent,
+                chunk_size);
+    future_shm->input_size_.store(chunk_size);
+    bytes_sent += chunk_size;
+
+    // Set FUTURE_NEW_DATA flag to signal chunk is ready
+    future_shm->flags_.SetBits(FutureShm::FUTURE_NEW_DATA);
+
     CHI_IPC->allocator_map_lock_.ReadUnlock();
+
+    HLOG(kDebug, "CopyTaskOutputToClient: Sent chunk {}/{} bytes", bytes_sent,
+         output_size);
   }
 }
 
