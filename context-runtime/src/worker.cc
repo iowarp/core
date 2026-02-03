@@ -1369,9 +1369,11 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   // LocalTransfer will delete the worker's copy of the task on completion
   if (was_copied) {
     EndTaskBeginClientTransfer(task_ptr, run_ctx, container);
+  } else {
+    // Runtime task - set FUTURE_COMPLETE flag directly
+    // (Client path sets it via LocalTransfer::SetComplete())
+    future_shm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
   }
-  // Note: For runtime tasks (was_copied=false), the task is owned by caller's
-  // Future, so we don't delete it here
 
   // Signal parent task
   EndTaskSignalParent(parent_task);
