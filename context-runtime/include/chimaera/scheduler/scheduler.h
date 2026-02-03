@@ -33,14 +33,6 @@ class Scheduler {
   virtual void DivideWorkers(WorkOrchestrator *work_orch) = 0;
 
   /**
-   * Get the list of workers that should process tasks from worker queues.
-   * Called by WorkOrchestrator during lane mapping.
-   *
-   * @return Vector of workers that process tasks
-   */
-  virtual std::vector<Worker*> GetTaskProcessingWorkers() = 0;
-
-  /**
    * Determines which worker to initially map a task to from clients.
    * First few workers are always the scheduling workers.
    * Analogous to the old MapTaskToLane function.

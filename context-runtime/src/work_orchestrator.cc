@@ -58,10 +58,10 @@ bool WorkOrchestrator::Init() {
          total_workers, num_task_workers);
   }
 
-  // Create all workers as generic type (kSchedWorker)
+  // Create all workers
   // The scheduler will partition them into groups via DivideWorkers()
   for (u32 i = 0; i < total_workers; ++i) {
-    if (!CreateWorker(kSchedWorker)) {
+    if (!CreateWorker()) {
       return false;
     }
   }
@@ -166,29 +166,8 @@ Worker *WorkOrchestrator::GetWorker(u32 worker_id) const {
   return all_workers_[worker_id];
 }
 
-std::vector<Worker *>
-WorkOrchestrator::GetWorkersByType(ThreadType thread_type) const {
-  std::vector<Worker *> workers;
-  if (!is_initialized_) {
-    return workers;
-  }
-
-  for (auto *worker : all_workers_) {
-    if (worker && worker->GetThreadType() == thread_type) {
-      workers.push_back(worker);
-    }
-  }
-
-  return workers;
-}
-
 size_t WorkOrchestrator::GetWorkerCount() const {
   return is_initialized_ ? all_workers_.size() : 0;
-}
-
-u32 WorkOrchestrator::GetWorkerCountByType(ThreadType thread_type) const {
-  ConfigManager *config = CHI_CONFIG_MANAGER;
-  return config->GetWorkerThreadCount(thread_type);
 }
 
 bool WorkOrchestrator::IsInitialized() const { return is_initialized_; }
@@ -216,29 +195,20 @@ bool WorkOrchestrator::SpawnWorkerThreads() {
     return false;
   }
 
-  // Get workers that should process tasks from scheduler
-  // The scheduler decides which workers are task-processing workers
-  std::vector<Worker*> task_workers;
-  if (scheduler_) {
-    task_workers = scheduler_->GetTaskProcessingWorkers();
-  } else {
-    HLOG(kError, "WorkOrchestrator: No scheduler available");
+  // All workers process tasks - assign each worker to a lane using 1:1 mapping
+  u32 num_workers = static_cast<u32>(all_workers_.size());
+  HLOG(kInfo, "WorkOrchestrator: num_workers={}, num_lanes={}",
+        num_workers, num_lanes);
+
+  if (num_workers == 0) {
+    HLOG(kError, "WorkOrchestrator: No workers available for lane mapping");
     return false;
   }
 
-  u32 num_task_workers = static_cast<u32>(task_workers.size());
-  HLOG(kInfo, "WorkOrchestrator: num_task_workers={}, num_lanes={}",
-        num_task_workers, num_lanes);
-
-  if (num_task_workers == 0) {
-    HLOG(kError, "WorkOrchestrator: No task workers available for lane mapping");
-    return false;
-  }
-
-  // Map lanes to task workers using 1:1 mapping
-  // Each task worker gets exactly one lane
-  for (u32 worker_idx = 0; worker_idx < num_task_workers; ++worker_idx) {
-    Worker *worker = task_workers[worker_idx];
+  // Map lanes to workers using 1:1 mapping
+  // Each worker gets exactly one lane
+  for (u32 worker_idx = 0; worker_idx < num_workers; ++worker_idx) {
+    Worker *worker = all_workers_[worker_idx];
     if (worker) {
       // Direct 1:1 mapping: worker i gets lane i
       u32 lane_id = worker_idx;
@@ -282,9 +252,9 @@ bool WorkOrchestrator::SpawnWorkerThreads() {
   }
 }
 
-bool WorkOrchestrator::CreateWorker(ThreadType thread_type) {
+bool WorkOrchestrator::CreateWorker() {
   u32 worker_id = static_cast<u32>(all_workers_.size());
-  auto worker = std::make_unique<Worker>(worker_id, thread_type);
+  auto worker = std::make_unique<Worker>(worker_id);
 
   if (!worker->Init()) {
     return false;
@@ -299,9 +269,9 @@ bool WorkOrchestrator::CreateWorker(ThreadType thread_type) {
   return true;
 }
 
-bool WorkOrchestrator::CreateWorkers(ThreadType thread_type, u32 count) {
+bool WorkOrchestrator::CreateWorkers(u32 count) {
   for (u32 i = 0; i < count; ++i) {
-    if (!CreateWorker(thread_type)) {
+    if (!CreateWorker()) {
       return false;
     }
   }

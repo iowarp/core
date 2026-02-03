@@ -242,14 +242,6 @@ struct AddressHash {
 // - BULK_EXPOSE: Bulk is exposed (sender exposes for reading)
 // - BULK_XFER: Bulk is exposed for writing (receiver)
 
-// Thread types for work orchestrator
-enum ThreadType {
-  kSchedWorker = 0,    ///< Scheduler worker for fast tasks (EstCpuTime < 50us)
-  kSlow = 1,           ///< Slow worker for long-running tasks (EstCpuTime >= 50us)
-  kProcessReaper = 2,  ///< Process reaper thread
-  kNetWorker = 3       ///< Network worker for Send/Recv tasks
-};
-
 // Lane mapping policies for task distribution
 enum class LaneMapPolicy {
   kMapByPidTid = 0, ///< Map tasks to lanes by hashing PID+TID (ensures

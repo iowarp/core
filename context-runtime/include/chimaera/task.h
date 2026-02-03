@@ -860,7 +860,6 @@ typedef hipc::multi_mpsc_ring_buffer<Future<Task>, CHI_MAIN_ALLOC_T> TaskQueue;
 struct RunContext {
   /** Coroutine handle for C++20 stackless coroutines */
   std::coroutine_handle<> coro_handle_;
-  ThreadType thread_type_;      /**< Type of worker thread executing this task */
   u32 worker_id_;               /**< Worker ID executing this task */
   FullPtr<Task> task_;          /**< Task being executed by this context */
   bool is_yielded_;             /**< Task is waiting for completion */
@@ -884,7 +883,6 @@ struct RunContext {
 
   RunContext()
       : coro_handle_(nullptr),
-        thread_type_(kSchedWorker),
         worker_id_(0),
         is_yielded_(false),
         yield_time_us_(0.0),
@@ -904,7 +902,6 @@ struct RunContext {
    */
   RunContext(RunContext&& other) noexcept
       : coro_handle_(other.coro_handle_),
-        thread_type_(other.thread_type_),
         worker_id_(other.worker_id_),
         task_(std::move(other.task_)),
         is_yielded_(other.is_yielded_),
@@ -932,7 +929,6 @@ struct RunContext {
   RunContext& operator=(RunContext&& other) noexcept {
     if (this != &other) {
       coro_handle_ = other.coro_handle_;
-      thread_type_ = other.thread_type_;
       worker_id_ = other.worker_id_;
       task_ = std::move(other.task_);
       is_yielded_ = other.is_yielded_;

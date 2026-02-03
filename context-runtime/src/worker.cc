@@ -34,9 +34,8 @@ namespace chi {
 
 // Stack detection is now handled by WorkOrchestrator during initialization
 
-Worker::Worker(u32 worker_id, ThreadType thread_type)
+Worker::Worker(u32 worker_id)
     : worker_id_(worker_id),
-      thread_type_(thread_type),
       is_running_(false),
       is_initialized_(false),
       did_work_(false),
@@ -614,12 +613,6 @@ void Worker::SuspendMe() {
 
 u32 Worker::GetId() const { return worker_id_; }
 
-ThreadType Worker::GetThreadType() const { return thread_type_; }
-
-void Worker::SetThreadType(ThreadType thread_type) {
-  thread_type_ = thread_type;
-}
-
 bool Worker::IsRunning() const { return is_running_; }
 
 RunContext *Worker::GetCurrentRunContext() const {
@@ -1080,7 +1073,6 @@ void Worker::BeginTask(Future<Task> &future, Container *container,
   RunContext *run_ctx = task_ptr->run_ctx_.get();
 
   // Clear and initialize RunContext for new task execution
-  run_ctx->thread_type_ = thread_type_;
   run_ctx->worker_id_ = worker_id_;
   run_ctx->task_ = task_ptr;        // Store task in RunContext
   run_ctx->is_yielded_ = false;     // Initially not blocked
@@ -1093,9 +1085,11 @@ void Worker::BeginTask(Future<Task> &future, Container *container,
   // Initialize adaptive polling fields for periodic tasks
   if (task_ptr->IsPeriodic()) {
     run_ctx->true_period_ns_ = task_ptr->period_ns_;
+    run_ctx->yield_time_us_ = task_ptr->period_ns_ / 1000.0;  // Initialize with true period
     run_ctx->did_work_ = false;  // Initially no work done
   } else {
     run_ctx->true_period_ns_ = 0.0;
+    run_ctx->yield_time_us_ = 0.0;
     run_ctx->did_work_ = false;
   }
 
@@ -1713,9 +1707,6 @@ void Worker::ReschedulePeriodicTask(RunContext *run_ctx,
   if (!run_ctx || task_ptr.IsNull() || !task_ptr->IsPeriodic()) {
     return;
   }
-
-  HLOG(kDebug, "ReschedulePeriodicTask: task={}, yield_time_us={}",
-       task_ptr->task_id_, run_ctx->yield_time_us_);
 
   // Get the lane from the run context
   TaskLane *lane = run_ctx->lane_;

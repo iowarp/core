@@ -56,24 +56,10 @@ class WorkOrchestrator {
   Worker* GetWorker(u32 worker_id) const;
 
   /**
-   * Get workers by thread type
-   * @param thread_type Type of worker threads
-   * @return Vector of worker pointers of specified type
-   */
-  std::vector<Worker*> GetWorkersByType(ThreadType thread_type) const;
-
-  /**
    * Get total number of workers
    * @return Total count of all workers
    */
   size_t GetWorkerCount() const;
-
-  /**
-   * Get worker count by type
-   * @param thread_type Type of worker threads
-   * @return Count of workers of specified type
-   */
-  u32 GetWorkerCountByType(ThreadType thread_type) const;
 
 
   /**
@@ -130,19 +116,17 @@ class WorkOrchestrator {
   bool SpawnWorkerThreads();
 
   /**
-   * Create workers of specified type
-   * @param thread_type Type of workers to create
+   * Create workers
    * @param count Number of workers to create
    * @return true if creation successful, false otherwise
    */
-  bool CreateWorkers(ThreadType thread_type, u32 count);
+  bool CreateWorkers(u32 count);
 
   /**
-   * Create a single worker with specified type
-   * @param thread_type Type of worker to create
+   * Create a single worker
    * @return true if creation successful, false otherwise
    */
-  bool CreateWorker(ThreadType thread_type);
+  bool CreateWorker();
 
   /**
    * Initialize queue lane mappings

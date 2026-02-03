@@ -24,80 +24,57 @@ void DefaultScheduler::DivideWorkers(WorkOrchestrator *work_orch) {
 
   u32 thread_count = config->GetNumThreads();
   u32 total_workers = work_orch->GetTotalWorkerCount();
-  u32 worker_idx = 0;
 
-  // Clear any existing worker group assignments
+  // Clear any existing worker assignments
   scheduler_workers_.clear();
-  slow_workers_.clear();
   net_worker_ = nullptr;
 
-  // Calculate scheduler workers: max(1, num_threads - 1)
-  // If num_threads = 1: worker 0 is both task and network worker
-  // If num_threads > 1: workers 0..(n-2) are task workers, worker (n-1) is dedicated network worker
-  u32 num_sched_workers = (thread_count > 1) ? (thread_count - 1) : 1;
+  // Network worker is always the last worker
+  net_worker_ = work_orch->GetWorker(total_workers - 1);
 
-  // Assign scheduler workers
-  for (u32 i = 0; i < num_sched_workers && worker_idx < total_workers; ++i) {
-    Worker *worker = work_orch->GetWorker(worker_idx);
+  // Scheduler workers are all workers except the last one (unless only 1 worker)
+  u32 num_sched_workers = (total_workers == 1) ? 1 : (total_workers - 1);
+  for (u32 i = 0; i < num_sched_workers; ++i) {
+    Worker *worker = work_orch->GetWorker(i);
     if (worker) {
-      worker->SetThreadType(kSchedWorker);
       scheduler_workers_.push_back(worker);
-      HLOG(kDebug, "DefaultScheduler: Added worker {} to scheduler_workers (now size={})",
-           worker_idx, scheduler_workers_.size());
-    } else {
-      HLOG(kWarning, "DefaultScheduler: Worker {} is null", worker_idx);
     }
-    ++worker_idx;
   }
 
-  // Assign network worker
-  if (thread_count == 1) {
-    // Single thread: worker 0 serves both roles
-    net_worker_ = work_orch->GetWorker(0);
-    HLOG(kDebug, "DefaultScheduler: Worker 0 serves dual role (task + network)");
-  } else {
-    // Multiple threads: last worker is dedicated network worker
-    Worker *net_worker = work_orch->GetWorker(worker_idx);
-    if (net_worker) {
-      net_worker->SetThreadType(kNetWorker);
-      net_worker_ = net_worker;
-      HLOG(kDebug, "DefaultScheduler: Worker {} is dedicated network worker", worker_idx);
-    }
-    ++worker_idx;
-  }
-
-  // Update IpcManager with actual number of scheduler workers
-  // This ensures clients map tasks to the correct number of lanes
+  // Update IpcManager with the number of workers
   IpcManager *ipc = CHI_IPC;
-  u32 num_scheduler_workers = static_cast<u32>(scheduler_workers_.size());
   if (ipc) {
-    ipc->SetNumSchedQueues(num_scheduler_workers);
+    ipc->SetNumSchedQueues(total_workers);
   }
 
-  if (thread_count == 1) {
-    HLOG(kInfo, "DefaultScheduler: 1 worker (serves both task and network roles)");
-  } else {
-    HLOG(kInfo, "DefaultScheduler: {} task workers, 1 dedicated network worker",
-         num_scheduler_workers);
-  }
-}
-
-std::vector<Worker*> DefaultScheduler::GetTaskProcessingWorkers() {
-  return scheduler_workers_;
+  HLOG(kInfo, "DefaultScheduler: {} scheduler workers, 1 network worker (worker {})",
+       scheduler_workers_.size(), total_workers - 1);
 }
 
 u32 DefaultScheduler::ClientMapTask(IpcManager *ipc_manager,
                                      const Future<Task> &task) {
   // Get number of scheduling queues
   u32 num_lanes = ipc_manager->GetNumSchedQueues();
-  HLOG(kDebug, "ClientMapTask: num_sched_queues={}", num_lanes);
   if (num_lanes == 0) {
     return 0;
   }
 
+  // Check if this is a network task
+  Task *task_ptr = task.get();
+  bool is_network_task = false;
+  if (task_ptr != nullptr && task_ptr->pool_id_ == chi::kAdminPoolId) {
+    u32 method_id = task_ptr->method_;
+    is_network_task = (method_id == 14 || method_id == 15);  // kSend or kRecv
+  }
+
   // Always use PID+TID hash-based mapping
   u32 lane = MapByPidTid(num_lanes);
-  HLOG(kDebug, "ClientMapTask: PID+TID hash mapped to lane {}", lane);
+
+  if (is_network_task) {
+    HLOG(kInfo, "ClientMapTask: Network task (pool={}, method={}) mapped to lane {}",
+         task_ptr->pool_id_.major_, task_ptr->method_, lane);
+  }
+
   return lane;
 }
 
@@ -112,7 +89,10 @@ u32 DefaultScheduler::RuntimeMapTask(Worker *worker, const Future<Task> &task) {
       if (method_id == 14 || method_id == 15) {  // kSend or kRecv
         // Schedule on network worker
         if (net_worker_ != nullptr) {
-          return net_worker_->GetId();
+          u32 net_worker_id = net_worker_->GetId();
+          HLOG(kInfo, "RuntimeMapTask: Routing network task (pool={}, method={}) to net_worker_id={}",
+               task_ptr->pool_id_.major_, method_id, net_worker_id);
+          return net_worker_id;
         }
       }
     }
@@ -134,6 +114,10 @@ void DefaultScheduler::AdjustPolling(RunContext *run_ctx) {
   if (!run_ctx) {
     return;
   }
+
+  // TEMPORARY: Disable adaptive polling to test if it resolves hanging issues
+  // Just return early without adjusting - tasks will use their configured period
+  return;
 
   // Maximum polling interval in microseconds (100ms)
   const double kMaxPollingIntervalUs = 100000.0;
@@ -173,45 +157,6 @@ u32 DefaultScheduler::MapByPidTid(u32 num_lanes) {
   size_t combined_hash =
       std::hash<pid_t>{}(pid) ^ (std::hash<void *>{}(&tid) << 1);
   return static_cast<u32>(combined_hash % num_lanes);
-}
-
-void DefaultScheduler::AssignToWorkerType(ThreadType thread_type,
-                                          Future<Task> &future) {
-  if (future.IsNull()) {
-    return;
-  }
-
-  // Select target worker vector based on thread type
-  std::vector<Worker *> *target_workers = nullptr;
-  std::atomic<size_t> *idx = nullptr;
-
-  if (thread_type == kSchedWorker) {
-    target_workers = &scheduler_workers_;
-    idx = &scheduler_idx_;
-  } else if (thread_type == kSlow) {
-    target_workers = &slow_workers_;
-    idx = &slow_idx_;
-  } else {
-    // Process reaper or other types - not supported for task routing
-    return;
-  }
-
-  if (target_workers->empty()) {
-    HLOG(kWarning, "AssignToWorkerType: No workers of type {}",
-          static_cast<int>(thread_type));
-    return;
-  }
-
-  // Round-robin assignment
-  size_t worker_idx = idx->fetch_add(1) % target_workers->size();
-  Worker *worker = (*target_workers)[worker_idx];
-
-  // Get the worker's assigned lane and emplace the task
-  TaskLane *lane = worker->GetLane();
-  if (lane != nullptr) {
-    // Emplace the Future into the lane
-    lane->Emplace(future);
-  }
 }
 
 }  // namespace chi

@@ -286,15 +286,21 @@ class IpcManager {
 
     // 4. Map task to lane using scheduler
     LaneId lane_id;
-    if (IsNetworkTask(task_ptr)) {
-      // Route Send/Recv tasks to net worker's lane (last lane)
-      lane_id = shared_header_->num_workers - 1;
+    Future<Task> task_future_for_sched = future.template Cast<Task>();
+    if (is_runtime) {
+      lane_id = scheduler_->RuntimeMapTask(worker, task_future_for_sched);
     } else {
-      Future<Task> task_future_for_sched = future.template Cast<Task>();
-      if (is_runtime) {
-        lane_id = scheduler_->RuntimeMapTask(worker, task_future_for_sched);
-      } else {
-        lane_id = scheduler_->ClientMapTask(this, task_future_for_sched);
+      lane_id = scheduler_->ClientMapTask(this, task_future_for_sched);
+    }
+
+    // Log network task routing
+    Task *task_for_log = task_future_for_sched.get();
+    if (task_for_log != nullptr && task_for_log->pool_id_ == kAdminPoolId) {
+      u32 method = task_for_log->method_;
+      if (method == 14 || method == 15) {
+        HLOG(kInfo, "IpcManager::Send: {} task (task_id={}, pool={}, method={}) -> lane_id={}, is_runtime={}",
+             method == 14 ? "Send" : "Recv", task_for_log->task_id_,
+             task_for_log->pool_id_.major_, method, lane_id, is_runtime);
       }
     }
 
@@ -733,24 +739,6 @@ class IpcManager {
   size_t ClearUserIpcs();
 
  private:
-  /**
-   * Check if task is a network task (Send or Recv)
-   * Network tasks are routed to the dedicated network worker
-   * @param task_ptr Task to check
-   * @return true if task is a Send or Recv admin task
-   */
-  template <typename TaskT>
-  bool IsNetworkTask(const hipc::FullPtr<TaskT> &task_ptr) const {
-    if (task_ptr.IsNull()) {
-      return false;
-    }
-    // Admin kSend = 14, kRecv = 15
-    constexpr u32 kAdminSend = 14;
-    constexpr u32 kAdminRecv = 15;
-    const Task *task = task_ptr.ptr_;
-    return task->pool_id_ == kAdminPoolId &&
-           (task->method_ == kAdminSend || task->method_ == kAdminRecv);
-  }
 
   /**
    * Initialize memory segments for server

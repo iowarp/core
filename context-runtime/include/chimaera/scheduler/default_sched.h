@@ -12,7 +12,7 @@ namespace chi {
 /**
  * Default scheduler implementation.
  * Uses PID+TID hash-based lane mapping and provides no rebalancing.
- * Manages its own worker partitioning into scheduler, slow, and network groups.
+ * All workers process tasks; scheduler tracks worker groups for routing decisions.
  */
 class DefaultScheduler : public Scheduler {
  public:
@@ -27,21 +27,11 @@ class DefaultScheduler : public Scheduler {
   ~DefaultScheduler() override = default;
 
   /**
-   * Partition workers into scheduler, slow, and network worker groups.
-   * Reads worker counts from ConfigManager and assigns workers to:
-   * - scheduler_workers_: First N workers for fast tasks
-   * - slow_workers_: Next M workers for long-running tasks
-   * - net_worker_: Last worker for network operations
+   * Initialize scheduler with all available workers.
+   * Tracks scheduler workers and network worker for routing decisions.
    * @param work_orch Pointer to the work orchestrator
    */
   void DivideWorkers(WorkOrchestrator *work_orch) override;
-
-  /**
-   * Get the list of workers that should process tasks from worker queues.
-   * Returns scheduler_workers_ which are assigned to process tasks.
-   * @return Vector of scheduler workers
-   */
-  std::vector<Worker*> GetTaskProcessingWorkers() override;
 
   /**
    * Map task to lane using PID+TID hash.
@@ -67,19 +57,6 @@ class DefaultScheduler : public Scheduler {
    */
   void AdjustPolling(RunContext *run_ctx) override;
 
-  /**
-   * Assign a task to a worker of the specified type using round-robin.
-   * @param thread_type Type of worker to assign to (kSchedWorker or kSlow)
-   * @param future Future containing the task to assign
-   */
-  void AssignToWorkerType(ThreadType thread_type, Future<Task> &future);
-
-  /**
-   * Get the network worker
-   * @return Pointer to the network worker, or nullptr if not assigned
-   */
-  Worker *GetNetWorker() const { return net_worker_; }
-
  private:
   /**
    * Map task to lane by PID+TID hash
@@ -88,14 +65,9 @@ class DefaultScheduler : public Scheduler {
    */
   u32 MapByPidTid(u32 num_lanes);
 
-  // Worker partitioning - specific to default scheduler
-  std::vector<Worker *> scheduler_workers_;  ///< Workers for fast tasks
-  std::vector<Worker *> slow_workers_;       ///< Workers for long-running tasks
-  Worker *net_worker_;                        ///< Network worker
-
-  // Round-robin assignment counters
-  std::atomic<size_t> scheduler_idx_{0};
-  std::atomic<size_t> slow_idx_{0};
+  // Internal worker tracking for routing decisions
+  std::vector<Worker *> scheduler_workers_;  ///< Task processing workers
+  Worker *net_worker_;                        ///< Network worker (for routing periodic Send/Recv)
 };
 
 }  // namespace chi

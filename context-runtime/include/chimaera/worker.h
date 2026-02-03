@@ -93,9 +93,8 @@ class Worker {
   /**
    * Constructor
    * @param worker_id Unique worker identifier
-   * @param thread_type Type of worker thread
    */
-  Worker(u32 worker_id, ThreadType thread_type);
+  Worker(u32 worker_id);
 
   /**
    * Destructor
@@ -128,19 +127,6 @@ class Worker {
    * @return Worker identifier
    */
   u32 GetId() const;
-
-  /**
-   * Get worker thread type
-   * @return Type of worker thread
-   */
-  ThreadType GetThreadType() const;
-
-  /**
-   * Set worker thread type
-   * Used by scheduler to assign worker types during DivideWorkers()
-   * @param thread_type New thread type for this worker
-   */
-  void SetThreadType(ThreadType thread_type);
 
   /**
    * Check if worker is running
@@ -503,7 +489,6 @@ class Worker {
   void RerouteDynamicTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx);
 
   u32 worker_id_;
-  ThreadType thread_type_;
   bool is_running_;
   bool is_initialized_;
   bool did_work_;       // Tracks if any work was done in current loop iteration

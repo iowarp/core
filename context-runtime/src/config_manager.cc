@@ -67,17 +67,6 @@ std::string ConfigManager::GetServerConfigPath() const {
   return std::string();
 }
 
-u32 ConfigManager::GetWorkerThreadCount(ThreadType thread_type) const {
-  switch (thread_type) {
-  case kSchedWorker:
-    return num_threads_;
-  case kProcessReaper:
-    return process_reaper_workers_;
-  default:
-    return 0;
-  }
-}
-
 size_t ConfigManager::GetMemorySegmentSize(MemorySegment segment) const {
   switch (segment) {
   case kMainSegment:

@@ -95,13 +95,6 @@ class ConfigManager : public hshm::BaseConfig {
   std::string GetServerConfigPath() const;
 
   /**
-   * Get number of worker threads for given type
-   * @param thread_type Type of worker thread
-   * @return Number of threads to spawn
-   */
-  u32 GetWorkerThreadCount(ThreadType thread_type) const;
-
-  /**
    * Get number of worker threads
    * @return Number of worker threads for task execution
    */
