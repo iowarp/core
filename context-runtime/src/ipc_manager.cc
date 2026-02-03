@@ -882,7 +882,8 @@ void IpcManager::FreeBuffer(FullPtr<char> buffer_ptr) {
   // Check if allocator ID is null (private memory allocated with HSHM_MALLOC)
   if (buffer_ptr.shm_.alloc_id_ == hipc::AllocatorId::GetNull()) {
     // Private memory - use HSHM_MALLOC->Free() for RUNTIME-allocated buffers
-    // In RUNTIME mode, AllocateBuffer uses HSHM_MALLOC which adds MallocPage header
+    // In RUNTIME mode, AllocateBuffer uses HSHM_MALLOC which adds MallocPage
+    // header
     HLOG(kInfo,
          "FreeBuffer: Freeing NULL allocator ID buffer - ptr_={}, off_={}",
          (void *)buffer_ptr.ptr_, buffer_ptr.shm_.off_.load());
@@ -1023,7 +1024,8 @@ bool IpcManager::IncreaseMemory(size_t size) {
       HLOG(kError, "IpcManager::IncreaseMemory: Failed to create shm for {}",
            shm_name);
       shm_count_.fetch_sub(1, std::memory_order_relaxed);
-      allocator_map_lock_.WriteUnlock();  // CRITICAL: Release lock before returning
+      allocator_map_lock_
+          .WriteUnlock();  // CRITICAL: Release lock before returning
       return false;
     }
 
@@ -1036,7 +1038,8 @@ bool IpcManager::IncreaseMemory(size_t size) {
            "IpcManager::IncreaseMemory: Failed to create allocator for {}",
            shm_name);
       shm_count_.fetch_sub(1, std::memory_order_relaxed);
-      allocator_map_lock_.WriteUnlock();  // CRITICAL: Release lock before returning
+      allocator_map_lock_
+          .WriteUnlock();  // CRITICAL: Release lock before returning
       return false;
     }
 
@@ -1070,7 +1073,8 @@ bool IpcManager::IncreaseMemory(size_t size) {
 }
 
 bool IpcManager::RegisterMemory(const hipc::AllocatorId &alloc_id) {
-  HLOG(kDebug, "RegisterMemory CALLED: alloc_id=({}.{})", alloc_id.major_, alloc_id.minor_);
+  HLOG(kDebug, "RegisterMemory CALLED: alloc_id=({}.{})", alloc_id.major_,
+       alloc_id.minor_);
   std::lock_guard<std::mutex> lock(shm_mutex_);
   // Acquire writer lock on allocator_map_lock_ during memory registration
   allocator_map_lock_.WriteLock(0);
@@ -1081,8 +1085,7 @@ bool IpcManager::RegisterMemory(const hipc::AllocatorId &alloc_id) {
   std::string shm_name =
       "chimaera_" + std::to_string(owner_pid) + "_" + std::to_string(shm_index);
 
-  HLOG(kInfo,
-       "IpcManager::RegisterMemory: Registering {} from pid {}",
+  HLOG(kInfo, "IpcManager::RegisterMemory: Registering {} from pid {}",
        shm_name, owner_pid);
 
   // Check if already registered
@@ -1101,7 +1104,8 @@ bool IpcManager::RegisterMemory(const hipc::AllocatorId &alloc_id) {
     if (!backend->shm_attach(shm_name)) {
       HLOG(kError, "IpcManager::RegisterMemory: Failed to attach to shm {}",
            shm_name);
-      allocator_map_lock_.WriteUnlock();  // CRITICAL: Release lock before returning
+      allocator_map_lock_
+          .WriteUnlock();  // CRITICAL: Release lock before returning
       return false;
     }
 
@@ -1113,7 +1117,8 @@ bool IpcManager::RegisterMemory(const hipc::AllocatorId &alloc_id) {
       HLOG(kError,
            "IpcManager::RegisterMemory: Failed to attach allocator for {}",
            shm_name);
-      allocator_map_lock_.WriteUnlock();  // CRITICAL: Release lock before returning
+      allocator_map_lock_
+          .WriteUnlock();  // CRITICAL: Release lock before returning
       return false;
     }
 
@@ -1409,132 +1414,25 @@ size_t IpcManager::ClearUserIpcs() {
   return removed_count;
 }
 
-Future<Task> IpcManager::MakeFuture(hipc::FullPtr<Task> task_ptr,
-                                    bool force_copy) {
-  // Check task_ptr validity once at the start - null is an error
-  if (task_ptr.IsNull()) {
-    HLOG(kError, "MakeFuture: called with null task_ptr");
-    return Future<Task>();
+void IpcManager::SetIsClientThread(bool is_client_thread) {
+  // Create TLS key if not already created
+  HSHM_THREAD_MODEL->CreateTls<bool>(chi_is_client_thread_key_, nullptr);
+
+  // Set the flag for the current thread
+  bool *flag = new bool(is_client_thread);
+  HSHM_THREAD_MODEL->SetTls(chi_is_client_thread_key_, flag);
+
+  HLOG(kDebug, "SetIsClientThread: Set to {} for current thread",
+       is_client_thread);
+}
+
+bool IpcManager::GetIsClientThread() const {
+  // Get the TLS value, defaulting to false if not set
+  bool *flag = HSHM_THREAD_MODEL->GetTls<bool>(chi_is_client_thread_key_);
+  if (!flag) {
+    return false;
   }
-
-  HLOG(kInfo, "MakeFuture: called with valid task_ptr, force_copy={}", force_copy);
-
-  if (!CHI_CHIMAERA_MANAGER->IsRuntime() || force_copy) {
-    // CLIENT PATH or FORCE COPY: Serialize the task into Future
-    HLOG(kInfo, "MakeFuture: CLIENT PATH");
-
-    // Get copy space size from task
-    size_t copy_space_size = task_ptr->GetCopySpaceSize();
-
-    // Allocate and construct FutureShm with copy_space using NewObj
-    size_t alloc_size = sizeof(FutureShm) + copy_space_size;
-    hipc::FullPtr<char> buffer = AllocateBuffer(alloc_size);
-    if (buffer.IsNull()) {
-      return Future<Task>();
-    }
-
-    // Construct FutureShm in-place using placement new
-    FutureShm *future_shm_ptr = new (buffer.ptr_) FutureShm();
-
-    // Initialize FutureShm fields
-    future_shm_ptr->pool_id_ = task_ptr->pool_id_;
-    future_shm_ptr->method_id_ = task_ptr->method_;
-    future_shm_ptr->capacity_.store(copy_space_size);
-
-    // Serialize task using LocalSaveTaskArchive with kSerializeIn mode
-    LocalSaveTaskArchive archive(LocalMsgType::kSerializeIn);
-    HLOG(kInfo, "MakeFuture: CLIENT PATH - About to serialize task_ptr={}", (void*)task_ptr.ptr_);
-    archive << (*task_ptr.ptr_);
-
-    // Get serialized data and copy to FutureShm's copy_space
-    const std::vector<char> &serialized = archive.GetData();
-    size_t serialized_size = serialized.size();
-    HLOG(kInfo,
-         "MakeFuture: CLIENT PATH - Serialized {} bytes, copy_space_size={}",
-         serialized_size, copy_space_size);
-    if (serialized_size >= 16) {
-      HLOG(kInfo,
-           "MakeFuture: CLIENT PATH - Serialized data (first 16 bytes): {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
-           (unsigned char)serialized[0], (unsigned char)serialized[1], (unsigned char)serialized[2], (unsigned char)serialized[3],
-           (unsigned char)serialized[4], (unsigned char)serialized[5], (unsigned char)serialized[6], (unsigned char)serialized[7],
-           (unsigned char)serialized[8], (unsigned char)serialized[9], (unsigned char)serialized[10], (unsigned char)serialized[11],
-           (unsigned char)serialized[12], (unsigned char)serialized[13], (unsigned char)serialized[14], (unsigned char)serialized[15]);
-    }
-    if (serialized_size >= 8) {
-      HLOG(kInfo,
-           "MakeFuture: CLIENT PATH - First 8 bytes: {} {} {} {} {} {} {} {}",
-           (unsigned int)(unsigned char)serialized[0],
-           (unsigned int)(unsigned char)serialized[1],
-           (unsigned int)(unsigned char)serialized[2],
-           (unsigned int)(unsigned char)serialized[3],
-           (unsigned int)(unsigned char)serialized[4],
-           (unsigned int)(unsigned char)serialized[5],
-           (unsigned int)(unsigned char)serialized[6],
-           (unsigned int)(unsigned char)serialized[7]);
-    }
-    if (serialized_size > copy_space_size) {
-      HLOG(kError,
-           "Serialized task size {} exceeds copy space {}, TRUNCATING - DATA "
-           "WILL BE CORRUPTED!",
-           serialized_size, copy_space_size);
-      serialized_size = copy_space_size;
-    }
-    memcpy(future_shm_ptr->copy_space, serialized.data(), serialized_size);
-    future_shm_ptr->input_size_.store(serialized_size, std::memory_order_release);
-
-    // Memory fence: Ensure copy_space and input_size_ writes are visible before flag
-    std::atomic_thread_fence(std::memory_order_release);
-
-    // Set FUTURE_COPY_FROM_CLIENT flag - worker will deserialize from copy_space
-    future_shm_ptr->flags_.SetBits(FutureShm::FUTURE_COPY_FROM_CLIENT);
-
-    HLOG(kInfo,
-         "MakeFuture: CLIENT PATH - Copied {} bytes to copy_space at offset {}",
-         serialized_size, offsetof(FutureShm, copy_space));
-
-    // Delete the client's task object ONLY if in true CLIENT mode (not
-    // colocated runtime) In RUNTIME mode with force_copy (TASK_FORCE_NET), keep
-    // the task alive for caller The worker will deserialize and create a new
-    // task object from the serialized data
-    hipc::ShmPtr<FutureShm> future_shm_shmptr =
-        buffer.shm_.template Cast<FutureShm>();
-
-    HLOG(kInfo,
-         "MakeFuture: CLIENT PATH - Created ShmPtr: alloc_id=({}.{}), off_={}, "
-         "buffer.ptr_={}",
-         future_shm_shmptr.alloc_id_.major_, future_shm_shmptr.alloc_id_.minor_,
-         future_shm_shmptr.off_.load(), (void *)buffer.ptr_);
-
-    // When force_copy is true, ALWAYS keep the original task_ptr alive
-    // The worker will deserialize and execute a copy, but caller keeps the
-    // original
-    HLOG(kInfo,
-         "MakeFuture: CLIENT PATH (force_copy) - preserving original task_ptr");
-    Future<Task> future(future_shm_shmptr, task_ptr);
-    HLOG(kInfo,
-         "MakeFuture: CLIENT PATH (force_copy) complete, returning future with "
-         "task_ptr preserved");
-    return future;
-  } else {
-    // RUNTIME PATH: Create Future with task pointer directly (no serialization)
-    // Runtime doesn't copy/serialize, so no copy_space needed
-    HLOG(kInfo, "MakeFuture: RUNTIME PATH");
-
-    // Allocate and construct FutureShm using NewObj (no copy_space for runtime)
-    hipc::FullPtr<FutureShm> future_shm = NewObj<FutureShm>();
-    if (future_shm.IsNull()) {
-      return Future<Task>();
-    }
-
-    // Initialize FutureShm fields
-    future_shm.ptr_->pool_id_ = task_ptr->pool_id_;
-    future_shm.ptr_->method_id_ = task_ptr->method_;
-    future_shm.ptr_->capacity_.store(0);  // No copy_space in runtime path
-
-    // Create Future with ShmPtr and task_ptr (no serialization needed)
-    Future<Task> future(future_shm.shm_, task_ptr);
-    return future;
-  }
+  return *flag;
 }
 
 }  // namespace chi

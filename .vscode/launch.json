@@ -42,6 +42,26 @@
             "preLaunchTask": "cmake-build-debug"
         },
         {
+            "name": "Debug test_core_functionality",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/test_core_functionality",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "cmake-build-debug"
+        },
+        {
             "name": "Debug bdev_file_explicit_backend test",
             "type": "cppdbg",
             "request": "launch",

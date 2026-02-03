@@ -274,6 +274,7 @@ enum MemorySegment {
 // HSHM Thread-local storage keys
 extern hshm::ThreadLocalKey chi_cur_worker_key_;
 extern hshm::ThreadLocalKey chi_task_counter_key_;
+extern hshm::ThreadLocalKey chi_is_client_thread_key_;
 
 /**
  * Thread-local task counter for generating unique TaskId major and unique

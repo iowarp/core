@@ -15,6 +15,7 @@
 #include "chimaera/chimaera_manager.h"
 #include "chimaera/corwlock.h"
 #include "chimaera/local_task_archives.h"
+#include "chimaera/local_transfer.h"
 #include "chimaera/scheduler/scheduler.h"
 #include "chimaera/task.h"
 #include "chimaera/task_queue.h"
@@ -211,8 +212,8 @@ class IpcManager {
    * @param args Constructor arguments
    * @return FullPtr<T> to constructed object
    */
-  template<typename T, typename... Args>
-  hipc::FullPtr<T> NewObj(Args&&... args) {
+  template <typename T, typename... Args>
+  hipc::FullPtr<T> NewObj(Args &&...args) {
     // Allocate buffer for the object
     hipc::FullPtr<char> buffer = AllocateBuffer(sizeof(T));
     if (buffer.IsNull()) {
@@ -220,7 +221,7 @@ class IpcManager {
     }
 
     // Construct object using placement new
-    T* obj = new (buffer.ptr_) T(std::forward<Args>(args)...);
+    T *obj = new (buffer.ptr_) T(std::forward<Args>(args)...);
 
     // Return FullPtr<T> by reinterpreting the buffer's ptr and shm
     hipc::FullPtr<T> result;
@@ -234,50 +235,162 @@ class IpcManager {
    * Used internally by Send and as a public interface for future creation
    *
    * Two execution paths:
-   * - Client mode OR force_copy: Serialize the task into the Future
-   * - Runtime mode without force_copy: Wrap task_ptr directly without
+   * - Client thread (IsClientThread=true): Serialize the task into the Future
+   * - Runtime thread (IsClientThread=false): Wrap task_ptr directly without
    * serialization
    *
+   * @tparam TaskT Task type (must derive from Task)
    * @param task_ptr Task to wrap in Future
-   * @param force_copy If true, always serialize the task regardless of mode
-   * @return Future<Task> wrapping the task
+   * @return Future<TaskT> wrapping the task
    */
-  Future<Task> MakeFuture(hipc::FullPtr<Task> task_ptr,
-                          bool force_copy = false);
+  template <typename TaskT>
+  Future<TaskT> MakeFuture(hipc::FullPtr<TaskT> task_ptr) {
+    // Check task_ptr validity once at the start - null is an error
+    if (task_ptr.IsNull()) {
+      HLOG(kError, "MakeFuture: called with null task_ptr");
+      return Future<TaskT>();
+    }
+
+    HLOG(kInfo, "MakeFuture: called with valid task_ptr");
+
+    bool is_runtime = CHI_CHIMAERA_MANAGER->IsRuntime();
+    Worker *worker = CHI_CUR_WORKER;
+
+    // Runtime path requires BOTH IsRuntime AND worker to be non-null
+    bool use_runtime_path = is_runtime && worker != nullptr;
+
+    if (!use_runtime_path) {
+      // CLIENT PATH: Serialize the task into Future
+      HLOG(kInfo, "MakeFuture: CLIENT PATH (is_runtime={}, worker={})",
+           is_runtime, (void *)worker);
+
+      // Serialize task FIRST to determine actual size needed
+      LocalSaveTaskArchive archive(LocalMsgType::kSerializeIn);
+      HLOG(kInfo, "MakeFuture: CLIENT PATH - About to serialize task_ptr={}",
+           (void *)task_ptr.ptr_);
+      archive << (*task_ptr.ptr_);
+
+      // Get serialized data
+      const std::vector<char> &serialized = archive.GetData();
+      size_t serialized_size = serialized.size();
+
+      // Get recommended copy space size from task, but use actual size if
+      // larger
+      size_t recommended_size = task_ptr->GetCopySpaceSize();
+      size_t copy_space_size = std::max(recommended_size, serialized_size);
+
+      HLOG(kInfo,
+           "MakeFuture: CLIENT PATH - Serialized {} bytes, recommended={}, "
+           "using copy_space_size={}",
+           serialized_size, recommended_size, copy_space_size);
+
+      // Allocate and construct FutureShm with appropriately sized copy_space
+      size_t alloc_size = sizeof(FutureShm) + copy_space_size;
+      hipc::FullPtr<char> buffer = AllocateBuffer(alloc_size);
+      if (buffer.IsNull()) {
+        return Future<TaskT>();
+      }
+
+      // Construct FutureShm in-place using placement new
+      FutureShm *future_shm_ptr = new (buffer.ptr_) FutureShm();
+
+      // Initialize FutureShm fields
+      future_shm_ptr->pool_id_ = task_ptr->pool_id_;
+      future_shm_ptr->method_id_ = task_ptr->method_;
+      future_shm_ptr->capacity_.store(copy_space_size);
+
+      // Copy serialized data to copy_space (guaranteed to fit now)
+      memcpy(future_shm_ptr->copy_space, serialized.data(), serialized_size);
+      future_shm_ptr->input_size_.store(serialized_size,
+                                        std::memory_order_release);
+
+      // Memory fence: Ensure copy_space and input_size_ writes are visible
+      // before flag
+      std::atomic_thread_fence(std::memory_order_release);
+
+      // Set FUTURE_COPY_FROM_CLIENT flag - worker will deserialize from
+      // copy_space
+      future_shm_ptr->flags_.SetBits(FutureShm::FUTURE_COPY_FROM_CLIENT);
+
+      HLOG(kInfo,
+           "MakeFuture: CLIENT PATH - Copied {} bytes to copy_space at offset "
+           "{}",
+           serialized_size, offsetof(FutureShm, copy_space));
+
+      // Keep the original task_ptr alive
+      // The worker will deserialize and execute a copy, but caller keeps the
+      // original
+      hipc::ShmPtr<FutureShm> future_shm_shmptr =
+          buffer.shm_.template Cast<FutureShm>();
+
+      HLOG(kInfo,
+           "MakeFuture: CLIENT PATH - Created ShmPtr: alloc_id=({}.{}), "
+           "off_={}, buffer.ptr_={}",
+           future_shm_shmptr.alloc_id_.major_,
+           future_shm_shmptr.alloc_id_.minor_, future_shm_shmptr.off_.load(),
+           (void *)buffer.ptr_);
+
+      // CLIENT PATH: Preserve the original task_ptr
+      HLOG(kInfo, "MakeFuture: CLIENT PATH - preserving original task_ptr");
+      Future<TaskT> future(future_shm_shmptr, task_ptr);
+      HLOG(kInfo,
+           "MakeFuture: CLIENT PATH complete, returning future with "
+           "task_ptr preserved");
+      return future;
+    } else {
+      // RUNTIME PATH: Create Future with task pointer directly (no
+      // serialization) Runtime doesn't copy/serialize, so no copy_space needed
+      HLOG(kInfo, "MakeFuture: RUNTIME PATH");
+
+      // Allocate and construct FutureShm using NewObj (no copy_space for
+      // runtime)
+      hipc::FullPtr<FutureShm> future_shm = NewObj<FutureShm>();
+      if (future_shm.IsNull()) {
+        return Future<TaskT>();
+      }
+
+      // Initialize FutureShm fields
+      future_shm.ptr_->pool_id_ = task_ptr->pool_id_;
+      future_shm.ptr_->method_id_ = task_ptr->method_;
+      future_shm.ptr_->capacity_.store(0);  // No copy_space in runtime path
+
+      // Create Future with ShmPtr and task_ptr (no serialization needed)
+      Future<TaskT> future(future_shm.shm_, task_ptr);
+      return future;
+    }
+  }
 
   /**
    * Send task asynchronously (serializes into Future)
    * Creates a Future wrapper, serializes task inputs, and enqueues to worker
    *
    * Two execution paths:
-   * - Client mode (!IsRuntime): Serialize task and copy Future with null task
-   * pointer
-   * - Runtime mode (IsRuntime): Create Future with task pointer directly (no
-   * copy)
+   * - Client thread (IsClientThread=true): Serialize task and copy Future with
+   * null task pointer
+   * - Runtime thread (IsClientThread=false): Create Future with task pointer
+   * directly (no copy)
    *
    * @param task_ptr Task to send
    * @param awake_event Whether to awaken worker after enqueueing
-   * @param force_copy Force serialization even in runtime mode (for testing
-   * only)
    * @return Future<TaskT> for polling completion and retrieving results
    */
   template <typename TaskT>
-  Future<TaskT> Send(hipc::FullPtr<TaskT> task_ptr, bool awake_event = true,
-                     bool force_copy = false) {
+  Future<TaskT> Send(hipc::FullPtr<TaskT> task_ptr, bool awake_event = true) {
     // 1. Create Future using MakeFuture (handles both client and runtime paths)
     // In CLIENT mode: MakeFuture serializes task and sets
     // FUTURE_COPY_FROM_CLIENT flag In RUNTIME mode: MakeFuture wraps task
     // pointer directly without serialization
-    Future<Task> task_future =
-        MakeFuture(task_ptr.template Cast<Task>(), force_copy);
-    Future<TaskT> future = task_future.template Cast<TaskT>();
+    Future<TaskT> future = MakeFuture(task_ptr);
 
     // 2. Get current worker (needed for runtime parent task tracking)
     Worker *worker = CHI_CUR_WORKER;
-    bool is_runtime = CHI_CHIMAERA_MANAGER->IsRuntime() && !force_copy;
+    bool is_runtime = CHI_CHIMAERA_MANAGER->IsRuntime();
+
+    // Runtime path requires BOTH IsRuntime AND worker to be non-null
+    bool use_runtime_path = is_runtime && worker != nullptr;
 
     // 3. Set parent task RunContext from current worker (runtime only)
-    if (is_runtime && worker != nullptr) {
+    if (use_runtime_path) {
       RunContext *run_ctx = worker->GetCurrentRunContext();
       if (run_ctx != nullptr) {
         future.SetParentTask(run_ctx);
@@ -287,21 +400,10 @@ class IpcManager {
     // 4. Map task to lane using scheduler
     LaneId lane_id;
     Future<Task> task_future_for_sched = future.template Cast<Task>();
-    if (is_runtime) {
+    if (use_runtime_path) {
       lane_id = scheduler_->RuntimeMapTask(worker, task_future_for_sched);
     } else {
       lane_id = scheduler_->ClientMapTask(this, task_future_for_sched);
-    }
-
-    // Log network task routing
-    Task *task_for_log = task_future_for_sched.get();
-    if (task_for_log != nullptr && task_for_log->pool_id_ == kAdminPoolId) {
-      u32 method = task_for_log->method_;
-      if (method == 14 || method == 15) {
-        HLOG(kInfo, "IpcManager::Send: {} task (task_id={}, pool={}, method={}) -> lane_id={}, is_runtime={}",
-             method == 14 ? "Send" : "Recv", task_for_log->task_id_,
-             task_for_log->pool_id_.major_, method, lane_id, is_runtime);
-      }
     }
 
     // 5. Enqueue the Future object to the worker queue
@@ -331,83 +433,41 @@ class IpcManager {
   template <typename TaskT>
   void Recv(Future<TaskT> &future) {
     bool is_runtime = CHI_CHIMAERA_MANAGER->IsRuntime();
-    HLOG(kInfo, "Recv: ENTRY, IsRuntime()={}, task_ptr={}", is_runtime, (void*)future.get());
+    Worker *worker = CHI_CUR_WORKER;
 
-    if (!is_runtime) {
-      // CLIENT PATH: Deserialize task outputs from FutureShm
+    // Runtime path requires BOTH IsRuntime AND worker to be non-null
+    bool use_runtime_path = is_runtime && worker != nullptr;
+
+    HLOG(kInfo, "Recv: ENTRY, IsRuntime()={}, worker={}, task_ptr={}",
+         is_runtime, (void *)worker, (void *)future.get());
+
+    if (!use_runtime_path) {
+      // CLIENT PATH: Deserialize task outputs from FutureShm using
+      // LocalTransfer
       HLOG(kInfo, "Recv: Taking CLIENT PATH - will deserialize");
       auto future_shm = future.GetFutureShm();
       TaskT *task_ptr = future.get();
 
-      // Check if data fits in copy space or requires streaming
+      // Get output size from FutureShm
       size_t output_size = future_shm->output_size_.load();
-      size_t copy_space_capacity = future_shm->capacity_.load();
 
-      std::vector<char> buffer;
+      // Use LocalTransfer to receive all data
+      LocalTransfer receiver(future_shm, output_size);
 
-      if (output_size == 0 || output_size <= copy_space_capacity) {
-        // Path 1: Data fits in copy space - deserialize directly from
-        // copy_space
-
-        // Memory fence: Ensure we see all worker writes to copy_space
-        std::atomic_thread_fence(std::memory_order_acquire);
-
-        size_t chunk_size = future_shm->current_chunk_size_.load();
-        buffer.assign(future_shm->copy_space,
-                      future_shm->copy_space + chunk_size);
-      } else {
-        // Path 2: Data larger than copy space - assemble from streaming
-        // Preallocate vector with output_size_
-        buffer.reserve(output_size);
-
-        // Loop: wait for FUTURE_NEW_DATA, copy from copy space, unset flag
-        size_t bytes_received = 0;
-        while (bytes_received < output_size) {
-          // Wait for FUTURE_NEW_DATA to be set (worker has data in copy space)
-          hshm::Timepoint start_time;
-          start_time.Now();
-          while (!future_shm->flags_.Any(FutureShm::FUTURE_NEW_DATA)) {
-            // Check timeout (avoid infinite wait)
-            double elapsed_us = start_time.GetUsecFromStart();
-            if (elapsed_us > 5000000.0) {  // 5 second timeout
-              HLOG(kError,
-                   "Recv: Timeout waiting for FUTURE_NEW_DATA from worker");
-              break;
-            }
-            HSHM_THREAD_MODEL->Yield();
-          }
-
-          // Memory fence: Ensure we see all worker writes to copy_space
-          std::atomic_thread_fence(std::memory_order_acquire);
-
-          // Copy data from copy space into buffer
-          size_t chunk_size = future_shm->current_chunk_size_.load();
-          size_t bytes_to_copy =
-              std::min(chunk_size, output_size - bytes_received);
-          buffer.insert(buffer.end(), future_shm->copy_space,
-                        future_shm->copy_space + bytes_to_copy);
-          bytes_received += bytes_to_copy;
-
-          // Memory fence: Ensure our reads complete before unsetting flag
-          std::atomic_thread_fence(std::memory_order_release);
-
-          // Unset FUTURE_NEW_DATA to signal worker that we consumed the data
-          future_shm->flags_.UnsetBits(FutureShm::FUTURE_NEW_DATA);
-
-          // Continue to next chunk if needed
-          if (bytes_received < output_size) {
-            // Wait a bit before polling for next chunk
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-          }
-        }
+      // Receive all data (blocks until complete)
+      bool recv_complete = receiver.Recv();
+      if (!recv_complete) {
+        HLOG(kError, "Recv: LocalTransfer failed - received {}/{} bytes",
+             receiver.GetBytesTransferred(), output_size);
       }
 
       // Create LocalLoadTaskArchive with kSerializeOut mode
-      LocalLoadTaskArchive archive(buffer);
+      LocalLoadTaskArchive archive(receiver.GetData());
       archive.SetMsgType(LocalMsgType::kSerializeOut);
 
       // Deserialize task outputs into the Future's task pointer
-      HLOG(kInfo, "Recv: About to deserialize into task_ptr={}", (void*)task_ptr);
+      HLOG(kInfo, "Recv: About to deserialize into task_ptr={}",
+           (void *)task_ptr);
       archive >> (*task_ptr);
       HLOG(kInfo, "Recv: Deserialization complete");
     } else {
@@ -417,6 +477,19 @@ class IpcManager {
     }
     HLOG(kInfo, "Recv: EXIT");
   }
+
+  /**
+   * Set the IsClientThread flag for the current thread
+   * @param is_client_thread true if thread is running client code, false
+   * otherwise
+   */
+  void SetIsClientThread(bool is_client_thread);
+
+  /**
+   * Get the IsClientThread flag for the current thread
+   * @return true if thread is running client code, false otherwise
+   */
+  bool GetIsClientThread() const;
 
   /**
    * Get TaskQueue for task processing
@@ -748,7 +821,6 @@ class IpcManager {
   size_t ClearUserIpcs();
 
  private:
-
   /**
    * Initialize memory segments for server
    * @return true if successful, false otherwise

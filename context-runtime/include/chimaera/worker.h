@@ -13,6 +13,7 @@
 
 #include "chimaera/container.h"
 #include "chimaera/integer_timer.h"
+#include "chimaera/local_transfer.h"
 #include "chimaera/pool_query.h"
 #include "chimaera/task.h"
 #include "chimaera/task_queue.h"
@@ -369,28 +370,19 @@ class Worker {
 
   /**
    * Begin client transfer for task outputs
+   * Called only when task was copied from client (was_copied = true)
    * @param task_ptr Task to serialize
    * @param run_ctx Runtime context
    * @param container Container for serialization
-   * @return true if task is complete, false if queued for streaming
    */
-  bool EndTaskBeginClientTransfer(const FullPtr<Task> &task_ptr,
-                                   RunContext *run_ctx, Container *container);
+  void EndTaskBeginClientTransfer(const FullPtr<Task> &task_ptr,
+                                  RunContext *run_ctx, Container *container);
 
   /**
    * Signal parent task that subtask completed
-   * @param run_ctx Runtime context
+   * @param parent_task Parent task's RunContext to signal
    */
-  void EndTaskSignalParent(RunContext *run_ctx);
-
-  /**
-   * Delete task created from serialized client data
-   * @param task_ptr Task to delete
-   * @param run_ctx Runtime context
-   * @param container Container for deletion
-   */
-  void EndTaskClient(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
-                     Container *container);
+  void EndTaskSignalParent(RunContext *parent_task);
 
   /**
    * End task execution and perform cleanup
@@ -553,13 +545,8 @@ class Worker {
   // Used when external code (e.g., bdev) registers FDs with this worker's epoll
   hshm::Mutex epoll_mutex_;
 
-  // Client copy queue - tasks waiting to stream output data to clients
-  // Queue of Future<Task> objects that need their output copied to copy space
-  std::queue<Future<Task>> client_copy_;
-
-  // Streaming buffers - stores serialized data for tasks being streamed to clients
-  // Map: FutureShm pointer -> (serialized_data, bytes_sent)
-  std::unordered_map<FutureShm*, std::pair<std::vector<char>, size_t>> streaming_buffers_;
+  // Client copy queue - LocalTransfer objects streaming output data to clients
+  std::queue<LocalTransfer> client_copy_;
 
   // Scheduler pointer (owned by IpcManager, not Worker)
   Scheduler *scheduler_;

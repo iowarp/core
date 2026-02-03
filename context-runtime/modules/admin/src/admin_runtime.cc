@@ -641,6 +641,7 @@ void Runtime::RecvIn(hipc::FullPtr<RecvTask> task,
     // Send task for execution using IpcManager::Send with awake_event=false
     // Note: This creates a Future and enqueues it to worker lanes
     // awake_event=false prevents setting parent task for received remote tasks
+    // Note: IsClientThread is false since this is runtime code
     (void)ipc_manager->Send(task_ptr, false);
   }
 

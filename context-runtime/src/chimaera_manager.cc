@@ -17,6 +17,7 @@ namespace chi {
 // HSHM Thread-local storage key definitions
 hshm::ThreadLocalKey chi_cur_worker_key_;
 hshm::ThreadLocalKey chi_task_counter_key_;
+hshm::ThreadLocalKey chi_is_client_thread_key_;
 
 /**
  * Create a new TaskId with current process/thread info and next major counter

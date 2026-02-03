@@ -7,6 +7,12 @@ This repository contains the unified IOWarp Core framework, integrating multiple
 - **context-assimilation-engine**: Context assimilation engine
 - **context-exploration-engine**: Context exploration engine
 
+## Testing Updates
+
+Never ever re-run tasks without installing your chanages first.
+You need sudo if you are in the container.
+We use rpaths for libraries. This stuff does not get overriden by LD_LIBRARY_PATH.
+
 ## Chimods
 
 When building chimods, make sure to edit chimaera_mod.yaml and chimaera_repo.yaml.

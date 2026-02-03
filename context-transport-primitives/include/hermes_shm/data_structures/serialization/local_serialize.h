@@ -7,13 +7,16 @@
 
 #include "hermes_shm/constants/macros.h"
 #include "hermes_shm/types/argpack.h"
-// #include "hermes_shm/data_structures/all.h"  // Deleted during hard refactoring
-#include "serialize_common.h"
-#include <vector>
-#include <list>
-#include <unordered_map>
-#include <string>
+#include "hermes_shm/util/logging.h"
+// #include "hermes_shm/data_structures/all.h"  // Deleted during hard
+// refactoring
 #include <cstring>
+#include <list>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "serialize_common.h"
 
 namespace hshm::ipc {
 
@@ -124,7 +127,8 @@ class LocalSerialize {
       // Serialize enums as their underlying type
       using UnderlyingType = std::underlying_type_t<T>;
       UnderlyingType value = static_cast<UnderlyingType>(obj);
-      write_binary(reinterpret_cast<const char *>(&value), sizeof(UnderlyingType));
+      write_binary(reinterpret_cast<const char *>(&value),
+                   sizeof(UnderlyingType));
     } else if constexpr (has_serialize_fun_v<LocalSerialize, T>) {
       serialize(*this, const_cast<T &>(obj));
     } else if constexpr (has_load_save_fun_v<LocalSerialize, T>) {
@@ -209,6 +213,12 @@ class LocalDeserialize {
   /** Save function (binary data) */
   HSHM_INLINE
   LocalDeserialize &read_binary(char *data, size_t size) {
+    if (cur_off_ + size > data_.size()) {
+      HLOG(kError,
+           "LocalDeserialize::read_binary: Attempted to read beyond end of "
+           "data");
+      return *this;
+    }
     memcpy(data, data_.data() + cur_off_, size);
     cur_off_ += size;
     return *this;

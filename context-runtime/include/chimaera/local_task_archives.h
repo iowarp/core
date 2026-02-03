@@ -257,6 +257,13 @@ public:
    * @return Reference to buffer containing serialized data
    */
   const std::vector<char> &GetData() const { return buffer_; }
+
+  /**
+   * Move serialized data out of the archive
+   *
+   * @return Moved buffer containing serialized data
+   */
+  std::vector<char> MoveData() { return std::move(buffer_); }
 };
 
 /**
