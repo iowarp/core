@@ -26,7 +26,7 @@
     "--privileged",
     "--shm-size=2gb"
   ],
-  "initializeCommand": "bash -c 'mkdir -p ~/.ssh ~/.claude && touch ~/.claude.json'",
+  "initializeCommand": "bash -c 'mkdir -p ~/.ssh ~/.claude && chmod 700 ~/.ssh && touch ~/.claude.json'",
   "customizations": {
     "vscode": {
       "extensions": [
