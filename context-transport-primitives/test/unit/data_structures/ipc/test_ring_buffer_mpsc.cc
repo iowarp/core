@@ -143,8 +143,10 @@ TEST_CASE("MPSC RingBuffer: contention under capacity limit",
   MallocBackend backend;
   auto *alloc = CreateTestAllocator(backend, 1024 * 1024);
 
-  // Small buffer to induce contention
-  mpsc_ring_buffer<int, ArenaAllocator<false>> rb(alloc, 16);
+  // Small buffer to induce contention (use non-waiting variant so Push returns false when full)
+  using test_mpsc_no_wait = ring_buffer<int, ArenaAllocator<false>,
+      (RING_BUFFER_MPSC_FLAGS | RING_BUFFER_FIXED_SIZE | RING_BUFFER_ERROR_ON_NO_SPACE)>;
+  test_mpsc_no_wait rb(alloc, 16);
 
   std::atomic<int> successful_pushes(0);
   std::atomic<int> failed_pushes(0);

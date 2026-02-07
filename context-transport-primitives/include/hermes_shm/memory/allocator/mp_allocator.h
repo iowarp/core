@@ -662,7 +662,8 @@ class _MultiProcessAllocator : public Allocator {
 
     // Calculate expansion size: use larger of process_unit_ or size + metadata overhead
     // Add 25% overhead for BuddyAllocator metadata (page headers, alignment)
-    size_t required_size = size + (size / 4) + sizeof(BuddyPage);
+    // Use 3 * sizeof(BuddyPage) to account for headers at each expansion level
+    size_t required_size = size + (size / 4) + 3 * sizeof(BuddyPage);
     size_t expand_size = (required_size > process_unit_) ? required_size : process_unit_;
 
     // Acquire global lock to allocate expansion memory

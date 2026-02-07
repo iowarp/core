@@ -1780,8 +1780,13 @@ vector<T, AllocT>::operator=(const vector &other) {
   // Clear current contents
   clear();
 
-  // Set allocator from other
-  this->this_ = other.this_;
+  // Set allocator from other (recalculate offset for this address)
+  AllocT *alloc = other.GetAllocator();
+  if (alloc) {
+    this->this_ = OffsetPtr<void>((size_t)this - (size_t)alloc);
+  } else {
+    this->this_ = OffsetPtr<void>::GetNull();
+  }
 
   // Copy elements from other
   if (other.size_ > 0) {
@@ -1815,8 +1820,13 @@ vector<T, AllocT>::operator=(vector &&other) noexcept {
   DestroyElements();
   DeallocateStorage();
 
-  // Move data from other
-  this->this_ = other.this_;
+  // Move data from other (recalculate offset for this address)
+  AllocT *alloc = other.GetAllocator();
+  if (alloc) {
+    this->this_ = OffsetPtr<void>((size_t)this - (size_t)alloc);
+  } else {
+    this->this_ = OffsetPtr<void>::GetNull();
+  }
   size_ = other.size_;
   capacity_ = other.capacity_;
   data_ = other.data_;
