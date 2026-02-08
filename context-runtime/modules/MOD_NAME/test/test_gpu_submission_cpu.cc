@@ -267,6 +267,8 @@ TEST_CASE("gpu_kernel_task_submission", "[gpu][kernel_submit]") {
     INFO("Step 3 FAILED: FullPtr construction from task pointer failed");
   } else if (result == -13) {
     INFO("Step 3 FAILED: NewTask returned null - task construction failed");
+  } else if (result == -14) {
+    INFO("Step 4 FAILED: MakeCopyFutureGpu returned null - task serialization failed");
   } else if (result == 0 || result == -999) {
     INFO("GPU kernel did not set result flags (initialization issue?)");
   }

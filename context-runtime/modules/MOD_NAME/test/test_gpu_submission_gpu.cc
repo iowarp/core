@@ -97,13 +97,29 @@ __global__ void gpu_submit_task_kernel(
     (&g_ipc_manager)->FreeBuffer(task_buffer);
     result_flags[2] = 0;  // Task buffer allocation OK
 
-    // Step 3: ULTRA-SIMPLE TEST - Just set to known value
-    result_flags[3] = -777;  // TEST: If you see -777, the code executed!
+    // Step 3: Create task using NewTask
+    chi::TaskId task_id = chi::CreateTaskId();
+    chi::PoolQuery query = chi::PoolQuery::Local();
 
-    // Step 4: Skipped for now (no task created yet)
-    result_flags[4] = 0;
+    auto task = (&g_ipc_manager)->NewTask<chimaera::MOD_NAME::GpuSubmitTask>(
+        task_id, pool_id, query, 0, test_value);
 
-    // Step 5: Mark as success
+    if (task.IsNull()) {
+      result_flags[3] = -13;  // NewTask failed
+      return;
+    }
+    result_flags[3] = 0;  // NewTask succeeded
+
+    // Step 4: Create Future using MakeCopyFutureGpu (serializes task)
+    auto future = (&g_ipc_manager)->MakeCopyFutureGpu(task);
+
+    if (future.IsNull()) {
+      result_flags[4] = -14;  // MakeCopyFutureGpu failed
+      return;
+    }
+    result_flags[4] = 0;  // MakeCopyFutureGpu succeeded
+
+    // Step 5: Mark as success - task created and serialized!
     result_flags[5] = 0;
   }
 
