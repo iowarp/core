@@ -125,24 +125,24 @@ class LocalSerialize {
   DataT &data_;
 
  public:
-  LocalSerialize(DataT &data) : data_(data) { data_.resize(0); }
-  LocalSerialize(DataT &data, bool) : data_(data) {}
+  HSHM_CROSS_FUN LocalSerialize(DataT &data) : data_(data) { data_.resize(0); }
+  HSHM_CROSS_FUN LocalSerialize(DataT &data, bool) : data_(data) {}
 
   /** left shift operator */
   template <typename T>
-  HSHM_INLINE LocalSerialize &operator<<(const T &obj) {
+  HSHM_INLINE_CROSS_FUN LocalSerialize &operator<<(const T &obj) {
     return base(obj);
   }
 
   /** & operator */
   template <typename T>
-  HSHM_INLINE LocalSerialize &operator&(const T &obj) {
+  HSHM_INLINE_CROSS_FUN LocalSerialize &operator&(const T &obj) {
     return base(obj);
   }
 
   /** Call operator */
   template <typename... Args>
-  HSHM_INLINE LocalSerialize &operator()(Args &&...args) {
+  HSHM_INLINE_CROSS_FUN LocalSerialize &operator()(Args &&...args) {
     hshm::ForwardIterateArgpack::Apply(
         hshm::make_argpack(std::forward<Args>(args)...),
         [this](auto i, auto &arg) { this->base(arg); });
@@ -151,7 +151,7 @@ class LocalSerialize {
 
   /** Save function */
   template <typename T>
-  HSHM_INLINE LocalSerialize &base(const T &obj) {
+  HSHM_INLINE_CROSS_FUN LocalSerialize &base(const T &obj) {
     STATIC_ASSERT((is_serializeable_v<LocalSerialize, T>),
                   "Cannot serialize object", void);
     if constexpr (std::is_arithmetic<T>::value) {
@@ -175,7 +175,7 @@ class LocalSerialize {
   }
 
   /** Save function (binary data) */
-  HSHM_INLINE
+  HSHM_INLINE_CROSS_FUN
   LocalSerialize &write_binary(const char *data, size_t size) {
     size_t off = data_.size();
     data_.resize(off + size);
@@ -195,23 +195,23 @@ class LocalDeserialize {
   size_t cur_off_ = 0;
 
  public:
-  LocalDeserialize(const DataT &data) : data_(data) { cur_off_ = 0; }
+  HSHM_CROSS_FUN LocalDeserialize(const DataT &data) : data_(data) { cur_off_ = 0; }
 
   /** right shift operator */
   template <typename T>
-  HSHM_INLINE LocalDeserialize &operator>>(T &obj) {
+  HSHM_INLINE_CROSS_FUN LocalDeserialize &operator>>(T &obj) {
     return base(obj);
   }
 
   /** & operator */
   template <typename T>
-  HSHM_INLINE LocalDeserialize &operator&(T &obj) {
+  HSHM_INLINE_CROSS_FUN LocalDeserialize &operator&(T &obj) {
     return base(obj);
   }
 
   /** Call operator */
   template <typename... Args>
-  HSHM_INLINE LocalDeserialize &operator()(Args &&...args) {
+  HSHM_INLINE_CROSS_FUN LocalDeserialize &operator()(Args &&...args) {
     hshm::ForwardIterateArgpack::Apply(
         hshm::make_argpack(std::forward<Args>(args)...),
         [this](auto i, auto &arg) { this->base(arg); });
@@ -220,7 +220,7 @@ class LocalDeserialize {
 
   /** Load function */
   template <typename T>
-  HSHM_INLINE LocalDeserialize &base(T &obj) {
+  HSHM_INLINE_CROSS_FUN LocalDeserialize &base(T &obj) {
     STATIC_ASSERT((is_serializeable_v<LocalDeserialize, T>),
                   "Cannot serialize object", void);
     if constexpr (std::is_arithmetic<T>::value) {
@@ -244,7 +244,7 @@ class LocalDeserialize {
   }
 
   /** Save function (binary data) */
-  HSHM_INLINE
+  HSHM_INLINE_CROSS_FUN
   LocalDeserialize &read_binary(char *data, size_t size) {
     if (cur_off_ + size > data_.size()) {
       HLOG(kError,
