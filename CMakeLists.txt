@@ -269,16 +269,6 @@ endif()
 # Thread support
 find_package(Threads REQUIRED)
 
-# Vulkan (optional, for GPU semaphore tests)
-find_package(Vulkan QUIET)
-if(Vulkan_FOUND)
-    message(STATUS "Vulkan found: ${Vulkan_LIBRARIES}")
-    set(WRP_CORE_ENABLE_VULKAN ON)
-else()
-    message(STATUS "Vulkan not found, Vulkan tests will be disabled")
-    set(WRP_CORE_ENABLE_VULKAN OFF)
-endif()
-
 # Compression libraries (conditional)
 if(WRP_CTE_ENABLE_COMPRESS)
     message(STATUS "WRP_CTE_ENABLE_COMPRESS is ON")

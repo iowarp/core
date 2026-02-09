@@ -13,11 +13,6 @@ if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
   )
   add_test(NAME test_gpu_shm_mmap COMMAND test_gpu_shm_mmap)
 
-  if(WRP_CORE_ENABLE_VULKAN)
-    target_link_libraries(test_gpu_shm_mmap Vulkan::Vulkan)
-    target_compile_definitions(test_gpu_shm_mmap PRIVATE HSHM_ENABLE_VULKAN=1)
-  endif()
-
   # GpuMalloc test
   add_cuda_executable(test_gpu_malloc TRUE test_gpu_malloc.cc)
   target_link_libraries(test_gpu_malloc
