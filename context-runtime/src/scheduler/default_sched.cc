@@ -62,12 +62,18 @@ void DefaultScheduler::DivideWorkers(WorkOrchestrator *work_orch) {
   // Clear any existing worker assignments
   scheduler_workers_.clear();
   net_worker_ = nullptr;
+  gpu_worker_ = nullptr;
 
   // Network worker is always the last worker
   net_worker_ = work_orch->GetWorker(total_workers - 1);
 
-  // Scheduler workers are all workers except the last one (unless only 1
-  // worker)
+  // GPU worker is worker N-2 if we have more than 2 workers
+  if (total_workers > 2) {
+    gpu_worker_ = work_orch->GetWorker(total_workers - 2);
+  }
+
+  // Scheduler workers are all workers except the network worker
+  // (GPU worker is also a scheduler worker — it can execute regular tasks too)
   u32 num_sched_workers = (total_workers == 1) ? 1 : (total_workers - 1);
   for (u32 i = 0; i < num_sched_workers; ++i) {
     Worker *worker = work_orch->GetWorker(i);
@@ -83,8 +89,10 @@ void DefaultScheduler::DivideWorkers(WorkOrchestrator *work_orch) {
   }
 
   HLOG(kInfo,
-       "DefaultScheduler: {} scheduler workers, 1 network worker (worker {})",
-       scheduler_workers_.size(), total_workers - 1);
+       "DefaultScheduler: {} scheduler workers, 1 network worker (worker {})"
+       ", gpu_worker={}",
+       scheduler_workers_.size(), total_workers - 1,
+       gpu_worker_ ? (int)gpu_worker_->GetId() : -1);
 }
 
 u32 DefaultScheduler::ClientMapTask(IpcManager *ipc_manager,
@@ -124,6 +132,14 @@ u32 DefaultScheduler::RuntimeMapTask(Worker *worker, const Future<Task> &task) {
         }
       }
     }
+  }
+
+  // GPU worker forwards tasks to scheduler workers (round-robin)
+  if (gpu_worker_ != nullptr && worker == gpu_worker_ &&
+      !scheduler_workers_.empty()) {
+    u32 idx = next_sched_idx_.fetch_add(1, std::memory_order_relaxed)
+              % scheduler_workers_.size();
+    return scheduler_workers_[idx]->GetId();
   }
 
   // All other tasks execute on the current worker

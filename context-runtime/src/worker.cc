@@ -333,7 +333,16 @@ void Worker::Run() {
     task_did_work_ = false;  // Reset task-level work tracker
 
     // Process tasks from assigned lane
-    ProcessNewTasks();
+    if (assigned_lane_) {
+      u32 count = ProcessNewTasks(assigned_lane_);
+      if (count > 0) did_work_ = true;
+    }
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+    for (auto *gpu_lane : gpu_lanes_) {
+      u32 count = ProcessNewTasks(gpu_lane);
+      if (count > 0) did_work_ = true;
+    }
+#endif
 
     // Check blocked queue for completed tasks at end of each iteration
     ContinueBlockedTasks(false);
@@ -387,6 +396,16 @@ void Worker::SetLane(TaskLane *lane) {
 }
 
 TaskLane *Worker::GetLane() const { return assigned_lane_; }
+
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+void Worker::SetGpuLanes(const std::vector<TaskLane *> &lanes) {
+  gpu_lanes_ = lanes;
+}
+
+const std::vector<TaskLane *> &Worker::GetGpuLanes() const {
+  return gpu_lanes_;
+}
+#endif
 
 bool Worker::EnsureIpcRegistered(
     const hipc::FullPtr<FutureShm> &future_shm_full) {
@@ -444,123 +463,129 @@ hipc::FullPtr<Task> Worker::GetOrCopyTaskFromFuture(Future<Task> &future,
   return task_full_ptr;
 }
 
-u32 Worker::ProcessNewTasks() {
-  // Process up to 16 tasks from this worker's lane per iteration
+u32 Worker::ProcessNewTasks(TaskLane *lane) {
   const u32 MAX_TASKS_PER_ITERATION = 16;
   u32 tasks_processed = 0;
 
-  // Network workers don't have lanes and don't process tasks this way
-  if (!assigned_lane_) {
+  if (!lane) {
     return 0;
   }
 
   while (tasks_processed < MAX_TASKS_PER_ITERATION) {
-    Future<Task> future;
-    // Pop Future<Task> from assigned lane
-    if (assigned_lane_->Pop(future)) {
+    if (ProcessNewTask(lane)) {
       tasks_processed++;
-      HLOG(kInfo, "Worker {}: Popped future from lane, processing task {}",
-           worker_id_, tasks_processed);
-      SetCurrentRunContext(nullptr);
-
-      // IMPORTANT: Register allocator BEFORE calling GetFutureShm()
-      // GetFutureShm() calls ToFullPtr() which requires the allocator to be
-      // registered to convert the ShmPtr to FullPtr
-      auto *ipc_manager = CHI_IPC;
-      auto future_shm_ptr = future.GetFutureShmPtr();
-      if (!future_shm_ptr.IsNull()) {
-        hipc::AllocatorId alloc_id = future_shm_ptr.alloc_id_;
-        if (alloc_id != hipc::AllocatorId::GetNull()) {
-          // Try to convert - if it fails, register the memory first
-          auto test_ptr = ipc_manager->ToFullPtr(future_shm_ptr);
-          if (test_ptr.IsNull()) {
-            bool registered = ipc_manager->RegisterMemory(alloc_id);
-            if (!registered) {
-              HLOG(kError,
-                   "Worker {}: Failed to register memory for alloc_id ({}.{})",
-                   worker_id_, alloc_id.major_, alloc_id.minor_);
-              continue;
-            }
-          }
-        }
-      }
-
-      // Now safe to get FutureShm - allocator is registered
-      auto future_shm = future.GetFutureShm();
-      if (future_shm.IsNull()) {
-        HLOG(kError, "Worker {}: Failed to get FutureShm (null pointer)",
-             worker_id_);
-        continue;
-      }
-
-      // Ensure IPC allocator is registered for this Future (double-check)
-      if (!EnsureIpcRegistered(future_shm)) {
-        // Registration failed - mark task as error and complete so client
-        // doesn't hang
-        future_shm->flags_.SetBits(1 | FutureShm::FUTURE_COMPLETE);
-        continue;
-      }
-
-      // Get pool_id and method_id from FutureShm
-      PoolId pool_id = future_shm->pool_id_;
-      u32 method_id = future_shm->method_id_;
-
-      // Get container for routing
-      auto *pool_manager = CHI_POOL_MANAGER;
-      Container *container = pool_manager->GetContainer(pool_id);
-
-      if (!container) {
-        // Container not found - mark as complete with error
-        HLOG(kError, "Worker {}: Container not found for pool_id={}, method={}",
-             worker_id_, pool_id, method_id);
-        // Set both error bit AND FUTURE_COMPLETE so client doesn't hang
-        future_shm->flags_.SetBits(1 | FutureShm::FUTURE_COMPLETE);
-        continue;
-      }
-
-      // Get or copy task from Future (handles deserialization if needed)
-      FullPtr<Task> task_full_ptr =
-          GetOrCopyTaskFromFuture(future, container, method_id);
-
-      // Check if task deserialization failed
-      if (task_full_ptr.IsNull()) {
-        HLOG(kError,
-             "Worker {}: Failed to deserialize task for pool_id={}, method={}",
-             worker_id_, pool_id, method_id);
-        // Mark as complete with error so client doesn't hang
-        future_shm->flags_.SetBits(1 | FutureShm::FUTURE_COMPLETE);
-        continue;
-      }
-
-      HLOG(kInfo,
-           "Worker {}: Task deserialized successfully, task_ptr={}, checking "
-           "if routed",
-           worker_id_, (void *)task_full_ptr.ptr_);
-
-      // Allocate stack and RunContext before routing
-      if (!task_full_ptr->IsRouted()) {
-        HLOG(kInfo, "Worker {}: Task not routed, calling BeginTask",
-             worker_id_);
-        BeginTask(future, container, assigned_lane_);
-      }
-
-      // Route task using consolidated routing function
-      if (RouteTask(future, assigned_lane_, container)) {
-        // Routing successful, execute the task
-#if HSHM_IS_HOST
-        RunContext *run_ctx = task_full_ptr->run_ctx_.get();
-        ExecTask(task_full_ptr, run_ctx, false);
-#endif
-      }
-      // Note: RouteTask returning false doesn't always indicate an error
-      // Real errors are handled within RouteTask itself
     } else {
-      // No more tasks in this lane
       break;
     }
   }
 
   return tasks_processed;
+}
+
+bool Worker::ProcessNewTask(TaskLane *lane) {
+  Future<Task> future;
+  // Pop Future<Task> from lane
+  if (!lane->Pop(future)) {
+    return false;
+  }
+
+  HLOG(kInfo, "Worker {}: Popped future from lane, processing task",
+       worker_id_);
+  SetCurrentRunContext(nullptr);
+
+  // IMPORTANT: Register allocator BEFORE calling GetFutureShm()
+  // GetFutureShm() calls ToFullPtr() which requires the allocator to be
+  // registered to convert the ShmPtr to FullPtr
+  auto *ipc_manager = CHI_IPC;
+  auto future_shm_ptr = future.GetFutureShmPtr();
+  if (!future_shm_ptr.IsNull()) {
+    hipc::AllocatorId alloc_id = future_shm_ptr.alloc_id_;
+    if (alloc_id != hipc::AllocatorId::GetNull()) {
+      // Try to convert - if it fails, register the memory first
+      auto test_ptr = ipc_manager->ToFullPtr(future_shm_ptr);
+      if (test_ptr.IsNull()) {
+        bool registered = ipc_manager->RegisterMemory(alloc_id);
+        if (!registered) {
+          HLOG(kError,
+               "Worker {}: Failed to register memory for alloc_id ({}.{})",
+               worker_id_, alloc_id.major_, alloc_id.minor_);
+          return true;  // Task was popped, count it
+        }
+      }
+    }
+  }
+
+  // Now safe to get FutureShm - allocator is registered
+  auto future_shm = future.GetFutureShm();
+  if (future_shm.IsNull()) {
+    HLOG(kError, "Worker {}: Failed to get FutureShm (null pointer)",
+         worker_id_);
+    return true;
+  }
+
+  // Ensure IPC allocator is registered for this Future (double-check)
+  if (!EnsureIpcRegistered(future_shm)) {
+    // Registration failed - mark task as error and complete so client
+    // doesn't hang
+    future_shm->flags_.SetBits(1 | FutureShm::FUTURE_COMPLETE);
+    return true;
+  }
+
+  // Get pool_id and method_id from FutureShm
+  PoolId pool_id = future_shm->pool_id_;
+  u32 method_id = future_shm->method_id_;
+
+  // Get container for routing
+  auto *pool_manager = CHI_POOL_MANAGER;
+  Container *container = pool_manager->GetContainer(pool_id);
+
+  if (!container) {
+    // Container not found - mark as complete with error
+    HLOG(kError, "Worker {}: Container not found for pool_id={}, method={}",
+         worker_id_, pool_id, method_id);
+    // Set both error bit AND FUTURE_COMPLETE so client doesn't hang
+    future_shm->flags_.SetBits(1 | FutureShm::FUTURE_COMPLETE);
+    return true;
+  }
+
+  // Get or copy task from Future (handles deserialization if needed)
+  FullPtr<Task> task_full_ptr =
+      GetOrCopyTaskFromFuture(future, container, method_id);
+
+  // Check if task deserialization failed
+  if (task_full_ptr.IsNull()) {
+    HLOG(kError,
+         "Worker {}: Failed to deserialize task for pool_id={}, method={}",
+         worker_id_, pool_id, method_id);
+    // Mark as complete with error so client doesn't hang
+    future_shm->flags_.SetBits(1 | FutureShm::FUTURE_COMPLETE);
+    return true;
+  }
+
+  HLOG(kInfo,
+       "Worker {}: Task deserialized successfully, task_ptr={}, checking "
+       "if routed",
+       worker_id_, (void *)task_full_ptr.ptr_);
+
+  // Allocate stack and RunContext before routing
+  if (!task_full_ptr->IsRouted()) {
+    HLOG(kInfo, "Worker {}: Task not routed, calling BeginTask",
+         worker_id_);
+    BeginTask(future, container, lane);
+  }
+
+  // Route task using consolidated routing function
+  if (RouteTask(future, lane, container)) {
+    // Routing successful, execute the task
+#if HSHM_IS_HOST
+    RunContext *run_ctx = task_full_ptr->run_ctx_.get();
+    ExecTask(task_full_ptr, run_ctx, false);
+#endif
+  }
+  // Note: RouteTask returning false doesn't always indicate an error
+  // Real errors are handled within RouteTask itself
+
+  return true;
 }
 
 double Worker::GetSuspendPeriod() const {
@@ -601,6 +626,13 @@ double Worker::GetSuspendPeriod() const {
 }
 
 void Worker::SuspendMe() {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  // GPU workers must never sleep — they need to poll GPU lanes continuously
+  if (!gpu_lanes_.empty()) {
+    return;
+  }
+#endif
+
   // No work was done in this iteration - increment idle counter
   idle_iterations_++;
 

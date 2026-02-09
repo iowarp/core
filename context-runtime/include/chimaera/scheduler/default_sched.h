@@ -52,7 +52,7 @@ class DefaultScheduler : public Scheduler {
   /**
    * Constructor
    */
-  DefaultScheduler() : net_worker_(nullptr) {}
+  DefaultScheduler() : net_worker_(nullptr), gpu_worker_(nullptr) {}
 
   /**
    * Destructor
@@ -90,6 +90,11 @@ class DefaultScheduler : public Scheduler {
    */
   void AdjustPolling(RunContext *run_ctx) override;
 
+  /**
+   * Get the designated GPU worker.
+   */
+  Worker *GetGpuWorker() const override { return gpu_worker_; }
+
  private:
   /**
    * Map task to lane by PID+TID hash
@@ -101,6 +106,8 @@ class DefaultScheduler : public Scheduler {
   // Internal worker tracking for routing decisions
   std::vector<Worker *> scheduler_workers_;  ///< Task processing workers
   Worker *net_worker_;                        ///< Network worker (for routing periodic Send/Recv)
+  Worker *gpu_worker_;                        ///< GPU queue polling worker
+  std::atomic<u32> next_sched_idx_{0};        ///< Round-robin index for GPU task forwarding
 };
 
 }  // namespace chi

@@ -261,32 +261,27 @@ bool WorkOrchestrator::SpawnWorkerThreads() {
   }
 
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
-  // Map GPU lanes to workers
-  // For now, assign all GPU lanes to all workers (each worker processes all GPU queues)
+  // Assign GPU lanes only to the designated GPU worker
   size_t num_gpus = ipc->GetGpuQueueCount();
-  if (num_gpus > 0) {
-    HLOG(kInfo, "WorkOrchestrator: Mapping {} GPU queue(s) to workers", num_gpus);
-
-    for (u32 worker_idx = 0; worker_idx < num_workers; ++worker_idx) {
-      Worker *worker = all_workers_[worker_idx];
-      if (worker) {
-        std::vector<TaskLane *> gpu_lanes;
-        gpu_lanes.reserve(num_gpus);
-
-        // Assign lane 0 from each GPU queue to this worker
-        for (size_t gpu_id = 0; gpu_id < num_gpus; ++gpu_id) {
-          TaskQueue *gpu_queue = ipc->GetGpuQueue(gpu_id);
-          if (gpu_queue) {
-            TaskLane *gpu_lane = &gpu_queue->GetLane(0, 0);  // Lane 0, priority 0
-            gpu_lanes.push_back(gpu_lane);
-            gpu_lane->SetAssignedWorkerId(worker->GetId());
-          }
+  if (num_gpus > 0 && scheduler_) {
+    Worker *gpu_worker = scheduler_->GetGpuWorker();
+    if (gpu_worker) {
+      std::vector<TaskLane *> gpu_lanes;
+      gpu_lanes.reserve(num_gpus);
+      for (size_t gpu_id = 0; gpu_id < num_gpus; ++gpu_id) {
+        TaskQueue *gpu_queue = ipc->GetGpuQueue(gpu_id);
+        if (gpu_queue) {
+          TaskLane *gpu_lane = &gpu_queue->GetLane(0, 0);
+          gpu_lanes.push_back(gpu_lane);
+          gpu_lane->SetAssignedWorkerId(gpu_worker->GetId());
         }
-
-        worker->SetGpuLanes(gpu_lanes);
-        HLOG(kInfo, "WorkOrchestrator: Assigned {} GPU lane(s) to worker {}",
-              gpu_lanes.size(), worker_idx);
       }
+      gpu_worker->SetGpuLanes(gpu_lanes);
+      HLOG(kInfo, "WorkOrchestrator: Assigned {} GPU lane(s) to GPU worker {}",
+           gpu_lanes.size(), gpu_worker->GetId());
+    } else {
+      HLOG(kWarning, "WorkOrchestrator: {} GPU queue(s) available but no GPU worker designated",
+           num_gpus);
     }
   }
 #endif

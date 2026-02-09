@@ -456,11 +456,12 @@ class Worker {
   void ContinueBlockedTasks(bool force);
 
   /**
-   * Process tasks from the worker's assigned lane
+   * Process tasks from a given lane
    * Processes up to MAX_TASKS_PER_ITERATION tasks per call
+   * @param lane The TaskLane to process tasks from
    * @return Number of tasks processed
    */
-  u32 ProcessNewTasks();
+  u32 ProcessNewTasks(TaskLane *lane);
 
   /**
    * Process a single task from a given lane

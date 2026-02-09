@@ -527,12 +527,12 @@ __global__ void test_gpu_make_copy_future_for_cpu_kernel(
  * Future::Wait until the CPU sets FUTURE_COMPLETE.
  *
  * @param backend GPU memory backend for IPC allocation
- * @param worker_queue GpuTaskQueue for enqueuing futures
+ * @param worker_queue TaskQueue for enqueuing futures
  * @param d_result Output: 0 on success, negative on error
  */
 __global__ void test_gpu_send_queue_wait_kernel(
     const hipc::MemoryBackend backend,
-    chi::GpuTaskQueue *worker_queue,
+    chi::TaskQueue *worker_queue,
     int *d_result) {
   CHIMAERA_GPU_INIT(backend, worker_queue);
 
@@ -907,8 +907,8 @@ TEST_CASE("GPU IPC AllocateBuffer basic functionality",
     new (queue_allocator) hipc::ArenaAllocator<false>();
     queue_allocator->shm_init(queue_backend, queue_backend.data_capacity_);
 
-    // Create GpuTaskQueue (1 group, 1 lane per group, depth 256)
-    auto gpu_queue = queue_allocator->template NewObj<chi::GpuTaskQueue>(
+    // Create TaskQueue (1 group, 1 lane per group, depth 256)
+    auto gpu_queue = queue_allocator->template NewObj<chi::TaskQueue>(
         queue_allocator, 1, 1, 256);
     REQUIRE(!gpu_queue.IsNull());
 
