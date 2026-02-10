@@ -679,64 +679,137 @@ struct RecvTask : public chi::Task {
 };
 
 /**
- * HeartbeatTask - Runtime health check
- * Used to verify runtime is alive and responding
+ * ClientConnectTask - Client connection handshake
+ * Polls for ZMQ heartbeat requests and responds (was HeartbeatTask)
  * Returns 0 on success to indicate runtime is healthy
  */
-struct HeartbeatTask : public chi::Task {
-  // Heartbeat response
+struct ClientConnectTask : public chi::Task {
+  // Connect response
   OUT int32_t response_;  ///< 0 = success, non-zero = error
 
   /** SHM default constructor */
-  HeartbeatTask() : chi::Task(), response_(-1) {}
+  ClientConnectTask() : chi::Task(), response_(-1) {}
 
   /** Emplace constructor */
-  explicit HeartbeatTask(const chi::TaskId &task_node,
-                         const chi::PoolId &pool_id,
-                         const chi::PoolQuery &pool_query)
-      : chi::Task(task_node, pool_id, pool_query, Method::kHeartbeat),
+  explicit ClientConnectTask(const chi::TaskId &task_node,
+                             const chi::PoolId &pool_id,
+                             const chi::PoolQuery &pool_query)
+      : chi::Task(task_node, pool_id, pool_query, Method::kClientConnect),
         response_(-1) {
-    // Initialize task
     task_id_ = task_node;
     pool_id_ = pool_id;
-    method_ = Method::kHeartbeat;
+    method_ = Method::kClientConnect;
     task_flags_.Clear();
     pool_query_ = pool_query;
   }
 
-  /**
-   * Serialize IN and INOUT parameters for network transfer
-   * No additional parameters for HeartbeatTask
-   */
   template <typename Archive>
   void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
-    // No additional parameters to serialize for heartbeat
   }
 
-  /**
-   * Serialize OUT and INOUT parameters for network transfer
-   * This includes: response_
-   */
   template <typename Archive>
   void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(response_);
   }
 
-  /**
-   * Copy from another HeartbeatTask (assumes this task is already constructed)
-   * @param other Pointer to the source task to copy from
-   */
-  void Copy(const hipc::FullPtr<HeartbeatTask> &other) {
-    // Copy base Task fields
+  void Copy(const hipc::FullPtr<ClientConnectTask> &other) {
     Task::Copy(other.template Cast<Task>());
-    // Copy HeartbeatTask-specific fields
     response_ = other->response_;
   }
 
-  /** Aggregate replica results into this task */
-  void Aggregate(const hipc::FullPtr<HeartbeatTask> &other) {
+  void Aggregate(const hipc::FullPtr<ClientConnectTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
+};
+
+/**
+ * ClientRecvTask - Receive tasks from ZMQ clients (TCP/IPC)
+ * Periodic task that polls ZMQ ROUTER sockets for client task submissions
+ */
+struct ClientRecvTask : public chi::Task {
+  OUT chi::u32 tasks_received_;
+
+  /** SHM default constructor */
+  ClientRecvTask() : chi::Task(), tasks_received_(0) {}
+
+  /** Emplace constructor */
+  explicit ClientRecvTask(const chi::TaskId &task_node,
+                          const chi::PoolId &pool_id,
+                          const chi::PoolQuery &pool_query)
+      : chi::Task(task_node, pool_id, pool_query, Method::kClientRecv),
+        tasks_received_(0) {
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kClientRecv;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(tasks_received_);
+  }
+
+  void Copy(const hipc::FullPtr<ClientRecvTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    tasks_received_ = other->tasks_received_;
+  }
+
+  void Aggregate(const hipc::FullPtr<ClientRecvTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
+};
+
+/**
+ * ClientSendTask - Send completed task outputs to ZMQ clients
+ * Periodic task that polls net_queue_ kClientSendTcp/kClientSendIpc priorities
+ */
+struct ClientSendTask : public chi::Task {
+  OUT chi::u32 tasks_sent_;
+
+  /** SHM default constructor */
+  ClientSendTask() : chi::Task(), tasks_sent_(0) {}
+
+  /** Emplace constructor */
+  explicit ClientSendTask(const chi::TaskId &task_node,
+                          const chi::PoolId &pool_id,
+                          const chi::PoolQuery &pool_query)
+      : chi::Task(task_node, pool_id, pool_query, Method::kClientSend),
+        tasks_sent_(0) {
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kClientSend;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(tasks_sent_);
+  }
+
+  void Copy(const hipc::FullPtr<ClientSendTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    tasks_sent_ = other->tasks_sent_;
+  }
+
+  void Aggregate(const hipc::FullPtr<ClientSendTask> &other) {
     Task::Aggregate(other.template Cast<Task>());
     Copy(other);
   }

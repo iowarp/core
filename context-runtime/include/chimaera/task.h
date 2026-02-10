@@ -430,11 +430,22 @@ struct FutureShm {
   static constexpr u32 FUTURE_COPY_FROM_CLIENT = 4; /**< Task needs to be copied from client serialization */
   static constexpr u32 FUTURE_WAS_COPIED = 8;    /**< Task was already copied from client (don't re-copy) */
 
+  // Origin constants: how the client submitted this task
+  static constexpr u32 FUTURE_CLIENT_SHM = 0;    /**< Client used shared memory */
+  static constexpr u32 FUTURE_CLIENT_TCP = 1;    /**< Client used ZMQ TCP */
+  static constexpr u32 FUTURE_CLIENT_IPC = 2;    /**< Client used ZMQ IPC (Unix domain socket) */
+
   /** Pool ID for the task */
   PoolId pool_id_;
 
   /** Method ID for the task */
   u32 method_id_;
+
+  /** Origin transport mode (FUTURE_CLIENT_SHM, _TCP, or _IPC) */
+  u32 origin_;
+
+  /** Virtual address of client's task (for ZMQ response routing) */
+  uintptr_t client_task_vaddr_;
 
   /** Size of input data in copy_space (client → worker direction) */
   hipc::atomic<size_t> input_size_;
@@ -461,6 +472,8 @@ struct FutureShm {
   HSHM_CROSS_FUN FutureShm() {
     pool_id_ = PoolId::GetNull();
     method_id_ = 0;
+    origin_ = FUTURE_CLIENT_SHM;
+    client_task_vaddr_ = 0;
     input_size_.store(0);
     output_size_.store(0);
     current_chunk_size_.store(0);

@@ -1376,9 +1376,9 @@ void Worker::ExecTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   EndTask(task_ptr, run_ctx, true);
 }
 
-void Worker::EndTaskBeginClientTransfer(const FullPtr<Task> &task_ptr,
-                                        RunContext *run_ctx,
-                                        Container *container) {
+void Worker::EndTaskClientTransfer(const FullPtr<Task> &task_ptr,
+                                   RunContext *run_ctx,
+                                   Container *container) {
   auto future_shm = run_ctx->future_.GetFutureShm();
 
   // Serialize task outputs
@@ -1466,13 +1466,25 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   // transfer)
   RunContext *parent_task = run_ctx->future_.GetParentTask();
 
-  // Handle client transfer only if task was copied from client
-  // LocalTransfer will delete the worker's copy of the task on completion
+  // Handle client transfer based on origin transport mode
   if (was_copied) {
-    EndTaskBeginClientTransfer(task_ptr, run_ctx, container);
+    u32 origin = future_shm->origin_;
+    switch (origin) {
+      case FutureShm::FUTURE_CLIENT_SHM:
+        EndTaskClientTransfer(task_ptr, run_ctx, container);
+        break;
+      case FutureShm::FUTURE_CLIENT_TCP:
+        CHI_IPC->EnqueueNetTask(run_ctx->future_, NetQueuePriority::kClientSendTcp);
+        break;
+      case FutureShm::FUTURE_CLIENT_IPC:
+        CHI_IPC->EnqueueNetTask(run_ctx->future_, NetQueuePriority::kClientSendIpc);
+        break;
+      default:
+        EndTaskClientTransfer(task_ptr, run_ctx, container);
+        break;
+    }
   } else {
     // Runtime task - set FUTURE_COMPLETE flag directly
-    // (Client path sets it via LocalTransfer::SetComplete())
     future_shm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
   }
 

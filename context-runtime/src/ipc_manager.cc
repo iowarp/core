@@ -79,6 +79,22 @@ bool IpcManager::ClientInit() {
     return true;
   }
 
+  // Parse CHI_IPC_MODE environment variable (default: TCP)
+  const char *ipc_mode_env = std::getenv("CHI_IPC_MODE");
+  if (ipc_mode_env != nullptr) {
+    std::string mode_str(ipc_mode_env);
+    if (mode_str == "SHM" || mode_str == "shm") {
+      ipc_mode_ = IpcMode::kShm;
+    } else if (mode_str == "IPC" || mode_str == "ipc") {
+      ipc_mode_ = IpcMode::kIpc;
+    } else {
+      ipc_mode_ = IpcMode::kTcp;  // Default
+    }
+  }
+  HLOG(kInfo, "IpcManager::ClientInit: IPC mode = {}",
+       ipc_mode_ == IpcMode::kShm ? "SHM" :
+       ipc_mode_ == IpcMode::kIpc ? "IPC" : "TCP");
+
   // Wait for local server to become available - critical for client
   // functionality TestLocalServer sends heartbeat to verify connectivity
   if (!WaitForLocalServer()) {
@@ -87,27 +103,62 @@ bool IpcManager::ClientInit() {
     return false;
   }
 
-  // Initialize memory segments for client
-  if (!ClientInitShm()) {
-    return false;
+  // SHM mode: Attach to main SHM segment and initialize queues
+  if (ipc_mode_ == IpcMode::kShm) {
+    if (!ClientInitShm()) {
+      return false;
+    }
+    if (!ClientInitQueues()) {
+      return false;
+    }
+
+    // Create per-process shared memory for client allocations
+    auto *config = CHI_CONFIG_MANAGER;
+    size_t initial_size =
+        config && config->IsValid()
+            ? config->GetMemorySegmentSize(kClientDataSegment)
+            : hshm::Unit<size_t>::Megabytes(256);  // Default 256MB
+    if (!IncreaseMemory(initial_size)) {
+      HLOG(kError,
+           "IpcManager::ClientInit: Failed to create per-process shared memory");
+      return false;
+    }
   }
 
-  // Initialize priority queues
-  if (!ClientInitQueues()) {
-    return false;
-  }
+  // TCP/IPC modes: Create DEALER sockets and spawn recv thread
+  if (ipc_mode_ == IpcMode::kTcp || ipc_mode_ == IpcMode::kIpc) {
+    auto *config = CHI_CONFIG_MANAGER;
+    u32 port = config->GetPort();
 
-  // Create per-process shared memory for client allocations
-  // Use configured client_data_segment_size from config
-  auto *config = CHI_CONFIG_MANAGER;
-  size_t initial_size =
-      config && config->IsValid()
-          ? config->GetMemorySegmentSize(kClientDataSegment)
-          : hshm::Unit<size_t>::Megabytes(256);  // Default 256MB
-  if (!IncreaseMemory(initial_size)) {
-    HLOG(kError,
-         "IpcManager::ClientInit: Failed to create per-process shared memory");
-    return false;
+    zmq_transport_ctx_ = zmq_ctx_new();
+    if (!zmq_transport_ctx_) {
+      HLOG(kError, "IpcManager::ClientInit: Failed to create ZMQ transport context");
+      return false;
+    }
+
+    if (ipc_mode_ == IpcMode::kTcp) {
+      zmq_tcp_client_socket_ = zmq_socket(zmq_transport_ctx_, ZMQ_DEALER);
+      if (zmq_tcp_client_socket_) {
+        int linger = 0;
+        zmq_setsockopt(zmq_tcp_client_socket_, ZMQ_LINGER, &linger, sizeof(linger));
+        std::string tcp_url = "tcp://127.0.0.1:" + std::to_string(port + 3);
+        zmq_connect(zmq_tcp_client_socket_, tcp_url.c_str());
+        HLOG(kInfo, "IpcManager: TCP transport DEALER connected to {}", tcp_url);
+      }
+    } else {
+      zmq_ipc_client_socket_ = zmq_socket(zmq_transport_ctx_, ZMQ_DEALER);
+      if (zmq_ipc_client_socket_) {
+        int linger = 0;
+        zmq_setsockopt(zmq_ipc_client_socket_, ZMQ_LINGER, &linger, sizeof(linger));
+        std::string ipc_url = "ipc:///tmp/chimaera_" + std::to_string(port) + ".ipc";
+        zmq_connect(zmq_ipc_client_socket_, ipc_url.c_str());
+        HLOG(kInfo, "IpcManager: IPC transport DEALER connected to {}", ipc_url);
+      }
+    }
+
+    // Spawn recv thread for receiving completed task outputs
+    zmq_recv_running_.store(true);
+    zmq_recv_thread_ = std::thread([this]() { RecvZmqClientThread(); });
   }
 
   // Retrieve node ID from shared header and store in this_host_
@@ -132,6 +183,7 @@ bool IpcManager::ClientInit() {
                             static_cast<Worker *>(nullptr));
 
   // Create scheduler using factory
+  auto *config = CHI_CONFIG_MANAGER;
   if (config && config->IsValid()) {
     std::string sched_name = config->GetLocalSched();
     scheduler_ = SchedulerFactory::Get(sched_name);
@@ -207,6 +259,42 @@ bool IpcManager::ServerInit() {
     return false;
   }
 
+  // Create ZMQ transport ROUTER sockets for client task reception
+  {
+    u32 port = config->GetPort();
+    zmq_transport_ctx_ = zmq_ctx_new();
+    if (!zmq_transport_ctx_) {
+      HLOG(kError, "IpcManager::ServerInit: Failed to create ZMQ transport context");
+      return false;
+    }
+
+    // TCP ROUTER on port+3
+    zmq_tcp_server_socket_ = zmq_socket(zmq_transport_ctx_, ZMQ_ROUTER);
+    if (zmq_tcp_server_socket_) {
+      std::string tcp_url = "tcp://0.0.0.0:" + std::to_string(port + 3);
+      int rc = zmq_bind(zmq_tcp_server_socket_, tcp_url.c_str());
+      if (rc == -1) {
+        HLOG(kError, "IpcManager::ServerInit: Failed to bind TCP ROUTER to {}: {}",
+             tcp_url, zmq_strerror(zmq_errno()));
+      } else {
+        HLOG(kInfo, "IpcManager: TCP transport ROUTER bound to {}", tcp_url);
+      }
+    }
+
+    // IPC ROUTER on Unix domain socket
+    zmq_ipc_server_socket_ = zmq_socket(zmq_transport_ctx_, ZMQ_ROUTER);
+    if (zmq_ipc_server_socket_) {
+      std::string ipc_url = "ipc:///tmp/chimaera_" + std::to_string(port) + ".ipc";
+      int rc = zmq_bind(zmq_ipc_server_socket_, ipc_url.c_str());
+      if (rc == -1) {
+        HLOG(kError, "IpcManager::ServerInit: Failed to bind IPC ROUTER to {}: {}",
+             ipc_url, zmq_strerror(zmq_errno()));
+      } else {
+        HLOG(kInfo, "IpcManager: IPC transport ROUTER bound to {}", ipc_url);
+      }
+    }
+  }
+
   is_initialized_ = true;
   return true;
 }
@@ -221,6 +309,28 @@ void IpcManager::ClientFinalize() {
                               static_cast<TaskCounter *>(nullptr));
   }
 
+  // Stop ZMQ recv thread
+  if (zmq_recv_running_.load()) {
+    zmq_recv_running_.store(false);
+    if (zmq_recv_thread_.joinable()) {
+      zmq_recv_thread_.join();
+    }
+  }
+
+  // Clean up ZMQ transport sockets
+  if (zmq_tcp_client_socket_) {
+    zmq_close(zmq_tcp_client_socket_);
+    zmq_tcp_client_socket_ = nullptr;
+  }
+  if (zmq_ipc_client_socket_) {
+    zmq_close(zmq_ipc_client_socket_);
+    zmq_ipc_client_socket_ = nullptr;
+  }
+  if (zmq_transport_ctx_) {
+    zmq_ctx_destroy(zmq_transport_ctx_);
+    zmq_transport_ctx_ = nullptr;
+  }
+
   // Clients should not destroy shared resources
 }
 
@@ -232,6 +342,20 @@ void IpcManager::ServerFinalize() {
   // Cleanup servers
   local_server_.reset();
   main_server_.reset();
+
+  // Clean up ZMQ transport sockets
+  if (zmq_tcp_server_socket_) {
+    zmq_close(zmq_tcp_server_socket_);
+    zmq_tcp_server_socket_ = nullptr;
+  }
+  if (zmq_ipc_server_socket_) {
+    zmq_close(zmq_ipc_server_socket_);
+    zmq_ipc_server_socket_ = nullptr;
+  }
+  if (zmq_transport_ctx_) {
+    zmq_ctx_destroy(zmq_transport_ctx_);
+    zmq_transport_ctx_ = nullptr;
+  }
 
   // Cleanup task queue in shared header (queue handles cleanup automatically)
   // Only the last process to detach will actually destroy shared data
@@ -421,11 +545,11 @@ bool IpcManager::ServerInitQueues() {
                                               &shared_header_->worker_queues);
 
     // Initialize network queue for send operations
-    // One lane with two priorities (SendIn and SendOut)
+    // One lane with four priorities (SendIn, SendOut, ClientSendTcp, ClientSendIpc)
     net_queue_ = main_allocator_->NewObj<NetQueue>(
         main_allocator_,
         1,             // num_lanes: single lane for network operations
-        2,             // num_priorities: 0=SendIn, 1=SendOut
+        4,             // num_priorities: 0=SendIn, 1=SendOut, 2=ClientSendTcp, 3=ClientSendIpc
         queue_depth);  // Use configured depth instead of hardcoded 1024
 
     return !worker_queues_.IsNull() && !net_queue_.IsNull();
@@ -865,30 +989,30 @@ bool IpcManager::TryStartMainServer(const std::string &hostname) {
          heartbeat_port);
 
     // Create raw ZMQ context and REP socket for heartbeat
-    heartbeat_ctx_ = zmq_ctx_new();
-    if (heartbeat_ctx_ == nullptr) {
+    connect_ctx_ = zmq_ctx_new();
+    if (connect_ctx_ == nullptr) {
       HLOG(kError, "Failed to create ZMQ context for heartbeat server");
       return false;
     }
 
-    heartbeat_socket_ = zmq_socket(heartbeat_ctx_, ZMQ_REP);
-    if (heartbeat_socket_ == nullptr) {
+    connect_socket_ = zmq_socket(connect_ctx_, ZMQ_REP);
+    if (connect_socket_ == nullptr) {
       HLOG(kError, "Failed to create ZMQ REP socket for heartbeat server");
-      zmq_ctx_destroy(heartbeat_ctx_);
-      heartbeat_ctx_ = nullptr;
+      zmq_ctx_destroy(connect_ctx_);
+      connect_ctx_ = nullptr;
       return false;
     }
 
     std::string heartbeat_url = protocol + "://" + heartbeat_host + ":" +
                                 std::to_string(heartbeat_port);
-    int rc = zmq_bind(heartbeat_socket_, heartbeat_url.c_str());
+    int rc = zmq_bind(connect_socket_, heartbeat_url.c_str());
     if (rc == -1) {
       HLOG(kError, "Failed to bind heartbeat server to {}: {}", heartbeat_url,
            zmq_strerror(zmq_errno()));
-      zmq_close(heartbeat_socket_);
-      zmq_ctx_destroy(heartbeat_ctx_);
-      heartbeat_socket_ = nullptr;
-      heartbeat_ctx_ = nullptr;
+      zmq_close(connect_socket_);
+      zmq_ctx_destroy(connect_ctx_);
+      connect_socket_ = nullptr;
+      connect_ctx_ = nullptr;
       return false;
     }
 
@@ -911,7 +1035,13 @@ hshm::lbm::Server *IpcManager::GetMainServer() const {
   return main_server_.get();
 }
 
-void *IpcManager::GetHeartbeatSocket() const { return heartbeat_socket_; }
+void *IpcManager::GetClientConnectSocket() const { return connect_socket_; }
+
+void *IpcManager::GetServerSocket(IpcMode mode) const {
+  if (mode == IpcMode::kTcp) return zmq_tcp_server_socket_;
+  if (mode == IpcMode::kIpc) return zmq_ipc_server_socket_;
+  return nullptr;
+}
 
 const Host &IpcManager::GetThisHost() const { return this_host_; }
 
@@ -930,7 +1060,16 @@ FullPtr<char> IpcManager::AllocateBuffer(size_t size) {
     return buffer;
   }
 
-  // CLIENT PATH: Use per-process shared memory allocation strategy
+  // CLIENT TCP/IPC PATH: Use private memory (no shared memory needed)
+  if (ipc_mode_ != IpcMode::kShm) {
+    FullPtr<char> buffer = HSHM_MALLOC->AllocateObjs<char>(size);
+    if (buffer.IsNull()) {
+      HLOG(kError, "AllocateBuffer: HSHM_MALLOC failed for {} bytes (client ZMQ mode)", size);
+    }
+    return buffer;
+  }
+
+  // CLIENT SHM PATH: Use per-process shared memory allocation strategy
   // 1. Check last accessed allocator first (fast path)
   if (last_alloc_ != nullptr) {
     FullPtr<char> buffer = last_alloc_->AllocateObjs<char>(size);
@@ -1546,6 +1685,97 @@ bool IpcManager::GetIsClientThread() const {
 //==============================================================================
 // GPU Memory Management
 //==============================================================================
+
+//==============================================================================
+// ZMQ Transport Methods
+//==============================================================================
+
+void IpcManager::RecvZmqClientThread() {
+  // Client-side thread: polls for completed task responses from the server
+  void *active_socket = (ipc_mode_ == IpcMode::kTcp)
+                            ? zmq_tcp_client_socket_
+                            : zmq_ipc_client_socket_;
+  if (!active_socket) {
+    HLOG(kError, "RecvZmqClientThread: No active socket");
+    return;
+  }
+
+  while (zmq_recv_running_.load()) {
+    // Non-blocking recv with poll timeout
+    zmq_pollitem_t poll_item = {active_socket, 0, ZMQ_POLLIN, 0};
+    int rc = zmq_poll(&poll_item, 1, 10);  // 10ms timeout
+    if (rc <= 0) {
+      continue;  // Timeout or error
+    }
+
+    // Receive the response message
+    zmq_msg_t msg;
+    zmq_msg_init(&msg);
+    rc = zmq_msg_recv(&msg, active_socket, ZMQ_DONTWAIT);
+    if (rc == -1) {
+      zmq_msg_close(&msg);
+      continue;
+    }
+
+    // Parse response: [u8 msg_type=2][uintptr_t vaddr][u64 output_size][output_data]
+    size_t msg_size = zmq_msg_size(&msg);
+    char *data = static_cast<char *>(zmq_msg_data(&msg));
+
+    if (msg_size < sizeof(uint8_t) + sizeof(uintptr_t) + sizeof(uint64_t)) {
+      HLOG(kError, "RecvZmqClientThread: Message too small: {}", msg_size);
+      zmq_msg_close(&msg);
+      continue;
+    }
+
+    size_t offset = 0;
+    uint8_t msg_type;
+    memcpy(&msg_type, data + offset, sizeof(msg_type));
+    offset += sizeof(msg_type);
+
+    if (msg_type != 2) {
+      HLOG(kError, "RecvZmqClientThread: Unexpected msg_type: {}", msg_type);
+      zmq_msg_close(&msg);
+      continue;
+    }
+
+    uintptr_t vaddr;
+    memcpy(&vaddr, data + offset, sizeof(vaddr));
+    offset += sizeof(vaddr);
+
+    uint64_t output_size;
+    memcpy(&output_size, data + offset, sizeof(output_size));
+    offset += sizeof(output_size);
+
+    // Find the pending future by vaddr
+    std::lock_guard<std::mutex> lock(pending_futures_mutex_);
+    auto it = pending_zmq_futures_.find(vaddr);
+    if (it == pending_zmq_futures_.end()) {
+      HLOG(kError, "RecvZmqClientThread: No pending future for vaddr 0x{:x}", vaddr);
+      zmq_msg_close(&msg);
+      continue;
+    }
+
+    FutureShm *future_shm = it->second;
+
+    // Copy output data into copy_space
+    size_t data_size = msg_size - offset;
+    if (data_size > 0 && data_size <= future_shm->capacity_.load()) {
+      memcpy(future_shm->copy_space, data + offset, data_size);
+    }
+    future_shm->output_size_.store(output_size);
+
+    // Memory fence before setting complete
+    std::atomic_thread_fence(std::memory_order_release);
+
+    // Signal completion
+    future_shm->flags_.SetBits(FutureShm::FUTURE_NEW_DATA | FutureShm::FUTURE_COMPLETE);
+
+    // Remove from pending map
+    pending_zmq_futures_.erase(it);
+
+    zmq_msg_close(&msg);
+  }
+}
 
 bool IpcManager::RegisterAcceleratorMemory(const hipc::MemoryBackend &backend) {
 #if !HSHM_ENABLE_CUDA && !HSHM_ENABLE_ROCM

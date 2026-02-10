@@ -65,11 +65,22 @@
 namespace chi {
 
 /**
+ * IPC transport mode for client-to-runtime communication
+ */
+enum class IpcMode : u32 {
+  kTcp = 0,  ///< ZMQ tcp:// (default, always available)
+  kIpc = 1,  ///< ZMQ ipc:// (Unix Domain Socket)
+  kShm = 2,  ///< Shared memory (existing behavior)
+};
+
+/**
  * Network queue priority levels for send operations
  */
 enum class NetQueuePriority : u32 {
-  kSendIn = 0,  ///< Priority 0: SendIn operations (sending task inputs)
-  kSendOut = 1  ///< Priority 1: SendOut operations (sending task outputs)
+  kSendIn = 0,         ///< Priority 0: SendIn operations (sending task inputs)
+  kSendOut = 1,        ///< Priority 1: SendOut operations (sending task outputs)
+  kClientSendTcp = 2,  ///< Priority 2: Client response via TCP
+  kClientSendIpc = 3,  ///< Priority 3: Client response via IPC
 };
 
 /**
@@ -292,12 +303,8 @@ class IpcManager {
   template <typename T, typename... Args>
   HSHM_CROSS_FUN hipc::FullPtr<T> NewObj(Args &&...args) {
     // Allocate buffer for the object
-    printf("NewObj: about to call AllocateBuffer(sizeof(T)=%lu)\n", sizeof(T));
     hipc::FullPtr<char> buffer = AllocateBuffer(sizeof(T));
-    printf("NewObj: buffer ptr=%p offset=%lu\n", buffer.ptr_,
-           buffer.shm_.off_.load());
     if (buffer.IsNull()) {
-      printf("NewObj: buffer IsNull, returning null\n");
       return hipc::FullPtr<T>();
     }
 
@@ -370,6 +377,8 @@ class IpcManager {
     // Initialize FutureShm fields
     future_shm_ptr->pool_id_ = task_ptr->pool_id_;
     future_shm_ptr->method_id_ = task_ptr->method_;
+    future_shm_ptr->origin_ = FutureShm::FUTURE_CLIENT_SHM;
+    future_shm_ptr->client_task_vaddr_ = reinterpret_cast<uintptr_t>(task_ptr.ptr_);
     future_shm_ptr->capacity_.store(copy_space_size);
 
     // Copy serialized data to copy_space
@@ -447,6 +456,8 @@ class IpcManager {
     FutureShm *future_shm_ptr = new (buffer.ptr_) FutureShm();
     future_shm_ptr->pool_id_ = task_ptr->pool_id_;
     future_shm_ptr->method_id_ = task_ptr->method_;
+    future_shm_ptr->origin_ = FutureShm::FUTURE_CLIENT_SHM;
+    future_shm_ptr->client_task_vaddr_ = 0;
     future_shm_ptr->capacity_.store(copy_space_size);
 
     // Copy serialized data into copy_space
@@ -506,6 +517,8 @@ class IpcManager {
     // Initialize FutureShm fields
     future_shm.ptr_->pool_id_ = task_ptr->pool_id_;
     future_shm.ptr_->method_id_ = task_ptr->method_;
+    future_shm.ptr_->origin_ = FutureShm::FUTURE_CLIENT_SHM;
+    future_shm.ptr_->client_task_vaddr_ = 0;
     future_shm.ptr_->capacity_.store(0);  // No copy_space in runtime path
 
     // Create Future with ShmPtr and task_ptr (no serialization)
@@ -599,19 +612,19 @@ class IpcManager {
     // differently
     return MakeCopyFutureGpu(task_ptr);
 #else  // HOST PATH
-    // 1. Create Future using MakeFuture (handles client/runtime paths)
-    // CLIENT: MakeFuture -> MakeCopyFuture (serializes task)
-    // RUNTIME: MakeFuture -> MakePointerFuture (wraps pointer)
-    Future<TaskT> future = MakeFuture(task_ptr);
-
-    // HOST PATH: Full task submission with scheduler and worker awareness
-
-    // 2. Get current worker (needed for runtime parent task tracking)
-    Worker *worker = CHI_CUR_WORKER;
     bool is_runtime = CHI_CHIMAERA_MANAGER->IsRuntime();
-
-    // Runtime path requires BOTH IsRuntime AND worker to be non-null
+    Worker *worker = CHI_CUR_WORKER;
     bool use_runtime_path = is_runtime && worker != nullptr;
+
+    // Client TCP/IPC path: serialize and send via ZMQ
+    // Runtime always uses SHM path internally, even from the main thread
+    if (!is_runtime && ipc_mode_ != IpcMode::kShm) {
+      return SendZmq(task_ptr, ipc_mode_);
+    }
+
+    // SHM path (client or runtime): original logic
+    // 1. Create Future using MakeFuture (handles client/runtime paths)
+    Future<TaskT> future = MakeFuture(task_ptr);
 
     // 3. Set parent task RunContext from current worker (runtime only)
     if (use_runtime_path) {
@@ -644,6 +657,97 @@ class IpcManager {
   }
 
   /**
+   * Send a task via ZMQ transport (TCP or IPC)
+   * Serializes the task, creates a private-memory FutureShm, sends via ZMQ
+   * @param task_ptr Task to send
+   * @param mode Transport mode (kTcp or kIpc)
+   * @return Future for polling completion
+   */
+  template <typename TaskT>
+  Future<TaskT> SendZmq(const hipc::FullPtr<TaskT> &task_ptr, IpcMode mode) {
+    if (task_ptr.IsNull()) {
+      return Future<TaskT>();
+    }
+
+    // Serialize the task inputs
+    LocalSaveTaskArchive archive(LocalMsgType::kSerializeIn);
+    archive << (*task_ptr.ptr_);
+
+    size_t serialized_size = archive.GetSize();
+    const std::vector<char> &serialized = archive.GetData();
+
+    // Determine copy space size
+    size_t recommended_size = task_ptr->GetCopySpaceSize();
+    size_t copy_space_size = (recommended_size > serialized_size)
+                                 ? recommended_size
+                                 : serialized_size;
+
+    // Allocate FutureShm in private memory (not shared memory)
+    size_t alloc_size = sizeof(FutureShm) + copy_space_size;
+    char *buffer = new char[alloc_size];
+    FutureShm *future_shm = new (buffer) FutureShm();
+
+    // Initialize FutureShm fields
+    future_shm->pool_id_ = task_ptr->pool_id_;
+    future_shm->method_id_ = task_ptr->method_;
+    future_shm->origin_ = (mode == IpcMode::kTcp)
+                               ? FutureShm::FUTURE_CLIENT_TCP
+                               : FutureShm::FUTURE_CLIENT_IPC;
+    future_shm->client_task_vaddr_ = reinterpret_cast<uintptr_t>(task_ptr.ptr_);
+    future_shm->capacity_.store(copy_space_size);
+
+    // Register in pending futures map
+    {
+      std::lock_guard<std::mutex> lock(pending_futures_mutex_);
+      pending_zmq_futures_[future_shm->client_task_vaddr_] = future_shm;
+    }
+
+    // Build wire message: [u8 msg_type=1][PoolId][u32 method][uintptr_t vaddr][u64 size][data]
+    size_t header_size = sizeof(uint8_t) + sizeof(PoolId) + sizeof(u32) +
+                         sizeof(uintptr_t) + sizeof(uint64_t);
+    size_t msg_size = header_size + serialized_size;
+    std::vector<char> wire_msg(msg_size);
+    size_t offset = 0;
+
+    uint8_t msg_type = 1;  // Task submission
+    memcpy(wire_msg.data() + offset, &msg_type, sizeof(msg_type));
+    offset += sizeof(msg_type);
+
+    memcpy(wire_msg.data() + offset, &task_ptr->pool_id_, sizeof(PoolId));
+    offset += sizeof(PoolId);
+
+    u32 method = task_ptr->method_;
+    memcpy(wire_msg.data() + offset, &method, sizeof(method));
+    offset += sizeof(method);
+
+    uintptr_t vaddr = future_shm->client_task_vaddr_;
+    memcpy(wire_msg.data() + offset, &vaddr, sizeof(vaddr));
+    offset += sizeof(vaddr);
+
+    uint64_t data_size = serialized_size;
+    memcpy(wire_msg.data() + offset, &data_size, sizeof(data_size));
+    offset += sizeof(data_size);
+
+    memcpy(wire_msg.data() + offset, serialized.data(), serialized_size);
+
+    // Send via ZMQ
+    void *socket = (mode == IpcMode::kTcp) ? zmq_tcp_client_socket_
+                                            : zmq_ipc_client_socket_;
+    {
+      std::lock_guard<std::mutex> lock(zmq_client_send_mutex_);
+      zmq_send(socket, wire_msg.data(), msg_size, 0);
+    }
+
+    // Create Future wrapping the private-memory FutureShm
+    // Use null allocator ID since this is private memory
+    hipc::ShmPtr<FutureShm> future_shm_shmptr(
+        hipc::AllocatorId::GetNull(),
+        hipc::OffsetPtr<FutureShm>(reinterpret_cast<size_t>(future_shm)));
+
+    return Future<TaskT>(future_shm_shmptr, task_ptr);
+  }
+
+  /**
    * Receive task results (deserializes from completed Future)
    * Called after Future::Wait() has confirmed task completion
    *
@@ -664,49 +768,65 @@ class IpcManager {
     bool use_runtime_path = is_runtime && worker != nullptr;
 
     if (!use_runtime_path) {
-      // CLIENT PATH: Deserialize task outputs from FutureShm using
-      // LocalTransfer
       auto future_shm = future.GetFutureShm();
       TaskT *task_ptr = future.get();
+      u32 origin = future_shm->origin_;
 
-      // Wait for first data to be available (signaled by FUTURE_NEW_DATA or
-      // FUTURE_COMPLETE) This ensures output_size_ is valid before we read it
-      hshm::abitfield32_t &flags = future_shm->flags_;
-      while (!flags.Any(FutureShm::FUTURE_NEW_DATA) &&
-             !flags.Any(FutureShm::FUTURE_COMPLETE)) {
-        HSHM_THREAD_MODEL->Yield();
+      if (origin == FutureShm::FUTURE_CLIENT_TCP ||
+          origin == FutureShm::FUTURE_CLIENT_IPC) {
+        // ZMQ PATH: Wait for RecvZmqClientThread to set FUTURE_COMPLETE
+        hshm::abitfield32_t &flags = future_shm->flags_;
+        while (!flags.Any(FutureShm::FUTURE_COMPLETE)) {
+          HSHM_THREAD_MODEL->Yield();
+        }
+
+        // Memory fence
+        std::atomic_thread_fence(std::memory_order_acquire);
+
+        // Deserialize task outputs from copy_space
+        size_t output_size = future_shm->output_size_.load();
+        if (output_size > 0) {
+          std::vector<char> data(future_shm->copy_space,
+                                 future_shm->copy_space + output_size);
+          LocalLoadTaskArchive archive(data);
+          archive.SetMsgType(LocalMsgType::kSerializeOut);
+          archive >> (*task_ptr);
+        }
+      } else {
+        // SHM PATH: Original logic using LocalTransfer
+
+        // Wait for first data to be available (signaled by FUTURE_NEW_DATA or
+        // FUTURE_COMPLETE)
+        hshm::abitfield32_t &flags = future_shm->flags_;
+        while (!flags.Any(FutureShm::FUTURE_NEW_DATA) &&
+               !flags.Any(FutureShm::FUTURE_COMPLETE)) {
+          HSHM_THREAD_MODEL->Yield();
+        }
+
+        // Memory fence
+        std::atomic_thread_fence(std::memory_order_acquire);
+
+        size_t output_size = future_shm->output_size_.load();
+
+        // Use LocalTransfer to receive all data
+        LocalTransfer receiver(future_shm, output_size);
+
+        bool recv_complete = receiver.Recv();
+        if (!recv_complete) {
+          HLOG(kError, "Recv: LocalTransfer failed - received {}/{} bytes",
+               receiver.GetBytesTransferred(), output_size);
+        }
+
+        while (!flags.Any(FutureShm::FUTURE_COMPLETE)) {
+          HSHM_THREAD_MODEL->Yield();
+        }
+
+        LocalLoadTaskArchive archive(receiver.GetData());
+        archive.SetMsgType(LocalMsgType::kSerializeOut);
+        archive >> (*task_ptr);
       }
-
-      // Memory fence: Ensure we see worker's writes to output_size_
-      std::atomic_thread_fence(std::memory_order_acquire);
-
-      // Get output size from FutureShm (now valid)
-      size_t output_size = future_shm->output_size_.load();
-
-      // Use LocalTransfer to receive all data
-      LocalTransfer receiver(future_shm, output_size);
-
-      // Receive all data (blocks until complete)
-      bool recv_complete = receiver.Recv();
-      if (!recv_complete) {
-        HLOG(kError, "Recv: LocalTransfer failed - received {}/{} bytes",
-             receiver.GetBytesTransferred(), output_size);
-      }
-
-      // Wait for FUTURE_COMPLETE to ensure all data has been sent
-      while (!flags.Any(FutureShm::FUTURE_COMPLETE)) {
-        HSHM_THREAD_MODEL->Yield();
-      }
-
-      // Create LocalLoadTaskArchive with kSerializeOut mode
-      LocalLoadTaskArchive archive(receiver.GetData());
-      archive.SetMsgType(LocalMsgType::kSerializeOut);
-
-      // Deserialize task outputs into the Future's task pointer
-      archive >> (*task_ptr);
     }
-    // RUNTIME PATH: No deserialization needed - task already has correct
-    // outputs
+    // RUNTIME PATH: No deserialization needed
   }
 
   /**
@@ -733,6 +853,12 @@ class IpcManager {
    * @return true if initialized, false otherwise
    */
   bool IsInitialized() const;
+
+  /**
+   * Get the current IPC transport mode
+   * @return IpcMode enum value (kTcp, kIpc, or kShm)
+   */
+  IpcMode GetIpcMode() const { return ipc_mode_; }
 
   /**
    * Get number of workers from shared memory header
@@ -832,16 +958,57 @@ class IpcManager {
   hshm::lbm::Server *GetMainServer() const;
 
   /**
-   * Get the heartbeat socket for polling heartbeat requests
+   * Get the client connect socket for polling connect requests
    * @return Raw ZMQ REP socket pointer, or nullptr if not initialized
    */
-  void *GetHeartbeatSocket() const;
+  void *GetClientConnectSocket() const;
 
   /**
    * Get this host identified during host identification
    * @return Const reference to this Host struct
    */
   const Host &GetThisHost() const;
+
+  /**
+   * Get the ZMQ server socket for the given mode
+   * @param mode IPC mode (kTcp or kIpc)
+   * @return ZMQ ROUTER socket pointer
+   */
+  void *GetServerSocket(IpcMode mode) const;
+
+  /**
+   * Client-side thread that receives completed task outputs via ZMQ
+   */
+  void RecvZmqClientThread();
+
+  /**
+   * Store a client identity for routing ZMQ responses
+   * @param client_vaddr Client task virtual address (key)
+   * @param identity ZMQ ROUTER identity frame
+   */
+  void StoreClientIdentity(uintptr_t client_vaddr,
+                           const std::vector<uint8_t> &identity) {
+    std::lock_guard<std::mutex> lock(zmq_identities_mutex_);
+    zmq_client_identities_[client_vaddr] = identity;
+  }
+
+  /**
+   * Look up and remove a client identity for ZMQ response routing
+   * @param client_vaddr Client task virtual address (key)
+   * @param[out] identity Retrieved identity frame
+   * @return true if identity found and removed
+   */
+  bool PopClientIdentity(uintptr_t client_vaddr,
+                         std::vector<uint8_t> &identity) {
+    std::lock_guard<std::mutex> lock(zmq_identities_mutex_);
+    auto it = zmq_client_identities_.find(client_vaddr);
+    if (it != zmq_client_identities_.end()) {
+      identity = std::move(it->second);
+      zmq_client_identities_.erase(it);
+      return true;
+    }
+    return false;
+  }
 
   /**
    * Start local ZeroMQ server
@@ -1189,9 +1356,36 @@ class IpcManager {
   // Main ZeroMQ server for distributed communication
   std::unique_ptr<hshm::lbm::Server> main_server_;
 
-  // Heartbeat server for client connection verification (ZMQ_REP)
-  void *heartbeat_ctx_;     ///< ZMQ context for heartbeat server
-  void *heartbeat_socket_;  ///< ZMQ REP socket for heartbeat server
+  // Client connect server for connection verification (ZMQ_REP)
+  void *connect_ctx_;     ///< ZMQ context for client connect server
+  void *connect_socket_;  ///< ZMQ REP socket for client connect server
+
+  // IPC transport mode (TCP default, configurable via CHI_IPC_MODE)
+  IpcMode ipc_mode_ = IpcMode::kTcp;
+
+  // ZMQ transport context (shared by all transport sockets)
+  void *zmq_transport_ctx_ = nullptr;
+
+  // Client-side: DEALER sockets for sending tasks via ZMQ
+  void *zmq_tcp_client_socket_ = nullptr;
+  void *zmq_ipc_client_socket_ = nullptr;
+  std::mutex zmq_client_send_mutex_;
+
+  // Server-side: ROUTER sockets for receiving client tasks via ZMQ
+  void *zmq_tcp_server_socket_ = nullptr;
+  void *zmq_ipc_server_socket_ = nullptr;
+
+  // Client recv thread (receives completed task outputs via ZMQ)
+  std::thread zmq_recv_thread_;
+  std::atomic<bool> zmq_recv_running_{false};
+
+  // Pending ZMQ futures (client-side, keyed by client_task_vaddr)
+  std::unordered_map<uintptr_t, FutureShm*> pending_zmq_futures_;
+  std::mutex pending_futures_mutex_;
+
+  // Server-side: ZMQ client identity tracking (keyed by client_task_vaddr)
+  std::unordered_map<uintptr_t, std::vector<uint8_t>> zmq_client_identities_;
+  std::mutex zmq_identities_mutex_;
 
   // Hostfile management
   std::unordered_map<u64, Host> hostfile_map_;  // Map node_id -> Host

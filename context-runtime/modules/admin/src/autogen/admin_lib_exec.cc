@@ -77,10 +77,10 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       co_await Recv(typed_task, rctx);
       break;
     }
-    case Method::kHeartbeat: {
+    case Method::kClientConnect: {
       // Cast task FullPtr to specific type
-      hipc::FullPtr<HeartbeatTask> typed_task = task_ptr.template Cast<HeartbeatTask>();
-      co_await Heartbeat(typed_task, rctx);
+      hipc::FullPtr<ClientConnectTask> typed_task = task_ptr.template Cast<ClientConnectTask>();
+      co_await ClientConnect(typed_task, rctx);
       break;
     }
     case Method::kMonitor: {
@@ -99,6 +99,18 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       // Cast task FullPtr to specific type
       hipc::FullPtr<WreapDeadIpcsTask> typed_task = task_ptr.template Cast<WreapDeadIpcsTask>();
       co_await WreapDeadIpcs(typed_task, rctx);
+      break;
+    }
+    case Method::kClientRecv: {
+      // Cast task FullPtr to specific type
+      hipc::FullPtr<ClientRecvTask> typed_task = task_ptr.template Cast<ClientRecvTask>();
+      co_await ClientRecv(typed_task, rctx);
+      break;
+    }
+    case Method::kClientSend: {
+      // Cast task FullPtr to specific type
+      hipc::FullPtr<ClientSendTask> typed_task = task_ptr.template Cast<ClientSendTask>();
+      co_await ClientSend(typed_task, rctx);
       break;
     }
     default: {
@@ -147,8 +159,8 @@ void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
       ipc_manager->DelTask(task_ptr.template Cast<RecvTask>());
       break;
     }
-    case Method::kHeartbeat: {
-      ipc_manager->DelTask(task_ptr.template Cast<HeartbeatTask>());
+    case Method::kClientConnect: {
+      ipc_manager->DelTask(task_ptr.template Cast<ClientConnectTask>());
       break;
     }
     case Method::kMonitor: {
@@ -161,6 +173,14 @@ void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
     }
     case Method::kWreapDeadIpcs: {
       ipc_manager->DelTask(task_ptr.template Cast<WreapDeadIpcsTask>());
+      break;
+    }
+    case Method::kClientRecv: {
+      ipc_manager->DelTask(task_ptr.template Cast<ClientRecvTask>());
+      break;
+    }
+    case Method::kClientSend: {
+      ipc_manager->DelTask(task_ptr.template Cast<ClientSendTask>());
       break;
     }
     default: {
@@ -214,8 +234,8 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
       archive << *typed_task.ptr_;
       break;
     }
-    case Method::kHeartbeat: {
-      auto typed_task = task_ptr.template Cast<HeartbeatTask>();
+    case Method::kClientConnect: {
+      auto typed_task = task_ptr.template Cast<ClientConnectTask>();
       archive << *typed_task.ptr_;
       break;
     }
@@ -231,6 +251,16 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
     }
     case Method::kWreapDeadIpcs: {
       auto typed_task = task_ptr.template Cast<WreapDeadIpcsTask>();
+      archive << *typed_task.ptr_;
+      break;
+    }
+    case Method::kClientRecv: {
+      auto typed_task = task_ptr.template Cast<ClientRecvTask>();
+      archive << *typed_task.ptr_;
+      break;
+    }
+    case Method::kClientSend: {
+      auto typed_task = task_ptr.template Cast<ClientSendTask>();
       archive << *typed_task.ptr_;
       break;
     }
@@ -284,8 +314,8 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
       archive >> *typed_task.ptr_;
       break;
     }
-    case Method::kHeartbeat: {
-      auto typed_task = task_ptr.template Cast<HeartbeatTask>();
+    case Method::kClientConnect: {
+      auto typed_task = task_ptr.template Cast<ClientConnectTask>();
       archive >> *typed_task.ptr_;
       break;
     }
@@ -301,6 +331,16 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
     }
     case Method::kWreapDeadIpcs: {
       auto typed_task = task_ptr.template Cast<WreapDeadIpcsTask>();
+      archive >> *typed_task.ptr_;
+      break;
+    }
+    case Method::kClientRecv: {
+      auto typed_task = task_ptr.template Cast<ClientRecvTask>();
+      archive >> *typed_task.ptr_;
+      break;
+    }
+    case Method::kClientSend: {
+      auto typed_task = task_ptr.template Cast<ClientSendTask>();
       archive >> *typed_task.ptr_;
       break;
     }
@@ -370,8 +410,8 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
       typed_task.ptr_->SerializeIn(archive);
       break;
     }
-    case Method::kHeartbeat: {
-      auto typed_task = task_ptr.template Cast<HeartbeatTask>();
+    case Method::kClientConnect: {
+      auto typed_task = task_ptr.template Cast<ClientConnectTask>();
       // Call SerializeIn - task will call Task::SerializeIn for base fields
       typed_task.ptr_->SerializeIn(archive);
       break;
@@ -390,6 +430,18 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
     }
     case Method::kWreapDeadIpcs: {
       auto typed_task = task_ptr.template Cast<WreapDeadIpcsTask>();
+      // Call SerializeIn - task will call Task::SerializeIn for base fields
+      typed_task.ptr_->SerializeIn(archive);
+      break;
+    }
+    case Method::kClientRecv: {
+      auto typed_task = task_ptr.template Cast<ClientRecvTask>();
+      // Call SerializeIn - task will call Task::SerializeIn for base fields
+      typed_task.ptr_->SerializeIn(archive);
+      break;
+    }
+    case Method::kClientSend: {
+      auto typed_task = task_ptr.template Cast<ClientSendTask>();
       // Call SerializeIn - task will call Task::SerializeIn for base fields
       typed_task.ptr_->SerializeIn(archive);
       break;
@@ -460,8 +512,8 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
       typed_task.ptr_->SerializeOut(archive);
       break;
     }
-    case Method::kHeartbeat: {
-      auto typed_task = task_ptr.template Cast<HeartbeatTask>();
+    case Method::kClientConnect: {
+      auto typed_task = task_ptr.template Cast<ClientConnectTask>();
       // Call SerializeOut - task will call Task::SerializeOut for base fields
       typed_task.ptr_->SerializeOut(archive);
       break;
@@ -480,6 +532,18 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
     }
     case Method::kWreapDeadIpcs: {
       auto typed_task = task_ptr.template Cast<WreapDeadIpcsTask>();
+      // Call SerializeOut - task will call Task::SerializeOut for base fields
+      typed_task.ptr_->SerializeOut(archive);
+      break;
+    }
+    case Method::kClientRecv: {
+      auto typed_task = task_ptr.template Cast<ClientRecvTask>();
+      // Call SerializeOut - task will call Task::SerializeOut for base fields
+      typed_task.ptr_->SerializeOut(archive);
+      break;
+    }
+    case Method::kClientSend: {
+      auto typed_task = task_ptr.template Cast<ClientSendTask>();
       // Call SerializeOut - task will call Task::SerializeOut for base fields
       typed_task.ptr_->SerializeOut(archive);
       break;
@@ -586,12 +650,12 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       }
       break;
     }
-    case Method::kHeartbeat: {
+    case Method::kClientConnect: {
       // Allocate new task
-      auto new_task_ptr = ipc_manager->NewTask<HeartbeatTask>();
+      auto new_task_ptr = ipc_manager->NewTask<ClientConnectTask>();
       if (!new_task_ptr.IsNull()) {
         // Copy task fields (includes base Task fields)
-        auto task_typed = orig_task_ptr.template Cast<HeartbeatTask>();
+        auto task_typed = orig_task_ptr.template Cast<ClientConnectTask>();
         new_task_ptr->Copy(task_typed);
         return new_task_ptr.template Cast<chi::Task>();
       }
@@ -625,6 +689,28 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       if (!new_task_ptr.IsNull()) {
         // Copy task fields (includes base Task fields)
         auto task_typed = orig_task_ptr.template Cast<WreapDeadIpcsTask>();
+        new_task_ptr->Copy(task_typed);
+        return new_task_ptr.template Cast<chi::Task>();
+      }
+      break;
+    }
+    case Method::kClientRecv: {
+      // Allocate new task
+      auto new_task_ptr = ipc_manager->NewTask<ClientRecvTask>();
+      if (!new_task_ptr.IsNull()) {
+        // Copy task fields (includes base Task fields)
+        auto task_typed = orig_task_ptr.template Cast<ClientRecvTask>();
+        new_task_ptr->Copy(task_typed);
+        return new_task_ptr.template Cast<chi::Task>();
+      }
+      break;
+    }
+    case Method::kClientSend: {
+      // Allocate new task
+      auto new_task_ptr = ipc_manager->NewTask<ClientSendTask>();
+      if (!new_task_ptr.IsNull()) {
+        // Copy task fields (includes base Task fields)
+        auto task_typed = orig_task_ptr.template Cast<ClientSendTask>();
         new_task_ptr->Copy(task_typed);
         return new_task_ptr.template Cast<chi::Task>();
       }
@@ -684,8 +770,8 @@ hipc::FullPtr<chi::Task> Runtime::NewTask(chi::u32 method) {
       auto new_task_ptr = ipc_manager->NewTask<RecvTask>();
       return new_task_ptr.template Cast<chi::Task>();
     }
-    case Method::kHeartbeat: {
-      auto new_task_ptr = ipc_manager->NewTask<HeartbeatTask>();
+    case Method::kClientConnect: {
+      auto new_task_ptr = ipc_manager->NewTask<ClientConnectTask>();
       return new_task_ptr.template Cast<chi::Task>();
     }
     case Method::kMonitor: {
@@ -698,6 +784,14 @@ hipc::FullPtr<chi::Task> Runtime::NewTask(chi::u32 method) {
     }
     case Method::kWreapDeadIpcs: {
       auto new_task_ptr = ipc_manager->NewTask<WreapDeadIpcsTask>();
+      return new_task_ptr.template Cast<chi::Task>();
+    }
+    case Method::kClientRecv: {
+      auto new_task_ptr = ipc_manager->NewTask<ClientRecvTask>();
+      return new_task_ptr.template Cast<chi::Task>();
+    }
+    case Method::kClientSend: {
+      auto new_task_ptr = ipc_manager->NewTask<ClientSendTask>();
       return new_task_ptr.template Cast<chi::Task>();
     }
     default: {
@@ -774,10 +868,10 @@ void Runtime::Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> origin_task_pt
       typed_origin.ptr_->Aggregate(typed_replica);
       break;
     }
-    case Method::kHeartbeat: {
+    case Method::kClientConnect: {
       // Get typed tasks for Aggregate call
-      auto typed_origin = origin_task_ptr.template Cast<HeartbeatTask>();
-      auto typed_replica = replica_task_ptr.template Cast<HeartbeatTask>();
+      auto typed_origin = origin_task_ptr.template Cast<ClientConnectTask>();
+      auto typed_replica = replica_task_ptr.template Cast<ClientConnectTask>();
       // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
       typed_origin.ptr_->Aggregate(typed_replica);
       break;
@@ -802,6 +896,22 @@ void Runtime::Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> origin_task_pt
       // Get typed tasks for Aggregate call
       auto typed_origin = origin_task_ptr.template Cast<WreapDeadIpcsTask>();
       auto typed_replica = replica_task_ptr.template Cast<WreapDeadIpcsTask>();
+      // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
+      typed_origin.ptr_->Aggregate(typed_replica);
+      break;
+    }
+    case Method::kClientRecv: {
+      // Get typed tasks for Aggregate call
+      auto typed_origin = origin_task_ptr.template Cast<ClientRecvTask>();
+      auto typed_replica = replica_task_ptr.template Cast<ClientRecvTask>();
+      // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
+      typed_origin.ptr_->Aggregate(typed_replica);
+      break;
+    }
+    case Method::kClientSend: {
+      // Get typed tasks for Aggregate call
+      auto typed_origin = origin_task_ptr.template Cast<ClientSendTask>();
+      auto typed_replica = replica_task_ptr.template Cast<ClientSendTask>();
       // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
       typed_origin.ptr_->Aggregate(typed_replica);
       break;

@@ -422,8 +422,8 @@ class Worker {
    * @param run_ctx Runtime context
    * @param container Container for serialization
    */
-  void EndTaskBeginClientTransfer(const FullPtr<Task> &task_ptr,
-                                  RunContext *run_ctx, Container *container);
+  void EndTaskClientTransfer(const FullPtr<Task> &task_ptr,
+                             RunContext *run_ctx, Container *container);
 
   /**
    * Signal parent task that subtask completed

@@ -89,9 +89,15 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
   // This task polls net_queue_ for send operations
   client_.AsyncSendPoll(chi::PoolQuery::Local(), 0, 500);
 
-  // Spawn periodic Heartbeat task with 5ms period
-  // This task polls for ZMQ heartbeat requests and responds
-  client_.AsyncHeartbeat(chi::PoolQuery::Local(), 5000);
+  // Spawn periodic ClientConnect task with 5ms period
+  // This task polls for ZMQ connect requests and responds
+  client_.AsyncClientConnect(chi::PoolQuery::Local(), 5000);
+
+  // Spawn periodic ClientRecv task for ZMQ client task reception
+  client_.AsyncClientRecv(chi::PoolQuery::Local(), 100);
+
+  // Spawn periodic ClientSend task for ZMQ client response sending
+  client_.AsyncClientSend(chi::PoolQuery::Local(), 100);
 
   // Spawn periodic WreapDeadIpcs task with 1 second period
   // This task reaps shared memory segments from dead processes
@@ -101,7 +107,7 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
        "Admin: Container created and initialized for pool: {} (ID: {}, count: "
        "{})",
        pool_name_, task->new_pool_id_, create_count_);
-  HLOG(kDebug, "Admin: Spawned periodic Recv, Send, and Heartbeat tasks");
+  HLOG(kDebug, "Admin: Spawned periodic Recv, Send, ClientConnect, ClientRecv, ClientSend tasks");
   (void)rctx;
   co_return;
 }
@@ -923,42 +929,268 @@ chi::TaskResume Runtime::Recv(hipc::FullPtr<RecvTask> task,
 }
 
 /**
- * Handle Heartbeat - Respond to heartbeat request
- * Polls heartbeat server for ZMQ REQ/REP requests and responds
- * Also sets task response to 0 to indicate runtime is healthy
- * @param task The heartbeat task
+ * Handle ClientConnect - Respond to client connection request
+ * Polls connect server for ZMQ REQ/REP requests and responds
+ * @param task The connect task
  * @param rctx Run context
  */
-chi::TaskResume Runtime::Heartbeat(hipc::FullPtr<HeartbeatTask> task,
-                                   chi::RunContext &rctx) {
+chi::TaskResume Runtime::ClientConnect(hipc::FullPtr<ClientConnectTask> task,
+                                       chi::RunContext &rctx) {
   auto *ipc_manager = CHI_IPC;
 
-  // Poll heartbeat socket - RECEIVE request and SEND response
-  // This ensures clients can verify the runtime is running
-  void *hb_socket = ipc_manager->GetHeartbeatSocket();
-  if (hb_socket != nullptr) {
-    // RECEIVE heartbeat request (non-blocking)
+  // Poll connect socket - RECEIVE request and SEND response
+  void *conn_socket = ipc_manager->GetClientConnectSocket();
+  if (conn_socket != nullptr) {
     int32_t request;
-    int rc = zmq_recv(hb_socket, &request, sizeof(request), ZMQ_DONTWAIT);
+    int rc = zmq_recv(conn_socket, &request, sizeof(request), ZMQ_DONTWAIT);
     if (rc != -1) {
-      // Received a heartbeat request - SEND response (0 = success)
       int32_t response = 0;
-      zmq_send(hb_socket, &response, sizeof(response), 0);
-      HLOG(kDebug, "Heartbeat: received request {}, sent response {}", request,
-           response);
-      // Mark that we did work (received and responded to heartbeat)
+      zmq_send(conn_socket, &response, sizeof(response), 0);
+      HLOG(kDebug, "ClientConnect: received request {}, sent response {}",
+           request, response);
       rctx.did_work_ = true;
     } else {
-      // No heartbeat request available (EAGAIN)
       rctx.did_work_ = false;
     }
   } else {
-    // No heartbeat socket available
     rctx.did_work_ = false;
   }
 
-  // Set task response to indicate runtime is healthy
   task->response_ = 0;
+  task->SetReturnCode(0);
+  co_return;
+}
+
+/**
+ * Handle ClientRecv - Receive tasks from ZMQ clients
+ * Polls TCP and IPC ROUTER sockets for incoming client task submissions
+ */
+chi::TaskResume Runtime::ClientRecv(hipc::FullPtr<ClientRecvTask> task,
+                                    chi::RunContext &rctx) {
+  auto *ipc_manager = CHI_IPC;
+  auto *pool_manager = CHI_POOL_MANAGER;
+  bool did_work = false;
+  task->tasks_received_ = 0;
+
+  // Process both TCP and IPC sockets
+  for (int mode_idx = 0; mode_idx < 2; ++mode_idx) {
+    chi::IpcMode mode = (mode_idx == 0) ? chi::IpcMode::kTcp : chi::IpcMode::kIpc;
+    void *router_socket = ipc_manager->GetServerSocket(mode);
+    if (!router_socket) continue;
+
+    // Non-blocking poll
+    zmq_pollitem_t poll_item = {router_socket, 0, ZMQ_POLLIN, 0};
+    int rc = zmq_poll(&poll_item, 1, 0);  // Non-blocking
+    if (rc <= 0) continue;
+
+    // Receive identity frame
+    zmq_msg_t identity_msg;
+    zmq_msg_init(&identity_msg);
+    rc = zmq_msg_recv(&identity_msg, router_socket, ZMQ_DONTWAIT);
+    if (rc == -1) {
+      zmq_msg_close(&identity_msg);
+      continue;
+    }
+
+    // Store identity
+    std::vector<uint8_t> identity(
+        static_cast<uint8_t *>(zmq_msg_data(&identity_msg)),
+        static_cast<uint8_t *>(zmq_msg_data(&identity_msg)) +
+            zmq_msg_size(&identity_msg));
+    zmq_msg_close(&identity_msg);
+
+    // Receive empty delimiter frame
+    zmq_msg_t empty_msg;
+    zmq_msg_init(&empty_msg);
+    zmq_msg_recv(&empty_msg, router_socket, 0);
+    zmq_msg_close(&empty_msg);
+
+    // Receive payload frame
+    zmq_msg_t payload_msg;
+    zmq_msg_init(&payload_msg);
+    rc = zmq_msg_recv(&payload_msg, router_socket, 0);
+    if (rc == -1) {
+      zmq_msg_close(&payload_msg);
+      continue;
+    }
+
+    char *data = static_cast<char *>(zmq_msg_data(&payload_msg));
+    size_t data_size = zmq_msg_size(&payload_msg);
+
+    // Parse: [u8 msg_type=1][PoolId][u32 method][uintptr_t vaddr][u64 size][data]
+    size_t offset = 0;
+    uint8_t msg_type;
+    memcpy(&msg_type, data + offset, sizeof(msg_type));
+    offset += sizeof(msg_type);
+
+    if (msg_type != 1) {
+      HLOG(kError, "ClientRecv: Unexpected msg_type: {}", msg_type);
+      zmq_msg_close(&payload_msg);
+      continue;
+    }
+
+    chi::PoolId pool_id;
+    memcpy(&pool_id, data + offset, sizeof(pool_id));
+    offset += sizeof(pool_id);
+
+    chi::u32 method_id;
+    memcpy(&method_id, data + offset, sizeof(method_id));
+    offset += sizeof(method_id);
+
+    uintptr_t client_vaddr;
+    memcpy(&client_vaddr, data + offset, sizeof(client_vaddr));
+    offset += sizeof(client_vaddr);
+
+    uint64_t serialized_size;
+    memcpy(&serialized_size, data + offset, sizeof(serialized_size));
+    offset += sizeof(serialized_size);
+
+    // Store client identity for response routing
+    ipc_manager->StoreClientIdentity(client_vaddr, identity);
+
+    // Deserialize the task using the container
+    chi::Container *container = pool_manager->GetContainer(pool_id);
+    if (!container) {
+      HLOG(kError, "ClientRecv: Container not found for pool_id {}", pool_id);
+      zmq_msg_close(&payload_msg);
+      continue;
+    }
+
+    // Create archive from serialized data
+    std::vector<char> task_data(data + offset, data + offset + serialized_size);
+    chi::LocalLoadTaskArchive archive(task_data);
+
+    // Allocate and deserialize the task
+    hipc::FullPtr<chi::Task> task_ptr =
+        container->LocalAllocLoadTask(method_id, archive);
+
+    if (task_ptr.IsNull()) {
+      HLOG(kError, "ClientRecv: Failed to deserialize task");
+      zmq_msg_close(&payload_msg);
+      continue;
+    }
+
+    // Create FutureShm for the task (server-side)
+    hipc::FullPtr<chi::FutureShm> future_shm = ipc_manager->NewObj<chi::FutureShm>();
+    future_shm->pool_id_ = pool_id;
+    future_shm->method_id_ = method_id;
+    future_shm->origin_ = (mode == chi::IpcMode::kTcp)
+                               ? chi::FutureShm::FUTURE_CLIENT_TCP
+                               : chi::FutureShm::FUTURE_CLIENT_IPC;
+    future_shm->client_task_vaddr_ = client_vaddr;
+    future_shm->capacity_.store(0);
+
+    // Create Future and enqueue to worker
+    chi::Future<chi::Task> future(future_shm.shm_, task_ptr);
+
+    // Map task to lane using scheduler
+    chi::LaneId lane_id = ipc_manager->GetScheduler()->ClientMapTask(ipc_manager, future);
+    auto *worker_queues = ipc_manager->GetTaskQueue();
+    auto &lane_ref = worker_queues->GetLane(lane_id, 0);
+    lane_ref.Push(future);
+    ipc_manager->AwakenWorker(&lane_ref);
+
+    zmq_msg_close(&payload_msg);
+    did_work = true;
+    task->tasks_received_++;
+  }
+
+  rctx.did_work_ = did_work;
+  task->SetReturnCode(0);
+  co_return;
+}
+
+/**
+ * Handle ClientSend - Send completed task outputs to ZMQ clients
+ * Polls net_queue_ kClientSendTcp and kClientSendIpc priorities
+ */
+chi::TaskResume Runtime::ClientSend(hipc::FullPtr<ClientSendTask> task,
+                                    chi::RunContext &rctx) {
+  auto *ipc_manager = CHI_IPC;
+  auto *pool_manager = CHI_POOL_MANAGER;
+  bool did_work = false;
+  task->tasks_sent_ = 0;
+
+  // Process both TCP and IPC queues
+  for (int mode_idx = 0; mode_idx < 2; ++mode_idx) {
+    chi::NetQueuePriority priority = (mode_idx == 0)
+                                         ? chi::NetQueuePriority::kClientSendTcp
+                                         : chi::NetQueuePriority::kClientSendIpc;
+    chi::IpcMode mode = (mode_idx == 0) ? chi::IpcMode::kTcp : chi::IpcMode::kIpc;
+
+    chi::Future<chi::Task> queued_future;
+    while (ipc_manager->TryPopNetTask(priority, queued_future)) {
+      auto origin_task = queued_future.GetTaskPtr();
+      if (origin_task.IsNull()) continue;
+
+      // Get the FutureShm to find client_task_vaddr
+      auto future_shm = queued_future.GetFutureShm();
+      if (future_shm.IsNull()) continue;
+
+      uintptr_t client_vaddr = future_shm->client_task_vaddr_;
+
+      // Get container to serialize outputs
+      chi::Container *container = pool_manager->GetContainer(origin_task->pool_id_);
+      if (!container) {
+        HLOG(kError, "ClientSend: Container not found for pool_id {}", origin_task->pool_id_);
+        continue;
+      }
+
+      // Serialize task outputs
+      chi::LocalSaveTaskArchive archive(chi::LocalMsgType::kSerializeOut);
+      container->LocalSaveTask(origin_task->method_, archive, origin_task);
+
+      size_t output_size = archive.GetSize();
+      const std::vector<char> &output_data = archive.GetData();
+
+      // Look up client identity
+      std::vector<uint8_t> client_identity;
+      bool found = ipc_manager->PopClientIdentity(client_vaddr, client_identity);
+
+      if (!found) {
+        HLOG(kError, "ClientSend: No identity for vaddr 0x{:x}", client_vaddr);
+        continue;
+      }
+
+      // Build response: [u8 msg_type=2][uintptr_t vaddr][u64 output_size][output_data]
+      size_t header_size = sizeof(uint8_t) + sizeof(uintptr_t) + sizeof(uint64_t);
+      size_t msg_size = header_size + output_size;
+      std::vector<char> response_msg(msg_size);
+      size_t offset = 0;
+
+      uint8_t msg_type = 2;
+      memcpy(response_msg.data() + offset, &msg_type, sizeof(msg_type));
+      offset += sizeof(msg_type);
+
+      memcpy(response_msg.data() + offset, &client_vaddr, sizeof(client_vaddr));
+      offset += sizeof(client_vaddr);
+
+      uint64_t out_size = output_size;
+      memcpy(response_msg.data() + offset, &out_size, sizeof(out_size));
+      offset += sizeof(out_size);
+
+      if (output_size > 0) {
+        memcpy(response_msg.data() + offset, output_data.data(), output_size);
+      }
+
+      // Send via ROUTER socket: [identity][empty][payload]
+      void *router_socket = ipc_manager->GetServerSocket(mode);
+      if (router_socket) {
+        zmq_send(router_socket, client_identity.data(), client_identity.size(),
+                 ZMQ_SNDMORE);
+        zmq_send(router_socket, "", 0, ZMQ_SNDMORE);
+        zmq_send(router_socket, response_msg.data(), msg_size, 0);
+      }
+
+      // Delete the task copy and free FutureShm
+      ipc_manager->DelTask(origin_task);
+
+      did_work = true;
+      task->tasks_sent_++;
+    }
+  }
+
+  rctx.did_work_ = did_work;
   task->SetReturnCode(0);
   co_return;
 }
