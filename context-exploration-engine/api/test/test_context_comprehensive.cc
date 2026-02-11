@@ -51,6 +51,7 @@
 #include <wrp_cae/core/constants.h>
 #include <wrp_cae/core/factory/assimilation_ctx.h>
 #include <wrp_cte/core/core_client.h>
+#include <chimaera/bdev/bdev_tasks.h>
 #include <chimaera/chimaera.h>
 #include <fstream>
 #include <cstdlib>
@@ -101,6 +102,17 @@ public:
       if (cte_create->GetReturnCode() != 0) {
         throw std::runtime_error("CTE pool creation failed");
       }
+
+      // Register a RAM storage target so PutBlob can allocate space.
+      // When CHI_SERVER_CONF is set, compose config already registers targets,
+      // but when it's absent (e.g., compute nodes), the pool has none.
+      auto reg_task = cte_client->AsyncRegisterTarget(
+          "ram::cee_test_cache",
+          chimaera::bdev::BdevType::kRam,
+          512 * 1024 * 1024,             // 512 MB
+          chi::PoolQuery::Local(),
+          chi::PoolId(512, 10));          // explicit bdev pool id
+      reg_task.Wait();
 
       // Initialize CAE client
       WRP_CAE_CLIENT_INIT();
