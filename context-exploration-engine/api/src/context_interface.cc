@@ -276,7 +276,9 @@ std::vector<std::string> ContextInterface::ContextRetrieve(
           std::cerr << "Warning: GetBlob failed for a blob in batch" << std::endl;
         }
       }
-      // Future destructors handle task cleanup automatically
+
+      // Task cleanup is handled by Future destructors when 'tasks'
+      // goes out of scope. Manual DelTask here causes a double-free.
     }
 
     // Convert buffer to std::string
