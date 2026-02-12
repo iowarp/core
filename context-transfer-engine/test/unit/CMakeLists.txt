@@ -17,6 +17,11 @@ add_executable(cte_core_unit_tests
     test_core_functionality_simple.cc
 )
 
+# Create separate executable for config/DPE tests (avoids TEST_CASE line number collisions)
+add_executable(test_cte_config_dpe
+    test_cte_config_dpe.cc
+)
+
 # Create single version of test_core_functionality that uses environment variable
 # CHIMAERA_WITH_RUNTIME to control whether runtime is initialized (default: yes)
 add_executable(test_core_functionality
@@ -66,6 +71,10 @@ target_include_directories(test_query PRIVATE
   ${CMAKE_SOURCE_DIR}/test  # For unified simple_test.h
 )
 
+target_include_directories(test_cte_config_dpe PRIVATE
+  ${CMAKE_SOURCE_DIR}/test  # For unified simple_test.h
+)
+
 target_include_directories(test_tag_operations PRIVATE
   ${CMAKE_SOURCE_DIR}/test  # For unified simple_test.h
 )
@@ -100,6 +109,18 @@ target_link_libraries(cte_core_unit_tests
 
 # Link test_core_functionality - using simple_test.h framework (NOT Catch2)
 target_link_libraries(test_core_functionality
+    wrp_cte_core_runtime         # CTE core runtime library
+    wrp_cte_core_client          # CTE core client library
+    chimaera::admin_runtime      # Admin module runtime (required for runtime mode)
+    chimaera::admin_client       # Admin module client
+    chimaera::bdev_runtime       # Bdev module runtime (required for runtime mode)
+    chimaera::bdev_client        # Bdev client for BdevType enum
+    hshm::cxx                    # HermesShm library
+    ${CMAKE_THREAD_LIBS_INIT}    # Threading support
+)
+
+# Link test_cte_config_dpe - using simple_test.h framework (NOT Catch2)
+target_link_libraries(test_cte_config_dpe
     wrp_cte_core_runtime         # CTE core runtime library
     wrp_cte_core_client          # CTE core client library
     chimaera::admin_runtime      # Admin module runtime (required for runtime mode)
@@ -227,6 +248,12 @@ add_test(NAME cte_core_workflow
 
 add_test(NAME cte_core_performance
     COMMAND cte_core_unit_tests)
+
+# CTE Config and DPE tests (separate executable)
+add_test(NAME cte_config_tests
+    COMMAND test_cte_config_dpe "[cte][config]")
+add_test(NAME cte_dpe_tests
+    COMMAND test_cte_config_dpe "[cte][dpe]")
 
 # Add test_core_functionality tests
 add_test(NAME cte_functional_pool_creation
@@ -474,11 +501,14 @@ set_tests_properties(
     cte_core_blob_info
     cte_core_tasks
     cte_core_helpers
+    cte_config_tests
+    cte_dpe_tests
     cte_core_workflow
     cte_core_performance
     PROPERTIES
         TIMEOUT 300  # 5 minute timeout for each test
         LABELS "unit;core;cte"
+        ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
 set_tests_properties(
@@ -493,6 +523,7 @@ set_tests_properties(
     PROPERTIES
         TIMEOUT 300  # 5 minute timeout for each test
         LABELS "functional;core;cte"
+        ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
 set_tests_properties(
@@ -511,6 +542,7 @@ set_tests_properties(
     PROPERTIES
         TIMEOUT 300  # 5 minute timeout for each test
         LABELS "query;core;cte"
+        ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
 set_tests_properties(
@@ -526,6 +558,7 @@ set_tests_properties(
     PROPERTIES
         TIMEOUT 300  # 5 minute timeout for each test
         LABELS "unit;tag;cte"
+        ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
 set_tests_properties(
@@ -559,6 +592,7 @@ set_tests_properties(
     PROPERTIES
         TIMEOUT 300  # 5 minute timeout for each test
         LABELS "unit;core;cte;client;config"
+        ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
 set_tests_properties(
@@ -584,6 +618,7 @@ set_tests_properties(
     PROPERTIES
         TIMEOUT 300  # 5 minute timeout for each test
         LABELS "unit;core;cte;runtime;coverage"
+        ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
 # Add tiered storage stress tests
@@ -598,6 +633,7 @@ set_tests_properties(
     PROPERTIES
         TIMEOUT 300  # 5 minute timeout
         LABELS "stress;tiered;cte"
+        ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
 # Add reorganize blob tests
@@ -612,13 +648,14 @@ set_tests_properties(
     PROPERTIES
         TIMEOUT 300  # 5 minute timeout
         LABELS "unit;reorganize;cte"
+        ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
 # ------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------
 # Install Targets
 # ------------------------------------------------------------------------------
-install(TARGETS cte_core_unit_tests test_core_functionality test_query test_tag_operations test_core_client_config test_core_runtime_coverage test_tiered_storage_stress test_reorganize_blob
+install(TARGETS cte_core_unit_tests test_core_functionality test_query test_cte_config_dpe test_tag_operations test_core_client_config test_core_runtime_coverage test_tiered_storage_stress test_reorganize_blob
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin

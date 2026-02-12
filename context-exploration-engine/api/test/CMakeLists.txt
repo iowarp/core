@@ -26,7 +26,7 @@ function(add_cee_api_unit_test TEST_NAME TEST_SOURCE)
 
   # Set test environment variables
   set_tests_properties(${TEST_NAME} PROPERTIES
-    ENVIRONMENT "INIT_CHIMAERA=1"
+    ENVIRONMENT "INIT_CHIMAERA=1;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
     TIMEOUT 300  # 5 minute timeout
   )
 endfunction()
@@ -82,6 +82,7 @@ set_tests_properties(
   PROPERTIES
     TIMEOUT 180
     LABELS "cee;comprehensive;coverage"
+    ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
 #------------------------------------------------------------------------------
@@ -140,7 +141,31 @@ if(TARGET wrp_cee)
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
   )
 
-  message(STATUS "CEE Python tests (basic and enhanced) configured")
+  # Copy retrieve roundtrip regression test to build directory
+  configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_context_retrieve_roundtrip.py
+    ${CMAKE_CURRENT_BINARY_DIR}/test_context_retrieve_roundtrip.py
+    COPYONLY
+  )
+
+  # Add retrieve roundtrip test to CTest
+  add_test(
+    NAME test_context_retrieve_roundtrip_python
+    COMMAND ${Python_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/test_context_retrieve_roundtrip.py
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+
+  set_tests_properties(test_context_retrieve_roundtrip_python PROPERTIES
+    LABELS "cee;api;python;retrieve;regression"
+    TIMEOUT 120
+  )
+
+  install(FILES test_context_retrieve_roundtrip.py
+    DESTINATION share/wrp_cee/test
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+  )
+
+  message(STATUS "CEE Python tests (basic, enhanced, and retrieve roundtrip) configured")
 else()
   message(STATUS "CEE Python test skipped (Python bindings not built)")
 endif()

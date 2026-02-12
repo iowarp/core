@@ -250,6 +250,25 @@ function(hshm_target_compile_definitions target)
 endfunction()
 
 # ------------------------------------------------------------------------------
+# Code Coverage (must be defined before add_subdirectory(src) which uses it)
+# ------------------------------------------------------------------------------
+if(NOT IS_HSHM_MAIN)
+    if(HSHM_ENABLE_COVERAGE)
+        set(COVERAGE_FLAGS "-fprofile-arcs -ftest-coverage" CACHE STRING
+            "Flags to the coverage program to perform coverage inspection")
+        mark_as_advanced(COVERAGE_FLAGS)
+
+        macro(set_coverage_flags target)
+            set_target_properties(${target}
+                PROPERTIES
+                COMPILE_FLAGS ${COVERAGE_FLAGS}
+                LINK_FLAGS ${COVERAGE_FLAGS}
+            )
+        endmacro()
+    endif()
+endif()
+
+# ------------------------------------------------------------------------------
 # Build hermes_shm source libraries (must be before hshm::compress so that
 # qtable_predictor and dense_nn_predictor targets are available)
 # ------------------------------------------------------------------------------

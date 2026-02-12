@@ -476,7 +476,7 @@ TEST_CASE("CAE - File URL Parsing", "[cae][url]") {
   REQUIRE(ctx.src.find("file::") == 0);
 
   ctx.src = "file:///absolute/path/file.dat";
-  REQUIRE(ctx.src.find("file::") == 0);
+  REQUIRE(ctx.src.find("file:") == 0);
 
   INFO("File URL parsing works correctly");
 }
