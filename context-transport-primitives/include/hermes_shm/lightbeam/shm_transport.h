@@ -86,15 +86,20 @@ class ShmClient : public Client {
     Transfer(reinterpret_cast<const char*>(&meta_len), sizeof(meta_len), ctx);
     Transfer(meta_buf.data(), meta_buf.size(), ctx);
 
-    // 3. Send each bulk with BULK_XFER flag
+    // 3. Send each bulk with BULK_XFER or BULK_EXPOSE flag
     for (size_t i = 0; i < meta.send.size(); ++i) {
-      if (!meta.send[i].flags.Any(BULK_XFER)) continue;
-      // Always send ShmPtr first — receiver inspects alloc_id_ to decide
-      Transfer(reinterpret_cast<const char*>(&meta.send[i].data.shm_),
-               sizeof(meta.send[i].data.shm_), ctx);
-      if (meta.send[i].data.shm_.alloc_id_.IsNull()) {
-        // Private memory — also send full data bytes
-        Transfer(meta.send[i].data.ptr_, meta.send[i].size, ctx);
+      if (meta.send[i].flags.Any(BULK_EXPOSE)) {
+        // BULK_EXPOSE: Send only the ShmPtr (no data transfer)
+        Transfer(reinterpret_cast<const char*>(&meta.send[i].data.shm_),
+                 sizeof(meta.send[i].data.shm_), ctx);
+      } else if (meta.send[i].flags.Any(BULK_XFER)) {
+        // BULK_XFER: Send ShmPtr first, then data if private memory
+        Transfer(reinterpret_cast<const char*>(&meta.send[i].data.shm_),
+                 sizeof(meta.send[i].data.shm_), ctx);
+        if (meta.send[i].data.shm_.alloc_id_.IsNull()) {
+          // Private memory — also send full data bytes
+          Transfer(meta.send[i].data.ptr_, meta.send[i].size, ctx);
+        }
       }
     }
     return 0;
@@ -161,31 +166,37 @@ class ShmServer : public Server {
   template <typename MetaT>
   int RecvBulks(MetaT& meta, const LbmContext& ctx = LbmContext()) {
     for (size_t i = 0; i < meta.recv.size(); ++i) {
-      if (!meta.recv[i].flags.Any(BULK_XFER)) continue;
-
-      // Always read ShmPtr first
-      hipc::ShmPtr<char> shm;
-      Transfer(reinterpret_cast<char*>(&shm), sizeof(shm), ctx);
-
-      if (!shm.alloc_id_.IsNull()) {
-        // Shared memory — ShmPtr passthrough, no data transfer
+      if (meta.recv[i].flags.Any(BULK_EXPOSE)) {
+        // BULK_EXPOSE: Read only the ShmPtr (no data transfer)
+        hipc::ShmPtr<char> shm;
+        Transfer(reinterpret_cast<char*>(&shm), sizeof(shm), ctx);
         meta.recv[i].data.shm_ = shm;
         meta.recv[i].data.ptr_ = nullptr;
-      } else {
-        // Private memory — read full data bytes
-        char* buf = meta.recv[i].data.ptr_;
-        bool allocated = false;
-        if (!buf) {
-          buf = static_cast<char*>(std::malloc(meta.recv[i].size));
-          allocated = true;
-        }
+      } else if (meta.recv[i].flags.Any(BULK_XFER)) {
+        // BULK_XFER: Read ShmPtr first, then data if private memory
+        hipc::ShmPtr<char> shm;
+        Transfer(reinterpret_cast<char*>(&shm), sizeof(shm), ctx);
 
-        Transfer(buf, meta.recv[i].size, ctx);
+        if (!shm.alloc_id_.IsNull()) {
+          // Shared memory — ShmPtr passthrough, no data transfer
+          meta.recv[i].data.shm_ = shm;
+          meta.recv[i].data.ptr_ = nullptr;
+        } else {
+          // Private memory — read full data bytes
+          char* buf = meta.recv[i].data.ptr_;
+          bool allocated = false;
+          if (!buf) {
+            buf = static_cast<char*>(std::malloc(meta.recv[i].size));
+            allocated = true;
+          }
 
-        if (allocated) {
-          meta.recv[i].data.ptr_ = buf;
-          meta.recv[i].data.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
-          meta.recv[i].data.shm_.off_ = reinterpret_cast<size_t>(buf);
+          Transfer(buf, meta.recv[i].size, ctx);
+
+          if (allocated) {
+            meta.recv[i].data.ptr_ = buf;
+            meta.recv[i].data.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
+            meta.recv[i].data.shm_.off_ = reinterpret_cast<size_t>(buf);
+          }
         }
       }
     }

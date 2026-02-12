@@ -703,9 +703,12 @@ void Runtime::RecvIn(hipc::FullPtr<RecvTask> task,
       continue;
     }
 
-    // Mark task as remote, set as data owner, unset periodic and TASK_FORCE_NET
+    // Mark task as remote, set as data owner, clear sender-side flags
+    // TASK_RUN_CTX_EXISTS and TASK_STARTED must be cleared so the receiving
+    // worker allocates a fresh RunContext via BeginTask
     task_ptr->SetFlags(TASK_REMOTE | TASK_DATA_OWNER);
-    task_ptr->ClearFlags(TASK_PERIODIC | TASK_FORCE_NET | TASK_ROUTED);
+    task_ptr->ClearFlags(TASK_PERIODIC | TASK_FORCE_NET | TASK_ROUTED |
+                         TASK_RUN_CTX_EXISTS | TASK_STARTED);
 
     // Add task to recv_map for later lookup (use net_key from task_id)
     // Note: No lock needed - single net worker processes all Send/Recv tasks

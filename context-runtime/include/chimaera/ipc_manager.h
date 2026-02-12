@@ -771,7 +771,6 @@ class IpcManager {
         }
       } else {
         // SHM PATH: Use lightbeam transport
-
         // Build SHM context for transfer
         hshm::lbm::LbmContext ctx;
         ctx.copy_space = future_shm->copy_space;

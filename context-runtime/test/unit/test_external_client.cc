@@ -156,9 +156,14 @@ TEST_CASE("ExternalClient - Basic Connection", "[external_client][ipc]") {
   u64 node_id = ipc->GetNodeId();
   (void)node_id;
 
-  // Test that we can get the task queue
+  // In TCP mode (default), the client does not attach to shared memory
+  // so GetTaskQueue() returns nullptr and that is correct behavior
   auto *queue = ipc->GetTaskQueue();
-  REQUIRE(queue != nullptr);
+  if (ipc->GetIpcMode() == IpcMode::kShm) {
+    REQUIRE(queue != nullptr);
+  } else {
+    REQUIRE(queue == nullptr);
+  }
 
   // Cleanup
   CleanupServer(server_pid);
@@ -254,9 +259,12 @@ TEST_CASE("ExternalClient - Client Operations", "[external_client][ipc]") {
   auto *ipc = CHI_IPC;
   REQUIRE(ipc != nullptr);
 
-  // Test GetNumSchedQueues
+  // In TCP mode (default), shared_header_ is not available so
+  // GetNumSchedQueues returns 0. In SHM mode it would be > 0.
   u32 num_queues = ipc->GetNumSchedQueues();
-  REQUIRE(num_queues > 0);
+  if (ipc->GetIpcMode() == IpcMode::kShm) {
+    REQUIRE(num_queues > 0);
+  }
 
   // Note: GetNumHosts, GetHost, and GetAllHosts are server-only operations.
   // The hostfile_map_ is populated during ServerInit and is NOT shared via
