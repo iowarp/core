@@ -15,12 +15,14 @@
 #   --run-distributed     Run distributed tests (requires Docker)
 #   --all                 Build and run all tests (equivalent to --build --run-ctest --run-distributed)
 #   --clean               Clean build directory before starting
+#   --site SITE_NAME      Submit results to CDash with the given site name
 #   --help                Show this help message
 #
 # Examples:
 #   ./CI/calculate_coverage.sh              # Just generate reports from existing data
 #   ./CI/calculate_coverage.sh --all        # Full build + test + report generation
 #   ./CI/calculate_coverage.sh --run-ctest  # Run CTest and generate reports
+#   ./CI/calculate_coverage.sh --all --site ubu-24.amd64  # Full run + CDash submit
 #
 ################################################################################
 
@@ -36,6 +38,7 @@ DO_BUILD=false
 DO_CTEST=false
 DO_DISTRIBUTED=false
 CLEAN_BUILD=false
+SITE_NAME=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -103,6 +106,10 @@ while [[ $# -gt 0 ]]; do
             CLEAN_BUILD=true
             shift
             ;;
+        --site)
+            SITE_NAME="$2"
+            shift 2
+            ;;
         --help|-h)
             show_help
             ;;
@@ -140,7 +147,11 @@ if [ "$DO_BUILD" = true ]; then
     print_header "Step 1: Building with Coverage Instrumentation"
 
     print_info "Configuring build with coverage enabled..."
-    cmake --preset=debug -DWRP_CORE_ENABLE_COVERAGE=ON
+    cmake --preset=debug \
+        -DWRP_CORE_ENABLE_COVERAGE=ON \
+        -DWRP_CTE_ENABLE_ADIOS2_ADAPTER=OFF \
+        -DWRP_CTE_ENABLE_COMPRESS=OFF \
+        -DWRP_CORE_ENABLE_GRAY_SCOTT=OFF
 
     print_info "Building project..."
     NUM_CORES=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
@@ -165,15 +176,39 @@ if [ "$DO_CTEST" = true ]; then
 
     cd "${BUILD_DIR}"
 
-    print_info "Running all CTest tests..."
-    ctest --output-on-failure
-
-    CTEST_EXIT_CODE=$?
-    if [ $CTEST_EXIT_CODE -eq 0 ]; then
-        print_success "All CTest tests passed"
+    if [ -n "${SITE_NAME}" ]; then
+        print_info "Running tests and submitting to CDash (site: ${SITE_NAME})..."
+        # Generate CTest dashboard script for CDash submission
+        cat > "${BUILD_DIR}/cdash_coverage.cmake" << EOFCMAKE
+set(CTEST_SITE "${SITE_NAME}")
+set(CTEST_BUILD_NAME "coverage")
+set(CTEST_SOURCE_DIRECTORY "${REPO_ROOT}")
+set(CTEST_BINARY_DIRECTORY "${BUILD_DIR}")
+set(CTEST_DROP_METHOD "https")
+set(CTEST_DROP_SITE "my.cdash.org")
+set(CTEST_DROP_LOCATION "/submit.php?project=HERMES")
+set(CTEST_DROP_SITE_CDASH TRUE)
+set(CTEST_COVERAGE_COMMAND "gcov")
+ctest_start("Experimental")
+ctest_test(RETURN_VALUE test_result)
+ctest_coverage()
+ctest_submit()
+if(NOT test_result EQUAL 0)
+  message("Some tests failed (exit code: \${test_result})")
+endif()
+EOFCMAKE
+        ctest -S "${BUILD_DIR}/cdash_coverage.cmake" -VV || true
+        print_success "CDash submission complete"
     else
-        print_error "Some CTest tests failed (exit code: $CTEST_EXIT_CODE)"
-        print_warning "Continuing with coverage generation..."
+        print_info "Running all CTest tests..."
+        CTEST_EXIT_CODE=0
+        ctest --output-on-failure || CTEST_EXIT_CODE=$?
+        if [ $CTEST_EXIT_CODE -eq 0 ]; then
+            print_success "All CTest tests passed"
+        else
+            print_error "Some CTest tests failed (exit code: $CTEST_EXIT_CODE)"
+            print_warning "Continuing with coverage generation..."
+        fi
     fi
 
     cd "${REPO_ROOT}"
@@ -284,13 +319,7 @@ print_header "Step 4: Collecting and Merging Coverage Data"
 
 cd "${BUILD_DIR}"
 
-print_info "Capturing final coverage data with lcov (using RC file for comprehensive error handling)..."
-# Create temporary lcovrc to handle all known coverage data issues
-cat > lcovrc_temp << 'EOFRC'
-geninfo_unexecuted_blocks = 1
-geninfo_compat_libtool = 1
-lcov_branch_coverage = 0
-EOFRC
+print_info "Capturing final coverage data with lcov..."
 
 # Use geninfo directly with comprehensive error ignoring for all components at once
 # This approach gives more accurate results than capturing from root directory
@@ -301,8 +330,6 @@ lcov --capture \
      --rc geninfo_unexecuted_blocks=1 \
      --ignore-errors graph,mismatch,negative,inconsistent,unused,empty,gcov,source \
      2>&1 | grep -E "Found [0-9]+ data files|Finished" || true
-
-rm -f lcovrc_temp
 
 if [ ! -f coverage_combined.info ] || [ ! -s coverage_combined.info ]; then
     print_error "Failed to generate coverage data"

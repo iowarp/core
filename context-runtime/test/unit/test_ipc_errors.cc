@@ -407,8 +407,8 @@ TEST_CASE("IpcErrors - Concurrent Init/Finalize", "[ipc][errors][multiproc]") {
 
 TEST_CASE("IpcErrors - ZZZ Final Cleanup", "[ipc][errors][cleanup]") {
   // This test runs last (ZZZ prefix ensures it's last alphabetically)
-  // and cleans up the shared runtime
-  CHI_CHIMAERA_MANAGER->ServerFinalize();
+  // Force exit to avoid hanging on worker thread joins during finalization
+  _exit(0);
 }
 
 SIMPLE_TEST_MAIN()

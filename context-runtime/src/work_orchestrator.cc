@@ -126,11 +126,7 @@ void WorkOrchestrator::Finalize() {
     StopWorkers();
   }
 
-  // Cleanup worker threads using HSHM thread model
-  auto thread_model = HSHM_THREAD_MODEL;
-  for (auto &thread : worker_threads_) {
-    thread_model->Join(thread);
-  }
+  // StopWorkers already joined threads (with timeout), just clear the vectors
   worker_threads_.clear();
 
   // Clear worker containers

@@ -974,7 +974,7 @@ class IpcManager {
   static constexpr size_t kShmMetadataOverhead = 32ULL * 1024 * 1024;
 
   /** Multiplier for shared memory allocation to ensure space for metadata */
-  static constexpr float kShmAllocationMultiplier = 1.2f;
+  static constexpr float kShmAllocationMultiplier = 2.5f;
 };
 
 }  // namespace chi

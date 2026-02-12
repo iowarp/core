@@ -26,7 +26,7 @@ function(add_cee_api_unit_test TEST_NAME TEST_SOURCE)
 
   # Set test environment variables
   set_tests_properties(${TEST_NAME} PROPERTIES
-    ENVIRONMENT "INIT_CHIMAERA=1"
+    ENVIRONMENT "INIT_CHIMAERA=1;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
     TIMEOUT 300  # 5 minute timeout
   )
 endfunction()
@@ -82,6 +82,7 @@ set_tests_properties(
   PROPERTIES
     TIMEOUT 180
     LABELS "cee;comprehensive;coverage"
+    ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
 #------------------------------------------------------------------------------
