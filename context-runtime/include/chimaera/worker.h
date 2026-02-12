@@ -312,11 +312,10 @@ class Worker {
    * scheduling
    * @param future Future containing the task to route
    * @param lane Pointer to the task lane for execution context
-   * @param container Output parameter for the container to use for task
-   * execution
+   * @param container The container to use for task execution
    * @return true if task was successfully routed, false otherwise
    */
-  bool RouteTask(Future<Task> &future, TaskLane *lane, Container *&container);
+  bool RouteTask(Future<Task> &future, TaskLane *lane, Container *container);
 
   /**
    * Resolve a pool query into concrete physical addresses
@@ -401,11 +400,10 @@ class Worker {
    * Route task locally using container query and Monitor with kLocalSchedule
    * @param future Future containing the task to route locally
    * @param lane Pointer to the task lane for execution context
-   * @param container Output parameter for the container to use for task
-   * execution
+   * @param container The container to use for task execution
    * @return true if local routing successful, false otherwise
    */
-  bool RouteLocal(Future<Task> &future, TaskLane *lane, Container *&container);
+  bool RouteLocal(Future<Task> &future, TaskLane *lane, Container *container);
 
   /**
    * Route task globally using admin client's ClientSendTaskIn method
@@ -425,12 +423,6 @@ class Worker {
    */
   void EndTaskShmTransfer(const FullPtr<Task> &task_ptr,
                              RunContext *run_ctx, Container *container);
-
-  /**
-   * Signal parent task that subtask completed
-   * @param parent_task Parent task's RunContext to signal
-   */
-  void EndTaskSignalParent(RunContext *parent_task);
 
   /**
    * End task execution and perform cleanup
@@ -471,14 +463,6 @@ class Worker {
    * @return true if a task was processed, false if lane was empty
    */
   bool ProcessNewTask(TaskLane *lane);
-
-  /**
-   * Ensure IPC allocator is registered for a Future
-   * Handles lazy registration of client memory allocators
-   * @param future_shm_full FullPtr to FutureShm to check allocator for
-   * @return true if allocator is registered or registration succeeded, false on failure
-   */
-  bool EnsureIpcRegistered(const hipc::FullPtr<FutureShm> &future_shm_full);
 
   /**
    * Get task pointer from Future, copying from client if needed
@@ -567,10 +551,11 @@ class Worker {
   static constexpr u32 BLOCKED_QUEUE_SIZE = 1024;
   std::queue<RunContext *> blocked_queues_[NUM_BLOCKED_QUEUES];
 
-  // Event queue for waking up tasks when their subtasks complete
+  // Event queue for completing subtask futures on the parent worker's thread
+  // Stores Future<Task> objects to set FUTURE_COMPLETE, avoiding stale RunContext* pointers
   // Allocated from malloc allocator (temporary runtime data, not IPC)
   static constexpr u32 EVENT_QUEUE_DEPTH = 1024;
-  hshm::ipc::mpsc_ring_buffer<RunContext *, hshm::ipc::MallocAllocator> *event_queue_;
+  hshm::ipc::mpsc_ring_buffer<Future<Task, CHI_MAIN_ALLOC_T>, hshm::ipc::MallocAllocator> *event_queue_;
 
   // Periodic queue system for time-based periodic tasks:
   // - Queue[0]: Tasks with yield_time_us_ <= 50us (checked every 16 iterations)

@@ -217,6 +217,13 @@ public:
   chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task, chi::RunContext &rctx);
 
   /**
+   * Handle RegisterMemory - Register client shared memory with runtime
+   * Called by SHM-mode clients after IncreaseMemory() to tell the runtime
+   * to attach to the new shared memory segment
+   */
+  chi::TaskResume RegisterMemory(hipc::FullPtr<RegisterMemoryTask> task, chi::RunContext &rctx);
+
+  /**
    * Handle SubmitBatch - Submit a batch of tasks in a single RPC
    * Deserializes tasks from the batch and executes them in parallel
    * up to 32 tasks at a time, then co_awaits their completion

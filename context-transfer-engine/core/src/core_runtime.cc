@@ -39,10 +39,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <functional>
+
+#include "hermes_shm/util/timer.h"
 #include <limits>
 #include <memory>
 #include <regex>
@@ -673,6 +676,12 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
   }
 
   try {
+    // Timing instrumentation
+    static thread_local size_t put_count = 0;
+    static thread_local double t_check_ms = 0, t_alloc_ms = 0;
+    static thread_local double t_write_ms = 0, t_meta_ms = 0;
+    hshm::Timer timer;
+
     // Extract input parameters
     TagId tag_id = task->tag_id_;
     std::string blob_name = task->blob_name_.str();
@@ -703,6 +712,7 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
     }
 
     // Step 1: Check if blob exists
+    timer.Resume();
     BlobInfo *blob_info_ptr = CheckBlobExists(blob_name, tag_id);
     bool blob_found = (blob_info_ptr != nullptr);
 
@@ -776,9 +786,17 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
 
     // Step 3: Allocate additional space if needed for blob extension
     // (no lock held during expensive bdev allocation)
+    timer.Pause();
+    t_check_ms += timer.GetMsec();
+    timer.Reset();
+
     chi::u32 allocation_result = 0;
+    timer.Resume();
     co_await AllocateNewData(*blob_info_ptr, offset, size, blob_score,
                              allocation_result);
+    timer.Pause();
+    t_alloc_ms += timer.GetMsec();
+    timer.Reset();
 
     if (allocation_result != 0) {
       HLOG(kError, "Allocation failure: {}", allocation_result);
@@ -790,8 +808,12 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
     // Step 4: Write data to blob blocks (compressed or uncompressed)
     // (no lock held during expensive I/O operations)
     chi::u32 write_result = 0;
+    timer.Resume();
     co_await ModifyExistingData(blob_info_ptr->blocks_, blob_data, size, offset,
                                 write_result);
+    timer.Pause();
+    t_write_ms += timer.GetMsec();
+    timer.Reset();
 
     if (write_result != 0) {
       task->return_code_ =
@@ -800,6 +822,7 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
     }
 
     // Store compression metadata in BlobInfo for future decompression
+    timer.Resume();
     Context &context = task->context_;
     blob_info_ptr->compress_lib_ = context.compress_lib_;
     blob_info_ptr->compress_preset_ = context.compress_preset_;
@@ -840,12 +863,25 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
         }
       }
     }  // Release read lock
+    timer.Pause();
+    t_meta_ms += timer.GetMsec();
+    timer.Reset();
 
     // Log telemetry and success messages
     LogTelemetry(CteOp::kPutBlob, offset, size, tag_id, now,
                  blob_info_ptr->last_read_);
 
     task->return_code_ = 0;
+
+    // Print timing every 100 ops
+    ++put_count;
+    if (put_count % 100 == 0) {
+      fprintf(stderr,
+              "[PutBlob] ops=%zu check=%.3f ms alloc=%.3f ms "
+              "write=%.3f ms meta=%.3f ms\n",
+              put_count, t_check_ms, t_alloc_ms, t_write_ms, t_meta_ms);
+      t_check_ms = t_alloc_ms = t_write_ms = t_meta_ms = 0;
+    }
 
   } catch (const std::exception &e) {
     HLOG(kError, "PutBlob failed with exception: {}", e.what());
@@ -1696,7 +1732,7 @@ chi::TaskResume Runtime::ModifyExistingData(
       auto write_task = cte_clientcopy.AsyncWrite(block.target_query_, blocks,
                                                   data_ptr, write_size);
 
-      write_tasks.push_back(write_task);
+      write_tasks.push_back(std::move(write_task));
       expected_write_sizes.push_back(write_size);
 
       // Step 6: Subtract the amount of data we have written from the
@@ -1713,9 +1749,10 @@ chi::TaskResume Runtime::ModifyExistingData(
        "ModifyExistingData: Waiting for {} async write tasks to complete",
        write_tasks.size());
   for (size_t task_idx = 0; task_idx < write_tasks.size(); ++task_idx) {
-    auto task = write_tasks[task_idx];
+    auto &task = write_tasks[task_idx];
     size_t expected_size = expected_write_sizes[task_idx];
 
+    bool was_ready = task.IsComplete();
     co_await task;
 
     HLOG(kDebug,
@@ -1727,8 +1764,9 @@ chi::TaskResume Runtime::ModifyExistingData(
     if (task->bytes_written_ != expected_size) {
       HLOG(kError,
            "ModifyExistingData: WRITE FAILED - task[{}] wrote {} bytes, "
-           "expected {}",
-           task_idx, task->bytes_written_, expected_size);
+           "expected {}, was_ready={}, is_complete_now={}, task_ptr={}",
+           task_idx, task->bytes_written_, expected_size,
+           was_ready, task.IsComplete(), (void*)task.get());
       error_code = 1;
       co_return;
     }
@@ -1808,7 +1846,7 @@ chi::TaskResume Runtime::ReadData(const std::vector<BlobBlock> &blocks,
       auto read_task = cte_clientcopy.AsyncRead(block.target_query_, blocks,
                                                 data_ptr, read_size);
 
-      read_tasks.push_back(read_task);
+      read_tasks.push_back(std::move(read_task));
       expected_read_sizes.push_back(read_size);
 
       // Step 6: Subtract the amount of data we have read from the
@@ -1824,7 +1862,7 @@ chi::TaskResume Runtime::ReadData(const std::vector<BlobBlock> &blocks,
   HLOG(kDebug, "ReadData: Waiting for {} async read tasks to complete",
        read_tasks.size());
   for (size_t task_idx = 0; task_idx < read_tasks.size(); ++task_idx) {
-    auto task = read_tasks[task_idx];
+    auto &task = read_tasks[task_idx];
     size_t expected_size = expected_read_sizes[task_idx];
 
     co_await task;

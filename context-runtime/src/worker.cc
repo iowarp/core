@@ -106,10 +106,10 @@ bool Worker::Init() {
   // initialization
 
   // Allocate and initialize event queue from malloc allocator (temporary
-  // runtime data)
+  // runtime data). Stores Future<Task> objects to avoid stale RunContext* pointers.
   event_queue_ = HSHM_MALLOC
                      ->template NewObj<hshm::ipc::mpsc_ring_buffer<
-                         RunContext *, hshm::ipc::MallocAllocator>>(
+                         Future<Task, CHI_MAIN_ALLOC_T>, hshm::ipc::MallocAllocator>>(
                          HSHM_MALLOC, EVENT_QUEUE_DEPTH)
                      .ptr_;
 
@@ -413,28 +413,6 @@ const std::vector<TaskLane *> &Worker::GetGpuLanes() const {
 }
 #endif
 
-bool Worker::EnsureIpcRegistered(
-    const hipc::FullPtr<FutureShm> &future_shm_full) {
-  auto *ipc_manager = CHI_IPC;
-  hipc::AllocatorId alloc_id = future_shm_full.shm_.alloc_id_;
-
-  // Only register if not null allocator and not already registered
-  if (alloc_id != hipc::AllocatorId::GetNull()) {
-    auto test_ptr = ipc_manager->ToFullPtr(future_shm_full.shm_);
-    if (test_ptr.IsNull()) {
-      // Allocator not registered - register it now
-      bool registered = ipc_manager->RegisterMemory(alloc_id);
-      if (!registered) {
-        // Registration failed
-        HLOG(kError,
-             "Worker {}: Failed to register memory for alloc_id ({}.{})",
-             worker_id_, alloc_id.major_, alloc_id.minor_);
-        return false;
-      }
-    }
-  }
-  return true;
-}
 
 hipc::FullPtr<Task> Worker::GetOrCopyTaskFromFuture(Future<Task> &future,
                                                     Container *container,
@@ -512,41 +490,11 @@ bool Worker::ProcessNewTask(TaskLane *lane) {
        worker_id_);
   SetCurrentRunContext(nullptr);
 
-  // IMPORTANT: Register allocator BEFORE calling GetFutureShm()
-  // GetFutureShm() calls ToFullPtr() which requires the allocator to be
-  // registered to convert the ShmPtr to FullPtr
-  auto *ipc_manager = CHI_IPC;
-  auto future_shm_ptr = future.GetFutureShmPtr();
-  if (!future_shm_ptr.IsNull()) {
-    hipc::AllocatorId alloc_id = future_shm_ptr.alloc_id_;
-    if (alloc_id != hipc::AllocatorId::GetNull()) {
-      // Try to convert - if it fails, register the memory first
-      auto test_ptr = ipc_manager->ToFullPtr(future_shm_ptr);
-      if (test_ptr.IsNull()) {
-        bool registered = ipc_manager->RegisterMemory(alloc_id);
-        if (!registered) {
-          HLOG(kError,
-               "Worker {}: Failed to register memory for alloc_id ({}.{})",
-               worker_id_, alloc_id.major_, alloc_id.minor_);
-          return true;  // Task was popped, count it
-        }
-      }
-    }
-  }
-
-  // Now safe to get FutureShm - allocator is registered
+  // Get FutureShm (allocator is pre-registered by Admin::RegisterMemory)
   auto future_shm = future.GetFutureShm();
   if (future_shm.IsNull()) {
     HLOG(kError, "Worker {}: Failed to get FutureShm (null pointer)",
          worker_id_);
-    return true;
-  }
-
-  // Ensure IPC allocator is registered for this Future (double-check)
-  if (!EnsureIpcRegistered(future_shm)) {
-    // Registration failed - mark task as error and complete so client
-    // doesn't hang
-    future_shm->flags_.SetBits(1 | FutureShm::FUTURE_COMPLETE);
     return true;
   }
 
@@ -586,9 +534,9 @@ bool Worker::ProcessNewTask(TaskLane *lane) {
        "if routed",
        worker_id_, (void *)task_full_ptr.ptr_);
 
-  // Allocate stack and RunContext before routing
-  if (!task_full_ptr->IsRouted()) {
-    HLOG(kDebug, "Worker {}: Task not routed, calling BeginTask",
+  // Allocate RunContext before routing (skip if already created)
+  if (!task_full_ptr->task_flags_.Any(TASK_RUN_CTX_EXISTS)) {
+    HLOG(kDebug, "Worker {}: RunContext not yet created, calling BeginTask",
          worker_id_);
     BeginTask(future, container, lane);
   }
@@ -782,7 +730,7 @@ void Worker::ClearCurrentWorker() {
 }
 
 bool Worker::RouteTask(Future<Task> &future, TaskLane *lane,
-                       Container *&container) {
+                       Container *container) {
   // Get task pointer from future
   FullPtr<Task> task_ptr = future.GetTaskPtr();
 
@@ -793,8 +741,6 @@ bool Worker::RouteTask(Future<Task> &future, TaskLane *lane,
 
   // Check if task has already been routed - if so, return true immediately
   if (task_ptr->IsRouted()) {
-    auto *pool_manager = CHI_POOL_MANAGER;
-    container = pool_manager->GetContainer(task_ptr->pool_id_);
     return (container != nullptr);
   }
 
@@ -886,39 +832,16 @@ bool Worker::IsTaskLocal(const FullPtr<Task> &task_ptr,
 }
 
 bool Worker::RouteLocal(Future<Task> &future, TaskLane *lane,
-                        Container *&container) {
+                        Container *container) {
   // Get task pointer from future
   FullPtr<Task> task_ptr = future.GetTaskPtr();
 
-  // Use scheduler to determine target worker for this task
-  u32 target_worker_id = worker_id_;  // Default to current worker
-  if (scheduler_ != nullptr) {
-    target_worker_id = scheduler_->RuntimeMapTask(this, future);
-  }
+  // Mark as routed so the task is not re-routed on subsequent passes.
+  // Tasks are already placed on the correct worker's lane by
+  // ClientMapTask/Send, so we always execute locally here.
+  task_ptr->SetFlags(TASK_ROUTED);
 
-  // If scheduler routed task to a different worker, forward it
-  if (target_worker_id != worker_id_) {
-    auto *work_orchestrator = CHI_WORK_ORCHESTRATOR;
-    Worker *target_worker = work_orchestrator->GetWorker(target_worker_id);
-
-    if (target_worker && target_worker->GetLane()) {
-      // Get the target worker's assigned lane and push the task
-      TaskLane *target_lane = target_worker->GetLane();
-      target_lane->Push(future);
-      return false;  // Task routed to another worker, don't execute here
-    } else {
-      // Fallback: execute locally if target worker not available
-      HLOG(kWarning,
-           "Worker {}: Scheduler routed to worker {} but worker unavailable, "
-           "executing locally",
-           worker_id_, target_worker_id);
-    }
-  }
-
-  // Execute task locally
-  // Get the container for execution
-  auto *pool_manager = CHI_POOL_MANAGER;
-  container = pool_manager->GetContainer(task_ptr->pool_id_);
+  // Execute task locally (container is provided by caller)
   if (!container) {
     HLOG(kError, "Worker {}: RouteLocal - container not found for pool_id={}",
          worker_id_, task_ptr->pool_id_);
@@ -930,10 +853,6 @@ bool Worker::RouteLocal(Future<Task> &future, TaskLane *lane,
 
   auto *ipc_manager = CHI_IPC;
   u32 node_id = ipc_manager->GetNodeId();
-
-  // Task is local and should be executed directly
-  // Set TASK_ROUTED flag to indicate this task has been routed
-  task_ptr->SetFlags(TASK_ROUTED);
 
   // Routing successful - caller should execute the task locally
   return true;
@@ -1231,6 +1150,9 @@ void Worker::BeginTask(Future<Task> &future, Container *container,
     run_ctx->did_work_ = false;
   }
 
+  // Mark that RunContext now exists for this task
+  task_ptr->SetFlags(TASK_RUN_CTX_EXISTS);
+
   // Set current run context
   SetCurrentRunContext(run_ctx);
 #endif
@@ -1421,29 +1343,6 @@ void Worker::EndTaskShmTransfer(const FullPtr<Task> &task_ptr,
   container->DelTask(task_ptr->method_, task_ptr);
 }
 
-void Worker::EndTaskSignalParent(RunContext *parent_task) {
-  // Wake up parent task if waiting for this subtask
-  if (parent_task == nullptr || parent_task->event_queue_ == nullptr ||
-      !parent_task->coro_handle_ || parent_task->coro_handle_.done()) {
-    return;
-  }
-
-  // Use atomic compare_exchange to ensure only one subtask notifies the parent
-  // (prevents duplicate event queue additions causing SIGILL)
-  bool expected = false;
-  if (parent_task->is_notified_.compare_exchange_strong(expected, true)) {
-    auto *parent_event_queue = reinterpret_cast<
-        hipc::mpsc_ring_buffer<RunContext *, CHI_MAIN_ALLOC_T> *>(
-        parent_task->event_queue_);
-    parent_event_queue->Emplace(parent_task);
-
-    // Awaken parent worker in case it's sleeping
-    if (parent_task->lane_ != nullptr) {
-      CHI_IPC->AwakenWorker(parent_task->lane_);
-    }
-  }
-}
-
 void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
                      bool can_resched) {
   // Check container once at the beginning
@@ -1501,13 +1400,25 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
         EndTaskShmTransfer(task_ptr, run_ctx, container);
         break;
     }
+  } else if (parent_task && parent_task->event_queue_) {
+    // Runtime subtask with parent: enqueue Future to parent worker's event queue.
+    // FUTURE_COMPLETE is NOT set here — it will be set by ProcessEventQueue on the
+    // parent's worker thread. This prevents the race where the parent sees
+    // FUTURE_COMPLETE early, completes, frees memory, and a stale event resumes
+    // a different task that reused the same address.
+    auto *parent_event_queue = reinterpret_cast<
+        hipc::mpsc_ring_buffer<Future<Task, CHI_MAIN_ALLOC_T>,
+                               hshm::ipc::MallocAllocator> *>(
+        parent_task->event_queue_);
+    parent_event_queue->Emplace(run_ctx->future_);
+    if (parent_task->lane_) {
+      CHI_IPC->AwakenWorker(parent_task->lane_);
+    }
   } else {
-    // Runtime task - set FUTURE_COMPLETE flag directly
+    // Runtime task without parent (top-level client task) - set FUTURE_COMPLETE
+    // directly so the client's Wait() can see it
     future_shm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
   }
-
-  // Signal parent task
-  EndTaskSignalParent(parent_task);
 }
 
 void Worker::RerouteDynamicTask(const FullPtr<Task> &task_ptr,
@@ -1519,7 +1430,7 @@ void Worker::RerouteDynamicTask(const FullPtr<Task> &task_ptr,
   Container *container = run_ctx->container_;
   TaskLane *lane = run_ctx->lane_;
 
-  // Reset the TASK_STARTED flag so the task can be executed again
+  // Reset flags so the task can be re-routed and executed again
   task_ptr->ClearFlags(TASK_STARTED | TASK_ROUTED);
 
   // Re-route the task using the updated pool_query
@@ -1648,27 +1559,27 @@ void Worker::ProcessPeriodicQueue(std::queue<RunContext *> &queue,
 }
 
 void Worker::ProcessEventQueue() {
-  // Process all tasks in the event queue
-  RunContext *run_ctx;
-  while (event_queue_->Pop(run_ctx)) {
-    HLOG(kDebug, "ProcessEventQueue: Popped run_ctx={}", (void *)run_ctx);
+  // Process all subtask futures in the event queue.
+  // Each entry is a Future<Task> from a completed subtask. We set
+  // FUTURE_COMPLETE on it here (on the parent worker's thread), then resume
+  // the parent coroutine. This avoids stale RunContext* pointers since
+  // FUTURE_COMPLETE is never set before the event is consumed.
+  Future<Task, CHI_MAIN_ALLOC_T> future;
+  while (event_queue_->Pop(future)) {
+    // Mark the subtask's future as complete
+    future.Complete();
+
+    // Get the parent RunContext that is waiting for this subtask.
+    // Safe to dereference because FUTURE_COMPLETE was not set until just now,
+    // so the parent coroutine could not have seen completion, could not have
+    // finished, and its RunContext has not been freed.
+    RunContext *run_ctx = future.GetParentTask();
     if (!run_ctx || run_ctx->task_.IsNull()) {
-      HLOG(kDebug, "ProcessEventQueue: Skipping null run_ctx or task");
       continue;
     }
 
     // Skip if coroutine handle is null or already completed
-    // This can legitimately happen when:
-    // 1. Multiple parallel subtasks complete and each posts an event to wake
-    // parent
-    //    Only the first event is needed; subsequent events are orphans
-    // 2. Parent already completed and was destroyed before events were
-    // processed
-    // 3. Coroutine completed synchronously (no suspension point hit)
     if (!run_ctx->coro_handle_ || run_ctx->coro_handle_.done()) {
-      HLOG(kDebug, "ProcessEventQueue: Skipping - coro_handle_={}, done={}",
-           (void *)run_ctx->coro_handle_.address(),
-           run_ctx->coro_handle_ ? run_ctx->coro_handle_.done() : false);
       continue;
     }
 
@@ -1827,7 +1738,7 @@ void Worker::ReschedulePeriodicTask(RunContext *run_ctx,
     return;
   }
 
-  // Unset TASK_STARTED flag when rescheduling periodic task
+  // Unset TASK_STARTED when rescheduling periodic task
   task_ptr->ClearFlags(TASK_STARTED);
 
   // Adjust polling rate based on whether task did work

@@ -93,7 +93,7 @@ struct WorkerIOContext {
 
 /**
  * Block size categories for data allocator
- * We cache the following block sizes: 256B, 1KB, 4KB, 64KB, 128KB
+ * We cache the following block sizes: 256B, 1KB, 4KB, 64KB, 128KB, 1MB
  */
 enum class BlockSizeCategory : chi::u32 {
   k256B = 0,
@@ -101,7 +101,8 @@ enum class BlockSizeCategory : chi::u32 {
   k4KB = 2,
   k64KB = 3,
   k128KB = 4,
-  kMaxCategories = 5
+  k1MB = 5,
+  kMaxCategories = 6
 };
 
 /**

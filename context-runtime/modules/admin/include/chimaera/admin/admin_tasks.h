@@ -1221,6 +1221,63 @@ struct SubmitBatchTask : public chi::Task {
 //   }
 // };
 
+/**
+ * RegisterMemoryTask - Register client shared memory with runtime
+ *
+ * When a SHM-mode client creates a new shared memory segment via
+ * IncreaseMemory(), it sends this task over TCP to tell the runtime
+ * server to attach to the new segment.
+ */
+struct RegisterMemoryTask : public chi::Task {
+  IN chi::u32 alloc_major_;  ///< AllocatorId major (pid)
+  IN chi::u32 alloc_minor_;  ///< AllocatorId minor (index)
+  OUT bool success_;
+
+  /** SHM default constructor */
+  RegisterMemoryTask()
+      : chi::Task(), alloc_major_(0), alloc_minor_(0), success_(false) {}
+
+  /** Emplace constructor */
+  explicit RegisterMemoryTask(const chi::TaskId &task_node,
+                              const chi::PoolId &pool_id,
+                              const chi::PoolQuery &pool_query,
+                              const hipc::AllocatorId &alloc_id)
+      : chi::Task(task_node, pool_id, pool_query, Method::kRegisterMemory),
+        alloc_major_(alloc_id.major_),
+        alloc_minor_(alloc_id.minor_),
+        success_(false) {
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kRegisterMemory;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+    ar(alloc_major_, alloc_minor_);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(success_);
+  }
+
+  void Copy(const hipc::FullPtr<RegisterMemoryTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    alloc_major_ = other->alloc_major_;
+    alloc_minor_ = other->alloc_minor_;
+    success_ = other->success_;
+  }
+
+  void Aggregate(const hipc::FullPtr<RegisterMemoryTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
+};
+
 }  // namespace chimaera::admin
 
 #endif  // ADMIN_TASKS_H_

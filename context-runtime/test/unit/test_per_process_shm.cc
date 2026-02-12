@@ -35,8 +35,7 @@
  * Unit tests for per-process shared memory functionality
  *
  * Tests the IpcManager's per-process shared memory allocation with:
- * - IncreaseMemory() for creating new shared memory segments
- * - AllocateBuffer() with allocations larger than 1GB to trigger IncreaseMemory
+ * - AllocateBuffer() with allocations larger than 1GB to trigger IncreaseClientShm
  * - Multiple segment creation and allocation fallback strategies
  */
 
@@ -63,34 +62,6 @@ constexpr size_t k500MB = 500ULL * 1024 * 1024;
 constexpr size_t k1GB = 1ULL * 1024 * 1024 * 1024;
 constexpr size_t k1_5GB = 1536ULL * 1024 * 1024;  // 1.5 GB
 }  // namespace
-
-TEST_CASE("Per-process shared memory IncreaseMemory",
-          "[ipc][per_process_shm][increase_memory]") {
-  REQUIRE(initialize_chimaera());
-
-  auto* ipc_manager = CHI_IPC;
-  REQUIRE(ipc_manager != nullptr);
-  REQUIRE(ipc_manager->IsInitialized());
-
-  SECTION("IncreaseMemory creates new shared memory segment") {
-    // Attempt to increase memory by 100MB
-    bool result = ipc_manager->IncreaseMemory(k100MB);
-
-    INFO("IncreaseMemory(100MB) result: " << (result ? "success" : "failure"));
-
-    // Should succeed in creating a new segment
-    REQUIRE(result);
-  }
-
-  SECTION("IncreaseMemory with 500MB allocation") {
-    // Create a larger segment
-    bool result = ipc_manager->IncreaseMemory(k500MB);
-
-    INFO("IncreaseMemory(500MB) result: " << (result ? "success" : "failure"));
-
-    REQUIRE(result);
-  }
-}
 
 TEST_CASE("Per-process shared memory AllocateBuffer medium sizes",
           "[ipc][per_process_shm][allocate][medium]") {

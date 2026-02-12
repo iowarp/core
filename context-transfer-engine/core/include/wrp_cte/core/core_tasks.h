@@ -796,6 +796,7 @@ struct PutBlobTask : public chi::Task {
     method_ = Method::kPutBlob;
     task_flags_.Clear();
     pool_query_ = pool_query;
+    stat_.io_size_ = size;
   }
 
   /**
@@ -875,6 +876,7 @@ struct GetBlobTask : public chi::Task {
     method_ = Method::kGetBlob;
     task_flags_.Clear();
     pool_query_ = pool_query;
+    stat_.io_size_ = size;
   }
 
   /**

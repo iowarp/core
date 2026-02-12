@@ -29,3 +29,4 @@ kSubmitBatch: 18         # Submit a batch of tasks in a single RPC
 kWreapDeadIpcs: 19       # Periodic task to reap dead IPC segments
 kClientRecv: 20          # Receive tasks from ZMQ clients
 kClientSend: 21          # Send task outputs to ZMQ clients
+kRegisterMemory: 22      # Register client shared memory with runtime

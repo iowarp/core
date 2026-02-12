@@ -43,71 +43,33 @@
 namespace chi {
 
 /**
- * Default scheduler implementation.
- * Uses PID+TID hash-based lane mapping and provides no rebalancing.
- * All workers process tasks; scheduler tracks worker groups for routing decisions.
+ * Default scheduler implementation with I/O-size-based routing.
+ * Routes tasks based on io_size_: small I/O and metadata go to the scheduler
+ * worker (worker 0), large I/O (>= 4KB) goes to dedicated I/O workers via
+ * round-robin, and network tasks go to the last worker.
  */
 class DefaultScheduler : public Scheduler {
  public:
-  /**
-   * Constructor
-   */
-  DefaultScheduler() : net_worker_(nullptr), gpu_worker_(nullptr) {}
-
-  /**
-   * Destructor
-   */
+  DefaultScheduler()
+      : scheduler_worker_(nullptr), net_worker_(nullptr),
+        gpu_worker_(nullptr), next_io_idx_{0} {}
   ~DefaultScheduler() override = default;
 
-  /**
-   * Initialize scheduler with all available workers.
-   * Tracks scheduler workers and network worker for routing decisions.
-   * @param work_orch Pointer to the work orchestrator
-   */
   void DivideWorkers(WorkOrchestrator *work_orch) override;
-
-  /**
-   * Map task to lane using PID+TID hash.
-   */
   u32 ClientMapTask(IpcManager *ipc_manager, const Future<Task> &task) override;
-
-  /**
-   * Return current worker (no migration).
-   * @param worker The worker that called this method
-   * @param task The task to be scheduled
-   * @return Worker ID to assign the task to
-   */
   u32 RuntimeMapTask(Worker *worker, const Future<Task> &task) override;
-
-  /**
-   * No rebalancing in default scheduler.
-   */
   void RebalanceWorker(Worker *worker) override;
-
-  /**
-   * Adjust polling interval for periodic tasks based on work done.
-   * Implements exponential backoff when tasks aren't doing work.
-   */
   void AdjustPolling(RunContext *run_ctx) override;
-
-  /**
-   * Get the designated GPU worker.
-   */
   Worker *GetGpuWorker() const override { return gpu_worker_; }
 
  private:
-  /**
-   * Map task to lane by PID+TID hash
-   * @param num_lanes Number of available lanes
-   * @return Lane ID to use
-   */
-  u32 MapByPidTid(u32 num_lanes);
+  static constexpr size_t kLargeIOThreshold = 4096;  ///< I/O size threshold
 
-  // Internal worker tracking for routing decisions
-  std::vector<Worker *> scheduler_workers_;  ///< Task processing workers
-  Worker *net_worker_;                        ///< Network worker (for routing periodic Send/Recv)
-  Worker *gpu_worker_;                        ///< GPU queue polling worker
-  std::atomic<u32> next_sched_idx_{0};        ///< Round-robin index for GPU task forwarding
+  Worker *scheduler_worker_;              ///< Worker 0: metadata + small I/O
+  std::vector<Worker *> io_workers_;      ///< Workers 1..N-2: large I/O
+  Worker *net_worker_;                    ///< Worker N-1: network
+  Worker *gpu_worker_;                    ///< GPU queue polling worker
+  std::atomic<u32> next_io_idx_{0};       ///< Round-robin index for I/O workers
 };
 
 }  // namespace chi

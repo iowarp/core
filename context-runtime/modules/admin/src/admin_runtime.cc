@@ -1292,6 +1292,21 @@ chi::TaskResume Runtime::SubmitBatch(hipc::FullPtr<SubmitBatchTask> task,
   co_return;
 }
 
+chi::TaskResume Runtime::RegisterMemory(hipc::FullPtr<RegisterMemoryTask> task,
+                                        chi::RunContext &rctx) {
+  auto *ipc_manager = CHI_IPC;
+  hipc::AllocatorId alloc_id(task->alloc_major_, task->alloc_minor_);
+
+  HLOG(kInfo, "Admin::RegisterMemory: Registering alloc_id ({}.{})",
+       alloc_id.major_, alloc_id.minor_);
+
+  task->success_ = ipc_manager->RegisterMemory(alloc_id);
+  task->SetReturnCode(task->success_ ? 0 : 1);
+
+  (void)rctx;
+  co_return;
+}
+
 chi::TaskResume Runtime::WreapDeadIpcs(hipc::FullPtr<WreapDeadIpcsTask> task,
                                        chi::RunContext &rctx) {
   auto *ipc_manager = CHI_IPC;

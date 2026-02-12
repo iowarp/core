@@ -345,6 +345,21 @@ class Client : public chi::ContainerClient {
     // Submit to runtime and return Future
     return ipc_manager->Send(task);
   }
+  /**
+   * RegisterMemory - Tell runtime to attach to a client shared memory segment
+   * @param pool_query Pool routing information
+   * @param alloc_id Allocator ID (major=pid, minor=index) to register
+   * @return Future for RegisterMemoryTask
+   */
+  chi::Future<RegisterMemoryTask> AsyncRegisterMemory(
+      const chi::PoolQuery& pool_query, const hipc::AllocatorId& alloc_id) {
+    auto* ipc_manager = CHI_IPC;
+
+    auto task = ipc_manager->NewTask<RegisterMemoryTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, alloc_id);
+
+    return ipc_manager->SendZmq(task, chi::IpcMode::kTcp);
+  }
 };
 
 }  // namespace chimaera::admin

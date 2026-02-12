@@ -41,8 +41,11 @@
 #include <sys/stat.h>
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <thread>
+
+#include "hermes_shm/util/timer.h"
 
 namespace chimaera::bdev {
 
@@ -118,13 +121,14 @@ void WorkerIOContext::Cleanup() {
   is_initialized_ = false;
 }
 
-// Block size constants (in bytes) - 4KB, 16KB, 32KB, 64KB, 128KB
+// Block size constants (in bytes) - 4KB, 16KB, 32KB, 64KB, 128KB, 1MB
 static const size_t kBlockSizes[] = {
-    4096,   // 4KB
-    16384,  // 16KB
-    32768,  // 32KB
-    65536,  // 64KB
-    131072  // 128KB
+    4096,     // 4KB
+    16384,    // 16KB
+    32768,    // 32KB
+    65536,    // 64KB
+    131072,   // 128KB
+    1048576   // 1MB
 };
 
 //===========================================================================
@@ -517,18 +521,18 @@ chi::TaskResume Runtime::AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task,
   std::vector<Block> local_blocks;
 
   // Divide the I/O request into blocks
-  // If I/O size >= 128KB, then divide into units of 128KB
+  // If I/O size >= largest cached block, divide into units of that size
   // Else, just use this I/O size
   std::vector<size_t> io_divisions;
 
-  const size_t k128KB =
-      kBlockSizes[static_cast<int>(BlockSizeCategory::k128KB)];
-  if (total_size >= k128KB) {
-    // Divide into 128KB chunks
+  const size_t kMaxBlock =
+      kBlockSizes[static_cast<int>(BlockSizeCategory::kMaxCategories) - 1];
+  if (total_size >= kMaxBlock) {
+    // Divide into max-block-sized chunks
     chi::u64 remaining = total_size;
-    while (remaining >= k128KB) {
-      io_divisions.push_back(k128KB);
-      remaining -= k128KB;
+    while (remaining >= kMaxBlock) {
+      io_divisions.push_back(kMaxBlock);
+      remaining -= kMaxBlock;
     }
     // Add remaining bytes if any
     if (remaining > 0) {
@@ -555,7 +559,7 @@ chi::TaskResume Runtime::AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task,
 
       // If no cached size fits, use largest category
       if (block_type == -1) {
-        block_type = static_cast<int>(BlockSizeCategory::k128KB);
+        block_type = static_cast<int>(BlockSizeCategory::kMaxCategories) - 1;
       }
 
       if (heap_.Allocate(alloc_size, block_type, block)) {
@@ -629,9 +633,6 @@ chi::TaskResume Runtime::FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
 
 chi::TaskResume Runtime::Write(hipc::FullPtr<WriteTask> task,
                                chi::RunContext &ctx) {
-  // Set I/O size in task stat for routing decisions
-  task->stat_.io_size_ = task->length_;
-
   switch (bdev_type_) {
     case BdevType::kFile:
       WriteToFile(task, ctx);
@@ -650,9 +651,6 @@ chi::TaskResume Runtime::Write(hipc::FullPtr<WriteTask> task,
 
 chi::TaskResume Runtime::Read(hipc::FullPtr<ReadTask> task,
                               chi::RunContext &ctx) {
-  // Set I/O size in task stat for routing decisions
-  task->stat_.io_size_ = task->length_;
-
   switch (bdev_type_) {
     case BdevType::kFile:
       ReadFromFile(task, ctx);
@@ -951,14 +949,23 @@ void Runtime::WriteToFile(hipc::FullPtr<WriteTask> task, chi::RunContext &ctx) {
 }
 
 void Runtime::WriteToRam(hipc::FullPtr<WriteTask> task) {
+  static thread_local size_t ram_write_count = 0;
+  static thread_local double t_resolve_ms = 0, t_memcpy_ms = 0;
+  hshm::Timer timer;
+
   // Convert hipc::ShmPtr<> to hipc::FullPtr<char> for data access
+  timer.Resume();
   auto *ipc_mgr = CHI_IPC;
   hipc::FullPtr<char> data_ptr = ipc_mgr->ToFullPtr(task->data_).Cast<char>();
+  timer.Pause();
+  t_resolve_ms += timer.GetMsec();
+  timer.Reset();
 
   chi::u64 total_bytes_written = 0;
   chi::u64 data_offset = 0;
 
   // Iterate over all blocks
+  timer.Resume();
   for (size_t i = 0; i < task->blocks_.size(); ++i) {
     const Block &block = task->blocks_[i];
 
@@ -988,6 +995,9 @@ void Runtime::WriteToRam(hipc::FullPtr<WriteTask> task) {
     total_bytes_written += block_write_size;
     data_offset += block_write_size;
   }
+  timer.Pause();
+  t_memcpy_ms += timer.GetMsec();
+  timer.Reset();
 
   task->return_code_ = 0;
   task->bytes_written_ = total_bytes_written;
@@ -995,6 +1005,14 @@ void Runtime::WriteToRam(hipc::FullPtr<WriteTask> task) {
   // Update performance metrics
   total_writes_.fetch_add(1);
   total_bytes_written_.fetch_add(task->bytes_written_);
+
+  ++ram_write_count;
+  if (ram_write_count % 100 == 0) {
+    fprintf(stderr,
+            "[WriteToRam] ops=%zu resolve=%.3f ms memcpy=%.3f ms\n",
+            ram_write_count, t_resolve_ms, t_memcpy_ms);
+    t_resolve_ms = t_memcpy_ms = 0;
+  }
 }
 
 // Backend-specific read operations

@@ -1150,14 +1150,6 @@ class IpcManager {
    */
   Scheduler *GetScheduler() { return scheduler_.get(); }
 
-  /**
-   * Increase memory by creating a new per-process shared memory segment
-   * Creates shared memory with name chimaera_{pid}_{shm_count_}
-   * Registers the new segment with the runtime via Admin::RegisterMemory
-   * @param size Size in bytes to allocate (32MB will be added for metadata)
-   * @return true if successful, false otherwise
-   */
-  bool IncreaseMemory(size_t size);
 
   /**
    * Register an existing shared memory segment into the IpcManager
@@ -1420,8 +1412,16 @@ class IpcManager {
  private:
 #if HSHM_IS_HOST
   /**
+   * Create a new per-process shared memory segment and register it with the runtime
+   * Client-only: sends Admin::RegisterMemory and waits for the server to attach
+   * @param size Size in bytes to allocate (32MB will be added for metadata)
+   * @return true if successful, false otherwise
+   */
+  bool IncreaseClientShm(size_t size);
+
+  /**
    * Vector of allocators owned by this process
-   * Used for allocation attempts before calling IncreaseMemory
+   * Used for allocation attempts before calling IncreaseClientShm
    */
   std::vector<hipc::MultiProcessAllocator *> alloc_vector_;
 

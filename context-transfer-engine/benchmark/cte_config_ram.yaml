@@ -1,7 +1,7 @@
 # Content Transfer Engine (CTE) Configuration File
 # RAM-only storage configuration for benchmark testing
 runtime:
-  num_threads: 1             # Worker threads for task execution
+  num_threads: 4             # Worker threads for task execution
   queue_depth: 1024          # Task queue depth per worker
 
   # Worker sleep configuration (all values in microseconds)

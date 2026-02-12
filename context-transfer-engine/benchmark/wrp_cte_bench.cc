@@ -204,14 +204,18 @@ private:
    */
   void PutWorkerThread(size_t thread_id, std::atomic<bool> &error_flag,
                        std::vector<long long> &thread_times) {
-    // Allocate data buffer
-    std::vector<char> data(io_size_);
-    std::memset(data.data(), thread_id & 0xFF, io_size_);
+    auto *cte_client = WRP_CTE_CLIENT;
 
-    // Allocate shared memory buffer for async operations
+    // Allocate shared memory buffer
     auto shm_buffer = CHI_IPC->AllocateBuffer(io_size_);
-    std::memcpy(shm_buffer.ptr_, data.data(), io_size_);
+    std::memset(shm_buffer.ptr_, thread_id & 0xFF, io_size_);
     hipc::ShmPtr<> shm_ptr = shm_buffer.shm_.template Cast<void>();
+
+    // Create one tag per thread
+    std::string tag_name = "tag_t" + std::to_string(thread_id);
+    auto tag_task = cte_client->AsyncGetOrCreateTag(tag_name);
+    tag_task.Wait();
+    wrp_cte::core::TagId tag_id = tag_task->tag_id_;
 
     auto start_time = high_resolution_clock::now();
 
@@ -224,18 +228,13 @@ private:
       std::vector<chi::Future<wrp_cte::core::PutBlobTask>> tasks;
       tasks.reserve(batch_size);
 
-      // Generate async Put operations
       for (int j = 0; j < batch_size; ++j) {
-        std::string tag_name =
-            "tag_t" + std::to_string(thread_id) + "_i" + std::to_string(i + j);
-        wrp_cte::core::Tag tag(tag_name);
-        std::string blob_name = "blob_0";
-
-        auto task = tag.AsyncPutBlob(blob_name, shm_ptr, io_size_, 0, 0.8f);
+        std::string blob_name = "blob_" + std::to_string(i + j);
+        auto task = cte_client->AsyncPutBlob(tag_id, blob_name, 0, io_size_,
+                                             shm_ptr, 0.8f);
         tasks.push_back(task);
       }
 
-      // Wait for all async operations to complete
       for (auto &task : tasks) {
         task.Wait();
       }
@@ -245,7 +244,6 @@ private:
     thread_times[thread_id] =
         duration_cast<microseconds>(end_time - start_time).count();
 
-    // Free shared memory buffer
     CHI_IPC->FreeBuffer(shm_buffer);
   }
 
@@ -273,19 +271,27 @@ private:
    */
   void GetWorkerThread(size_t thread_id, std::atomic<bool> &error_flag,
                        std::vector<long long> &thread_times) {
-    // Allocate data buffers
-    std::vector<char> put_data(io_size_);
-    std::vector<char> get_data(io_size_);
+    auto *cte_client = WRP_CTE_CLIENT;
 
-    // First populate data using Put operations
+    // Allocate shared memory buffers
+    auto put_shm = CHI_IPC->AllocateBuffer(io_size_);
+    auto get_shm = CHI_IPC->AllocateBuffer(io_size_);
+    hipc::ShmPtr<> put_ptr = put_shm.shm_.template Cast<void>();
+    hipc::ShmPtr<> get_ptr = get_shm.shm_.template Cast<void>();
+
+    // Create one tag per thread
+    std::string tag_name = "tag_t" + std::to_string(thread_id);
+    auto tag_task = cte_client->AsyncGetOrCreateTag(tag_name);
+    tag_task.Wait();
+    wrp_cte::core::TagId tag_id = tag_task->tag_id_;
+
+    // Populate data using Put operations
     for (int i = 0; i < io_count_; ++i) {
-      std::string tag_name =
-          "tag_t" + std::to_string(thread_id) + "_i" + std::to_string(i);
-      wrp_cte::core::Tag tag(tag_name);
-      std::string blob_name = "blob_0";
-
-      std::memset(put_data.data(), (thread_id + i) & 0xFF, io_size_);
-      tag.PutBlob(blob_name, put_data.data(), io_size_);
+      std::memset(put_shm.ptr_, (thread_id + i) & 0xFF, io_size_);
+      std::string blob_name = "blob_" + std::to_string(i);
+      auto task = cte_client->AsyncPutBlob(tag_id, blob_name, 0, io_size_,
+                                           put_ptr, 0.8f);
+      task.Wait();
     }
 
     auto start_time = high_resolution_clock::now();
@@ -297,20 +303,20 @@ private:
 
       int batch_size = std::min(depth_, io_count_ - i);
 
-      // For Get operations, use synchronous API in batches
       for (int j = 0; j < batch_size; ++j) {
-        std::string tag_name =
-            "tag_t" + std::to_string(thread_id) + "_i" + std::to_string(i + j);
-        wrp_cte::core::Tag tag(tag_name);
-        std::string blob_name = "blob_0";
-
-        tag.GetBlob(blob_name, get_data.data(), io_size_);
+        std::string blob_name = "blob_" + std::to_string(i + j);
+        auto task = cte_client->AsyncGetBlob(tag_id, blob_name, 0, io_size_,
+                                             0, get_ptr);
+        task.Wait();
       }
     }
 
     auto end_time = high_resolution_clock::now();
     thread_times[thread_id] =
         duration_cast<microseconds>(end_time - start_time).count();
+
+    CHI_IPC->FreeBuffer(put_shm);
+    CHI_IPC->FreeBuffer(get_shm);
   }
 
   void RunGetBenchmark() {
@@ -339,17 +345,20 @@ private:
    */
   void PutGetWorkerThread(size_t thread_id, std::atomic<bool> &error_flag,
                           std::vector<long long> &thread_times) {
-    // Allocate data buffers
-    std::vector<char> put_data(io_size_);
-    std::vector<char> get_data(io_size_);
+    auto *cte_client = WRP_CTE_CLIENT;
 
-    // Fill put data with pattern
-    std::memset(put_data.data(), thread_id & 0xFF, io_size_);
+    // Allocate shared memory buffers
+    auto put_shm = CHI_IPC->AllocateBuffer(io_size_);
+    auto get_shm = CHI_IPC->AllocateBuffer(io_size_);
+    std::memset(put_shm.ptr_, thread_id & 0xFF, io_size_);
+    hipc::ShmPtr<> put_ptr = put_shm.shm_.template Cast<void>();
+    hipc::ShmPtr<> get_ptr = get_shm.shm_.template Cast<void>();
 
-    // Allocate shared memory buffer for async Put
-    auto shm_buffer = CHI_IPC->AllocateBuffer(io_size_);
-    std::memcpy(shm_buffer.ptr_, put_data.data(), io_size_);
-    hipc::ShmPtr<> shm_ptr = shm_buffer.shm_.template Cast<void>();
+    // Create one tag per thread
+    std::string tag_name = "tag_t" + std::to_string(thread_id);
+    auto tag_task = cte_client->AsyncGetOrCreateTag(tag_name);
+    tag_task.Wait();
+    wrp_cte::core::TagId tag_id = tag_task->tag_id_;
 
     auto start_time = high_resolution_clock::now();
 
@@ -362,30 +371,22 @@ private:
       std::vector<chi::Future<wrp_cte::core::PutBlobTask>> put_tasks;
       put_tasks.reserve(batch_size);
 
-      // Generate async Put operations
       for (int j = 0; j < batch_size; ++j) {
-        std::string tag_name =
-            "tag_t" + std::to_string(thread_id) + "_i" + std::to_string(i + j);
-        wrp_cte::core::Tag tag(tag_name);
-        std::string blob_name = "blob_0";
-
-        auto task = tag.AsyncPutBlob(blob_name, shm_ptr, io_size_, 0, 0.8f);
+        std::string blob_name = "blob_" + std::to_string(i + j);
+        auto task = cte_client->AsyncPutBlob(tag_id, blob_name, 0, io_size_,
+                                             put_ptr, 0.8f);
         put_tasks.push_back(task);
       }
 
-      // Wait for Put operations
       for (auto &task : put_tasks) {
         task.Wait();
       }
 
-      // Perform Get operations synchronously
       for (int j = 0; j < batch_size; ++j) {
-        std::string tag_name =
-            "tag_t" + std::to_string(thread_id) + "_i" + std::to_string(i + j);
-        wrp_cte::core::Tag tag(tag_name);
-        std::string blob_name = "blob_0";
-
-        tag.GetBlob(blob_name, get_data.data(), io_size_);
+        std::string blob_name = "blob_" + std::to_string(i + j);
+        auto task = cte_client->AsyncGetBlob(tag_id, blob_name, 0, io_size_,
+                                             0, get_ptr);
+        task.Wait();
       }
     }
 
@@ -393,8 +394,8 @@ private:
     thread_times[thread_id] =
         duration_cast<microseconds>(end_time - start_time).count();
 
-    // Free shared memory buffer
-    CHI_IPC->FreeBuffer(shm_buffer);
+    CHI_IPC->FreeBuffer(put_shm);
+    CHI_IPC->FreeBuffer(get_shm);
   }
 
   void RunPutGetBenchmark() {

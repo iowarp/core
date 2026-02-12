@@ -58,6 +58,7 @@
 #include <iostream>
 #include <memory>
 
+#include "chimaera/admin.h"
 #include "chimaera/admin/admin_client.h"
 #include "chimaera/chimaera_manager.h"
 #include "chimaera/config_manager.h"
@@ -105,6 +106,60 @@ bool IpcManager::ClientInit() {
     return false;
   }
 
+  // Always create TCP lightbeam client/server and recv thread.
+  // Even in SHM mode, control-plane ops (e.g. RegisterMemory) use TCP.
+  {
+    auto *config = CHI_CONFIG_MANAGER;
+    u32 port = config->GetPort();
+
+    try {
+      zmq_client_ = hshm::lbm::TransportFactory::GetClient(
+          "127.0.0.1", hshm::lbm::Transport::kZeroMq, "tcp", port + 3);
+      HLOG(kInfo, "IpcManager: TCP lightbeam client connected to port {}",
+           port + 3);
+
+      zmq_response_server_ = hshm::lbm::TransportFactory::GetServer(
+          "127.0.0.1", hshm::lbm::Transport::kZeroMq, "tcp", port + 4);
+      HLOG(kInfo, "IpcManager: TCP response server bound on port {}",
+           port + 4);
+    } catch (const std::exception &e) {
+      HLOG(kError,
+           "IpcManager::ClientInit: Failed to create TCP lightbeam transport: {}",
+           e.what());
+      return false;
+    }
+
+    zmq_recv_running_.store(true);
+    zmq_recv_thread_ = std::thread([this]() { RecvZmqClientThread(); });
+  }
+
+  // IPC mode: Override zmq_client_/zmq_response_server_ with UDS transport
+  if (ipc_mode_ == IpcMode::kIpc) {
+    auto *config = CHI_CONFIG_MANAGER;
+    u32 port = config->GetPort();
+    std::string ipc_path =
+        "/tmp/chimaera_" + std::to_string(port) + ".ipc";
+    std::string ipc_response_path =
+        "/tmp/chimaera_" + std::to_string(port) + "_response.ipc";
+
+    try {
+      zmq_client_ = hshm::lbm::TransportFactory::GetClient(
+          ipc_path, hshm::lbm::Transport::kSocket, "ipc", 0);
+      HLOG(kInfo, "IpcManager: IPC lightbeam client connected to {}",
+           ipc_path);
+
+      zmq_response_server_ = hshm::lbm::TransportFactory::GetServer(
+          ipc_response_path, hshm::lbm::Transport::kSocket, "ipc", 0);
+      HLOG(kInfo, "IpcManager: IPC response server bound on {}",
+           ipc_response_path);
+    } catch (const std::exception &e) {
+      HLOG(kError,
+           "IpcManager::ClientInit: Failed to create IPC lightbeam transport: {}",
+           e.what());
+      return false;
+    }
+  }
+
   // SHM mode: Attach to main SHM segment and initialize queues
   if (ipc_mode_ == IpcMode::kShm) {
     if (!ClientInitShm()) {
@@ -120,7 +175,7 @@ bool IpcManager::ClientInit() {
         config && config->IsValid()
             ? config->GetMemorySegmentSize(kClientDataSegment)
             : hshm::Unit<size_t>::Megabytes(256);  // Default 256MB
-    if (!IncreaseMemory(initial_size)) {
+    if (!IncreaseClientShm(initial_size)) {
       HLOG(kError,
            "IpcManager::ClientInit: Failed to create per-process shared memory");
       return false;
@@ -131,54 +186,6 @@ bool IpcManager::ClientInit() {
         "", hshm::lbm::Transport::kShm);
     shm_server_ = hshm::lbm::TransportFactory::GetServer(
         "", hshm::lbm::Transport::kShm);
-  }
-
-  // TCP/IPC modes: Create lightbeam client/server and spawn recv thread
-  if (ipc_mode_ == IpcMode::kTcp || ipc_mode_ == IpcMode::kIpc) {
-    auto *config = CHI_CONFIG_MANAGER;
-    u32 port = config->GetPort();
-
-    try {
-      if (ipc_mode_ == IpcMode::kTcp) {
-        // PUSH client to send tasks to server's PULL on port+3
-        zmq_client_ = hshm::lbm::TransportFactory::GetClient(
-            "127.0.0.1", hshm::lbm::Transport::kZeroMq, "tcp", port + 3);
-        HLOG(kInfo, "IpcManager: TCP lightbeam client connected to port {}",
-             port + 3);
-
-        // PULL server to receive responses from server on port+4
-        zmq_response_server_ = hshm::lbm::TransportFactory::GetServer(
-            "127.0.0.1", hshm::lbm::Transport::kZeroMq, "tcp", port + 4);
-        HLOG(kInfo, "IpcManager: TCP response server bound on port {}",
-             port + 4);
-      } else {
-        std::string ipc_path =
-            "/tmp/chimaera_" + std::to_string(port) + ".ipc";
-        std::string ipc_response_path =
-            "/tmp/chimaera_" + std::to_string(port) + "_response.ipc";
-
-        // PUSH client to send tasks to server's PULL on IPC path
-        zmq_client_ = hshm::lbm::TransportFactory::GetClient(
-            ipc_path, hshm::lbm::Transport::kSocket, "ipc", 0);
-        HLOG(kInfo, "IpcManager: IPC lightbeam client connected to {}",
-             ipc_path);
-
-        // PULL server to receive responses from server on IPC response path
-        zmq_response_server_ = hshm::lbm::TransportFactory::GetServer(
-            ipc_response_path, hshm::lbm::Transport::kSocket, "ipc", 0);
-        HLOG(kInfo, "IpcManager: IPC response server bound on {}",
-             ipc_response_path);
-      }
-    } catch (const std::exception &e) {
-      HLOG(kError,
-           "IpcManager::ClientInit: Failed to create lightbeam transport: {}",
-           e.what());
-      return false;
-    }
-
-    // Spawn recv thread for receiving completed task outputs
-    zmq_recv_running_.store(true);
-    zmq_recv_thread_ = std::thread([this]() { RecvZmqClientThread(); });
   }
 
   // Retrieve node ID from shared header and store in this_host_
@@ -265,18 +272,6 @@ bool IpcManager::ServerInit() {
     std::string sched_name = config->GetLocalSched();
     scheduler_ = SchedulerFactory::Get(sched_name);
     HLOG(kDebug, "Scheduler initialized: {}", sched_name);
-  }
-
-  // Create per-process shared memory for runtime allocations
-  // Use configured client_data_segment_size from config
-  size_t initial_size =
-      config && config->IsValid()
-          ? config->GetMemorySegmentSize(kClientDataSegment)
-          : hshm::Unit<size_t>::Megabytes(256);  // Default 256MB
-  if (!IncreaseMemory(initial_size)) {
-    HLOG(kError,
-         "IpcManager::ServerInit: Failed to create per-process shared memory");
-    return false;
   }
 
   // Create lightbeam PULL servers for client task reception
@@ -1091,8 +1086,8 @@ FullPtr<char> IpcManager::AllocateBuffer(size_t size) {
 #if HSHM_IS_HOST
   // HOST-ONLY PATH: The device implementation is in ipc_manager.h
 
-  // RUNTIME PATH: Use private memory (HSHM_MALLOC) to avoid shared memory
-  // allocation and IncreaseMemory calls which can cause deadlocks
+  // RUNTIME PATH: Use private memory (HSHM_MALLOC) — runtime never uses
+  // per-process shared memory segments
   if (CHI_CHIMAERA_MANAGER && CHI_CHIMAERA_MANAGER->IsRuntime()) {
     // Use HSHM_MALLOC allocator for private memory allocation
     FullPtr<char> buffer = HSHM_MALLOC->AllocateObjs<char>(size);
@@ -1138,7 +1133,7 @@ FullPtr<char> IpcManager::AllocateBuffer(size_t size) {
   // Calculate segment size: (requested_size + 32MB metadata) * 1.2 multiplier
   size_t new_size = static_cast<size_t>((size + kShmMetadataOverhead) *
                                         kShmAllocationMultiplier);
-  if (!IncreaseMemory(new_size)) {
+  if (!IncreaseClientShm(new_size)) {
     HLOG(kError, "AllocateBuffer: Failed to increase memory for {} bytes",
          size);
     return FullPtr<char>::GetNull();
@@ -1278,8 +1273,8 @@ bool IpcManager::TryPopNetTask(NetQueuePriority priority,
 // Per-Process Shared Memory Management
 //==============================================================================
 
-bool IpcManager::IncreaseMemory(size_t size) {
-  HLOG(kDebug, "IncreaseMemory CALLED: size={}", size);
+bool IpcManager::IncreaseClientShm(size_t size) {
+  HLOG(kDebug, "IncreaseClientShm CALLED: size={}", size);
   std::lock_guard<std::mutex> lock(shm_mutex_);
   // Acquire writer lock on allocator_map_lock_ during memory increase
   // This ensures exclusive access to the allocator_map_ structures
@@ -1297,7 +1292,7 @@ bool IpcManager::IncreaseMemory(size_t size) {
 
   HLOG(
       kInfo,
-      "IpcManager::IncreaseMemory: Creating {} with size {} ({} + {} overhead)",
+      "IpcManager::IncreaseClientShm: Creating {} with size {} ({} + {} overhead)",
       shm_name, total_size, size, kShmMetadataOverhead);
 
   try {
@@ -1310,7 +1305,7 @@ bool IpcManager::IncreaseMemory(size_t size) {
     // Initialize shared memory using backend's shm_init method
     if (!backend->shm_init(alloc_id, hshm::Unit<size_t>::Bytes(total_size),
                            shm_name)) {
-      HLOG(kError, "IpcManager::IncreaseMemory: Failed to create shm for {}",
+      HLOG(kError, "IpcManager::IncreaseClientShm: Failed to create shm for {}",
            shm_name);
       shm_count_.fetch_sub(1, std::memory_order_relaxed);
       allocator_map_lock_
@@ -1324,7 +1319,7 @@ bool IpcManager::IncreaseMemory(size_t size) {
 
     if (allocator == nullptr) {
       HLOG(kError,
-           "IpcManager::IncreaseMemory: Failed to create allocator for {}",
+           "IpcManager::IncreaseClientShm: Failed to create allocator for {}",
            shm_name);
       shm_count_.fetch_sub(1, std::memory_order_relaxed);
       allocator_map_lock_
@@ -1341,20 +1336,24 @@ bool IpcManager::IncreaseMemory(size_t size) {
     last_alloc_ = allocator;
 
     HLOG(kInfo,
-         "IpcManager::IncreaseMemory: Created allocator {} with ID ({}.{})",
+         "IpcManager::IncreaseClientShm: Created allocator {} with ID ({}.{})",
          shm_name, alloc_id.major_, alloc_id.minor_);
 
     // Release the lock before returning
     allocator_map_lock_.WriteUnlock();
 
-    // Note: Registration with runtime is now done lazily in SetAllocator()
-    // when the worker first encounters a FutureShm from this client's memory
+    // Tell the runtime server to attach to this new shared memory segment
+    auto *admin_client = CHI_ADMIN;
+    if (admin_client) {
+      admin_client->AsyncRegisterMemory(
+          chi::PoolQuery::Local(), alloc_id).Wait();
+    }
 
     return true;
 
   } catch (const std::exception &e) {
     allocator_map_lock_.WriteUnlock();
-    HLOG(kError, "IpcManager::IncreaseMemory: Exception creating {}: {}",
+    HLOG(kError, "IpcManager::IncreaseClientShm: Exception creating {}: {}",
          shm_name, e.what());
     shm_count_.fetch_sub(1, std::memory_order_relaxed);
     return false;
