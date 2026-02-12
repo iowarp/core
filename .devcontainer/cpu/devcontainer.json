@@ -3,6 +3,10 @@
   "build": {
     "dockerfile": "Dockerfile",
     "context": "../..",
+    "args": {
+      "HOST_UID": "${localEnv:HOST_UID:1000}",
+      "HOST_GID": "${localEnv:HOST_GID:1000}"
+    },
     "options": [
       "--tag=iowarp/core-devcontainer:latest"
     ]
@@ -26,6 +30,7 @@
     "--privileged",
     "--shm-size=2gb"
   ],
+  "updateRemoteUserUID": true,
   "initializeCommand": "bash -c 'mkdir -p ~/.ssh ~/.claude && chmod 700 ~/.ssh && touch ~/.claude.json'",
   "customizations": {
     "vscode": {

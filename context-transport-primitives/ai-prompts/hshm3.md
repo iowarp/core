@@ -1,1 +1,0 @@
-> @CLAUDE.md Let's implement a portable MPI alternative for spawning processes on windows
