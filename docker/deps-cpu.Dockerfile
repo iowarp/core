@@ -104,9 +104,9 @@ WORKDIR /home/iowarp
 RUN if [ ! -d "/home/iowarp/miniconda3" ]; then \
     ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
-        MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh"; \
+    MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh"; \
     else \
-        MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"; \
+    MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"; \
     fi && \
     wget "$MINICONDA_URL" -O /tmp/miniconda.sh \
     && bash /tmp/miniconda.sh -b -p /home/iowarp/miniconda3 \
@@ -290,7 +290,8 @@ RUN cd /home/iowarp \
     && conda activate base \
     && pip install -e . -r requirements.txt  \
     && jarvis init \
-    && jarvis rg build
+    && jarvis rg build \
+    && jarvis repo add /workspace/jarvis_iowarp
 
 # Configure Spack to use conda packages
 RUN mkdir -p ~/.spack && \
@@ -325,9 +326,9 @@ RUN mkdir -p ~/.spack && \
 # Use architecture-aware library path (x86_64 or aarch64)
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
-        LIB_ARCH="aarch64-linux-gnu"; \
+    LIB_ARCH="aarch64-linux-gnu"; \
     else \
-        LIB_ARCH="x86_64-linux-gnu"; \
+    LIB_ARCH="x86_64-linux-gnu"; \
     fi && \
     echo '' >> /home/iowarp/.bashrc \
     && echo "export LD_LIBRARY_PATH=/usr/local/lib:/home/iowarp/miniconda3/lib:/usr/lib/${LIB_ARCH}:\$LD_LIBRARY_PATH" >> /home/iowarp/.bashrc \
