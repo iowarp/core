@@ -173,8 +173,8 @@ bool Config::Validate() const {
     return false;
   }
 
-  if (performance_.stat_targets_period_ms_ == 0 || performance_.stat_targets_period_ms_ > 60000) {
-    HLOG(kError, "Config validation error: Invalid stat_targets_period_ms {} (must be 1-60000)", performance_.stat_targets_period_ms_);
+  if (performance_.stat_targets_period_ms_ < 10 || performance_.stat_targets_period_ms_ > 60000) {
+    HLOG(kError, "Config validation error: Invalid stat_targets_period_ms {} (must be 10-60000)", performance_.stat_targets_period_ms_);
     return false;
   }
 

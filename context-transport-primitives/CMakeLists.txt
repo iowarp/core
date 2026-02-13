@@ -20,7 +20,7 @@ add_compile_definitions(_CRT_SECURE_NO_DEPRECATE)
 # All HSHM_ENABLE_* options are now set by root CMakeLists.txt from WRP_CORE_* parameters
 # CMAKE_EXPORT_COMPILE_COMMANDS is set by root CMakeLists.txt
 # BUILD_SHARED_LIBS is set by root CMakeLists.txt
-# HSHM_ENABLE_TESTS is set by root CMakeLists.txt
+# WRP_CORE_ENABLE_TESTS is set by root CMakeLists.txt
 # Benchmarks are controlled by WRP_CORE_ENABLE_BENCHMARKS
 # HSHM_ENABLE_WINDOWS_THREADS, HSHM_ENABLE_PTHREADS, HSHM_DEBUG_LOCK, and HSHM_NO_COMPILE are set by root CMakeLists.txt
 
@@ -223,16 +223,12 @@ function(hshm_target_compile_definitions target)
         HSHM_LOG_LEVEL=${HSHM_LOG_LEVEL}
     )
 
-    # Add CUDA/ROCM definitions for all targets
-    # Host targets get 0, GPU targets get 1 (set explicitly in their target definitions)
-    if(target STREQUAL "hermes_shm_host" OR target STREQUAL "cxx")
-        # Host-only targets: explicitly disable GPU support
-        list(APPEND common_definitions
-            HSHM_ENABLE_CUDA=0
-            HSHM_ENABLE_ROCM=0
-        )
-    else()
-        # GPU and other targets: use CMake variable values
+    # Add CUDA/ROCM definitions for GPU targets only.
+    # Host targets (hermes_shm_host, cxx) do NOT propagate HSHM_ENABLE_CUDA
+    # to avoid conflicts when a consumer links both host and GPU libraries.
+    # Undefined HSHM_ENABLE_CUDA evaluates to 0 in #if directives, which is
+    # the correct behavior for host-only consumers.
+    if(NOT (target STREQUAL "hermes_shm_host" OR target STREQUAL "cxx"))
         list(APPEND common_definitions
             HSHM_ENABLE_CUDA=$<BOOL:${WRP_CORE_ENABLE_CUDA}>
             HSHM_ENABLE_ROCM=$<BOOL:${WRP_CORE_ENABLE_ROCM}>
@@ -363,7 +359,7 @@ endif()
 set(TEST_MAIN ${HSHM_ROOT}/test/unit)
 # enable_testing() is handled by root CMakeLists.txt
 
-if(HSHM_ENABLE_TESTS)
+if(WRP_CORE_ENABLE_TESTS)
     message("Building HSHM unit tests")
     add_subdirectory(test)
 endif()

@@ -47,15 +47,13 @@ class TestMeta : public LbmMeta {
  public:
   int request_id;
   std::string operation;
-};
 
-// Cereal serialization for TestMeta
-namespace cereal {
-template <class Archive>
-void serialize(Archive& ar, TestMeta& meta) {
-  ar(meta.send, meta.recv, meta.request_id, meta.operation);
-}
-}  // namespace cereal
+  template <typename Ar>
+  void serialize(Ar& ar) {
+    LbmMeta::serialize(ar);
+    ar(request_id, operation);
+  }
+};
 
 void TestBasicTransfer() {
   std::cout << "\n==== Testing Basic Transfer with New API ====\n";
@@ -83,8 +81,10 @@ void TestBasicTransfer() {
   send_meta.request_id = 42;
   send_meta.operation = "test_op";
 
-  Bulk bulk1 = client->Expose(data1, size1, BULK_XFER);
-  Bulk bulk2 = client->Expose(data2, size2, BULK_XFER);
+  Bulk bulk1 = client->Expose(
+      hipc::FullPtr<char>(const_cast<char*>(data1)), size1, BULK_XFER);
+  Bulk bulk2 = client->Expose(
+      hipc::FullPtr<char>(const_cast<char*>(data2)), size2, BULK_XFER);
 
   send_meta.send.push_back(bulk1);
   send_meta.send.push_back(bulk2);
@@ -115,10 +115,12 @@ void TestBasicTransfer() {
   std::vector<char> recv_buf1(recv_meta.send[0].size);
   std::vector<char> recv_buf2(recv_meta.send[1].size);
 
-  recv_meta.recv.push_back(server->Expose(recv_buf1.data(), recv_buf1.size(),
-                                          recv_meta.send[0].flags.bits_));
-  recv_meta.recv.push_back(server->Expose(recv_buf2.data(), recv_buf2.size(),
-                                          recv_meta.send[1].flags.bits_));
+  recv_meta.recv.push_back(server->Expose(
+      hipc::FullPtr<char>(recv_buf1.data()), recv_buf1.size(),
+      recv_meta.send[0].flags.bits_));
+  recv_meta.recv.push_back(server->Expose(
+      hipc::FullPtr<char>(recv_buf2.data()), recv_buf2.size(),
+      recv_meta.send[1].flags.bits_));
 
   // Receive bulks
   rc = server->RecvBulks(recv_meta);
@@ -164,7 +166,9 @@ void TestMultipleBulks() {
   // Create metadata
   LbmMeta send_meta;
   for (const auto& chunk : data_chunks) {
-    Bulk bulk = client->Expose(chunk.data(), chunk.size(), BULK_XFER);
+    Bulk bulk = client->Expose(
+        hipc::FullPtr<char>(const_cast<char*>(chunk.data())),
+        chunk.size(), BULK_XFER);
     send_meta.send.push_back(bulk);
   }
 
@@ -189,9 +193,10 @@ void TestMultipleBulks() {
   std::vector<std::vector<char>> recv_buffers;
   for (size_t i = 0; i < recv_meta.send.size(); ++i) {
     recv_buffers.emplace_back(recv_meta.send[i].size);
-    recv_meta.recv.push_back(server->Expose(recv_buffers[i].data(),
-                                            recv_buffers[i].size(),
-                                            recv_meta.send[i].flags.bits_));
+    recv_meta.recv.push_back(server->Expose(
+        hipc::FullPtr<char>(recv_buffers[i].data()),
+        recv_buffers[i].size(),
+        recv_meta.send[i].flags.bits_));
   }
 
   rc = server->RecvBulks(recv_meta);

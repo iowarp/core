@@ -102,6 +102,12 @@ class Scheduler {
    * @param run_ctx Pointer to the RunContext for the periodic task
    */
   virtual void AdjustPolling(RunContext *run_ctx) = 0;
+
+  /**
+   * Get the designated GPU worker (polls GPU queues).
+   * @return Pointer to GPU worker, or nullptr if none assigned
+   */
+  virtual Worker *GetGpuWorker() const { return nullptr; }
 };
 
 }  // namespace chi

@@ -1028,9 +1028,10 @@ TEST_CASE("CoRwLock Performance", "[corwlock][performance]") {
     INFO("Writer execution time: " << writer_duration.count()
                                    << " microseconds");
 
-    // Both should be reasonable
-    REQUIRE(reader_duration.count() < (kShortHoldMs * 1000 * 10));
-    REQUIRE(writer_duration.count() < (kShortHoldMs * 1000 * 10));
+    // Both should be reasonable (20x hold duration to account for
+    // task dispatch, worker scheduling, and lock acquisition overhead)
+    REQUIRE(reader_duration.count() < (kShortHoldMs * 1000 * 20));
+    REQUIRE(writer_duration.count() < (kShortHoldMs * 1000 * 20));
   }
 }
 

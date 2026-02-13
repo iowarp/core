@@ -82,6 +82,18 @@ set(IPC_ERRORS_TEST_SOURCES
   test_ipc_errors.cc
 )
 
+# IPC Transport Modes test executable
+set(IPC_TRANSPORT_MODES_TEST_TARGET chimaera_ipc_transport_modes_tests)
+set(IPC_TRANSPORT_MODES_TEST_SOURCES
+  test_ipc_transport_modes.cc
+)
+
+# GPU IPC AllocateBuffer test executable (only if CUDA or HIP is enabled)
+set(IPC_ALLOCATE_BUFFER_GPU_TEST_TARGET test_ipc_allocate_buffer_gpu)
+set(IPC_ALLOCATE_BUFFER_GPU_TEST_SOURCES
+  test_ipc_allocate_buffer_gpu.cc
+)
+
 # Create core test executable
 add_executable(${TEST_TARGET} ${TEST_SOURCES})
 
@@ -378,8 +390,54 @@ set_target_properties(${IPC_ERRORS_TEST_TARGET} PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
+# Create IPC Transport Modes test executable
+add_executable(${IPC_TRANSPORT_MODES_TEST_TARGET} ${IPC_TRANSPORT_MODES_TEST_SOURCES})
+
+target_include_directories(${IPC_TRANSPORT_MODES_TEST_TARGET} PRIVATE
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/bdev/include
+  ${CHIMAERA_ROOT}/modules/admin/include
+)
+
+target_link_libraries(${IPC_TRANSPORT_MODES_TEST_TARGET}
+  chimaera_cxx               # Main Chimaera library
+  chimaera_bdev_client        # Bdev module client
+  chimaera_admin_client       # Admin module client
+  hshm::cxx                  # HermesShm library
+  ${CMAKE_THREAD_LIBS_INIT}  # Threading support
+)
+
+set_target_properties(${IPC_TRANSPORT_MODES_TEST_TARGET} PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+)
+
+set_target_properties(${IPC_TRANSPORT_MODES_TEST_TARGET} PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+# Create GPU IPC AllocateBuffer test executable (only if CUDA or HIP is enabled)
+if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
+  add_cuda_executable(${IPC_ALLOCATE_BUFFER_GPU_TEST_TARGET} TRUE ${IPC_ALLOCATE_BUFFER_GPU_TEST_SOURCES})
+  target_include_directories(${IPC_ALLOCATE_BUFFER_GPU_TEST_TARGET} PRIVATE
+    ${CHIMAERA_ROOT}/include
+    ${CHIMAERA_ROOT}/test
+    ${CHIMAERA_ROOT}/modules/MOD_NAME/include
+  )
+  target_link_libraries(${IPC_ALLOCATE_BUFFER_GPU_TEST_TARGET}
+    chimaera_cxx
+    hshm::cuda_cxx
+    ${CMAKE_THREAD_LIBS_INIT}
+  )
+  set_target_properties(${IPC_ALLOCATE_BUFFER_GPU_TEST_TARGET} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  add_test(NAME ${IPC_ALLOCATE_BUFFER_GPU_TEST_TARGET} COMMAND ${IPC_ALLOCATE_BUFFER_GPU_TEST_TARGET})
+endif()
+
 # Enable CTest integration if testing is enabled
-if(CHIMAERA_ENABLE_TESTS)
+if(WRP_CORE_ENABLE_TESTS)
   # Core Runtime Tests
   add_test(
     NAME cr_runtime_initialization_tests
@@ -813,6 +871,49 @@ if(CHIMAERA_ENABLE_TESTS)
     TIMEOUT 120
   )
 
+  # IPC Transport Mode Tests
+  # NOTE: Each test case must run in its own process because CHIMAERA_INIT has
+  # a static guard that prevents re-initialization.
+  add_test(
+    NAME cr_ipc_transport_shm
+    COMMAND ${IPC_TRANSPORT_MODES_TEST_TARGET} "IpcTransportMode - SHM Client Connection"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_ipc_transport_shm PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+    TIMEOUT 120
+  )
+
+  add_test(
+    NAME cr_ipc_transport_tcp
+    COMMAND ${IPC_TRANSPORT_MODES_TEST_TARGET} "IpcTransportMode - TCP Client Connection"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_ipc_transport_tcp PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+    TIMEOUT 120
+  )
+
+  add_test(
+    NAME cr_ipc_transport_ipc
+    COMMAND ${IPC_TRANSPORT_MODES_TEST_TARGET} "IpcTransportMode - IPC Client Connection"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_ipc_transport_ipc PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+    TIMEOUT 120
+  )
+
+  add_test(
+    NAME cr_ipc_transport_default
+    COMMAND ${IPC_TRANSPORT_MODES_TEST_TARGET} "IpcTransportMode - Default Mode Is TCP"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_ipc_transport_default PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin"
+    TIMEOUT 120
+  )
+
   # Set test properties for timeout and environment
   set_tests_properties(
     cr_runtime_initialization_tests
@@ -920,6 +1021,7 @@ install(TARGETS
   ${EXTERNAL_CLIENT_TEST_TARGET}
   ${RUNTIME_CLEANUP_TEST_TARGET}
   ${IPC_ERRORS_TEST_TARGET}
+  ${IPC_TRANSPORT_MODES_TEST_TARGET}
   RUNTIME DESTINATION bin
 )
 
@@ -933,7 +1035,7 @@ message(STATUS "  Test target: ${TEST_TARGET}")
 message(STATUS "  Test sources: ${TEST_SOURCES}")
 message(STATUS "  IPC AllocateBuffer test target: ${IPC_ALLOCATE_BUFFER_TEST_TARGET}")
 message(STATUS "  Per-Process SHM test target: ${PER_PROCESS_SHM_TEST_TARGET}")
-message(STATUS "  CTest enabled: ${CHIMAERA_ENABLE_TESTS}")
+message(STATUS "  CTest enabled: ${WRP_CORE_ENABLE_TESTS}")
 message(STATUS "  Output directory: ${CMAKE_BINARY_DIR}/bin")
 message(STATUS "")
 message(STATUS "Module-specific tests are in:")

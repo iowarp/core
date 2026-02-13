@@ -41,14 +41,8 @@ services:
         echo 'Node 1: Starting runtime...' &&
         /workspace/build/bin/chimaera_start_runtime &
         RUNTIME_PID=\$! &&
-        echo 'Node 1: Runtime started (PID \$RUNTIME_PID). Running distributed tests...' &&
-        sleep 3 &&
-        /workspace/build/bin/chimaera_bdev_chimod_tests ${TEST_FILTER:-} &&
-        TEST_EXIT=\$? &&
-        echo 'Node 1: Tests completed.' &&
-        kill \$RUNTIME_PID 2>/dev/null || true &&
-        wait \$RUNTIME_PID 2>/dev/null || true &&
-        exit \$TEST_EXIT
+        echo 'Node 1: Runtime started (PID \$RUNTIME_PID). Waiting for test runner...' &&
+        wait \$RUNTIME_PID
       "
 
   # Node 2

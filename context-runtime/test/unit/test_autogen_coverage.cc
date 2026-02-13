@@ -163,7 +163,7 @@ TEST_CASE("Autogen - Admin FlushTask SaveTask/LoadTask", "[autogen][admin][flush
   }
 }
 
-TEST_CASE("Autogen - Admin HeartbeatTask SaveTask/LoadTask", "[autogen][admin][heartbeat]") {
+TEST_CASE("Autogen - Admin ClientConnectTask SaveTask/LoadTask", "[autogen][admin][clientconnect]") {
   EnsureInitialized();
 
   auto* ipc_manager = CHI_IPC;
@@ -175,29 +175,29 @@ TEST_CASE("Autogen - Admin HeartbeatTask SaveTask/LoadTask", "[autogen][admin][h
     return;
   }
 
-  SECTION("SaveTask and LoadTask for HeartbeatTask") {
-    auto orig_task = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+  SECTION("SaveTask and LoadTask for ClientConnectTask") {
+    auto orig_task = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
 
     if (orig_task.IsNull()) {
-      INFO("Failed to create HeartbeatTask - skipping test");
+      INFO("Failed to create ClientConnectTask - skipping test");
       return;
     }
 
     chi::SaveTaskArchive save_archive(chi::MsgType::kSerializeIn);
     hipc::FullPtr<chi::Task> task_ptr = orig_task.template Cast<chi::Task>();
-    container->SaveTask(chimaera::admin::Method::kHeartbeat, save_archive, task_ptr);
+    container->SaveTask(chimaera::admin::Method::kClientConnect, save_archive, task_ptr);
 
     std::string save_data = save_archive.GetData();
     chi::LoadTaskArchive load_archive(save_data);
     load_archive.msg_type_ = chi::MsgType::kSerializeIn;
 
-    auto loaded_task = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>();
+    auto loaded_task = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>();
     hipc::FullPtr<chi::Task> loaded_ptr = loaded_task.template Cast<chi::Task>();
-    container->LoadTask(chimaera::admin::Method::kHeartbeat, load_archive, loaded_ptr);
+    container->LoadTask(chimaera::admin::Method::kClientConnect, load_archive, loaded_ptr);
 
     REQUIRE(!loaded_task.IsNull());
-    INFO("HeartbeatTask SaveTask/LoadTask completed successfully");
+    INFO("ClientConnectTask SaveTask/LoadTask completed successfully");
 
     ipc_manager->DelTask(orig_task);
     ipc_manager->DelTask(loaded_task);
@@ -224,7 +224,7 @@ TEST_CASE("Autogen - Admin NewTask for all methods", "[autogen][admin][newtask]"
         chimaera::admin::Method::kGetOrCreatePool,
         chimaera::admin::Method::kDestroyPool,
         chimaera::admin::Method::kFlush,
-        chimaera::admin::Method::kHeartbeat,
+        chimaera::admin::Method::kClientConnect,
         chimaera::admin::Method::kMonitor,
         chimaera::admin::Method::kSubmitBatch
     };
@@ -291,8 +291,8 @@ TEST_CASE("Autogen - Admin NewCopyTask", "[autogen][admin][copytask]") {
     ipc_manager->DelTask(orig_task);
   }
 
-  SECTION("NewCopyTask for HeartbeatTask") {
-    auto orig_task = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+  SECTION("NewCopyTask for ClientConnectTask") {
+    auto orig_task = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
 
     if (orig_task.IsNull()) {
@@ -301,10 +301,10 @@ TEST_CASE("Autogen - Admin NewCopyTask", "[autogen][admin][copytask]") {
     }
 
     hipc::FullPtr<chi::Task> task_ptr = orig_task.template Cast<chi::Task>();
-    auto copied_task = container->NewCopyTask(chimaera::admin::Method::kHeartbeat, task_ptr, false);
+    auto copied_task = container->NewCopyTask(chimaera::admin::Method::kClientConnect, task_ptr, false);
 
     if (!copied_task.IsNull()) {
-      INFO("NewCopyTask for HeartbeatTask succeeded");
+      INFO("NewCopyTask for ClientConnectTask succeeded");
       ipc_manager->DelTask(copied_task);
     }
 
@@ -431,8 +431,8 @@ TEST_CASE("Autogen - Admin LocalSaveTask/LocalLoadTask", "[autogen][admin][local
     ipc_manager->DelTask(orig_task);
   }
 
-  SECTION("LocalSaveTask and LocalLoadTask for HeartbeatTask") {
-    auto orig_task = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+  SECTION("LocalSaveTask and LocalLoadTask for ClientConnectTask") {
+    auto orig_task = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
 
     if (orig_task.IsNull()) {
@@ -442,13 +442,13 @@ TEST_CASE("Autogen - Admin LocalSaveTask/LocalLoadTask", "[autogen][admin][local
 
     chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
     hipc::FullPtr<chi::Task> task_ptr = orig_task.template Cast<chi::Task>();
-    container->LocalSaveTask(chimaera::admin::Method::kHeartbeat, save_archive, task_ptr);
+    container->LocalSaveTask(chimaera::admin::Method::kClientConnect, save_archive, task_ptr);
 
-    auto loaded_task = container->NewTask(chimaera::admin::Method::kHeartbeat);
+    auto loaded_task = container->NewTask(chimaera::admin::Method::kClientConnect);
     if (!loaded_task.IsNull()) {
       chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
-      container->LocalLoadTask(chimaera::admin::Method::kHeartbeat, load_archive, loaded_task);
-      INFO("LocalSaveTask/LocalLoadTask for HeartbeatTask completed");
+      container->LocalLoadTask(chimaera::admin::Method::kClientConnect, load_archive, loaded_task);
+      INFO("LocalSaveTask/LocalLoadTask for ClientConnectTask completed");
       ipc_manager->DelTask(loaded_task);
     }
 
@@ -479,7 +479,7 @@ TEST_CASE("Autogen - Admin DelTask for all methods", "[autogen][admin][deltask]"
     std::vector<std::pair<chi::u32, std::string>> methods = {
         {chimaera::admin::Method::kFlush, "FlushTask"},
         {chimaera::admin::Method::kMonitor, "MonitorTask"},
-        {chimaera::admin::Method::kHeartbeat, "HeartbeatTask"},
+        {chimaera::admin::Method::kClientConnect, "ClientConnectTask"},
     };
 
     for (const auto& [method, name] : methods) {
@@ -2511,15 +2511,15 @@ TEST_CASE("Autogen - Admin Additional Task Coverage", "[autogen][admin][addition
     }
   }
 
-  SECTION("Copy for HeartbeatTask") {
-    auto task1 = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+  SECTION("Copy for ClientConnectTask") {
+    auto task1 = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
-    auto task2 = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+    auto task2 = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
 
     if (!task1.IsNull() && !task2.IsNull()) {
       task2->Copy(task1);
-      INFO("HeartbeatTask Copy completed");
+      INFO("ClientConnectTask Copy completed");
       ipc_manager->DelTask(task1);
       ipc_manager->DelTask(task2);
     }
@@ -2553,15 +2553,15 @@ TEST_CASE("Autogen - Admin Additional Task Coverage", "[autogen][admin][addition
     }
   }
 
-  SECTION("Aggregate for HeartbeatTask") {
-    auto task1 = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+  SECTION("Aggregate for ClientConnectTask") {
+    auto task1 = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
-    auto task2 = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+    auto task2 = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
 
     if (!task1.IsNull() && !task2.IsNull()) {
       task1->Aggregate(task2);
-      INFO("HeartbeatTask Aggregate completed");
+      INFO("ClientConnectTask Aggregate completed");
       ipc_manager->DelTask(task1);
       ipc_manager->DelTask(task2);
     }
@@ -2886,11 +2886,11 @@ TEST_CASE("Autogen - Admin Container advanced operations", "[autogen][admin][con
       ipc_manager->DelTask(task1b);
     }
 
-    auto task2a = admin_container->NewTask(chimaera::admin::Method::kHeartbeat);
-    auto task2b = admin_container->NewTask(chimaera::admin::Method::kHeartbeat);
+    auto task2a = admin_container->NewTask(chimaera::admin::Method::kClientConnect);
+    auto task2b = admin_container->NewTask(chimaera::admin::Method::kClientConnect);
     if (!task2a.IsNull() && !task2b.IsNull()) {
-      admin_container->Aggregate(chimaera::admin::Method::kHeartbeat, task2a, task2b);
-      INFO("Admin Container Aggregate for Heartbeat completed");
+      admin_container->Aggregate(chimaera::admin::Method::kClientConnect, task2a, task2b);
+      INFO("Admin Container Aggregate for ClientConnect completed");
       ipc_manager->DelTask(task2a);
       ipc_manager->DelTask(task2b);
     }
@@ -3358,8 +3358,8 @@ TEST_CASE("Autogen - Admin SerializeOut coverage", "[autogen][admin][serializeou
     }
   }
 
-  SECTION("SerializeOut for HeartbeatTask") {
-    auto task = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+  SECTION("SerializeOut for ClientConnectTask") {
+    auto task = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
     if (!task.IsNull()) {
       chi::SaveTaskArchive save_archive(chi::MsgType::kSerializeOut);
@@ -3367,10 +3367,10 @@ TEST_CASE("Autogen - Admin SerializeOut coverage", "[autogen][admin][serializeou
       std::string data = save_archive.GetData();
       chi::LoadTaskArchive load_archive(data);
       load_archive.msg_type_ = chi::MsgType::kSerializeOut;
-      auto loaded = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+      auto loaded = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
           chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
       load_archive >> *loaded;
-      INFO("HeartbeatTask SerializeOut completed");
+      INFO("ClientConnectTask SerializeOut completed");
       ipc_manager->DelTask(task);
       ipc_manager->DelTask(loaded);
     }
@@ -3682,10 +3682,10 @@ TEST_CASE("Autogen - Admin Container DelTask coverage", "[autogen][admin][contai
       INFO("Admin Container DelTask for Monitor completed");
     }
 
-    auto task3 = admin_container->NewTask(chimaera::admin::Method::kHeartbeat);
+    auto task3 = admin_container->NewTask(chimaera::admin::Method::kClientConnect);
     if (!task3.IsNull()) {
-      admin_container->DelTask(chimaera::admin::Method::kHeartbeat, task3);
-      INFO("Admin Container DelTask for Heartbeat completed");
+      admin_container->DelTask(chimaera::admin::Method::kClientConnect, task3);
+      INFO("Admin Container DelTask for ClientConnect completed");
     }
 
     auto task4 = admin_container->NewTask(chimaera::admin::Method::kCreate);
@@ -4167,12 +4167,12 @@ TEST_CASE("Autogen - Admin NewCopyTask comprehensive", "[autogen][admin][newcopy
     }
   }
 
-  SECTION("NewCopyTask for Heartbeat") {
-    auto orig = admin_container->NewTask(chimaera::admin::Method::kHeartbeat);
+  SECTION("NewCopyTask for ClientConnect") {
+    auto orig = admin_container->NewTask(chimaera::admin::Method::kClientConnect);
     if (!orig.IsNull()) {
-      auto copy = admin_container->NewCopyTask(chimaera::admin::Method::kHeartbeat, orig, false);
+      auto copy = admin_container->NewCopyTask(chimaera::admin::Method::kClientConnect, orig, false);
       if (!copy.IsNull()) {
-        INFO("Admin NewCopyTask for Heartbeat completed");
+        INFO("Admin NewCopyTask for ClientConnect completed");
         ipc_manager->DelTask(copy);
       }
       ipc_manager->DelTask(orig);
@@ -4380,34 +4380,34 @@ TEST_CASE("Autogen - Admin SaveTask/LoadTask comprehensive", "[autogen][admin][s
     }
   }
 
-  SECTION("SaveTask/LoadTask SerializeIn for Heartbeat") {
-    auto task = admin_container->NewTask(chimaera::admin::Method::kHeartbeat);
+  SECTION("SaveTask/LoadTask SerializeIn for ClientConnect") {
+    auto task = admin_container->NewTask(chimaera::admin::Method::kClientConnect);
     if (!task.IsNull()) {
       chi::SaveTaskArchive save_archive(chi::MsgType::kSerializeIn);
-      admin_container->SaveTask(chimaera::admin::Method::kHeartbeat, save_archive, task);
-      auto loaded = admin_container->NewTask(chimaera::admin::Method::kHeartbeat);
+      admin_container->SaveTask(chimaera::admin::Method::kClientConnect, save_archive, task);
+      auto loaded = admin_container->NewTask(chimaera::admin::Method::kClientConnect);
       if (!loaded.IsNull()) {
         chi::LoadTaskArchive load_archive(save_archive.GetData());
         load_archive.msg_type_ = chi::MsgType::kSerializeIn;
-        admin_container->LoadTask(chimaera::admin::Method::kHeartbeat, load_archive, loaded);
-        INFO("SaveTask/LoadTask SerializeIn for Heartbeat completed");
+        admin_container->LoadTask(chimaera::admin::Method::kClientConnect, load_archive, loaded);
+        INFO("SaveTask/LoadTask SerializeIn for ClientConnect completed");
         ipc_manager->DelTask(loaded);
       }
       ipc_manager->DelTask(task);
     }
   }
 
-  SECTION("SaveTask/LoadTask SerializeOut for Heartbeat") {
-    auto task = admin_container->NewTask(chimaera::admin::Method::kHeartbeat);
+  SECTION("SaveTask/LoadTask SerializeOut for ClientConnect") {
+    auto task = admin_container->NewTask(chimaera::admin::Method::kClientConnect);
     if (!task.IsNull()) {
       chi::SaveTaskArchive save_archive(chi::MsgType::kSerializeOut);
-      admin_container->SaveTask(chimaera::admin::Method::kHeartbeat, save_archive, task);
-      auto loaded = admin_container->NewTask(chimaera::admin::Method::kHeartbeat);
+      admin_container->SaveTask(chimaera::admin::Method::kClientConnect, save_archive, task);
+      auto loaded = admin_container->NewTask(chimaera::admin::Method::kClientConnect);
       if (!loaded.IsNull()) {
         chi::LoadTaskArchive load_archive(save_archive.GetData());
         load_archive.msg_type_ = chi::MsgType::kSerializeOut;
-        admin_container->LoadTask(chimaera::admin::Method::kHeartbeat, load_archive, loaded);
-        INFO("SaveTask/LoadTask SerializeOut for Heartbeat completed");
+        admin_container->LoadTask(chimaera::admin::Method::kClientConnect, load_archive, loaded);
+        INFO("SaveTask/LoadTask SerializeOut for ClientConnect completed");
         ipc_manager->DelTask(loaded);
       }
       ipc_manager->DelTask(task);
@@ -5012,26 +5012,26 @@ TEST_CASE("Autogen - Admin All Methods Comprehensive", "[autogen][admin][all][co
     }
   }
 
-  SECTION("HeartbeatTask full coverage") {
-    auto task = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+  SECTION("ClientConnectTask full coverage") {
+    auto task = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
     if (!task.IsNull()) {
       chi::SaveTaskArchive save_in(chi::MsgType::kSerializeIn);
       save_in << *task;
       chi::LoadTaskArchive load_in(save_in.GetData());
       load_in.msg_type_ = chi::MsgType::kSerializeIn;
-      auto loaded_in = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+      auto loaded_in = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
           chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
       load_in >> *loaded_in;
 
-      auto task2 = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+      auto task2 = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
           chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
       if (!task2.IsNull()) {
         task2->Copy(task);
         task->Aggregate(task2);
         ipc_manager->DelTask(task2);
       }
-      INFO("HeartbeatTask full coverage completed");
+      INFO("ClientConnectTask full coverage completed");
       ipc_manager->DelTask(loaded_in);
       ipc_manager->DelTask(task);
     }
@@ -6976,16 +6976,9 @@ TEST_CASE("Autogen - CAE CreateParams coverage", "[autogen][cae][createparams]")
     INFO("CreateParams default constructor test passed");
   }
 
-  SECTION("CreateParams constructor with allocator") {
-    // CreateParams takes CHI_MAIN_ALLOC_T* (MultiProcessAllocator)
-    // We can pass nullptr since the constructor body is empty
-    wrp_cae::core::CreateParams params(nullptr);
-    INFO("CreateParams allocator constructor test passed");
-  }
-
-  SECTION("CreateParams copy constructor with allocator") {
+  SECTION("CreateParams copy constructor") {
     wrp_cae::core::CreateParams params1;
-    wrp_cae::core::CreateParams params2(nullptr, params1);
+    wrp_cae::core::CreateParams params2(params1);
     INFO("CreateParams copy constructor test passed");
   }
 }
@@ -8302,19 +8295,19 @@ TEST_CASE("Autogen - Admin Runtime AllocLoadTask coverage", "[autogen][admin][ru
     }
   }
 
-  SECTION("AllocLoadTask for HeartbeatTask") {
-    auto orig_task = container->NewTask(chimaera::admin::Method::kHeartbeat);
+  SECTION("AllocLoadTask for ClientConnectTask") {
+    auto orig_task = container->NewTask(chimaera::admin::Method::kClientConnect);
     if (!orig_task.IsNull()) {
       chi::SaveTaskArchive save_archive(chi::MsgType::kSerializeIn);
-      container->SaveTask(chimaera::admin::Method::kHeartbeat, save_archive, orig_task);
+      container->SaveTask(chimaera::admin::Method::kClientConnect, save_archive, orig_task);
 
       std::string save_data = save_archive.GetData();
       chi::LoadTaskArchive load_archive(save_data);
       load_archive.msg_type_ = chi::MsgType::kSerializeIn;
 
-      auto loaded_task = container->AllocLoadTask(chimaera::admin::Method::kHeartbeat, load_archive);
+      auto loaded_task = container->AllocLoadTask(chimaera::admin::Method::kClientConnect, load_archive);
       if (!loaded_task.IsNull()) {
-        INFO("AllocLoadTask for HeartbeatTask succeeded");
+        INFO("AllocLoadTask for ClientConnectTask succeeded");
         ipc_manager->DelTask(loaded_task);
       }
       ipc_manager->DelTask(orig_task);
@@ -9754,19 +9747,19 @@ TEST_CASE("Autogen - Admin LocalAllocLoadTask Additional Methods", "[autogen][ad
     }
   }
 
-  SECTION("Heartbeat LocalAllocLoadTask") {
-    auto orig_task = ipc_manager->NewTask<chimaera::admin::HeartbeatTask>(
+  SECTION("ClientConnect LocalAllocLoadTask") {
+    auto orig_task = ipc_manager->NewTask<chimaera::admin::ClientConnectTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
 
     if (!orig_task.IsNull()) {
       chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
       hipc::FullPtr<chi::Task> task_ptr = orig_task.template Cast<chi::Task>();
-      container->LocalSaveTask(chimaera::admin::Method::kHeartbeat, save_archive, task_ptr);
+      container->LocalSaveTask(chimaera::admin::Method::kClientConnect, save_archive, task_ptr);
 
       chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
-      auto loaded = container->LocalAllocLoadTask(chimaera::admin::Method::kHeartbeat, load_archive);
+      auto loaded = container->LocalAllocLoadTask(chimaera::admin::Method::kClientConnect, load_archive);
       if (!loaded.IsNull()) {
-        INFO("Heartbeat LocalAllocLoadTask completed");
+        INFO("ClientConnect LocalAllocLoadTask completed");
         ipc_manager->DelTask(loaded);
       }
       ipc_manager->DelTask(orig_task);
@@ -11523,14 +11516,14 @@ TEST_CASE("Autogen - SystemInfo SharedMemory", "[autogen][systeminfo][shm]") {
     // Unmap
     hshm::SystemInfo::UnmapMemory(ptr, shm_size);
 
-    // Close
-    hshm::SystemInfo::CloseSharedMemory(fd);
-
-    // Open
+    // Open (re-open while original fd is still open)
     hshm::File fd2;
     bool opened = hshm::SystemInfo::OpenSharedMemory(fd2, shm_name);
     REQUIRE(opened);
     hshm::SystemInfo::CloseSharedMemory(fd2);
+
+    // Close original fd
+    hshm::SystemInfo::CloseSharedMemory(fd);
 
     // Destroy
     hshm::SystemInfo::DestroySharedMemory(shm_name);

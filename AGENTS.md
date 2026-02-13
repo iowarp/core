@@ -784,6 +784,7 @@ environment:
   - CHI_CLIENT_DATA_SEGMENT_SIZE=512M
   - CHI_RUNTIME_DATA_SEGMENT_SIZE=512M
   - CHI_ZMQ_PORT=5555
+  - CHI_IPC_MODE=TCP          # SHM, TCP (default), or IPC
   - CHI_LOG_LEVEL=info
   - CHI_SHM_SIZE=2147483648
 ```
@@ -810,6 +811,34 @@ volumes:
   - ./hostfile:/etc/iowarp/hostfile:ro
 environment:
   - CHI_HOSTFILE=/etc/iowarp/hostfile
+```
+
+## IPC Transport Modes
+
+Chimaera clients communicate with the runtime server using one of three IPC transport modes, controlled by the `CHI_IPC_MODE` environment variable. This variable is read during `IpcManager::ClientInit()`.
+
+**Values:**
+
+| Value | Mode | Description |
+|-------|------|-------------|
+| `SHM` / `shm` | Shared Memory | Client attaches to the server's shared memory queues and pushes tasks directly. Lowest latency, requires same-machine access to the server's shared memory segment. |
+| `TCP` / `tcp` | TCP (ZeroMQ) | Client sends serialized tasks over TCP via lightbeam PUSH/PULL sockets. Works across machines. **This is the default when `CHI_IPC_MODE` is unset.** |
+| `IPC` / `ipc` | Unix Domain Socket (ZeroMQ) | Client sends serialized tasks over a Unix domain socket via lightbeam PUSH/PULL. Same-machine only, avoids TCP overhead. |
+
+**Bulk data handling:**
+- In SHM mode, `bulk()` serialization writes the `ShmPtr` (allocator ID + offset) since both client and server can resolve shared memory pointers.
+- In TCP/IPC mode, buffers are allocated with null `alloc_id_` (private memory). `bulk()` detects null `alloc_id_` and inlines the actual data bytes into the serialization stream.
+
+**Example:**
+```bash
+# Use shared memory transport (same machine, lowest latency)
+export CHI_IPC_MODE=SHM
+
+# Use TCP transport (default, works across machines)
+export CHI_IPC_MODE=TCP
+
+# Use Unix domain socket transport (same machine, no TCP overhead)
+export CHI_IPC_MODE=IPC
 ```
 
 ## Python Wheel Distribution

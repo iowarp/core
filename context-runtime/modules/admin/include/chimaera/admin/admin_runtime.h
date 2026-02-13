@@ -185,11 +185,22 @@ public:
   chi::TaskResume Recv(hipc::FullPtr<RecvTask> task, chi::RunContext &rctx);
 
   /**
-   * Handle Heartbeat - Respond to heartbeat request
+   * Handle ClientConnect - Respond to client connection request
    * Sets response to 0 to indicate runtime is healthy
-   * Returns TaskResume for consistency with other methods called from Run
    */
-  chi::TaskResume Heartbeat(hipc::FullPtr<HeartbeatTask> task, chi::RunContext &rctx);
+  chi::TaskResume ClientConnect(hipc::FullPtr<ClientConnectTask> task, chi::RunContext &rctx);
+
+  /**
+   * Handle ClientRecv - Receive tasks from ZMQ clients (TCP/IPC)
+   * Polls ZMQ ROUTER sockets for incoming task submissions
+   */
+  chi::TaskResume ClientRecv(hipc::FullPtr<ClientRecvTask> task, chi::RunContext &rctx);
+
+  /**
+   * Handle ClientSend - Send completed task outputs to ZMQ clients
+   * Polls net_queue_ kClientSendTcp/kClientSendIpc priorities
+   */
+  chi::TaskResume ClientSend(hipc::FullPtr<ClientSendTask> task, chi::RunContext &rctx);
 
   /**
    * Handle WreapDeadIpcs - Periodic task to reap shared memory from dead processes
@@ -204,6 +215,13 @@ public:
    * Returns serialized statistics in JSON format
    */
   chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task, chi::RunContext &rctx);
+
+  /**
+   * Handle RegisterMemory - Register client shared memory with runtime
+   * Called by SHM-mode clients after IncreaseMemory() to tell the runtime
+   * to attach to the new shared memory segment
+   */
+  chi::TaskResume RegisterMemory(hipc::FullPtr<RegisterMemoryTask> task, chi::RunContext &rctx);
 
   /**
    * Handle SubmitBatch - Submit a batch of tasks in a single RPC

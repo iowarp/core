@@ -41,7 +41,7 @@
 
 #include "../simple_test.h"
 
-#include <sys/mman.h>
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -88,13 +88,14 @@ pid_t StartServerProcess() {
 bool WaitForServer(int max_attempts = 50) {
   // The main shared memory segment name is "chi_main_segment_${USER}"
   const char *user = std::getenv("USER");
-  std::string shm_name = std::string("/chi_main_segment_") + (user ? user : "");
+  std::string memfd_path = std::string("/tmp/chimaera_memfd/chi_main_segment_") +
+                           (user ? user : "");
 
   for (int i = 0; i < max_attempts; ++i) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-    // Check if shared memory exists (indicates server is ready)
-    int fd = shm_open(shm_name.c_str(), O_RDONLY, 0666);
+    // Check if memfd symlink exists (indicates server is ready)
+    int fd = open(memfd_path.c_str(), O_RDONLY);
     if (fd >= 0) {
       close(fd);
       // Give it a bit more time to fully initialize
@@ -109,10 +110,11 @@ bool WaitForServer(int max_attempts = 50) {
  * Helper to cleanup server process
  */
 void CleanupSharedMemory() {
-  // Clean up leftover shared memory segments
+  // Clean up leftover memfd symlinks
   const char *user = std::getenv("USER");
-  std::string main_seg = std::string("/chi_main_segment_") + (user ? user : "");
-  shm_unlink(main_seg.c_str());
+  std::string memfd_path = std::string("/tmp/chimaera_memfd/chi_main_segment_") +
+                           (user ? user : "");
+  unlink(memfd_path.c_str());
 }
 
 void CleanupServer(pid_t server_pid) {
@@ -154,9 +156,14 @@ TEST_CASE("ExternalClient - Basic Connection", "[external_client][ipc]") {
   u64 node_id = ipc->GetNodeId();
   (void)node_id;
 
-  // Test that we can get the task queue
+  // In TCP mode (default), the client does not attach to shared memory
+  // so GetTaskQueue() returns nullptr and that is correct behavior
   auto *queue = ipc->GetTaskQueue();
-  REQUIRE(queue != nullptr);
+  if (ipc->GetIpcMode() == IpcMode::kShm) {
+    REQUIRE(queue != nullptr);
+  } else {
+    REQUIRE(queue == nullptr);
+  }
 
   // Cleanup
   CleanupServer(server_pid);
@@ -252,9 +259,12 @@ TEST_CASE("ExternalClient - Client Operations", "[external_client][ipc]") {
   auto *ipc = CHI_IPC;
   REQUIRE(ipc != nullptr);
 
-  // Test GetNumSchedQueues
+  // In TCP mode (default), shared_header_ is not available so
+  // GetNumSchedQueues returns 0. In SHM mode it would be > 0.
   u32 num_queues = ipc->GetNumSchedQueues();
-  REQUIRE(num_queues > 0);
+  if (ipc->GetIpcMode() == IpcMode::kShm) {
+    REQUIRE(num_queues > 0);
+  }
 
   // Note: GetNumHosts, GetHost, and GetAllHosts are server-only operations.
   // The hostfile_map_ is populated during ServerInit and is NOT shared via

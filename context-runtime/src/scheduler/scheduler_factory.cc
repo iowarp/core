@@ -35,12 +35,16 @@
 #include "chimaera/scheduler/scheduler_factory.h"
 
 #include "chimaera/scheduler/default_sched.h"
+#include "chimaera/scheduler/local_sched.h"
 
 namespace chi {
 
 std::unique_ptr<Scheduler> SchedulerFactory::Get(const std::string &sched_name) {
   if (sched_name == "default") {
     return std::make_unique<DefaultScheduler>();
+  }
+  if (sched_name == "local") {
+    return std::make_unique<LocalScheduler>();
   }
 
   // If scheduler name not recognized, return default scheduler

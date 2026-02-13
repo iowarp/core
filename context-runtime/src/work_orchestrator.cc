@@ -256,6 +256,32 @@ bool WorkOrchestrator::SpawnWorkerThreads() {
     }
   }
 
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  // Assign GPU lanes only to the designated GPU worker
+  size_t num_gpus = ipc->GetGpuQueueCount();
+  if (num_gpus > 0 && scheduler_) {
+    Worker *gpu_worker = scheduler_->GetGpuWorker();
+    if (gpu_worker) {
+      std::vector<TaskLane *> gpu_lanes;
+      gpu_lanes.reserve(num_gpus);
+      for (size_t gpu_id = 0; gpu_id < num_gpus; ++gpu_id) {
+        TaskQueue *gpu_queue = ipc->GetGpuQueue(gpu_id);
+        if (gpu_queue) {
+          TaskLane *gpu_lane = &gpu_queue->GetLane(0, 0);
+          gpu_lanes.push_back(gpu_lane);
+          gpu_lane->SetAssignedWorkerId(gpu_worker->GetId());
+        }
+      }
+      gpu_worker->SetGpuLanes(gpu_lanes);
+      HLOG(kInfo, "WorkOrchestrator: Assigned {} GPU lane(s) to GPU worker {}",
+           gpu_lanes.size(), gpu_worker->GetId());
+    } else {
+      HLOG(kWarning, "WorkOrchestrator: {} GPU queue(s) available but no GPU worker designated",
+           num_gpus);
+    }
+  }
+#endif
+
   // Use HSHM thread model to spawn worker threads
   auto thread_model = HSHM_THREAD_MODEL;
   worker_threads_.reserve(all_workers_.size());

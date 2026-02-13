@@ -91,6 +91,12 @@ struct bitfield {
   /** Set bits using mask */
   HSHM_INLINE_CROSS_FUN void SetBits(T mask) { bits_ |= mask; }
 
+  /** Set bits using system-scope atomic (visible to CPU from GPU) */
+  HSHM_INLINE_CROSS_FUN void SetBitsSystem(T mask) {
+    T cur = bits_.load();
+    bits_.store_system(cur | mask);
+  }
+
   /** Unset bits in mask */
   HSHM_INLINE_CROSS_FUN void UnsetBits(T mask) { bits_ &= ~mask; }
 
@@ -115,7 +121,7 @@ struct bitfield {
 
   /** Serialization */
   template <typename Ar>
-  void serialize(Ar &ar) {
+  HSHM_CROSS_FUN void serialize(Ar &ar) {
     ar & bits_;
   }
 };

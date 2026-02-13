@@ -76,8 +76,8 @@ cleanup() {
     rm -f "${TEST_CONFIG}" 2>/dev/null || true
     rm -f /tmp/test_compose_util_bdev.dat 2>/dev/null || true
 
-    # Clean up shared memory
-    rm -f /dev/shm/chi_* 2>/dev/null || true
+    # Clean up memfd symlinks
+    rm -rf /tmp/chimaera_memfd/* 2>/dev/null || true
 
     sleep 1
     echo -e "${GREEN}Cleanup complete${NC}"

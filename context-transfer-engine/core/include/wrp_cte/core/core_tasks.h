@@ -44,19 +44,19 @@
 // Include bdev client for TargetInfo
 #include <chimaera/bdev/bdev_client.h>
 #include <yaml-cpp/yaml.h>
+
 #include <chrono>
 // Include cereal for serialization
-#include <cereal/cereal.hpp>
 #include <cereal/archives/binary.hpp>
+#include <cereal/cereal.hpp>
 
 namespace wrp_cte::core {
-
 
 // CTE Core Pool ID constant (major: 512, minor: 0)
 static constexpr chi::PoolId kCtePoolId(512, 0);
 
 // CTE Core Pool Name constant
-static constexpr const char* kCtePoolName = "wrp_cte_core";
+static constexpr const char *kCtePoolName = "wrp_cte_core";
 
 // Timestamp type definition
 using Timestamp = std::chrono::time_point<std::chrono::steady_clock>;
@@ -75,32 +75,23 @@ struct CreateParams {
   // Default constructor
   CreateParams() {}
 
-  // Constructor with allocator and parameters
-  CreateParams(CHI_MAIN_ALLOC_T *alloc)
-      : config_() {
-    (void)alloc; // Suppress unused parameter warning
-  }
+  // Copy constructor (required for task creation)
+  CreateParams(const CreateParams &other) : config_(other.config_) {}
 
-  // Copy constructor with allocator (required for task creation)
-  CreateParams(CHI_MAIN_ALLOC_T *alloc,
-               const CreateParams &other)
-      : config_(other.config_) {
-    (void)alloc; // Suppress unused parameter warning
-  }
-
-  // Constructor with allocator, pool_id, and CreateParams (required for admin
+  // Constructor with pool_id and CreateParams (required for admin
   // task creation)
-  CreateParams(CHI_MAIN_ALLOC_T *alloc,
-               const chi::PoolId &pool_id, const CreateParams &other)
+  CreateParams(const chi::PoolId &pool_id, const CreateParams &other)
       : config_(other.config_) {
-    // pool_id is used by the admin task framework, but we don't need to store it
-    (void)pool_id; // Suppress unused parameter warning
-    (void)alloc; // Suppress unused parameter warning
+    // pool_id is used by the admin task framework, but we don't need to store
+    // it
+    (void)pool_id;  // Suppress unused parameter warning
   }
 
   // Serialization support for cereal
-  template <class Archive> void serialize(Archive &ar) {
-    // Config is not serialized - it's loaded from pool_config.config_ in LoadConfig
+  template <class Archive>
+  void serialize(Archive &ar) {
+    // Config is not serialized - it's loaded from pool_config.config_ in
+    // LoadConfig
     (void)ar;
   }
 
@@ -109,22 +100,29 @@ struct CreateParams {
    * Required for compose feature support
    * @param pool_config Pool configuration from compose section
    */
-  void LoadConfig(const chi::PoolConfig& pool_config) {
+  void LoadConfig(const chi::PoolConfig &pool_config) {
     // The pool_config.config_ contains the full CTE configuration YAML
     // in the format of config/cte_config.yaml (targets, storage, dpe sections).
     // Parse it directly into the Config object
-    HLOG(kDebug, "CTE CreateParams::LoadConfig() - config string length: {}", pool_config.config_.length());
-    HLOG(kDebug, "CTE CreateParams::LoadConfig() - config string:\n{}", pool_config.config_);
+    HLOG(kDebug, "CTE CreateParams::LoadConfig() - config string length: {}",
+         pool_config.config_.length());
+    HLOG(kDebug, "CTE CreateParams::LoadConfig() - config string:\n{}",
+         pool_config.config_);
     if (!pool_config.config_.empty()) {
       bool success = config_.LoadFromString(pool_config.config_);
       if (!success) {
-        HLOG(kError, "CTE CreateParams::LoadConfig() - Failed to load config from string");
+        HLOG(kError,
+             "CTE CreateParams::LoadConfig() - Failed to load config from "
+             "string");
       } else {
-        HLOG(kInfo, "CTE CreateParams::LoadConfig() - Successfully loaded config with {} storage devices",
+        HLOG(kInfo,
+             "CTE CreateParams::LoadConfig() - Successfully loaded config with "
+             "{} storage devices",
              config_.storage_.devices_.size());
       }
     } else {
-      HLOG(kWarning, "CTE CreateParams::LoadConfig() - Empty config string provided");
+      HLOG(kWarning,
+           "CTE CreateParams::LoadConfig() - Empty config string provided");
     }
   }
 };
@@ -149,24 +147,25 @@ using DestroyTask = chimaera::admin::DestroyTask;
 struct TargetInfo {
   std::string target_name_;
   std::string bdev_pool_name_;
-  chimaera::bdev::Client bdev_client_; // Bdev client for this target
-  chi::PoolQuery target_query_;        // Target pool query for bdev API calls
+  chimaera::bdev::Client bdev_client_;  // Bdev client for this target
+  chi::PoolQuery target_query_;         // Target pool query for bdev API calls
   chi::u64 bytes_read_;
   chi::u64 bytes_written_;
   chi::u64 ops_read_;
   chi::u64 ops_written_;
-  float target_score_;       // Target score (0-1, normalized log bandwidth)
-  chi::u64 remaining_space_; // Remaining allocatable space in bytes
-  chimaera::bdev::PerfMetrics perf_metrics_; // Performance metrics from bdev
+  float target_score_;        // Target score (0-1, normalized log bandwidth)
+  chi::u64 remaining_space_;  // Remaining allocatable space in bytes
+  chimaera::bdev::PerfMetrics perf_metrics_;  // Performance metrics from bdev
 
   TargetInfo() = default;
 
-  explicit TargetInfo(CHI_MAIN_ALLOC_T *alloc)
-      : bytes_read_(0), bytes_written_(0), ops_read_(0), ops_written_(0),
-        target_score_(0.0f), remaining_space_(0) {
-    // std::string doesn't need allocator, chi::u64 and float are POD types
-    (void)alloc; // Suppress unused parameter warning
-  }
+  explicit TargetInfo(int /*unused*/)
+      : bytes_read_(0),
+        bytes_written_(0),
+        ops_read_(0),
+        ops_written_(0),
+        target_score_(0.0f),
+        remaining_space_(0) {}
 };
 
 /**
@@ -174,30 +173,33 @@ struct TargetInfo {
  */
 struct RegisterTargetTask : public chi::Task {
   // Task-specific data using HSHM macros
-  IN chi::priv::string target_name_; // Name and file path of the target to register
-  IN chimaera::bdev::BdevType bdev_type_; // Block device type enum
-  IN chi::u64 total_size_;                // Total size for allocation
-  IN chi::PoolQuery target_query_;        // Target pool query for bdev API calls
-  IN chi::PoolId bdev_id_;                // PoolId to create for the underlying bdev
+  IN chi::priv::string
+      target_name_;  // Name and file path of the target to register
+  IN chimaera::bdev::BdevType bdev_type_;  // Block device type enum
+  IN chi::u64 total_size_;                 // Total size for allocation
+  IN chi::PoolQuery target_query_;  // Target pool query for bdev API calls
+  IN chi::PoolId bdev_id_;          // PoolId to create for the underlying bdev
 
   // SHM constructor
   RegisterTargetTask()
-      : chi::Task(), target_name_(HSHM_MALLOC),
-        bdev_type_(chimaera::bdev::BdevType::kFile), total_size_(0),
+      : chi::Task(),
+        target_name_(HSHM_MALLOC),
+        bdev_type_(chimaera::bdev::BdevType::kFile),
+        total_size_(0),
         bdev_id_(chi::PoolId::GetNull()) {}
 
   // Emplace constructor
-  explicit RegisterTargetTask(const chi::TaskId &task_id,
-                              const chi::PoolId &pool_id,
-                              const chi::PoolQuery &pool_query,
-                              const std::string &target_name,
-                              chimaera::bdev::BdevType bdev_type,
-                              chi::u64 total_size,
-                              const chi::PoolQuery &target_query,
-                              const chi::PoolId &bdev_id)
+  explicit RegisterTargetTask(
+      const chi::TaskId &task_id, const chi::PoolId &pool_id,
+      const chi::PoolQuery &pool_query, const std::string &target_name,
+      chimaera::bdev::BdevType bdev_type, chi::u64 total_size,
+      const chi::PoolQuery &target_query, const chi::PoolId &bdev_id)
       : chi::Task(task_id, pool_id, pool_query, Method::kRegisterTarget),
-        target_name_(HSHM_MALLOC, target_name), bdev_type_(bdev_type),
-        total_size_(total_size), target_query_(target_query), bdev_id_(bdev_id) {
+        target_name_(HSHM_MALLOC, target_name),
+        bdev_type_(bdev_type),
+        total_size_(total_size),
+        target_query_(target_query),
+        bdev_id_(bdev_id) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kRegisterTarget;
@@ -208,7 +210,8 @@ struct RegisterTargetTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(target_name_, bdev_type_, total_size_, target_query_, bdev_id_);
   }
@@ -216,7 +219,8 @@ struct RegisterTargetTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
   }
 
@@ -250,18 +254,17 @@ struct RegisterTargetTask : public chi::Task {
  * container)
  */
 struct UnregisterTargetTask : public chi::Task {
-  IN chi::priv::string target_name_; // Name of the target to unregister
+  IN chi::priv::string target_name_;  // Name of the target to unregister
 
   // SHM constructor
-  UnregisterTargetTask()
-      : chi::Task(), target_name_(HSHM_MALLOC) {}
+  UnregisterTargetTask() : chi::Task(), target_name_(HSHM_MALLOC) {}
 
   // Emplace constructor
-  explicit UnregisterTargetTask(
-      const chi::TaskId &task_id, const chi::PoolId &pool_id,
-      const chi::PoolQuery &pool_query, const std::string &target_name)
-      : chi::Task(task_id, pool_id, pool_query,
-                  Method::kUnregisterTarget),
+  explicit UnregisterTargetTask(const chi::TaskId &task_id,
+                                const chi::PoolId &pool_id,
+                                const chi::PoolQuery &pool_query,
+                                const std::string &target_name)
+      : chi::Task(task_id, pool_id, pool_query, Method::kUnregisterTarget),
         target_name_(HSHM_MALLOC, target_name) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -273,7 +276,8 @@ struct UnregisterTargetTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(target_name_);
   }
@@ -281,7 +285,8 @@ struct UnregisterTargetTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     // No output parameters (return_code_ handled by base class)
   }
@@ -310,11 +315,10 @@ struct UnregisterTargetTask : public chi::Task {
  */
 struct ListTargetsTask : public chi::Task {
   OUT std::vector<std::string>
-      target_names_; // List of registered target names
+      target_names_;  // List of registered target names
 
   // SHM constructor
-  ListTargetsTask()
-      : chi::Task() {}
+  ListTargetsTask() : chi::Task() {}
 
   // Emplace constructor
   explicit ListTargetsTask(const chi::TaskId &task_id,
@@ -331,7 +335,8 @@ struct ListTargetsTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     // No input parameters
   }
@@ -339,7 +344,8 @@ struct ListTargetsTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(target_names_);
   }
@@ -370,8 +376,7 @@ struct ListTargetsTask : public chi::Task {
  */
 struct StatTargetsTask : public chi::Task {
   // SHM constructor
-  StatTargetsTask()
-      : chi::Task() {}
+  StatTargetsTask() : chi::Task() {}
 
   // Emplace constructor
   explicit StatTargetsTask(const chi::TaskId &task_id,
@@ -388,7 +393,8 @@ struct StatTargetsTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     // No input parameters
   }
@@ -396,7 +402,8 @@ struct StatTargetsTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     // No output parameters (return_code_ handled by base class)
   }
@@ -408,7 +415,7 @@ struct StatTargetsTask : public chi::Task {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     // No task-specific fields to copy
-    (void)other; // Suppress unused parameter warning
+    (void)other;  // Suppress unused parameter warning
   }
 
   /**
@@ -427,17 +434,23 @@ struct StatTargetsTask : public chi::Task {
  */
 struct GetTargetInfoTask : public chi::Task {
   IN chi::priv::string target_name_;  // Name of target to query
-  OUT float target_score_;             // Target score (0-1, normalized log bandwidth)
-  OUT chi::u64 remaining_space_;       // Remaining allocatable space in bytes
-  OUT chi::u64 bytes_read_;            // Bytes read from target
-  OUT chi::u64 bytes_written_;         // Bytes written to target
-  OUT chi::u64 ops_read_;              // Read operations
-  OUT chi::u64 ops_written_;           // Write operations
+  OUT float target_score_;  // Target score (0-1, normalized log bandwidth)
+  OUT chi::u64 remaining_space_;  // Remaining allocatable space in bytes
+  OUT chi::u64 bytes_read_;       // Bytes read from target
+  OUT chi::u64 bytes_written_;    // Bytes written to target
+  OUT chi::u64 ops_read_;         // Read operations
+  OUT chi::u64 ops_written_;      // Write operations
 
   // SHM constructor
   GetTargetInfoTask()
-      : chi::Task(), target_name_(HSHM_MALLOC), target_score_(0.0f), remaining_space_(0),
-        bytes_read_(0), bytes_written_(0), ops_read_(0), ops_written_(0) {}
+      : chi::Task(),
+        target_name_(HSHM_MALLOC),
+        target_score_(0.0f),
+        remaining_space_(0),
+        bytes_read_(0),
+        bytes_written_(0),
+        ops_read_(0),
+        ops_written_(0) {}
 
   // Emplace constructor
   explicit GetTargetInfoTask(const chi::TaskId &task_id,
@@ -445,8 +458,13 @@ struct GetTargetInfoTask : public chi::Task {
                              const chi::PoolQuery &pool_query,
                              const std::string &target_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetTargetInfo),
-        target_name_(HSHM_MALLOC, target_name), target_score_(0.0f), remaining_space_(0),
-        bytes_read_(0), bytes_written_(0), ops_read_(0), ops_written_(0) {
+        target_name_(HSHM_MALLOC, target_name),
+        target_score_(0.0f),
+        remaining_space_(0),
+        bytes_read_(0),
+        bytes_written_(0),
+        ops_read_(0),
+        ops_written_(0) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kGetTargetInfo;
@@ -457,7 +475,8 @@ struct GetTargetInfoTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(target_name_);
   }
@@ -465,10 +484,11 @@ struct GetTargetInfoTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
-    ar(target_score_, remaining_space_, bytes_read_, bytes_written_,
-       ops_read_, ops_written_);
+    ar(target_score_, remaining_space_, bytes_read_, bytes_written_, ops_read_,
+       ops_written_);
   }
 
   /**
@@ -501,17 +521,18 @@ struct GetTargetInfoTask : public chi::Task {
  */
 using TagId = chi::UniqueId;
 
-} // namespace wrp_cte::core
+}  // namespace wrp_cte::core
 
 // Hash specialization for TagId (TagId uses same hash as chi::UniqueId)
 namespace hshm {
-template <> struct hash<wrp_cte::core::TagId> {
+template <>
+struct hash<wrp_cte::core::TagId> {
   std::size_t operator()(const wrp_cte::core::TagId &id) const {
     std::hash<chi::u32> hasher;
     return hasher(id.major_) ^ (hasher(id.minor_) << 1);
   }
 };
-} // namespace hshm
+}  // namespace hshm
 
 namespace wrp_cte::core {
 
@@ -521,39 +542,34 @@ namespace wrp_cte::core {
 struct TagInfo {
   std::string tag_name_;
   TagId tag_id_;
-  std::atomic<size_t> total_size_;       // Total size of all blobs in this tag
-  Timestamp last_modified_; // Last modification time
-  Timestamp last_read_;     // Last read time
+  std::atomic<size_t> total_size_;  // Total size of all blobs in this tag
+  Timestamp last_modified_;         // Last modification time
+  Timestamp last_read_;             // Last read time
 
   TagInfo()
-      : tag_name_(), tag_id_(TagId::GetNull()), total_size_(0),
+      : tag_name_(),
+        tag_id_(TagId::GetNull()),
+        total_size_(0),
         last_modified_(std::chrono::steady_clock::now()),
         last_read_(std::chrono::steady_clock::now()) {}
 
-  explicit TagInfo(CHI_MAIN_ALLOC_T *alloc)
-      : tag_name_(), tag_id_(TagId::GetNull()), total_size_(0),
+  TagInfo(const std::string &tag_name, const TagId &tag_id)
+      : tag_name_(tag_name),
+        tag_id_(tag_id),
+        total_size_(0),
         last_modified_(std::chrono::steady_clock::now()),
-        last_read_(std::chrono::steady_clock::now()) {
-    (void)alloc; // Suppress unused parameter warning
-  }
-
-  TagInfo(CHI_MAIN_ALLOC_T *alloc,
-          const std::string &tag_name, const TagId &tag_id)
-      : tag_name_(tag_name), tag_id_(tag_id), total_size_(0),
-        last_modified_(std::chrono::steady_clock::now()),
-        last_read_(std::chrono::steady_clock::now()) {
-    (void)alloc; // Suppress unused parameter warning
-  }
+        last_read_(std::chrono::steady_clock::now()) {}
 
   // Copy constructor
   TagInfo(const TagInfo &other)
-      : tag_name_(other.tag_name_), tag_id_(other.tag_id_),
+      : tag_name_(other.tag_name_),
+        tag_id_(other.tag_id_),
         total_size_(other.total_size_.load()),
         last_modified_(other.last_modified_),
         last_read_(other.last_read_) {}
 
   // Copy assignment operator
-  TagInfo& operator=(const TagInfo &other) {
+  TagInfo &operator=(const TagInfo &other) {
     if (this != &other) {
       tag_name_ = other.tag_name_;
       tag_id_ = other.tag_id_;
@@ -570,17 +586,19 @@ struct TagInfo {
  * Each block represents a portion of a blob stored in a target
  */
 struct BlobBlock {
-  chimaera::bdev::Client bdev_client_; // Bdev client for this block's target
-  chi::PoolQuery target_query_;        // Target pool query for bdev API calls
-  chi::u64 target_offset_; // Offset within target where this block is stored
-  chi::u64 size_;          // Size of this block in bytes
+  chimaera::bdev::Client bdev_client_;  // Bdev client for this block's target
+  chi::PoolQuery target_query_;         // Target pool query for bdev API calls
+  chi::u64 target_offset_;  // Offset within target where this block is stored
+  chi::u64 size_;           // Size of this block in bytes
 
   BlobBlock() = default;
 
   BlobBlock(const chimaera::bdev::Client &client,
             const chi::PoolQuery &target_query, chi::u64 offset, chi::u64 size)
-      : bdev_client_(client), target_query_(target_query),
-        target_offset_(offset), size_(size) {}
+      : bdev_client_(client),
+        target_query_(target_query),
+        target_offset_(offset),
+        size_(size) {}
 };
 
 /**
@@ -589,36 +607,35 @@ struct BlobBlock {
 struct BlobInfo {
   std::string blob_name_;
   std::vector<BlobBlock>
-      blocks_;              // Vector of blocks that make up this blob (ordered)
-  float score_;             // 0-1 score for reorganization
-  Timestamp last_modified_; // Last modification time
-  Timestamp last_read_;     // Last read time
-  int compress_lib_;        // Compression library ID used for this blob (0 = no compression)
-  int compress_preset_;     // Compression preset used (1=FAST, 2=BALANCED, 3=BEST)
-  chi::u64 trace_key_;      // Unique trace ID for linking to trace logs (0 = not traced)
+      blocks_;   // Vector of blocks that make up this blob (ordered)
+  float score_;  // 0-1 score for reorganization
+  Timestamp last_modified_;  // Last modification time
+  Timestamp last_read_;      // Last read time
+  int compress_lib_;     // Compression library ID used for this blob (0 = no
+                         // compression)
+  int compress_preset_;  // Compression preset used (1=FAST, 2=BALANCED, 3=BEST)
+  chi::u64
+      trace_key_;  // Unique trace ID for linking to trace logs (0 = not traced)
 
   BlobInfo()
-      : blob_name_(), blocks_(), score_(0.0f),
+      : blob_name_(),
+        blocks_(),
+        score_(0.0f),
         last_modified_(std::chrono::steady_clock::now()),
         last_read_(std::chrono::steady_clock::now()),
-        compress_lib_(0), compress_preset_(2), trace_key_(0) {}
+        compress_lib_(0),
+        compress_preset_(2),
+        trace_key_(0) {}
 
-  explicit BlobInfo(CHI_MAIN_ALLOC_T *alloc)
-      : blob_name_(), blocks_(), score_(0.0f),
+  BlobInfo(const std::string &blob_name, float score)
+      : blob_name_(blob_name),
+        blocks_(),
+        score_(score),
         last_modified_(std::chrono::steady_clock::now()),
         last_read_(std::chrono::steady_clock::now()),
-        compress_lib_(0), compress_preset_(2), trace_key_(0) {
-    (void)alloc; // Suppress unused parameter warning
-  }
-
-  BlobInfo(CHI_MAIN_ALLOC_T *alloc,
-           const std::string &blob_name, float score)
-      : blob_name_(blob_name), blocks_(), score_(score),
-        last_modified_(std::chrono::steady_clock::now()),
-        last_read_(std::chrono::steady_clock::now()),
-        compress_lib_(0), compress_preset_(2), trace_key_(0) {
-    (void)alloc; // Suppress unused parameter warning
-  }
+        compress_lib_(0),
+        compress_preset_(2),
+        trace_key_(0) {}
 
   /**
    * Get total size of blob by summing all block sizes
@@ -637,51 +654,54 @@ struct BlobInfo {
  * Provides metadata for compression decision-making
  */
 struct Context {
-  int dynamic_compress_;   // 0 - skip, 1 - static, 2 - dynamic
-  int compress_lib_;       // The compression library to apply (0-10)
-  int compress_preset_;    // Compression preset: 1=FAST, 2=BALANCED, 3=BEST (default=2)
-  chi::u32 target_psnr_;   // The acceptable PSNR for lossy compression (0 means infinity)
-  int psnr_chance_;        // The chance PSNR will be validated (default 100%)
-  bool max_performance_;   // Compression objective (performance vs ratio)
-  int consumer_node_;      // The node where consumer will access data (-1 for unknown)
-  int data_type_;          // The type of data (e.g., float, char, int, double)
-  bool trace_;             // Enable tracing for this operation
-  chi::u64 trace_key_;     // Unique trace ID for this Put operation
-  int trace_node_;         // Node ID where trace was initiated
+  int dynamic_compress_;  // 0 - skip, 1 - static, 2 - dynamic
+  int compress_lib_;      // The compression library to apply (0-10)
+  int compress_preset_;   // Compression preset: 1=FAST, 2=BALANCED, 3=BEST
+                          // (default=2)
+  chi::u32 target_psnr_;  // The acceptable PSNR for lossy compression (0 means
+                          // infinity)
+  int psnr_chance_;       // The chance PSNR will be validated (default 100%)
+  bool max_performance_;  // Compression objective (performance vs ratio)
+  int consumer_node_;     // The node where consumer will access data (-1 for
+                          // unknown)
+  int data_type_;         // The type of data (e.g., float, char, int, double)
+  bool trace_;            // Enable tracing for this operation
+  chi::u64 trace_key_;    // Unique trace ID for this Put operation
+  int trace_node_;        // Node ID where trace was initiated
 
   // Dynamic statistics (populated after compression)
-  chi::u64 actual_original_size_;      // Original data size in bytes
-  chi::u64 actual_compressed_size_;    // Actual size after compression in bytes
-  double actual_compression_ratio_;    // Actual compression ratio (original/compressed)
-  double actual_compress_time_ms_;     // Actual compression time in milliseconds
-  double actual_psnr_db_;              // Actual PSNR for lossy compression (0 if lossless)
+  chi::u64 actual_original_size_;    // Original data size in bytes
+  chi::u64 actual_compressed_size_;  // Actual size after compression in bytes
+  double actual_compression_ratio_;  // Actual compression ratio
+                                     // (original/compressed)
+  double actual_compress_time_ms_;   // Actual compression time in milliseconds
+  double actual_psnr_db_;  // Actual PSNR for lossy compression (0 if lossless)
 
   Context()
-      : dynamic_compress_(0), compress_lib_(0), compress_preset_(2),
-        target_psnr_(0), psnr_chance_(100), max_performance_(false),
-        consumer_node_(-1), data_type_(0), trace_(false),
-        trace_key_(0), trace_node_(-1),
-        actual_original_size_(0), actual_compressed_size_(0),
-        actual_compression_ratio_(1.0), actual_compress_time_ms_(0.0),
+      : dynamic_compress_(0),
+        compress_lib_(0),
+        compress_preset_(2),
+        target_psnr_(0),
+        psnr_chance_(100),
+        max_performance_(false),
+        consumer_node_(-1),
+        data_type_(0),
+        trace_(false),
+        trace_key_(0),
+        trace_node_(-1),
+        actual_original_size_(0),
+        actual_compressed_size_(0),
+        actual_compression_ratio_(1.0),
+        actual_compress_time_ms_(0.0),
         actual_psnr_db_(0.0) {}
 
-  explicit Context(CHI_MAIN_ALLOC_T *alloc)
-      : dynamic_compress_(0), compress_lib_(0), compress_preset_(2),
-        target_psnr_(0), psnr_chance_(100), max_performance_(false),
-        consumer_node_(-1), data_type_(0), trace_(false),
-        trace_key_(0), trace_node_(-1),
-        actual_original_size_(0), actual_compressed_size_(0),
-        actual_compression_ratio_(1.0), actual_compress_time_ms_(0.0),
-        actual_psnr_db_(0.0) {
-    (void)alloc;
-  }
-
   // Serialization support for cereal
-  template <class Archive> void serialize(Archive &ar) {
-    ar(dynamic_compress_, compress_lib_, compress_preset_, target_psnr_, psnr_chance_,
-       max_performance_, consumer_node_, data_type_, trace_, trace_key_, trace_node_,
-       actual_original_size_, actual_compressed_size_, actual_compression_ratio_,
-       actual_compress_time_ms_, actual_psnr_db_);
+  template <class Archive>
+  void serialize(Archive &ar) {
+    ar(dynamic_compress_, compress_lib_, compress_preset_, target_psnr_,
+       psnr_chance_, max_performance_, consumer_node_, data_type_, trace_,
+       trace_key_, trace_node_, actual_original_size_, actual_compressed_size_,
+       actual_compression_ratio_, actual_compress_time_ms_, actual_psnr_db_);
   }
 };
 
@@ -701,33 +721,41 @@ enum class CteOp : chi::u32 {
  * CTE Telemetry data structure for performance monitoring
  */
 struct CteTelemetry {
-  CteOp op_;                   // Operation type
-  size_t off_;                 // Offset within blob (for Put/Get operations)
-  size_t size_;                // Size of operation (for Put/Get operations)
-  TagId tag_id_;               // Tag ID involved
-  Timestamp mod_time_;         // Last modification time
-  Timestamp read_time_;        // Last read time
-  std::uint64_t logical_time_; // Logical time for ordering telemetry entries
+  CteOp op_;                    // Operation type
+  size_t off_;                  // Offset within blob (for Put/Get operations)
+  size_t size_;                 // Size of operation (for Put/Get operations)
+  TagId tag_id_;                // Tag ID involved
+  Timestamp mod_time_;          // Last modification time
+  Timestamp read_time_;         // Last read time
+  std::uint64_t logical_time_;  // Logical time for ordering telemetry entries
 
   CteTelemetry()
-      : op_(CteOp::kPutBlob), off_(0), size_(0),
-        tag_id_(TagId::GetNull()), mod_time_(std::chrono::steady_clock::now()),
-        read_time_(std::chrono::steady_clock::now()), logical_time_(0) {}
+      : op_(CteOp::kPutBlob),
+        off_(0),
+        size_(0),
+        tag_id_(TagId::GetNull()),
+        mod_time_(std::chrono::steady_clock::now()),
+        read_time_(std::chrono::steady_clock::now()),
+        logical_time_(0) {}
 
-  CteTelemetry(CteOp op, size_t off, size_t size,
-               const TagId &tag_id, const Timestamp &mod_time,
-               const Timestamp &read_time, std::uint64_t logical_time = 0)
-      : op_(op), off_(off), size_(size), tag_id_(tag_id),
-        mod_time_(mod_time), read_time_(read_time),
+  CteTelemetry(CteOp op, size_t off, size_t size, const TagId &tag_id,
+               const Timestamp &mod_time, const Timestamp &read_time,
+               std::uint64_t logical_time = 0)
+      : op_(op),
+        off_(off),
+        size_(size),
+        tag_id_(tag_id),
+        mod_time_(mod_time),
+        read_time_(read_time),
         logical_time_(logical_time) {}
 
   // Serialization support for cereal
-  template <class Archive> void serialize(Archive &ar) {
+  template <class Archive>
+  void serialize(Archive &ar) {
     // Convert timestamps to duration counts for serialization
     auto mod_count = mod_time_.time_since_epoch().count();
     auto read_count = read_time_.time_since_epoch().count();
-    ar(op_, off_, size_, tag_id_, mod_count, read_count,
-       logical_time_);
+    ar(op_, off_, size_, tag_id_, mod_count, read_count, logical_time_);
     // Note: On deserialization, timestamps will be reconstructed from counts
     if (Archive::is_loading::value) {
       mod_time_ = Timestamp(Timestamp::duration(mod_count));
@@ -742,8 +770,8 @@ struct CteTelemetry {
  */
 template <typename CreateParamsT = CreateParams>
 struct GetOrCreateTagTask : public chi::Task {
-  IN chi::priv::string tag_name_; // Tag name (required)
-  INOUT TagId tag_id_;       // Tag unique ID (default null, output on creation)
+  IN chi::priv::string tag_name_;  // Tag name (required)
+  INOUT TagId tag_id_;  // Tag unique ID (default null, output on creation)
 
   // SHM constructor
   GetOrCreateTagTask()
@@ -756,7 +784,8 @@ struct GetOrCreateTagTask : public chi::Task {
                               const std::string &tag_name,
                               const TagId &tag_id = TagId::GetNull())
       : chi::Task(task_id, pool_id, pool_query, Method::kGetOrCreateTag),
-        tag_name_(HSHM_MALLOC, tag_name), tag_id_(tag_id) {
+        tag_name_(HSHM_MALLOC, tag_name),
+        tag_id_(tag_id) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kGetOrCreateTag;
@@ -767,7 +796,8 @@ struct GetOrCreateTagTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_name_, tag_id_);
   }
@@ -775,7 +805,8 @@ struct GetOrCreateTagTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(tag_id_);
   }
@@ -804,45 +835,58 @@ struct GetOrCreateTagTask : public chi::Task {
  * PutBlob task - Store a blob with optional compression context
  */
 struct PutBlobTask : public chi::Task {
-  IN TagId tag_id_;              // Tag ID for blob grouping
-  INOUT chi::priv::string blob_name_; // Blob name (required)
-  IN chi::u64 offset_;           // Offset within blob
-  IN chi::u64 size_;             // Size of blob data
-  IN hipc::ShmPtr<> blob_data_;   // Blob data (shared memory pointer)
-  IN float score_;               // Score for placement: -1.0=unknown (use defaults), 0.0-1.0=explicit
-  INOUT Context context_;        // Context for compression control and statistics
-  IN chi::u32 flags_;            // Operation flags
+  IN TagId tag_id_;                    // Tag ID for blob grouping
+  INOUT chi::priv::string blob_name_;  // Blob name (required)
+  IN chi::u64 offset_;                 // Offset within blob
+  IN chi::u64 size_;                   // Size of blob data
+  IN hipc::ShmPtr<> blob_data_;        // Blob data (shared memory pointer)
+  IN float score_;         // Score for placement: -1.0=unknown (use defaults),
+                           // 0.0-1.0=explicit
+  INOUT Context context_;  // Context for compression control and statistics
+  IN chi::u32 flags_;      // Operation flags
 
   // SHM constructor
   // Default score -1.0f means "unknown" - runtime will use 1.0 for new blobs
   // or preserve existing score for modifications
   PutBlobTask()
-      : chi::Task(), tag_id_(TagId::GetNull()), blob_name_(HSHM_MALLOC),
-        offset_(0), size_(0),
-        blob_data_(hipc::ShmPtr<>::GetNull()), score_(-1.0f), context_(),
+      : chi::Task(),
+        tag_id_(TagId::GetNull()),
+        blob_name_(HSHM_MALLOC),
+        offset_(0),
+        size_(0),
+        blob_data_(hipc::ShmPtr<>::GetNull()),
+        score_(-1.0f),
+        context_(),
         flags_(0) {}
 
   // Emplace constructor
   explicit PutBlobTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
                        const chi::PoolQuery &pool_query, const TagId &tag_id,
-                       const std::string &blob_name,
-                       chi::u64 offset, chi::u64 size, hipc::ShmPtr<> blob_data,
-                       float score, const Context &context, chi::u32 flags)
+                       const std::string &blob_name, chi::u64 offset,
+                       chi::u64 size, hipc::ShmPtr<> blob_data, float score,
+                       const Context &context, chi::u32 flags)
       : chi::Task(task_id, pool_id, pool_query, Method::kPutBlob),
-        tag_id_(tag_id), blob_name_(HSHM_MALLOC, blob_name),
-        offset_(offset), size_(size), blob_data_(blob_data), score_(score),
-        context_(context), flags_(flags) {
+        tag_id_(tag_id),
+        blob_name_(HSHM_MALLOC, blob_name),
+        offset_(offset),
+        size_(size),
+        blob_data_(blob_data),
+        score_(score),
+        context_(context),
+        flags_(flags) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kPutBlob;
     task_flags_.Clear();
     pool_query_ = pool_query;
+    // stat_.io_size_ = size;
   }
 
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_, offset_, size_, score_, context_, flags_);
     // Use BULK_XFER to transfer blob data from client to runtime
@@ -852,7 +896,8 @@ struct PutBlobTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(blob_name_, context_);
     // No bulk transfer needed for PutBlob output (metadata only)
@@ -888,40 +933,49 @@ struct PutBlobTask : public chi::Task {
  * GetBlob task - Retrieve a blob (unimplemented for now)
  */
 struct GetBlobTask : public chi::Task {
-  IN TagId tag_id_;              // Tag ID for blob lookup
-  IN chi::priv::string blob_name_;    // Blob name (required)
-  IN chi::u64 offset_;           // Offset within blob
-  IN chi::u64 size_;             // Size of data to retrieve
-  IN chi::u32 flags_;            // Operation flags
+  IN TagId tag_id_;                 // Tag ID for blob lookup
+  IN chi::priv::string blob_name_;  // Blob name (required)
+  IN chi::u64 offset_;              // Offset within blob
+  IN chi::u64 size_;                // Size of data to retrieve
+  IN chi::u32 flags_;               // Operation flags
   IN hipc::ShmPtr<>
-      blob_data_; // Input buffer for blob data (shared memory pointer)
+      blob_data_;  // Input buffer for blob data (shared memory pointer)
 
   // SHM constructor
   GetBlobTask()
-      : chi::Task(), tag_id_(TagId::GetNull()), blob_name_(HSHM_MALLOC),
-        offset_(0), size_(0), flags_(0),
+      : chi::Task(),
+        tag_id_(TagId::GetNull()),
+        blob_name_(HSHM_MALLOC),
+        offset_(0),
+        size_(0),
+        flags_(0),
         blob_data_(hipc::ShmPtr<>::GetNull()) {}
 
   // Emplace constructor
   explicit GetBlobTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
                        const chi::PoolQuery &pool_query, const TagId &tag_id,
-                       const std::string &blob_name,
-                       chi::u64 offset, chi::u64 size, chi::u32 flags,
-                       hipc::ShmPtr<> blob_data)
+                       const std::string &blob_name, chi::u64 offset,
+                       chi::u64 size, chi::u32 flags, hipc::ShmPtr<> blob_data)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetBlob),
-        tag_id_(tag_id), blob_name_(HSHM_MALLOC, blob_name),
-        offset_(offset), size_(size), flags_(flags), blob_data_(blob_data) {
+        tag_id_(tag_id),
+        blob_name_(HSHM_MALLOC, blob_name),
+        offset_(offset),
+        size_(size),
+        flags_(flags),
+        blob_data_(blob_data) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kGetBlob;
     task_flags_.Clear();
     pool_query_ = pool_query;
+    // stat_.io_size_ = size;
   }
 
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_, offset_, size_, flags_);
     // Use BULK_EXPOSE - metadata only, runtime will allocate buffer for read
@@ -932,7 +986,8 @@ struct GetBlobTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     // Use BULK_XFER to transfer read data back to client
     ar.bulk(blob_data_, size_, BULK_XFER);
@@ -966,23 +1021,27 @@ struct GetBlobTask : public chi::Task {
  * ReorganizeBlob task - Change score for a single blob
  */
 struct ReorganizeBlobTask : public chi::Task {
-  IN TagId tag_id_;              // Tag ID containing blob
-  IN chi::priv::string blob_name_;    // Blob name to reorganize
-  IN float new_score_;           // New score for the blob (0-1)
+  IN TagId tag_id_;                 // Tag ID containing blob
+  IN chi::priv::string blob_name_;  // Blob name to reorganize
+  IN float new_score_;              // New score for the blob (0-1)
 
   // SHM constructor
   ReorganizeBlobTask()
-      : chi::Task(), tag_id_(TagId::GetNull()), blob_name_(HSHM_MALLOC),
+      : chi::Task(),
+        tag_id_(TagId::GetNull()),
+        blob_name_(HSHM_MALLOC),
         new_score_(0.0f) {}
 
   // Emplace constructor
-  explicit ReorganizeBlobTask(
-      const chi::TaskId &task_id, const chi::PoolId &pool_id,
-      const chi::PoolQuery &pool_query, const TagId &tag_id,
-      const std::string &blob_name, float new_score)
-      : chi::Task(task_id, pool_id, pool_query,
-                  Method::kReorganizeBlob),
-        tag_id_(tag_id), blob_name_(HSHM_MALLOC, blob_name), new_score_(new_score) {
+  explicit ReorganizeBlobTask(const chi::TaskId &task_id,
+                              const chi::PoolId &pool_id,
+                              const chi::PoolQuery &pool_query,
+                              const TagId &tag_id, const std::string &blob_name,
+                              float new_score)
+      : chi::Task(task_id, pool_id, pool_query, Method::kReorganizeBlob),
+        tag_id_(tag_id),
+        blob_name_(HSHM_MALLOC, blob_name),
+        new_score_(new_score) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kReorganizeBlob;
@@ -993,7 +1052,8 @@ struct ReorganizeBlobTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_, new_score_);
   }
@@ -1001,7 +1061,8 @@ struct ReorganizeBlobTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     // No output parameters (return_code_ handled by base class)
   }
@@ -1031,8 +1092,8 @@ struct ReorganizeBlobTask : public chi::Task {
  * DelBlob task - Remove blob and decrement tag size
  */
 struct DelBlobTask : public chi::Task {
-  IN TagId tag_id_;           // Tag ID for blob lookup
-  IN chi::priv::string blob_name_; // Blob name (required)
+  IN TagId tag_id_;                 // Tag ID for blob lookup
+  IN chi::priv::string blob_name_;  // Blob name (required)
 
   // SHM constructor
   DelBlobTask()
@@ -1043,7 +1104,8 @@ struct DelBlobTask : public chi::Task {
                        const chi::PoolQuery &pool_query, const TagId &tag_id,
                        const std::string &blob_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kDelBlob),
-        tag_id_(tag_id), blob_name_(HSHM_MALLOC, blob_name) {
+        tag_id_(tag_id),
+        blob_name_(HSHM_MALLOC, blob_name) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kDelBlob;
@@ -1054,7 +1116,8 @@ struct DelBlobTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_);
   }
@@ -1062,7 +1125,8 @@ struct DelBlobTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     // No output parameters (return_code_ handled by base class)
   }
@@ -1092,8 +1156,8 @@ struct DelBlobTask : public chi::Task {
  * Supports lookup by either tag ID or tag name
  */
 struct DelTagTask : public chi::Task {
-  INOUT TagId tag_id_;       // Tag ID to delete (input or lookup result)
-  IN chi::priv::string tag_name_; // Tag name for lookup (optional)
+  INOUT TagId tag_id_;             // Tag ID to delete (input or lookup result)
+  IN chi::priv::string tag_name_;  // Tag name for lookup (optional)
 
   // SHM constructor
   DelTagTask()
@@ -1103,7 +1167,8 @@ struct DelTagTask : public chi::Task {
   explicit DelTagTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
                       const chi::PoolQuery &pool_query, const TagId &tag_id)
       : chi::Task(task_id, pool_id, pool_query, Method::kDelTag),
-        tag_id_(tag_id), tag_name_(HSHM_MALLOC) {
+        tag_id_(tag_id),
+        tag_name_(HSHM_MALLOC) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kDelTag;
@@ -1116,7 +1181,8 @@ struct DelTagTask : public chi::Task {
                       const chi::PoolQuery &pool_query,
                       const std::string &tag_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kDelTag),
-        tag_id_(TagId::GetNull()), tag_name_(HSHM_MALLOC, tag_name) {
+        tag_id_(TagId::GetNull()),
+        tag_name_(HSHM_MALLOC, tag_name) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kDelTag;
@@ -1127,7 +1193,8 @@ struct DelTagTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, tag_name_);
   }
@@ -1135,7 +1202,8 @@ struct DelTagTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(tag_id_);
   }
@@ -1164,19 +1232,19 @@ struct DelTagTask : public chi::Task {
  * GetTagSize task - Get the total size of a tag
  */
 struct GetTagSizeTask : public chi::Task {
-  IN TagId tag_id_;     // Tag ID to query
-  OUT size_t tag_size_; // Total size of all blobs in tag
+  IN TagId tag_id_;      // Tag ID to query
+  OUT size_t tag_size_;  // Total size of all blobs in tag
 
   // SHM constructor
-  GetTagSizeTask()
-      : chi::Task(), tag_id_(TagId::GetNull()), tag_size_(0) {}
+  GetTagSizeTask() : chi::Task(), tag_id_(TagId::GetNull()), tag_size_(0) {}
 
   // Emplace constructor
   explicit GetTagSizeTask(const chi::TaskId &task_id,
                           const chi::PoolId &pool_id,
                           const chi::PoolQuery &pool_query, const TagId &tag_id)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetTagSize),
-        tag_id_(tag_id), tag_size_(0) {
+        tag_id_(tag_id),
+        tag_size_(0) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kGetTagSize;
@@ -1187,7 +1255,8 @@ struct GetTagSizeTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_id_);
   }
@@ -1195,7 +1264,8 @@ struct GetTagSizeTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(tag_size_);
   }
@@ -1224,22 +1294,25 @@ struct GetTagSizeTask : public chi::Task {
  * PollTelemetryLog task - Poll telemetry log with minimum logical time filter
  */
 struct PollTelemetryLogTask : public chi::Task {
-  IN std::uint64_t minimum_logical_time_;  // Minimum logical time filter
-  OUT std::uint64_t last_logical_time_;    // Last logical time scanned
-  OUT chi::priv::vector<CteTelemetry> entries_; // Retrieved telemetry entries
+  IN std::uint64_t minimum_logical_time_;        // Minimum logical time filter
+  OUT std::uint64_t last_logical_time_;          // Last logical time scanned
+  OUT chi::priv::vector<CteTelemetry> entries_;  // Retrieved telemetry entries
 
   // SHM constructor
   PollTelemetryLogTask()
-      : chi::Task(), minimum_logical_time_(0), last_logical_time_(0),
+      : chi::Task(),
+        minimum_logical_time_(0),
+        last_logical_time_(0),
         entries_(HSHM_MALLOC) {}
 
   // Emplace constructor
-  explicit PollTelemetryLogTask(
-      const chi::TaskId &task_id, const chi::PoolId &pool_id,
-      const chi::PoolQuery &pool_query, std::uint64_t minimum_logical_time)
-      : chi::Task(task_id, pool_id, pool_query,
-                  Method::kPollTelemetryLog),
-        minimum_logical_time_(minimum_logical_time), last_logical_time_(0),
+  explicit PollTelemetryLogTask(const chi::TaskId &task_id,
+                                const chi::PoolId &pool_id,
+                                const chi::PoolQuery &pool_query,
+                                std::uint64_t minimum_logical_time)
+      : chi::Task(task_id, pool_id, pool_query, Method::kPollTelemetryLog),
+        minimum_logical_time_(minimum_logical_time),
+        last_logical_time_(0),
         entries_(HSHM_MALLOC) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -1251,7 +1324,8 @@ struct PollTelemetryLogTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(minimum_logical_time_);
   }
@@ -1259,7 +1333,8 @@ struct PollTelemetryLogTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(last_logical_time_, entries_);
   }
@@ -1289,13 +1364,15 @@ struct PollTelemetryLogTask : public chi::Task {
  * GetBlobScore task - Get the score of a blob
  */
 struct GetBlobScoreTask : public chi::Task {
-  IN TagId tag_id_;           // Tag ID for blob lookup
-  IN chi::priv::string blob_name_; // Blob name (required)
-  OUT float score_;           // Blob score (0-1)
+  IN TagId tag_id_;                 // Tag ID for blob lookup
+  IN chi::priv::string blob_name_;  // Blob name (required)
+  OUT float score_;                 // Blob score (0-1)
 
   // SHM constructor
   GetBlobScoreTask()
-      : chi::Task(), tag_id_(TagId::GetNull()), blob_name_(HSHM_MALLOC),
+      : chi::Task(),
+        tag_id_(TagId::GetNull()),
+        blob_name_(HSHM_MALLOC),
         score_(0.0f) {}
 
   // Emplace constructor
@@ -1304,7 +1381,8 @@ struct GetBlobScoreTask : public chi::Task {
                             const chi::PoolQuery &pool_query,
                             const TagId &tag_id, const std::string &blob_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetBlobScore),
-        tag_id_(tag_id), blob_name_(HSHM_MALLOC, blob_name),
+        tag_id_(tag_id),
+        blob_name_(HSHM_MALLOC, blob_name),
         score_(0.0f) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -1316,7 +1394,8 @@ struct GetBlobScoreTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_);
   }
@@ -1324,7 +1403,8 @@ struct GetBlobScoreTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(score_);
   }
@@ -1354,13 +1434,15 @@ struct GetBlobScoreTask : public chi::Task {
  * GetBlobSize task - Get the size of a blob
  */
 struct GetBlobSizeTask : public chi::Task {
-  IN TagId tag_id_;           // Tag ID for blob lookup
-  IN chi::priv::string blob_name_; // Blob name (required)
-  OUT chi::u64 size_;         // Blob size in bytes
+  IN TagId tag_id_;                 // Tag ID for blob lookup
+  IN chi::priv::string blob_name_;  // Blob name (required)
+  OUT chi::u64 size_;               // Blob size in bytes
 
   // SHM constructor
   GetBlobSizeTask()
-      : chi::Task(), tag_id_(TagId::GetNull()), blob_name_(HSHM_MALLOC),
+      : chi::Task(),
+        tag_id_(TagId::GetNull()),
+        blob_name_(HSHM_MALLOC),
         size_(0) {}
 
   // Emplace constructor
@@ -1369,7 +1451,8 @@ struct GetBlobSizeTask : public chi::Task {
                            const chi::PoolQuery &pool_query,
                            const TagId &tag_id, const std::string &blob_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetBlobSize),
-        tag_id_(tag_id), blob_name_(HSHM_MALLOC, blob_name),
+        tag_id_(tag_id),
+        blob_name_(HSHM_MALLOC, blob_name),
         size_(0) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -1381,7 +1464,8 @@ struct GetBlobSizeTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_);
   }
@@ -1389,7 +1473,8 @@ struct GetBlobSizeTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(size_);
   }
@@ -1420,9 +1505,10 @@ struct GetBlobSizeTask : public chi::Task {
  * Contains the target pool ID and size for each block
  */
 struct BlobBlockInfo {
-  chi::PoolId target_pool_id_;  // Pool ID of the target (bdev) storing this block
-  chi::u64 block_size_;         // Size of this block in bytes
-  chi::u64 block_offset_;       // Offset within target where block is stored
+  chi::PoolId
+      target_pool_id_;     // Pool ID of the target (bdev) storing this block
+  chi::u64 block_size_;    // Size of this block in bytes
+  chi::u64 block_offset_;  // Offset within target where block is stored
 
   BlobBlockInfo() : target_pool_id_(), block_size_(0), block_offset_(0) {}
   BlobBlockInfo(const chi::PoolId &pool_id, chi::u64 size, chi::u64 offset)
@@ -1430,7 +1516,8 @@ struct BlobBlockInfo {
 
   template <typename Archive>
   void serialize(Archive &ar) {
-    chi::u64 pool_id_u64 = target_pool_id_.IsNull() ? 0 : target_pool_id_.ToU64();
+    chi::u64 pool_id_u64 =
+        target_pool_id_.IsNull() ? 0 : target_pool_id_.ToU64();
     ar(pool_id_u64, block_size_, block_offset_);
     // Restore PoolId from u64 when deserializing
     target_pool_id_ = chi::PoolId::FromU64(pool_id_u64);
@@ -1450,8 +1537,12 @@ struct GetBlobInfoTask : public chi::Task {
 
   // SHM constructor
   GetBlobInfoTask()
-      : chi::Task(), tag_id_(TagId::GetNull()), blob_name_(HSHM_MALLOC),
-        score_(0.0f), total_size_(0), blocks_() {}
+      : chi::Task(),
+        tag_id_(TagId::GetNull()),
+        blob_name_(HSHM_MALLOC),
+        score_(0.0f),
+        total_size_(0),
+        blocks_() {}
 
   // Emplace constructor
   explicit GetBlobInfoTask(const chi::TaskId &task_id,
@@ -1459,8 +1550,10 @@ struct GetBlobInfoTask : public chi::Task {
                            const chi::PoolQuery &pool_query,
                            const TagId &tag_id, const std::string &blob_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetBlobInfo),
-        tag_id_(tag_id), blob_name_(HSHM_MALLOC, blob_name),
-        score_(0.0f), total_size_(0) {
+        tag_id_(tag_id),
+        blob_name_(HSHM_MALLOC, blob_name),
+        score_(0.0f),
+        total_size_(0) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kGetBlobInfo;
@@ -1471,7 +1564,8 @@ struct GetBlobInfoTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_);
   }
@@ -1479,7 +1573,8 @@ struct GetBlobInfoTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(score_, total_size_);
     // NOTE: blocks_ temporarily removed from serialization for debugging
@@ -1510,20 +1605,18 @@ struct GetBlobInfoTask : public chi::Task {
  * GetContainedBlobs task - Get all blob names contained in a tag
  */
 struct GetContainedBlobsTask : public chi::Task {
-  IN TagId tag_id_; // Tag ID to query
-  OUT std::vector<std::string>
-      blob_names_; // Vector of blob names in the tag
+  IN TagId tag_id_;                          // Tag ID to query
+  OUT std::vector<std::string> blob_names_;  // Vector of blob names in the tag
 
   // SHM constructor
-  GetContainedBlobsTask()
-      : chi::Task(), tag_id_(TagId::GetNull()) {}
+  GetContainedBlobsTask() : chi::Task(), tag_id_(TagId::GetNull()) {}
 
   // Emplace constructor
-  explicit GetContainedBlobsTask(
-      const chi::TaskId &task_id, const chi::PoolId &pool_id,
-      const chi::PoolQuery &pool_query, const TagId &tag_id)
-      : chi::Task(task_id, pool_id, pool_query,
-                  Method::kGetContainedBlobs),
+  explicit GetContainedBlobsTask(const chi::TaskId &task_id,
+                                 const chi::PoolId &pool_id,
+                                 const chi::PoolQuery &pool_query,
+                                 const TagId &tag_id)
+      : chi::Task(task_id, pool_id, pool_query, Method::kGetContainedBlobs),
         tag_id_(tag_id) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -1535,7 +1628,8 @@ struct GetContainedBlobsTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_id_);
   }
@@ -1543,7 +1637,8 @@ struct GetContainedBlobsTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(blob_names_);
   }
@@ -1588,17 +1683,18 @@ struct TagQueryTask : public chi::Task {
 
   // SHM constructor
   TagQueryTask()
-      : chi::Task(), tag_regex_(HSHM_MALLOC), max_tags_(0),
+      : chi::Task(),
+        tag_regex_(HSHM_MALLOC),
+        max_tags_(0),
         total_tags_matched_(0) {}
 
   // Emplace constructor
-  explicit TagQueryTask(const chi::TaskId &task_id,
-                        const chi::PoolId &pool_id,
+  explicit TagQueryTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
                         const chi::PoolQuery &pool_query,
-                        const std::string &tag_regex,
-                        chi::u32 max_tags = 0)
+                        const std::string &tag_regex, chi::u32 max_tags = 0)
       : chi::Task(task_id, pool_id, pool_query, Method::kTagQuery),
-        tag_regex_(HSHM_MALLOC, tag_regex), max_tags_(max_tags),
+        tag_regex_(HSHM_MALLOC, tag_regex),
+        max_tags_(max_tags),
         total_tags_matched_(0) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -1610,7 +1706,8 @@ struct TagQueryTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_regex_, max_tags_);
   }
@@ -1618,7 +1715,8 @@ struct TagQueryTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(total_tags_matched_, results_);
   }
@@ -1672,19 +1770,22 @@ struct BlobQueryTask : public chi::Task {
 
   // SHM constructor
   BlobQueryTask()
-      : chi::Task(), tag_regex_(HSHM_MALLOC), blob_regex_(HSHM_MALLOC), max_blobs_(0),
+      : chi::Task(),
+        tag_regex_(HSHM_MALLOC),
+        blob_regex_(HSHM_MALLOC),
+        max_blobs_(0),
         total_blobs_matched_(0) {}
 
   // Emplace constructor
-  explicit BlobQueryTask(const chi::TaskId &task_id,
-                         const chi::PoolId &pool_id,
+  explicit BlobQueryTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
                          const chi::PoolQuery &pool_query,
                          const std::string &tag_regex,
-                         const std::string &blob_regex,
-                         chi::u32 max_blobs = 0)
+                         const std::string &blob_regex, chi::u32 max_blobs = 0)
       : chi::Task(task_id, pool_id, pool_query, Method::kBlobQuery),
-        tag_regex_(HSHM_MALLOC, tag_regex), blob_regex_(HSHM_MALLOC, blob_regex),
-        max_blobs_(max_blobs), total_blobs_matched_(0) {
+        tag_regex_(HSHM_MALLOC, tag_regex),
+        blob_regex_(HSHM_MALLOC, blob_regex),
+        max_blobs_(max_blobs),
+        total_blobs_matched_(0) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kBlobQuery;
@@ -1695,7 +1796,8 @@ struct BlobQueryTask : public chi::Task {
   /**
    * Serialize IN and INOUT parameters
    */
-  template <typename Archive> void SerializeIn(Archive &ar) {
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(tag_regex_, blob_regex_, max_blobs_);
   }
@@ -1703,7 +1805,8 @@ struct BlobQueryTask : public chi::Task {
   /**
    * Serialize OUT and INOUT parameters
    */
-  template <typename Archive> void SerializeOut(Archive &ar) {
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(total_blobs_matched_, tag_names_, blob_names_);
   }
@@ -1732,7 +1835,8 @@ struct BlobQueryTask : public chi::Task {
 
     // Append results up to max_blobs_ (if non-zero)
     for (size_t i = 0; i < other->tag_names_.size(); ++i) {
-      if (max_blobs_ != 0 && tag_names_.size() >= static_cast<size_t>(max_blobs_))
+      if (max_blobs_ != 0 &&
+          tag_names_.size() >= static_cast<size_t>(max_blobs_))
         break;
       tag_names_.push_back(other->tag_names_[i]);
       blob_names_.push_back(other->blob_names_[i]);
@@ -1740,7 +1844,6 @@ struct BlobQueryTask : public chi::Task {
   }
 };
 
-} // namespace wrp_cte::core
+}  // namespace wrp_cte::core
 
-
-#endif // WRPCTE_CORE_TASKS_H_
+#endif  // WRPCTE_CORE_TASKS_H_

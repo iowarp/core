@@ -21,6 +21,24 @@ if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
   )
   add_test(NAME test_gpu_malloc COMMAND test_gpu_malloc)
 
+  # LocalSerialize GPU test
+  add_cuda_executable(test_local_serialize_gpu TRUE test_local_serialize_gpu.cc)
+  target_link_libraries(test_local_serialize_gpu
+    hshm::cuda_cxx
+    Catch2::Catch2WithMain
+  )
+  add_test(NAME test_local_serialize_gpu COMMAND test_local_serialize_gpu)
+
+  # LocalTransfer GPU test
+  add_cuda_executable(test_local_transfer_gpu TRUE test_local_transfer_gpu.cc)
+  target_link_libraries(test_local_transfer_gpu
+    hshm::cuda_cxx
+    Catch2::Catch2WithMain
+  )
+  add_test(NAME test_local_transfer_gpu COMMAND test_local_transfer_gpu)
+
+  add_subdirectory(runtime)
+
 else()
   message(STATUS "GPU tests disabled (WRP_CORE_ENABLE_CUDA and WRP_CORE_ENABLE_ROCM are both OFF)")
 endif()

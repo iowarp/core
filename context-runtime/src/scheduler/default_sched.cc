@@ -34,8 +34,6 @@
 // Copyright 2024 IOWarp contributors
 #include "chimaera/scheduler/default_sched.h"
 
-#include <functional>
-
 #include "chimaera/config_manager.h"
 #include "chimaera/ipc_manager.h"
 #include "chimaera/work_orchestrator.h"
@@ -48,77 +46,76 @@ void DefaultScheduler::DivideWorkers(WorkOrchestrator *work_orch) {
     return;
   }
 
-  // Get worker counts from configuration
-  ConfigManager *config = CHI_CONFIG_MANAGER;
-  if (!config) {
-    HLOG(kError,
-         "DefaultScheduler::DivideWorkers: ConfigManager not available");
-    return;
-  }
-
-  u32 thread_count = config->GetNumThreads();
   u32 total_workers = work_orch->GetTotalWorkerCount();
 
-  // Clear any existing worker assignments
-  scheduler_workers_.clear();
+  scheduler_worker_ = nullptr;
+  io_workers_.clear();
   net_worker_ = nullptr;
+  gpu_worker_ = nullptr;
+
+  // Worker 0 is always the scheduler worker
+  scheduler_worker_ = work_orch->GetWorker(0);
 
   // Network worker is always the last worker
   net_worker_ = work_orch->GetWorker(total_workers - 1);
 
-  // Scheduler workers are all workers except the last one (unless only 1
-  // worker)
-  u32 num_sched_workers = (total_workers == 1) ? 1 : (total_workers - 1);
-  for (u32 i = 0; i < num_sched_workers; ++i) {
-    Worker *worker = work_orch->GetWorker(i);
-    if (worker) {
-      scheduler_workers_.push_back(worker);
+  // GPU worker is worker N-2 if we have more than 2 workers
+  if (total_workers > 2) {
+    gpu_worker_ = work_orch->GetWorker(total_workers - 2);
+  }
+
+  // I/O workers are workers 1..N-2 (empty if N <= 2)
+  if (total_workers > 2) {
+    for (u32 i = 1; i < total_workers - 1; ++i) {
+      Worker *worker = work_orch->GetWorker(i);
+      if (worker) {
+        io_workers_.push_back(worker);
+      }
     }
   }
 
-  // Update IpcManager with the number of workers
+  // Number of scheduling queues excludes the network worker
   IpcManager *ipc = CHI_IPC;
   if (ipc) {
-    ipc->SetNumSchedQueues(total_workers);
+    ipc->SetNumSchedQueues(1);
   }
 
   HLOG(kInfo,
-       "DefaultScheduler: {} scheduler workers, 1 network worker (worker {})",
-       scheduler_workers_.size(), total_workers - 1);
+       "DefaultScheduler: 1 scheduler worker (0), {} I/O workers, "
+       "1 network worker ({}), gpu_worker={}",
+       io_workers_.size(), total_workers - 1,
+       gpu_worker_ ? (int)gpu_worker_->GetId() : -1);
 }
 
 u32 DefaultScheduler::ClientMapTask(IpcManager *ipc_manager,
                                     const Future<Task> &task) {
-  // Get number of scheduling queues
   u32 num_lanes = ipc_manager->GetNumSchedQueues();
   if (num_lanes == 0) {
     return 0;
   }
 
-  // Check if this is a network task (Send or Recv from admin pool)
   Task *task_ptr = task.get();
+
+  // Network tasks (Send/Recv from admin pool) → last lane
   if (task_ptr != nullptr && task_ptr->pool_id_ == chi::kAdminPoolId) {
     u32 method_id = task_ptr->method_;
-    if (method_id == 14 || method_id == 15) {  // kSend or kRecv
-      // Route to network worker (last worker)
+    if (method_id == 14 || method_id == 15) {
       return num_lanes - 1;
     }
   }
 
-  // Use PID+TID hash-based mapping for other tasks
-  u32 lane = MapByPidTid(num_lanes);
-
-  return lane;
+  // Default: scheduler worker (lane 0)
+  return 0;
 }
 
 u32 DefaultScheduler::RuntimeMapTask(Worker *worker, const Future<Task> &task) {
-  // Check if this is a periodic Send or Recv task from admin pool
   Task *task_ptr = task.get();
+
+  // Periodic Send/Recv → network worker
   if (task_ptr != nullptr && task_ptr->IsPeriodic()) {
     if (task_ptr->pool_id_ == chi::kAdminPoolId) {
       u32 method_id = task_ptr->method_;
-      if (method_id == 14 || method_id == 15) {  // kSend or kRecv
-        // Schedule on network worker
+      if (method_id == 14 || method_id == 15) {
         if (net_worker_ != nullptr) {
           return net_worker_->GetId();
         }
@@ -126,66 +123,37 @@ u32 DefaultScheduler::RuntimeMapTask(Worker *worker, const Future<Task> &task) {
     }
   }
 
-  // All other tasks execute on the current worker
+  // Route large I/O to dedicated I/O workers (round-robin)
+  if (task_ptr != nullptr && !io_workers_.empty()) {
+    size_t io_size = task_ptr->stat_.io_size_;
+    if (io_size >= kLargeIOThreshold) {
+      u32 idx = next_io_idx_.fetch_add(1, std::memory_order_relaxed) %
+                static_cast<u32>(io_workers_.size());
+      return io_workers_[idx]->GetId();
+    }
+  }
+
+  // Small I/O / metadata → scheduler worker
+  if (scheduler_worker_ != nullptr) {
+    return scheduler_worker_->GetId();
+  }
+
   if (worker != nullptr) {
     return worker->GetId();
   }
   return 0;
 }
 
-void DefaultScheduler::RebalanceWorker(Worker *worker) {
-  // No rebalancing in default scheduler
-  (void)worker;
-}
+void DefaultScheduler::RebalanceWorker(Worker *worker) { (void)worker; }
 
 void DefaultScheduler::AdjustPolling(RunContext *run_ctx) {
   if (!run_ctx) {
     return;
   }
-
-  // TEMPORARY: Disable adaptive polling to test if it resolves hanging issues
-  // Just return early without adjusting - tasks will use their configured
-  // period
-  return;
-
-  // Maximum polling interval in microseconds (100ms)
-  const double kMaxPollingIntervalUs = 100000.0;
-
-  if (run_ctx->did_work_) {
-    // Task did work - use the true (responsive) period
-    run_ctx->yield_time_us_ = run_ctx->true_period_ns_ / 1000.0;
-  } else {
-    // Task didn't do work - increase polling interval (exponential backoff)
-    double current_interval = run_ctx->yield_time_us_;
-
-    // If uninitialized, start backoff from the true period
-    if (current_interval <= 0.0) {
-      current_interval = run_ctx->true_period_ns_ / 1000.0;
-    }
-
-    // Exponential backoff: double the interval
-    double new_interval = current_interval * 2.0;
-
-    // Cap at maximum polling interval
-    if (new_interval > kMaxPollingIntervalUs) {
-      new_interval = kMaxPollingIntervalUs;
-    }
-
-    run_ctx->yield_time_us_ = new_interval;
-  }
-}
-
-u32 DefaultScheduler::MapByPidTid(u32 num_lanes) {
-  // Use HSHM_SYSTEM_INFO to get both PID and TID for lane hashing
-  auto *sys_info = HSHM_SYSTEM_INFO;
-  pid_t pid = sys_info->pid_;
-  auto tid = HSHM_THREAD_MODEL->GetTid();
-
-  // Combine PID and TID for hashing to ensure different processes/threads use
-  // different lanes
-  size_t combined_hash =
-      std::hash<pid_t>{}(pid) ^ (std::hash<void *>{}(&tid) << 1);
-  return static_cast<u32>(combined_hash % num_lanes);
+  // Adaptive polling disabled for now - restore the true period
+  // This is critical because co_await on Futures sets yield_time_us_ = 0,
+  // so we must restore it here to prevent periodic tasks from busy-looping
+  run_ctx->yield_time_us_ = run_ctx->true_period_ns_ / 1000.0;
 }
 
 }  // namespace chi

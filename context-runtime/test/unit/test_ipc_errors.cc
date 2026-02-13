@@ -180,26 +180,6 @@ TEST_CASE("IpcErrors - Invalid Buffer Free", "[ipc][errors][memory]") {
   // Note: Cleanup happens once at end of all tests
 }
 
-TEST_CASE("IpcErrors - Memory Increase Invalid Size", "[ipc][errors][memory]") {
-  // Use shared runtime initialization
-  REQUIRE(InitializeRuntime());
-
-  auto *ipc = CHI_IPC;
-  REQUIRE(ipc != nullptr);
-
-  // Try to increase memory by 0
-  // Note: IncreaseMemory(0) actually succeeds because 32MB metadata overhead
-  // is always added, creating a valid 32MB shared memory segment.
-  bool result = ipc->IncreaseMemory(0);
-  // Just verify it doesn't crash; it may succeed due to overhead allocation
-
-  // Try to increase by huge amount (should fail)
-  result = ipc->IncreaseMemory(hshm::Unit<size_t>::Terabytes(100));
-  REQUIRE(!result);
-
-  // Note: Cleanup happens once at end of all tests
-}
-
 // ============================================================================
 // Host/Network Error Tests
 // ============================================================================

@@ -4,6 +4,16 @@ project(chimaera VERSION 1.0.0)
 # Set root directory for this component
 set(CHIMAERA_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Enable CUDA if requested
+if(WRP_CORE_ENABLE_CUDA)
+    wrp_core_enable_cuda(17)
+endif()
+
+# Enable ROCm if requested
+if(WRP_CORE_ENABLE_ROCM)
+    wrp_core_enable_rocm(HIP 17)
+endif()
+
 # Read namespace from chimaera_repo.yaml in project root (function defined in ChimaeraCommon.cmake)
 # This will be called after the utilities are included below
 
@@ -63,8 +73,8 @@ if(WRP_CORE_ENABLE_BENCHMARKS)
 endif()
 
 # Add test subdirectory if testing is enabled
-# CHIMAERA_ENABLE_TESTS is set by root CMakeLists.txt
-if(CHIMAERA_ENABLE_TESTS)
+# WRP_CORE_ENABLE_TESTS is set by root CMakeLists.txt
+if(WRP_CORE_ENABLE_TESTS)
   # enable_testing() is handled by root CMakeLists.txt
   add_subdirectory(test)
   message(STATUS "Unit tests enabled - added test subdirectory")

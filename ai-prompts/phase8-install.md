@@ -1,1 +1,0 @@
-Can we make it so any environment variable beginning with WRP_CORE_ENABLE_, WRP_CTE_ENABLE_, WRP_CAE_ENABLE_, WRP_CEE_ENABLE_, HSHM_ENABLE_, WRP_CTP_ENABLE_, WRP_RUNTIME_ENABLE_, or CHIMAERA_ENABLE_ gets forwarded to the cmake command in install.sh?

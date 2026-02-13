@@ -54,6 +54,9 @@
 #endif
 #include <sys/types.h>
 #include <unistd.h>
+#if __linux__
+#include <linux/memfd.h>
+#endif
 // WINDOWS
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
 #include <windows.h>
@@ -323,9 +326,47 @@ void *SystemInfo::GetTls(const ThreadLocalKey &key) {
 #endif
 }
 
+#if HSHM_ENABLE_PROCFS_SYSINFO && __linux__
+static const char *kMemfdDir = "/tmp/chimaera_memfd";
+
+static std::string GetMemfdPath(const std::string &name) {
+  // Strip leading '/' from name if present
+  const char *base = name.c_str();
+  if (base[0] == '/') {
+    base++;
+  }
+  return std::string(kMemfdDir) + "/" + base;
+}
+
+static void EnsureMemfdDir() {
+  mkdir(kMemfdDir, 0777);
+}
+#endif
+
 bool SystemInfo::CreateNewSharedMemory(File &fd, const std::string &name,
                                        size_t size) {
 #if HSHM_ENABLE_PROCFS_SYSINFO
+#if __linux__
+  fd.posix_fd_ = memfd_create(name.c_str(), 0);
+  if (fd.posix_fd_ < 0) {
+    return false;
+  }
+  int ret = ftruncate(fd.posix_fd_, size);
+  if (ret < 0) {
+    close(fd.posix_fd_);
+    return false;
+  }
+  EnsureMemfdDir();
+  std::string memfd_path = GetMemfdPath(name);
+  unlink(memfd_path.c_str());
+  std::string proc_path =
+      "/proc/" + std::to_string(getpid()) + "/fd/" + std::to_string(fd.posix_fd_);
+  if (symlink(proc_path.c_str(), memfd_path.c_str()) < 0) {
+    close(fd.posix_fd_);
+    return false;
+  }
+  return true;
+#else
   fd.posix_fd_ = shm_open(name.c_str(), O_CREAT | O_RDWR, 0666);
   if (fd.posix_fd_ < 0) {
     return false;
@@ -336,6 +377,7 @@ bool SystemInfo::CreateNewSharedMemory(File &fd, const std::string &name,
     return false;
   }
   return true;
+#endif
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
   fd.windows_fd_ =
       CreateFileMapping(INVALID_HANDLE_VALUE,  // use paging file
@@ -350,8 +392,14 @@ bool SystemInfo::CreateNewSharedMemory(File &fd, const std::string &name,
 
 bool SystemInfo::OpenSharedMemory(File &fd, const std::string &name) {
 #if HSHM_ENABLE_PROCFS_SYSINFO
+#if __linux__
+  std::string memfd_path = GetMemfdPath(name);
+  fd.posix_fd_ = open(memfd_path.c_str(), O_RDWR);
+  return fd.posix_fd_ >= 0;
+#else
   fd.posix_fd_ = shm_open(name.c_str(), O_RDWR, 0666);
   return fd.posix_fd_ >= 0;
+#endif
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
   fd.windows_fd_ = OpenFileMapping(FILE_MAP_ALL_ACCESS, FALSE, name.c_str());
   return fd.windows_fd_ != nullptr;
@@ -368,7 +416,12 @@ void SystemInfo::CloseSharedMemory(File &file) {
 
 void SystemInfo::DestroySharedMemory(const std::string &name) {
 #if HSHM_ENABLE_PROCFS_SYSINFO
+#if __linux__
+  std::string memfd_path = GetMemfdPath(name);
+  unlink(memfd_path.c_str());
+#else
   shm_unlink(name.c_str());
+#endif
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
 #endif
 }

@@ -83,7 +83,31 @@ stop_docker_cluster() {
 
 
 
+# Check if a test name matches the filter
+matches_filter() {
+    local name="$1"
+    local filter="$2"
+    if [ -z "$filter" ]; then
+        return 0
+    fi
+    case "$name" in
+        *"$filter"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Run a single test case inside the Docker cluster
+# $1: test filter name
+run_single_test() {
+    local filter="$1"
+    docker exec iowarp-distributed-node1 bash -c "
+        export CHIMAERA_WITH_RUNTIME=0
+        chimaera_bdev_chimod_tests '$filter'
+    "
+}
+
 # Run test directly in Docker
+# Each IPC mode runs as a separate process to ensure clean initialization.
 run_test_docker_direct() {
     log_info "Running distributed test with filter: $TEST_FILTER"
     cd "$SCRIPT_DIR"
@@ -92,13 +116,17 @@ run_test_docker_direct() {
     log_info "Waiting for runtimes to initialize across all nodes..."
     sleep 5
 
-    # Execute test on node1 using installed binary
-    docker exec iowarp-distributed-node1 bash -c "
-        export CHIMAERA_WITH_RUNTIME=0
-        chimaera_bdev_chimod_tests $TEST_FILTER
-    "
+    # Execute each IPC mode variant as a separate process invocation
+    for mode in shm tcp ipc; do
+        local test_name="bdev_file_explicit_backend_${mode}"
+        if matches_filter "$test_name" "$TEST_FILTER"; then
+            log_info "Running $test_name (CHI_IPC_MODE=${mode^^})..."
+            run_single_test "$test_name"
+            log_success "$test_name passed"
+        fi
+    done
 
-    log_success "Test completed"
+    log_success "All tests completed"
 }
 
 

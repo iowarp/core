@@ -11,7 +11,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../../" && pwd)"
 
 # Export workspace path for docker-compose
-export IOWARP_CORE_ROOT="${REPO_ROOT}"
+# Priority: HOST_WORKSPACE > existing IOWARP_CORE_ROOT > computed REPO_ROOT
+if [ -n "${HOST_WORKSPACE:-}" ]; then
+    export IOWARP_CORE_ROOT="${HOST_WORKSPACE}"
+elif [ -z "${IOWARP_CORE_ROOT:-}" ]; then
+    export IOWARP_CORE_ROOT="${REPO_ROOT}"
+fi
+# Otherwise keep existing IOWARP_CORE_ROOT (e.g., from devcontainer.json)
 
 cd "$SCRIPT_DIR"
 

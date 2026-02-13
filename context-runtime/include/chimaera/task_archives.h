@@ -49,6 +49,19 @@
 
 #include "chimaera/types.h"
 
+// Type trait to detect types convertible to std::string but not std::string itself
+// Used to handle hshm::priv::basic_string which has an implicit operator std::string()
+// that conflicts with cereal's serialization detection
+template <typename T, typename = void>
+struct is_string_convertible_non_std : std::false_type {};
+template <typename T>
+struct is_string_convertible_non_std<T,
+    std::enable_if_t<
+        std::is_convertible_v<T, std::string> &&
+        !std::is_same_v<std::decay_t<T>, std::string> &&
+        !std::is_base_of_v<std::string, std::decay_t<T>>
+    >> : std::true_type {};
+
 namespace chi {
 
 // Forward declaration
@@ -259,6 +272,9 @@ private:
   template <typename T> void SerializeArg(T &arg) {
     if constexpr (std::is_base_of_v<Task, std::remove_pointer_t<std::decay_t<T>>>) {
       *this << arg;
+    } else if constexpr (is_string_convertible_non_std<std::decay_t<T>>::value) {
+      std::string tmp(arg);
+      (*archive_)(tmp);
     } else {
       (*archive_)(arg);
     }
@@ -291,6 +307,20 @@ public:
    * @param lbm_client Pointer to the Lightbeam client
    */
   void SetLbmClient(hshm::lbm::Client *lbm_client) { lbm_client_ = lbm_client; }
+
+  /**
+   * Serialize for LocalSerialize (SHM transport).
+   * Shadows LbmMeta::serialize so that the cereal stream data
+   * and task_infos_ are included when sending through the ring buffer.
+   */
+  template <typename Ar>
+  void serialize(Ar &ar) {
+    ar(send, recv, send_bulks, recv_bulks);
+    ar(task_infos_, msg_type_);
+    archive_.reset();
+    std::string stream_data = stream_.str();
+    ar(stream_data);
+  }
 
   /**
    * Cereal save function - serializes archive contents
@@ -460,6 +490,10 @@ private:
   template <typename T> void DeserializeArg(T &arg) {
     if constexpr (std::is_base_of_v<Task, std::remove_pointer_t<std::decay_t<T>>>) {
       *this >> arg;
+    } else if constexpr (is_string_convertible_non_std<std::decay_t<T>>::value) {
+      std::string tmp;
+      (*archive_)(tmp);
+      arg = tmp;
     } else {
       (*archive_)(arg);
     }
@@ -505,6 +539,22 @@ public:
    * @return Reference to the cereal archive
    */
   cereal::BinaryInputArchive &GetArchive() { return *archive_; }
+
+  /**
+   * Deserialize for LocalDeserialize (SHM transport).
+   * Shadows LbmMeta::serialize so that the cereal stream data
+   * and task_infos_ are recovered from the ring buffer.
+   */
+  template <typename Ar>
+  void serialize(Ar &ar) {
+    ar(send, recv, send_bulks, recv_bulks);
+    ar(task_infos_, msg_type_);
+    std::string stream_data;
+    ar(stream_data);
+    data_ = std::move(stream_data);
+    stream_ = std::make_unique<std::istringstream>(data_);
+    archive_ = std::make_unique<cereal::BinaryInputArchive>(*stream_);
+  }
 
   /**
    * Cereal save function - not applicable for input archive
