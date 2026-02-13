@@ -374,6 +374,23 @@ class Client : public chi::ContainerClient {
 
     return ipc_manager->Send(task);
   }
+
+  /**
+   * AddNode - Register a new node with all nodes in the cluster
+   * @param pool_query Pool routing (use Broadcast to reach all nodes)
+   * @param new_node_ip IP address of the new node
+   * @param new_node_port Port of the new node's runtime
+   * @return Future for the AddNode task
+   */
+  chi::Future<AddNodeTask> AsyncAddNode(const chi::PoolQuery& pool_query,
+                                        const std::string& new_node_ip,
+                                        chi::u32 new_node_port) {
+    auto* ipc_manager = CHI_IPC;
+    auto task = ipc_manager->NewTask<AddNodeTask>(
+        chi::CreateTaskId(), pool_id_, pool_query,
+        new_node_ip, new_node_port);
+    return ipc_manager->Send(task);
+  }
 };
 
 }  // namespace chimaera::admin

@@ -1329,6 +1329,68 @@ struct RestartContainersTask : public chi::Task {
   }
 };
 
+/**
+ * AddNodeTask - Register a new node with all existing nodes in the cluster
+ * Broadcasts to all nodes to update their internal hostfile
+ */
+struct AddNodeTask : public chi::Task {
+  IN chi::priv::string new_node_ip_;
+  IN chi::u32 new_node_port_;
+  OUT chi::u64 new_node_id_;
+  OUT chi::priv::string error_message_;
+
+  /** SHM default constructor */
+  AddNodeTask()
+      : chi::Task(),
+        new_node_ip_(HSHM_MALLOC),
+        new_node_port_(0),
+        new_node_id_(0),
+        error_message_(HSHM_MALLOC) {}
+
+  /** Emplace constructor */
+  explicit AddNodeTask(const chi::TaskId &task_node,
+                       const chi::PoolId &pool_id,
+                       const chi::PoolQuery &pool_query,
+                       const std::string &new_node_ip,
+                       chi::u32 new_node_port)
+      : chi::Task(task_node, pool_id, pool_query, Method::kAddNode),
+        new_node_ip_(HSHM_MALLOC, new_node_ip),
+        new_node_port_(new_node_port),
+        new_node_id_(0),
+        error_message_(HSHM_MALLOC) {
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kAddNode;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+    ar(new_node_ip_, new_node_port_);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(new_node_id_, error_message_);
+  }
+
+  void Copy(const hipc::FullPtr<AddNodeTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    new_node_ip_ = other->new_node_ip_;
+    new_node_port_ = other->new_node_port_;
+    new_node_id_ = other->new_node_id_;
+    error_message_ = other->error_message_;
+  }
+
+  void Aggregate(const hipc::FullPtr<AddNodeTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
+};
+
 }  // namespace chimaera::admin
 
 #endif  // ADMIN_TASKS_H_

@@ -1378,6 +1378,35 @@ chi::TaskResume Runtime::RestartContainers(
   co_return;
 }
 
+chi::TaskResume Runtime::AddNode(
+    hipc::FullPtr<AddNodeTask> task, chi::RunContext &rctx) {
+  (void)rctx;
+  HLOG(kInfo, "Admin: Executing AddNode for {}:{}",
+       task->new_node_ip_.str(), task->new_node_port_);
+
+  auto *ipc_manager = CHI_IPC;
+  auto *pool_manager = CHI_POOL_MANAGER;
+
+  // Add the new node to the IpcManager's hostfile
+  chi::u64 new_node_id = ipc_manager->AddNode(
+      task->new_node_ip_.str(), task->new_node_port_);
+  task->new_node_id_ = new_node_id;
+
+  // Notify all containers about the new node
+  chi::Host new_host(task->new_node_ip_.str(), new_node_id);
+  std::vector<chi::PoolId> pool_ids = pool_manager->GetAllPoolIds();
+  for (const auto &pool_id : pool_ids) {
+    chi::Container *container = pool_manager->GetContainer(pool_id);
+    if (container) {
+      container->Expand(new_host);
+    }
+  }
+
+  HLOG(kInfo, "Admin: AddNode complete, assigned node_id={}", new_node_id);
+  task->SetReturnCode(0);
+  co_return;
+}
+
 chi::TaskResume Runtime::WreapDeadIpcs(hipc::FullPtr<WreapDeadIpcsTask> task,
                                        chi::RunContext &rctx) {
   auto *ipc_manager = CHI_IPC;

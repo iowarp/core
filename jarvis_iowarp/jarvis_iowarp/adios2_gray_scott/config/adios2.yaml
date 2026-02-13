@@ -1,0 +1,12 @@
+name: adios2
+env: hermes
+pkgs:
+  - pkg_type: hermes_run
+    pkg_name: hermes_run
+    sleep: 5
+    provider: sockets
+  - pkg_type: adios_gray_scott
+    pkg_name: adios_gray_scott
+    engine: hermes
+    ppn: 16
+    nprocs: 4

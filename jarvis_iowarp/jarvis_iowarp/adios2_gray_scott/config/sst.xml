@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<adios-config>
+
+    <!--============================================
+           Configuration for Gray-Scott with SST
+        ============================================-->
+
+    <io name="SimulationOutput">
+        <engine type="SST">
+            <!-- SST streaming engine parameters -->
+            <parameter key="RendezvousReaderCount" value="1"/>
+            <parameter key="QueueLimit" value="5"/>
+            <parameter key="QueueFullPolicy" value="Block"/>
+            <parameter key="OpenTimeoutSecs" value="30.0"/>
+            <parameter key="RegistrationMethod" value="File"/>
+        </engine>
+    </io>
+
+    <!--===========================================
+           Configuration for PDF calc with SST
+        ===========================================-->
+
+    <io name="PDFAnalysisOutput">
+        <engine type="BP5">
+            <!-- Output from pdf_calc still uses BP5 -->
+            <parameter key="RendezvousReaderCount" value="0"/>
+            <parameter key="QueueLimit" value="1"/>
+            <parameter key="QueueFullPolicy" value="Discard"/>
+            <parameter key="OpenTimeoutSecs" value="10.0"/>
+        </engine>
+    </io>
+
+    <io name="SimulationCheckpoint">
+        <engine type="BP5">
+        </engine>
+    </io>
+</adios-config>

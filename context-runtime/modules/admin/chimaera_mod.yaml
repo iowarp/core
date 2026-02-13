@@ -30,3 +30,5 @@ kWreapDeadIpcs: 19       # Periodic task to reap dead IPC segments
 kClientRecv: 20          # Receive tasks from ZMQ clients
 kClientSend: 21          # Send task outputs to ZMQ clients
 kRegisterMemory: 22      # Register client shared memory with runtime
+kRestartContainers: 23   # Restart containers from saved compose configs
+kAddNode: 24             # Register a new node with all existing nodes

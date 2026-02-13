@@ -48,37 +48,72 @@
 #include <chimaera/admin/admin_client.h>
 
 void PrintUsage(const char* program_name) {
-  std::cout << "Usage: " << program_name << " [--unregister] <compose_config.yaml>\n";
+  std::cout << "Usage: " << program_name << " [--unregister] [--node-ip <ip>] <compose_config.yaml>\n";
   std::cout << "  Loads compose configuration and creates/destroys specified pools\n";
   std::cout << "  --unregister: Destroy pools instead of creating them\n";
+  std::cout << "  --node-ip <ip>: Register a new node with the cluster before compose\n";
   std::cout << "  Requires runtime to be already initialized\n";
 }
 
 int main(int argc, char** argv) {
-  if (argc < 2 || argc > 3) {
+  if (argc < 2) {
     PrintUsage(argv[0]);
     return 1;
   }
 
   bool unregister = false;
   std::string config_path;
+  std::string node_ip;
 
-  if (argc == 3) {
-    if (std::string(argv[1]) == "--unregister") {
+  // Parse arguments
+  int i = 1;
+  while (i < argc) {
+    std::string arg(argv[i]);
+    if (arg == "--unregister") {
       unregister = true;
-      config_path = argv[2];
+      ++i;
+    } else if (arg == "--node-ip") {
+      if (i + 1 >= argc) {
+        std::cerr << "--node-ip requires an IP address argument\n";
+        PrintUsage(argv[0]);
+        return 1;
+      }
+      node_ip = argv[i + 1];
+      i += 2;
     } else {
-      PrintUsage(argv[0]);
-      return 1;
+      config_path = arg;
+      ++i;
     }
-  } else {
-    config_path = argv[1];
+  }
+
+  if (config_path.empty()) {
+    std::cerr << "Missing compose config path\n";
+    PrintUsage(argv[0]);
+    return 1;
   }
 
   // Initialize Chimaera client
   if (!chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, false)) {
     std::cerr << "Failed to initialize Chimaera client\n";
     return 1;
+  }
+
+  // If --node-ip provided, broadcast AddNode to all existing nodes
+  if (!node_ip.empty()) {
+    auto* admin_client = CHI_ADMIN;
+    auto* config = CHI_CONFIG_MANAGER;
+    chi::u32 port = config->GetPort();
+
+    std::cout << "Registering new node " << node_ip << " with cluster\n";
+    auto task = admin_client->AsyncAddNode(
+        chi::PoolQuery::Broadcast(), node_ip, port);
+    task.Wait();
+
+    if (task->GetReturnCode() != 0) {
+      std::cerr << "Failed to register node: " << task->error_message_.str() << "\n";
+      return 1;
+    }
+    std::cout << "Node registered as node_id=" << task->new_node_id_ << "\n";
   }
 
   // Load configuration

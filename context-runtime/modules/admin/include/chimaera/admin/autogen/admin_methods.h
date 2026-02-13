@@ -29,6 +29,7 @@ GLOBAL_CONST chi::u32 kClientRecv = 20;
 GLOBAL_CONST chi::u32 kClientSend = 21;
 GLOBAL_CONST chi::u32 kRegisterMemory = 22;
 GLOBAL_CONST chi::u32 kRestartContainers = 23;
+GLOBAL_CONST chi::u32 kAddNode = 24;
 }  // namespace Method
 
 }  // namespace chimaera::admin

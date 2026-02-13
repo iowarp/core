@@ -125,6 +125,12 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       co_await RestartContainers(typed_task, rctx);
       break;
     }
+    case Method::kAddNode: {
+      // Cast task FullPtr to specific type
+      hipc::FullPtr<AddNodeTask> typed_task = task_ptr.template Cast<AddNodeTask>();
+      co_await AddNode(typed_task, rctx);
+      break;
+    }
     default: {
       // Unknown method - do nothing
       break;
@@ -201,6 +207,10 @@ void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
     }
     case Method::kRestartContainers: {
       ipc_manager->DelTask(task_ptr.template Cast<RestartContainersTask>());
+      break;
+    }
+    case Method::kAddNode: {
+      ipc_manager->DelTask(task_ptr.template Cast<AddNodeTask>());
       break;
     }
     default: {
@@ -294,6 +304,11 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
       archive << *typed_task.ptr_;
       break;
     }
+    case Method::kAddNode: {
+      auto typed_task = task_ptr.template Cast<AddNodeTask>();
+      archive << *typed_task.ptr_;
+      break;
+    }
     default: {
       // Unknown method - do nothing
       break;
@@ -381,6 +396,11 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
     }
     case Method::kRestartContainers: {
       auto typed_task = task_ptr.template Cast<RestartContainersTask>();
+      archive >> *typed_task.ptr_;
+      break;
+    }
+    case Method::kAddNode: {
+      auto typed_task = task_ptr.template Cast<AddNodeTask>();
       archive >> *typed_task.ptr_;
       break;
     }
@@ -498,6 +518,12 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
       typed_task.ptr_->SerializeIn(archive);
       break;
     }
+    case Method::kAddNode: {
+      auto typed_task = task_ptr.template Cast<AddNodeTask>();
+      // Call SerializeIn - task will call Task::SerializeIn for base fields
+      typed_task.ptr_->SerializeIn(archive);
+      break;
+    }
     default: {
       // Unknown method - do nothing
       break;
@@ -608,6 +634,12 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
     }
     case Method::kRestartContainers: {
       auto typed_task = task_ptr.template Cast<RestartContainersTask>();
+      // Call SerializeOut - task will call Task::SerializeOut for base fields
+      typed_task.ptr_->SerializeOut(archive);
+      break;
+    }
+    case Method::kAddNode: {
+      auto typed_task = task_ptr.template Cast<AddNodeTask>();
       // Call SerializeOut - task will call Task::SerializeOut for base fields
       typed_task.ptr_->SerializeOut(archive);
       break;
@@ -802,6 +834,17 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       }
       break;
     }
+    case Method::kAddNode: {
+      // Allocate new task
+      auto new_task_ptr = ipc_manager->NewTask<AddNodeTask>();
+      if (!new_task_ptr.IsNull()) {
+        // Copy task fields (includes base Task fields)
+        auto task_typed = orig_task_ptr.template Cast<AddNodeTask>();
+        new_task_ptr->Copy(task_typed);
+        return new_task_ptr.template Cast<chi::Task>();
+      }
+      break;
+    }
     default: {
       // For unknown methods, create base Task copy
       auto new_task_ptr = ipc_manager->NewTask<chi::Task>();
@@ -886,6 +929,10 @@ hipc::FullPtr<chi::Task> Runtime::NewTask(chi::u32 method) {
     }
     case Method::kRestartContainers: {
       auto new_task_ptr = ipc_manager->NewTask<RestartContainersTask>();
+      return new_task_ptr.template Cast<chi::Task>();
+    }
+    case Method::kAddNode: {
+      auto new_task_ptr = ipc_manager->NewTask<AddNodeTask>();
       return new_task_ptr.template Cast<chi::Task>();
     }
     default: {
@@ -1022,6 +1069,14 @@ void Runtime::Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> origin_task_pt
       // Get typed tasks for Aggregate call
       auto typed_origin = origin_task_ptr.template Cast<RestartContainersTask>();
       auto typed_replica = replica_task_ptr.template Cast<RestartContainersTask>();
+      // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
+      typed_origin.ptr_->Aggregate(typed_replica);
+      break;
+    }
+    case Method::kAddNode: {
+      // Get typed tasks for Aggregate call
+      auto typed_origin = origin_task_ptr.template Cast<AddNodeTask>();
+      auto typed_replica = replica_task_ptr.template Cast<AddNodeTask>();
       // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
       typed_origin.ptr_->Aggregate(typed_replica);
       break;

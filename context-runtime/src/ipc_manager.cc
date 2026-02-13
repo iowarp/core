@@ -868,6 +868,28 @@ const std::vector<Host> &IpcManager::GetAllHosts() const {
 
 size_t IpcManager::GetNumHosts() const { return hostfile_map_.size(); }
 
+u64 IpcManager::AddNode(const std::string& ip_address, u32 port) {
+  (void)port;  // Port stored elsewhere (ConfigManager) for now
+
+  // Check if node already exists
+  for (const auto& pair : hostfile_map_) {
+    if (pair.second.ip_address == ip_address) {
+      HLOG(kInfo, "AddNode: Node {} already registered as node_id={}",
+           ip_address, pair.first);
+      return pair.first;
+    }
+  }
+
+  // Assign next node ID (linear offset)
+  u64 new_node_id = static_cast<u64>(hostfile_map_.size());
+  Host host(ip_address, new_node_id);
+  hostfile_map_[new_node_id] = host;
+  hosts_cache_valid_ = false;
+
+  HLOG(kInfo, "AddNode: Registered {} as node_id={}", ip_address, new_node_id);
+  return new_node_id;
+}
+
 bool IpcManager::IdentifyThisHost() {
   HLOG(kDebug, "Identifying current host");
 

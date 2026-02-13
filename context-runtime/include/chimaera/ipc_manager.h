@@ -158,39 +158,6 @@ struct ClientShmInfo {
 };
 
 /**
- * Host structure for hostfile management
- * Contains IP address and corresponding 64-bit node ID
- */
-struct Host {
-  std::string ip_address;  // IP address as string (IPv4 or IPv6)
-  u64 node_id;             // 64-bit representation of IP address
-
-  /**
-   * Default constructor
-   */
-  Host() : node_id(0) {}
-
-  /**
-   * Constructor with IP address and node ID (required)
-   * Node IDs are assigned based on linear offset in hostfile
-   * @param ip IP address string
-   * @param id Node ID (typically offset in hostfile)
-   */
-  Host(const std::string &ip, u64 id) : ip_address(ip), node_id(id) {}
-
-  /**
-   * Stream output operator for Host
-   * @param os Output stream
-   * @param host Host object to print
-   * @return Reference to output stream
-   */
-  friend std::ostream &operator<<(std::ostream &os, const Host &host) {
-    os << "Host(ip=" << host.ip_address << ", node_id=" << host.node_id << ")";
-    return os;
-  }
-};
-
-/**
  * IPC Manager singleton for inter-process communication
  *
  * Manages ZeroMQ server using lightbeam from HSHM, three memory segments,
@@ -910,6 +877,14 @@ class IpcManager {
    * @return Number of hosts
    */
   size_t GetNumHosts() const;
+
+  /**
+   * Add a new node to the internal hostfile
+   * @param ip_address IP address of the new node
+   * @param port Port of the new node's runtime
+   * @return Assigned node ID for the new node
+   */
+  u64 AddNode(const std::string& ip_address, u32 port);
 
   /**
    * Identify current host from hostfile by attempting TCP server binding

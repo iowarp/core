@@ -163,6 +163,17 @@ class Container {
   }
 
   /**
+   * Expand container to accommodate a new node in the cluster
+   * Called when a new node is registered via Admin::AddNode.
+   * Default implementation is a no-op.
+   * Override to re-partition data or update routing when nodes join.
+   * @param new_host The newly registered host
+   */
+  virtual void Expand(const Host& new_host) {
+    (void)new_host;
+  }
+
+  /**
    * Serialize task parameters for network transfer (unified method)
    * Must be implemented by derived classes
    * Uses switch-case structure based on method ID to dispatch to appropriate serialization
