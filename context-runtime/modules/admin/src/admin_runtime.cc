@@ -52,6 +52,7 @@
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+#include <filesystem>
 #include <vector>
 
 namespace chimaera::admin {
@@ -1309,6 +1310,70 @@ chi::TaskResume Runtime::RegisterMemory(hipc::FullPtr<RegisterMemoryTask> task,
   task->success_ = ipc_manager->RegisterMemory(alloc_id);
   task->SetReturnCode(task->success_ ? 0 : 1);
 
+  (void)rctx;
+  co_return;
+}
+
+chi::TaskResume Runtime::RestartContainers(
+    hipc::FullPtr<RestartContainersTask> task, chi::RunContext &rctx) {
+  HLOG(kDebug, "Admin: Executing RestartContainers task");
+
+  task->containers_restarted_ = 0;
+  task->error_message_ = "";
+
+  try {
+    auto *config_manager = CHI_CONFIG_MANAGER;
+    std::string restart_dir = config_manager->GetConfDir() + "/restart";
+
+    namespace fs = std::filesystem;
+    if (!fs::exists(restart_dir) || !fs::is_directory(restart_dir)) {
+      HLOG(kDebug, "Admin: No restart directory found at {}", restart_dir);
+      task->SetReturnCode(0);
+      co_return;
+    }
+
+    for (const auto &entry : fs::directory_iterator(restart_dir)) {
+      if (entry.path().extension() != ".yaml") continue;
+
+      // Load pool config from YAML file
+      chi::ConfigManager temp_config;
+      if (!temp_config.LoadYaml(entry.path().string())) {
+        HLOG(kError, "Admin: Failed to load restart config: {}",
+             entry.path().string());
+        continue;
+      }
+
+      const auto &compose_config = temp_config.GetComposeConfig();
+      for (const auto &pool_config : compose_config.pools_) {
+        HLOG(kInfo, "Admin: Restarting pool {} (module: {})",
+             pool_config.pool_name_, pool_config.mod_name_);
+
+        auto future = client_.AsyncCompose(pool_config);
+        co_await future;
+
+        chi::u32 rc = future->GetReturnCode();
+        if (rc != 0) {
+          HLOG(kError, "Admin: Failed to restart pool {}: rc={}",
+               pool_config.pool_name_, rc);
+          continue;
+        }
+
+        task->containers_restarted_++;
+        HLOG(kInfo, "Admin: Successfully restarted pool {}",
+             pool_config.pool_name_);
+      }
+    }
+
+    task->SetReturnCode(0);
+    HLOG(kInfo, "Admin: RestartContainers completed, {} containers restarted",
+         task->containers_restarted_);
+  } catch (const std::exception &e) {
+    task->return_code_ = 99;
+    std::string error_msg =
+        std::string("Exception during RestartContainers: ") + e.what();
+    task->error_message_ = chi::priv::string(HSHM_MALLOC, error_msg);
+    HLOG(kError, "Admin: RestartContainers failed: {}", e.what());
+  }
   (void)rctx;
   co_return;
 }

@@ -40,23 +40,40 @@
 
 #include <iostream>
 #include <string>
+#include <sstream>
+#include <filesystem>
+#include <fstream>
 #include <chimaera/chimaera.h>
 #include <chimaera/config_manager.h>
 #include <chimaera/admin/admin_client.h>
 
 void PrintUsage(const char* program_name) {
-  std::cout << "Usage: " << program_name << " <compose_config.yaml>\n";
-  std::cout << "  Loads compose configuration and creates specified pools\n";
+  std::cout << "Usage: " << program_name << " [--unregister] <compose_config.yaml>\n";
+  std::cout << "  Loads compose configuration and creates/destroys specified pools\n";
+  std::cout << "  --unregister: Destroy pools instead of creating them\n";
   std::cout << "  Requires runtime to be already initialized\n";
 }
 
 int main(int argc, char** argv) {
-  if (argc != 2) {
+  if (argc < 2 || argc > 3) {
     PrintUsage(argv[0]);
     return 1;
   }
 
-  std::string config_path = argv[1];
+  bool unregister = false;
+  std::string config_path;
+
+  if (argc == 3) {
+    if (std::string(argv[1]) == "--unregister") {
+      unregister = true;
+      config_path = argv[2];
+    } else {
+      PrintUsage(argv[0]);
+      return 1;
+    }
+  } else {
+    config_path = argv[1];
+  }
 
   // Initialize Chimaera client
   if (!chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, false)) {
@@ -78,7 +95,8 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  std::cout << "Found " << compose_config.pools_.size() << " pools to create\n";
+  std::cout << "Found " << compose_config.pools_.size() << " pools to "
+            << (unregister ? "destroy" : "create") << "\n";
 
   // Get admin client
   auto* admin_client = CHI_ADMIN;
@@ -87,31 +105,93 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Process compose - iterate over pools and create each one
-  auto* ipc_manager = CHI_IPC;
-  for (const auto& pool_config : compose_config.pools_) {
-    std::cout << "Creating pool " << pool_config.pool_name_
-              << " (module: " << pool_config.mod_name_ << ")\n";
+  if (unregister) {
+    // Unregister mode: destroy pools
+    for (const auto& pool_config : compose_config.pools_) {
+      std::cout << "Destroying pool " << pool_config.pool_name_
+                << " (module: " << pool_config.mod_name_ << ")\n";
 
-    // Create pool asynchronously and wait
-    auto task = admin_client->AsyncCompose(pool_config);
-    task.Wait();
+      auto task = admin_client->AsyncDestroyPool(
+          chi::PoolQuery::Dynamic(), pool_config.pool_id_);
+      task.Wait();
 
-    // Check return code
-    chi::u32 return_code = task->GetReturnCode();
-    if (return_code != 0) {
-      std::cerr << "Failed to create pool " << pool_config.pool_name_
-                << " (module: " << pool_config.mod_name_
-                << "), return code: " << return_code << "\n";
-      return 1;
+      chi::u32 return_code = task->GetReturnCode();
+      if (return_code != 0) {
+        std::cerr << "Failed to destroy pool " << pool_config.pool_name_
+                  << ", return code: " << return_code << "\n";
+        // Continue destroying other pools
+      } else {
+        std::cout << "Successfully destroyed pool " << pool_config.pool_name_ << "\n";
+      }
+
+      // Remove restart file if it exists
+      namespace fs = std::filesystem;
+      std::string restart_file = config_manager->GetConfDir() + "/restart/"
+                                 + pool_config.pool_name_ + ".yaml";
+      if (fs::exists(restart_file)) {
+        fs::remove(restart_file);
+        std::cout << "Removed restart file: " << restart_file << "\n";
+      }
     }
 
-    std::cout << "Successfully created pool " << pool_config.pool_name_ << "\n";
+    std::cout << "Unregister completed for "
+              << compose_config.pools_.size() << " pools\n";
+  } else {
+    // Register mode: create pools
+    for (const auto& pool_config : compose_config.pools_) {
+      std::cout << "Creating pool " << pool_config.pool_name_
+                << " (module: " << pool_config.mod_name_ << ")\n";
 
-    // Cleanup task
+      // Create pool asynchronously and wait
+      auto task = admin_client->AsyncCompose(pool_config);
+      task.Wait();
+
+      // Check return code
+      chi::u32 return_code = task->GetReturnCode();
+      if (return_code != 0) {
+        std::cerr << "Failed to create pool " << pool_config.pool_name_
+                  << " (module: " << pool_config.mod_name_
+                  << "), return code: " << return_code << "\n";
+        return 1;
+      }
+
+      std::cout << "Successfully created pool " << pool_config.pool_name_ << "\n";
+
+      // Save restart config if restart_ flag is set
+      if (pool_config.restart_) {
+        namespace fs = std::filesystem;
+        std::string restart_dir = config_manager->GetConfDir() + "/restart";
+        fs::create_directories(restart_dir);
+        std::string restart_file = restart_dir + "/" + pool_config.pool_name_ + ".yaml";
+
+        // Write pool config wrapped in compose section so RestartContainers
+        // can load it via ConfigManager::LoadYaml (which expects compose: [...])
+        std::ofstream ofs(restart_file);
+        if (ofs.is_open()) {
+          // Indent the pool config under compose: list entry
+          std::string indented;
+          std::istringstream stream(pool_config.config_);
+          std::string line;
+          bool first = true;
+          while (std::getline(stream, line)) {
+            if (first) {
+              indented += "  - " + line + "\n";
+              first = false;
+            } else {
+              indented += "    " + line + "\n";
+            }
+          }
+          ofs << "compose:\n" << indented;
+          ofs.close();
+          std::cout << "Saved restart config: " << restart_file << "\n";
+        } else {
+          std::cerr << "Warning: Failed to save restart config: " << restart_file << "\n";
+        }
+      }
+    }
+
+    std::cout << "Compose processing completed successfully - all "
+              << compose_config.pools_.size() << " pools created\n";
   }
-
-  std::cout << "Compose processing completed successfully - all "
-            << compose_config.pools_.size() << " pools created\n";
   return 0;
 }

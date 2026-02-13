@@ -28,6 +28,7 @@ GLOBAL_CONST chi::u32 kWreapDeadIpcs = 19;
 GLOBAL_CONST chi::u32 kClientRecv = 20;
 GLOBAL_CONST chi::u32 kClientSend = 21;
 GLOBAL_CONST chi::u32 kRegisterMemory = 22;
+GLOBAL_CONST chi::u32 kRestartContainers = 23;
 }  // namespace Method
 
 }  // namespace chimaera::admin

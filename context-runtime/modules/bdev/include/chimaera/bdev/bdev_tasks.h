@@ -104,6 +104,15 @@ struct PerfMetrics {
 };
 
 /**
+ * Persistence level for block devices
+ */
+enum class PersistenceLevel : chi::u32 {
+  kVolatile = 0,            // RAM-backed, lost on crash (e.g., RAM bdev)
+  kTemporaryNonVolatile = 1, // File-backed but not long-term (e.g., local SSD scratch)
+  kLongTerm = 2             // Durable persistent storage (e.g., PFS, NVMe)
+};
+
+/**
  * CreateParams for bdev chimod
  * Contains configuration parameters for bdev container creation
  */
@@ -117,6 +126,9 @@ struct CreateParams {
 
   // Performance characteristics (user-defined instead of benchmarked)
   PerfMetrics perf_metrics_;  // User-provided performance characteristics
+
+  // Persistence level for this block device
+  PersistenceLevel persistence_level_ = PersistenceLevel::kVolatile;
 
   // Required: chimod library name for module manager
   static constexpr const char *chimod_lib_name = "chimaera_bdev";
@@ -192,7 +204,7 @@ struct CreateParams {
   // Serialization support for cereal
   template <class Archive>
   void serialize(Archive &ar) {
-    ar(bdev_type_, total_size_, io_depth_, alignment_, perf_metrics_);
+    ar(bdev_type_, total_size_, io_depth_, alignment_, perf_metrics_, persistence_level_);
   }
 
   /**
@@ -248,6 +260,17 @@ struct CreateParams {
       }
       if (perf["iops"]) {
         perf_metrics_.iops_ = perf["iops"].as<double>();
+      }
+    }
+
+    if (config["persistence_level"]) {
+      std::string pl_str = config["persistence_level"].as<std::string>();
+      if (pl_str == "volatile") {
+        persistence_level_ = PersistenceLevel::kVolatile;
+      } else if (pl_str == "temporary") {
+        persistence_level_ = PersistenceLevel::kTemporaryNonVolatile;
+      } else if (pl_str == "long_term") {
+        persistence_level_ = PersistenceLevel::kLongTerm;
       }
     }
   }

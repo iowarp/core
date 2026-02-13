@@ -156,6 +156,7 @@ struct TargetInfo {
   float target_score_;        // Target score (0-1, normalized log bandwidth)
   chi::u64 remaining_space_;  // Remaining allocatable space in bytes
   chimaera::bdev::PerfMetrics perf_metrics_;  // Performance metrics from bdev
+  chimaera::bdev::PersistenceLevel persistence_level_ = chimaera::bdev::PersistenceLevel::kVolatile;
 
   TargetInfo() = default;
 
@@ -668,6 +669,7 @@ struct Context {
   bool trace_;            // Enable tracing for this operation
   chi::u64 trace_key_;    // Unique trace ID for this Put operation
   int trace_node_;        // Node ID where trace was initiated
+  int min_persistence_level_;  // 0=volatile, 1=temp-nonvolatile, 2=long-term
 
   // Dynamic statistics (populated after compression)
   chi::u64 actual_original_size_;    // Original data size in bytes
@@ -689,6 +691,7 @@ struct Context {
         trace_(false),
         trace_key_(0),
         trace_node_(-1),
+        min_persistence_level_(0),
         actual_original_size_(0),
         actual_compressed_size_(0),
         actual_compression_ratio_(1.0),
@@ -700,7 +703,7 @@ struct Context {
   void serialize(Archive &ar) {
     ar(dynamic_compress_, compress_lib_, compress_preset_, target_psnr_,
        psnr_chance_, max_performance_, consumer_node_, data_type_, trace_,
-       trace_key_, trace_node_, actual_original_size_, actual_compressed_size_,
+       trace_key_, trace_node_, min_persistence_level_, actual_original_size_, actual_compressed_size_,
        actual_compression_ratio_, actual_compress_time_ms_, actual_psnr_db_);
   }
 };
@@ -1841,6 +1844,106 @@ struct BlobQueryTask : public chi::Task {
       tag_names_.push_back(other->tag_names_[i]);
       blob_names_.push_back(other->blob_names_[i]);
     }
+  }
+};
+
+/**
+ * FlushMetadataTask - Periodic task to flush tag/blob metadata to durable storage
+ */
+struct FlushMetadataTask : public chi::Task {
+  OUT chi::u64 entries_flushed_;
+
+  /** SHM default constructor */
+  FlushMetadataTask() : chi::Task(), entries_flushed_(0) {}
+
+  /** Emplace constructor */
+  explicit FlushMetadataTask(const chi::TaskId &task_node,
+                             const chi::PoolId &pool_id,
+                             const chi::PoolQuery &pool_query)
+      : chi::Task(task_node, pool_id, pool_query, Method::kFlushMetadata),
+        entries_flushed_(0) {
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kFlushMetadata;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(entries_flushed_);
+  }
+
+  void Copy(const hipc::FullPtr<FlushMetadataTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    entries_flushed_ = other->entries_flushed_;
+  }
+
+  void Aggregate(const hipc::FullPtr<FlushMetadataTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
+};
+
+/**
+ * FlushDataTask - Periodic task to flush data from volatile to non-volatile targets
+ */
+struct FlushDataTask : public chi::Task {
+  IN int target_persistence_level_;
+  OUT chi::u64 bytes_flushed_;
+  OUT chi::u64 blobs_flushed_;
+
+  /** SHM default constructor */
+  FlushDataTask()
+      : chi::Task(),
+        target_persistence_level_(1),
+        bytes_flushed_(0),
+        blobs_flushed_(0) {}
+
+  /** Emplace constructor */
+  explicit FlushDataTask(const chi::TaskId &task_node,
+                         const chi::PoolId &pool_id,
+                         const chi::PoolQuery &pool_query,
+                         int target_persistence_level = 1)
+      : chi::Task(task_node, pool_id, pool_query, Method::kFlushData),
+        target_persistence_level_(target_persistence_level),
+        bytes_flushed_(0),
+        blobs_flushed_(0) {
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kFlushData;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+    ar(target_persistence_level_);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(bytes_flushed_, blobs_flushed_);
+  }
+
+  void Copy(const hipc::FullPtr<FlushDataTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    target_persistence_level_ = other->target_persistence_level_;
+    bytes_flushed_ = other->bytes_flushed_;
+    blobs_flushed_ = other->blobs_flushed_;
+  }
+
+  void Aggregate(const hipc::FullPtr<FlushDataTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
   }
 };
 

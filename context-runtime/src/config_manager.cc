@@ -216,6 +216,11 @@ void ConfigManager::ParseYAML(YAML::Node &yaml_conf) {
       max_sleep_ = runtime["max_sleep"].as<u32>();
     }
 
+    // Configuration directory for persistent runtime config
+    if (runtime["conf_dir"]) {
+      conf_dir_ = runtime["conf_dir"].as<std::string>();
+    }
+
     // Note: stack_size parameter removed (was never used)
     // Note: heartbeat_interval parsing removed (not used by runtime)
   }
@@ -290,6 +295,11 @@ void ConfigManager::ParseYAML(YAML::Node &yaml_conf) {
         YAML::Emitter emitter;
         emitter << pool_node;
         pool_config.config_ = emitter.c_str();
+
+        // Parse restart field if present
+        if (pool_node["restart"]) {
+          pool_config.restart_ = pool_node["restart"].as<bool>();
+        }
 
         // Add to compose config
         compose_config_.pools_.push_back(pool_config);

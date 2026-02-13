@@ -51,6 +51,7 @@ struct PoolConfig {
   PoolId pool_id_;           /**< Pool ID for this module */
   PoolQuery pool_query_;     /**< Pool query routing (Dynamic or Local) */
   std::string config_;       /**< Remaining YAML configuration as string */
+  bool restart_ = false;     /**< If true, store compose file for crash-restart */
 
   PoolConfig() = default;
 
@@ -69,7 +70,7 @@ struct PoolConfig {
    */
   template <class Archive>
   void serialize(Archive& ar) {
-    ar(mod_name_, pool_name_, pool_id_, pool_query_, config_);
+    ar(mod_name_, pool_name_, pool_id_, pool_query_, config_, restart_);
   }
 };
 
@@ -196,6 +197,12 @@ class ConfigManager : public hshm::BaseConfig {
   const ComposeConfig& GetComposeConfig() const { return compose_config_; }
 
   /**
+   * Get configuration directory for persistent runtime config
+   * @return Directory path for storing persistent runtime configuration
+   */
+  std::string GetConfDir() const { return conf_dir_; }
+
+  /**
    * Get wait_for_restart timeout in seconds
    * @return Maximum time to wait for remote connection during system boot (default: 30 seconds)
    */
@@ -264,6 +271,9 @@ class ConfigManager : public hshm::BaseConfig {
 
   // Compose configuration
   ComposeConfig compose_config_;
+
+  // Configuration directory for persistent runtime config
+  std::string conf_dir_ = "/tmp/chimaera";
 };
 
 }  // namespace chi

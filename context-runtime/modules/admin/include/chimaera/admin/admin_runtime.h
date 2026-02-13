@@ -224,6 +224,12 @@ public:
   chi::TaskResume RegisterMemory(hipc::FullPtr<RegisterMemoryTask> task, chi::RunContext &rctx);
 
   /**
+   * Handle RestartContainers - Re-create pools from saved restart configs
+   * Reads conf_dir/restart/ directory and re-creates pools from saved YAML
+   */
+  chi::TaskResume RestartContainers(hipc::FullPtr<RestartContainersTask> task, chi::RunContext &rctx);
+
+  /**
    * Handle SubmitBatch - Submit a batch of tasks in a single RPC
    * Deserializes tasks from the batch and executes them in parallel
    * up to 32 tasks at a time, then co_awaits their completion

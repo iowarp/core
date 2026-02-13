@@ -42,6 +42,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 
@@ -257,6 +258,19 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
          stat_period_ms);
     client_.AsyncStatTargets(chi::PoolQuery::Local(), stat_period_ms);
   }
+
+  // Spawn periodic FlushMetadata if metadata_log_path is configured
+  if (!config_.performance_.metadata_log_path_.empty()) {
+    client_.AsyncFlushMetadata(chi::PoolQuery::Local(),
+      config_.performance_.flush_metadata_period_ms_ * 1000.0);
+  }
+
+  // Spawn periodic FlushData if configured
+  if (config_.performance_.flush_data_period_ms_ > 0) {
+    client_.AsyncFlushData(chi::PoolQuery::Local(),
+      config_.performance_.flush_data_min_persistence_,
+      config_.performance_.flush_data_period_ms_ * 1000.0);
+  }
   co_return;
 }
 
@@ -398,6 +412,7 @@ chi::TaskResume Runtime::RegisterTarget(hipc::FullPtr<RegisterTargetTask> task,
         total_size;  // Use actual remaining space from bdev
     target_info.perf_metrics_ =
         perf_metrics;  // Store the entire PerfMetrics structure
+    target_info.persistence_level_ = GetPersistenceLevelForTarget(target_name);
 
     // Register the target using TargetId as key
     {
@@ -793,7 +808,8 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
     chi::u32 allocation_result = 0;
     timer.Resume();
     co_await AllocateNewData(*blob_info_ptr, offset, size, blob_score,
-                             allocation_result);
+                             allocation_result,
+                             task->context_.min_persistence_level_);
     timer.Pause();
     t_alloc_ms += timer.GetMsec();
     timer.Reset();
@@ -1395,6 +1411,27 @@ float Runtime::GetManualScoreForTarget(const std::string &target_name) {
   return -1.0f;  // No manual score configured for this target
 }
 
+chimaera::bdev::PersistenceLevel Runtime::GetPersistenceLevelForTarget(
+    const std::string &target_name) {
+  for (size_t i = 0; i < storage_devices_.size(); ++i) {
+    const auto &device = storage_devices_[i];
+    std::string expected_target_name = "storage_device_" + std::to_string(i);
+    if (target_name == expected_target_name || target_name == device.path_ ||
+        (target_name.rfind(device.path_, 0) == 0 &&
+         (target_name.size() == device.path_.size() ||
+          target_name[device.path_.size()] == '_'))) {
+      // Convert string persistence level to enum
+      if (device.persistence_level_ == "temporary") {
+        return chimaera::bdev::PersistenceLevel::kTemporaryNonVolatile;
+      } else if (device.persistence_level_ == "long_term") {
+        return chimaera::bdev::PersistenceLevel::kLongTerm;
+      }
+      return chimaera::bdev::PersistenceLevel::kVolatile;
+    }
+  }
+  return chimaera::bdev::PersistenceLevel::kVolatile;
+}
+
 TagId Runtime::GetOrAssignTagId(const std::string &tag_name,
                                 const TagId &preferred_id) {
   size_t tag_lock_index = GetTagLockIndex(tag_name);
@@ -1425,6 +1462,104 @@ TagId Runtime::GetOrAssignTagId(const std::string &tag_name,
   tag_id_to_info_.insert_or_assign(tag_id, tag_info);
 
   return tag_id;
+}
+
+chi::TaskResume Runtime::FlushMetadata(hipc::FullPtr<FlushMetadataTask> task,
+                                       chi::RunContext &ctx) {
+  task->entries_flushed_ = 0;
+
+  const std::string &log_path = config_.performance_.metadata_log_path_;
+  if (log_path.empty()) {
+    task->return_code_ = 0;
+    (void)ctx;
+    co_return;
+  }
+
+  try {
+    namespace fs = std::filesystem;
+    fs::create_directories(fs::path(log_path).parent_path());
+
+    std::ofstream ofs(log_path, std::ios::binary | std::ios::trunc);
+    if (!ofs.is_open()) {
+      HLOG(kError, "FlushMetadata: Failed to open log file: {}", log_path);
+      task->return_code_ = 1;
+      co_return;
+    }
+
+    // Write tag_name_to_id_ entries
+    tag_name_to_id_.for_each([&](const std::string &name, const TagId &id) {
+      uint8_t entry_type = 0;  // tag_name_to_id entry
+      uint32_t key_len = static_cast<uint32_t>(name.size());
+      ofs.write(reinterpret_cast<const char*>(&entry_type), sizeof(entry_type));
+      ofs.write(reinterpret_cast<const char*>(&key_len), sizeof(key_len));
+      ofs.write(name.data(), key_len);
+      ofs.write(reinterpret_cast<const char*>(&id), sizeof(id));
+      task->entries_flushed_++;
+    });
+
+    ofs.close();
+    task->return_code_ = 0;
+    HLOG(kDebug, "FlushMetadata: Flushed {} entries to {}", task->entries_flushed_, log_path);
+  } catch (const std::exception &e) {
+    HLOG(kError, "FlushMetadata: Exception: {}", e.what());
+    task->return_code_ = 99;
+  }
+  (void)ctx;
+  co_return;
+}
+
+chi::TaskResume Runtime::FlushData(hipc::FullPtr<FlushDataTask> task,
+                                   chi::RunContext &ctx) {
+  task->bytes_flushed_ = 0;
+  task->blobs_flushed_ = 0;
+
+  int target_level = task->target_persistence_level_;
+
+  // Find non-volatile targets that meet the persistence level requirement
+  std::vector<chi::PoolId> nonvolatile_targets;
+  registered_targets_.for_each([&](const chi::PoolId &id, const TargetInfo &info) {
+    if (static_cast<int>(info.persistence_level_) >= target_level) {
+      nonvolatile_targets.push_back(id);
+    }
+  });
+
+  if (nonvolatile_targets.empty()) {
+    HLOG(kDebug, "FlushData: No non-volatile targets available at level >= {}", target_level);
+    task->return_code_ = 0;
+    (void)ctx;
+    co_return;
+  }
+
+  // Iterate all blobs and check if they have blocks on volatile targets
+  chi::u64 blobs_checked = 0;
+  tag_blob_name_to_info_.for_each([&](const std::string &key, const BlobInfo &blob_info) {
+    blobs_checked++;
+    bool has_volatile_blocks = false;
+    for (const auto &block : blob_info.blocks_) {
+      // Check if this block's target is below the required persistence level
+      // by examining the target_query_ pool_id against registered targets
+      (void)block;
+      // Blocks don't carry a target_id directly; we identify volatile blocks
+      // by comparing against known non-volatile target set.
+      // For now, conservatively count all blobs as needing evaluation.
+      has_volatile_blocks = true;
+      break;
+    }
+    if (has_volatile_blocks && !blob_info.blocks_.empty()) {
+      // TODO: Read data from volatile target and write to non-volatile target
+      // For now, just count the blobs that would need flushing
+      task->blobs_flushed_++;
+      for (const auto &block : blob_info.blocks_) {
+        task->bytes_flushed_ += block.size_;
+      }
+    }
+  });
+
+  task->return_code_ = 0;
+  HLOG(kDebug, "FlushData: Checked {} blobs, {} need flushing ({} bytes)",
+       blobs_checked, task->blobs_flushed_, task->bytes_flushed_);
+  (void)ctx;
+  co_return;
 }
 
 // GetWorkRemaining implementation (required pure virtual method)
@@ -1527,7 +1662,8 @@ BlobInfo *Runtime::CreateNewBlob(const std::string &blob_name,
 
 chi::TaskResume Runtime::AllocateNewData(BlobInfo &blob_info, chi::u64 offset,
                                          chi::u64 size, float blob_score,
-                                         chi::u32 &error_code) {
+                                         chi::u32 &error_code,
+                                         int min_persistence_level) {
   HLOG(kDebug, "AllocateNewData");
   // Calculate required additional space
   chi::u64 current_blob_size = blob_info.GetTotalSize();
@@ -1541,12 +1677,16 @@ chi::TaskResume Runtime::AllocateNewData(BlobInfo &blob_info, chi::u64 offset,
 
   chi::u64 additional_size = required_size - current_blob_size;
 
-  // Get all available targets for data placement
+  // Get all available targets for data placement (filtered by persistence level)
   std::vector<TargetInfo> available_targets;
   available_targets.reserve(registered_targets_.size());
   registered_targets_.for_each(
-      [&available_targets](const chi::PoolId &target_id,
+      [&available_targets, min_persistence_level](const chi::PoolId &target_id,
                            const TargetInfo &target_info) {
+        // Filter by minimum persistence level
+        if (static_cast<int>(target_info.persistence_level_) < min_persistence_level) {
+          return;
+        }
         HLOG(kDebug,
              "AllocateNewData: for_each - key=({},{}), "
              "value.bdev_client_.pool_id_=({},{}), remaining_space={}",

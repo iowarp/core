@@ -1,0 +1,20 @@
+---
+runtime:
+  num_threads: 4
+  queue_depth: 256
+  conf_dir: /tmp/chimaera_restart_test
+
+compose:
+  - mod_name: wrp_cte_core
+    pool_name: cte_restart_test
+    pool_query: local
+    pool_id: "512.0"
+    restart: true
+    storage:
+      - path: /tmp/cte_restart_ram
+        bdev_type: ram
+        capacity_limit: 100MB
+    performance:
+      metadata_log_path: /tmp/chimaera_restart_test/metadata.log
+      flush_metadata_period_ms: 0
+      flush_data_period_ms: 0

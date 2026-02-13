@@ -154,6 +154,15 @@ class Container {
   }
 
   /**
+   * Restart container after crash recovery
+   * Default: re-initialize. Override for state restoration.
+   */
+  virtual void Restart(const PoolId& pool_id, const std::string& pool_name,
+                       u32 container_id = 0) {
+    Init(pool_id, pool_name, container_id);
+  }
+
+  /**
    * Serialize task parameters for network transfer (unified method)
    * Must be implemented by derived classes
    * Uses switch-case structure based on method ID to dispatch to appropriate serialization

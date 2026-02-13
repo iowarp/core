@@ -1278,6 +1278,57 @@ struct RegisterMemoryTask : public chi::Task {
   }
 };
 
+/**
+ * RestartContainersTask - Restart containers from saved compose configs
+ * Reads conf_dir/restart/ directory and re-creates pools from saved YAML files
+ */
+struct RestartContainersTask : public chi::Task {
+  OUT chi::u32 containers_restarted_;
+  OUT chi::priv::string error_message_;
+
+  /** SHM default constructor */
+  RestartContainersTask()
+      : chi::Task(),
+        containers_restarted_(0),
+        error_message_(HSHM_MALLOC) {}
+
+  /** Emplace constructor */
+  explicit RestartContainersTask(const chi::TaskId &task_node,
+                                 const chi::PoolId &pool_id,
+                                 const chi::PoolQuery &pool_query)
+      : chi::Task(task_node, pool_id, pool_query, Method::kRestartContainers),
+        containers_restarted_(0),
+        error_message_(HSHM_MALLOC) {
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kRestartContainers;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(containers_restarted_, error_message_);
+  }
+
+  void Copy(const hipc::FullPtr<RestartContainersTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    containers_restarted_ = other->containers_restarted_;
+    error_message_ = other->error_message_;
+  }
+
+  void Aggregate(const hipc::FullPtr<RestartContainersTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
+};
+
 }  // namespace chimaera::admin
 
 #endif  // ADMIN_TASKS_H_

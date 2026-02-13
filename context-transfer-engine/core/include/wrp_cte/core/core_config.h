@@ -52,12 +52,21 @@ struct PerformanceConfig {
   float score_threshold_;               // Threshold for blob reorganization
   float score_difference_threshold_;    // Minimum score difference for reorganization
 
+  chi::u32 flush_metadata_period_ms_;   // Period for periodic metadata flush (default 5s)
+  std::string metadata_log_path_;       // Path for metadata log (empty = disabled)
+  chi::u32 flush_data_period_ms_;       // Period for data flush (default 10s)
+  int flush_data_min_persistence_;      // Min persistence level to flush to (1=temp-nonvolatile)
+
   PerformanceConfig()
       : target_stat_interval_ms_(5000),
         stat_targets_period_ms_(50),
         max_concurrent_operations_(64),
         score_threshold_(0.7f),
-        score_difference_threshold_(0.05f) {}
+        score_difference_threshold_(0.05f),
+        flush_metadata_period_ms_(5000),
+        metadata_log_path_(""),
+        flush_data_period_ms_(10000),
+        flush_data_min_persistence_(1) {}
 };
 
 /**
@@ -82,10 +91,11 @@ struct StorageDeviceConfig {
   std::string bdev_type_;     // Block device type ("file", "ram", etc.)
   chi::u64 capacity_limit_;   // Capacity limit in bytes (parsed from size string)
   float score_;               // Optional manual score (0.0-1.0), -1.0 means use automatic scoring
-  
-  StorageDeviceConfig() : capacity_limit_(0), score_(-1.0f) {}
-  StorageDeviceConfig(const std::string& path, const std::string& bdev_type, chi::u64 capacity, float score = -1.0f)
-      : path_(path), bdev_type_(bdev_type), capacity_limit_(capacity), score_(score) {}
+  std::string persistence_level_;  // "volatile", "temporary", "long_term"
+
+  StorageDeviceConfig() : capacity_limit_(0), score_(-1.0f), persistence_level_("volatile") {}
+  StorageDeviceConfig(const std::string& path, const std::string& bdev_type, chi::u64 capacity, float score = -1.0f, const std::string& persistence_level = "volatile")
+      : path_(path), bdev_type_(bdev_type), capacity_limit_(capacity), score_(score), persistence_level_(persistence_level) {}
 };
 
 /**

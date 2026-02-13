@@ -243,6 +243,12 @@ private:
   float GetManualScoreForTarget(const std::string &target_name);
 
   /**
+   * Get the persistence level for a target from its storage device config
+   */
+  chimaera::bdev::PersistenceLevel GetPersistenceLevelForTarget(
+      const std::string &target_name);
+
+  /**
    * Helper function to get or assign a tag ID
    */
   TagId GetOrAssignTagId(const std::string &tag_name,
@@ -316,7 +322,8 @@ private:
    * Returns TaskResume for coroutine-based async operations
    */
   chi::TaskResume AllocateNewData(BlobInfo &blob_info, chi::u64 offset, chi::u64 size,
-                                  float blob_score, chi::u32 &error_code);
+                                  float blob_score, chi::u32 &error_code,
+                                  int min_persistence_level = 0);
 
   /**
    * Write data to existing blob blocks
@@ -428,6 +435,16 @@ private:
    * @param ctx Runtime context for task execution
    */
   chi::TaskResume GetBlobInfo(hipc::FullPtr<GetBlobInfoTask> task, chi::RunContext &ctx);
+
+  /**
+   * Flush metadata to durable storage (Method::kFlushMetadata)
+   */
+  chi::TaskResume FlushMetadata(hipc::FullPtr<FlushMetadataTask> task, chi::RunContext &ctx);
+
+  /**
+   * Flush data from volatile to non-volatile targets (Method::kFlushData)
+   */
+  chi::TaskResume FlushData(hipc::FullPtr<FlushDataTask> task, chi::RunContext &ctx);
 
 private:
   /**
