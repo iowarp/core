@@ -34,8 +34,6 @@
 #ifndef CHIMAERA_INCLUDE_CHIMAERA_POOL_QUERY_H_
 #define CHIMAERA_INCLUDE_CHIMAERA_POOL_QUERY_H_
 
-#include <cereal/cereal.hpp>
-
 #include "chimaera/types.h"
 
 namespace chi {
@@ -276,7 +274,7 @@ class PoolQuery {
   }
 
   /**
-   * Cereal serialization support
+   * Serialization support for any archive type
    * @param ar Archive for serialization
    */
   template <class Archive>

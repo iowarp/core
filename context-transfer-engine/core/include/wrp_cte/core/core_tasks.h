@@ -670,6 +670,7 @@ struct Context {
   chi::u64 trace_key_;    // Unique trace ID for this Put operation
   int trace_node_;        // Node ID where trace was initiated
   int min_persistence_level_;  // 0=volatile, 1=temp-nonvolatile, 2=long-term
+  int persistence_target_;     // Specific persistence level to target (-1 = use min_persistence_level_)
 
   // Dynamic statistics (populated after compression)
   chi::u64 actual_original_size_;    // Original data size in bytes
@@ -692,6 +693,7 @@ struct Context {
         trace_key_(0),
         trace_node_(-1),
         min_persistence_level_(0),
+        persistence_target_(-1),
         actual_original_size_(0),
         actual_compressed_size_(0),
         actual_compression_ratio_(1.0),
@@ -703,7 +705,8 @@ struct Context {
   void serialize(Archive &ar) {
     ar(dynamic_compress_, compress_lib_, compress_preset_, target_psnr_,
        psnr_chance_, max_performance_, consumer_node_, data_type_, trace_,
-       trace_key_, trace_node_, min_persistence_level_, actual_original_size_, actual_compressed_size_,
+       trace_key_, trace_node_, min_persistence_level_, persistence_target_,
+       actual_original_size_, actual_compressed_size_,
        actual_compression_ratio_, actual_compress_time_ms_, actual_psnr_db_);
   }
 };

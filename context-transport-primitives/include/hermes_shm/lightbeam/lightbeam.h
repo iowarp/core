@@ -32,7 +32,6 @@
  */
 
 #pragma once
-#if HSHM_ENABLE_LIGHTBEAM
 // Common types, interfaces, and factory for lightbeam transports.
 // Users must include the appropriate transport header (zmq_transport.h,
 // socket_transport.h) before using the factory for that transport.
@@ -220,4 +219,3 @@ class TransportFactory {
 };
 
 }  // namespace hshm::lbm
-#endif  // HSHM_ENABLE_LIGHTBEAM

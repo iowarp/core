@@ -137,7 +137,9 @@
 // Solver functionality
 #include "solver/nonlinear_least_squares.h"
 
-// Lightbeam transport layer
+// Lightbeam transport layer (base types always available)
+#include "lightbeam/lightbeam.h"
+// Concrete transports + factory (only when hshm::lightbeam is linked)
 #include "lightbeam/transport_factory_impl.h"
 
 #endif  // HSHM_SHM_INCLUDE_HSHM_SHM_HSHM_SHM_H_

@@ -466,9 +466,21 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
          "Creating container for pool {} on node {} with container_id={}",
          target_pool_id, node_id, node_id);
 
-    // Initialize container with pool ID, name, and container ID (this will call
-    // InitClient internally)
-    container->Init(target_pool_id, pool_name, node_id);
+    // Check if this is a restart scenario (compose mode with restart flag)
+    bool is_restart = false;
+    if (create_task->do_compose_) {
+      chi::PoolConfig pool_config =
+          chi::Task::Deserialize<chi::PoolConfig>(create_task->chimod_params_);
+      is_restart = pool_config.restart_;
+    }
+
+    // Initialize container with pool ID, name, and container ID
+    if (is_restart) {
+      HLOG(kInfo, "PoolManager: Restart detected for pool {}, calling Restart()", pool_name);
+      container->Restart(target_pool_id, pool_name, node_id);
+    } else {
+      container->Init(target_pool_id, pool_name, node_id);
+    }
 
     HLOG(kInfo,
          "Container initialized with pool ID {}, name {}, and container ID {}",

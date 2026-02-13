@@ -45,8 +45,6 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-
-#include "hermes_shm/util/timer.h"
 #include <limits>
 #include <memory>
 #include <regex>
@@ -58,6 +56,7 @@
 
 #include "chimaera/worker.h"
 #include "hermes_shm/util/logging.h"
+#include "hermes_shm/util/timer.h"
 
 namespace wrp_cte::core {
 
@@ -251,6 +250,11 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
        config_.targets_.neighborhood_, config_.targets_.poll_period_ms_,
        config_.performance_.stat_targets_period_ms_);
 
+  // If this is a restart, restore metadata from the persistent log
+  if (is_restart_) {
+    RestoreMetadataFromLog();
+  }
+
   // Start periodic StatTargets task to keep target stats updated
   chi::u32 stat_period_ms = config_.performance_.stat_targets_period_ms_;
   if (stat_period_ms > 0) {
@@ -259,17 +263,20 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
     client_.AsyncStatTargets(chi::PoolQuery::Local(), stat_period_ms);
   }
 
-  // Spawn periodic FlushMetadata if metadata_log_path is configured
-  if (!config_.performance_.metadata_log_path_.empty()) {
-    client_.AsyncFlushMetadata(chi::PoolQuery::Local(),
-      config_.performance_.flush_metadata_period_ms_ * 1000.0);
+  // Spawn periodic FlushMetadata if metadata_log_path is configured and period
+  // > 0
+  if (!config_.performance_.metadata_log_path_.empty() &&
+      config_.performance_.flush_metadata_period_ms_ > 0) {
+    client_.AsyncFlushMetadata(
+        chi::PoolQuery::Local(),
+        config_.performance_.flush_metadata_period_ms_ * 1000.0);
   }
 
   // Spawn periodic FlushData if configured
   if (config_.performance_.flush_data_period_ms_ > 0) {
     client_.AsyncFlushData(chi::PoolQuery::Local(),
-      config_.performance_.flush_data_min_persistence_,
-      config_.performance_.flush_data_period_ms_ * 1000.0);
+                           config_.performance_.flush_data_min_persistence_,
+                           config_.performance_.flush_data_period_ms_ * 1000.0);
   }
   co_return;
 }
@@ -683,7 +690,6 @@ chi::TaskResume Runtime::GetTargetInfo(hipc::FullPtr<GetTargetInfoTask> task,
 
 chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
                                  chi::RunContext &ctx) {
-  // Dynamic scheduling phase - determine routing
   if (ctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
     task->pool_query_ =
         HashBlobToContainer(task->tag_id_, task->blob_name_.str());
@@ -691,217 +697,106 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
   }
 
   try {
-    // Timing instrumentation
-    static thread_local size_t put_count = 0;
-    static thread_local double t_check_ms = 0, t_alloc_ms = 0;
-    static thread_local double t_write_ms = 0, t_meta_ms = 0;
-    hshm::Timer timer;
-
-    // Extract input parameters
     TagId tag_id = task->tag_id_;
     std::string blob_name = task->blob_name_.str();
     chi::u64 offset = task->offset_;
     chi::u64 size = task->size_;
     hipc::ShmPtr<> blob_data = task->blob_data_;
     float blob_score = task->score_;
-    chi::u32 flags = task->flags_;
 
-    // Suppress unused variable warning for flags - may be used in future
-    (void)flags;
-
-    // Validate input parameters
+    // Validate inputs
     if (size == 0) {
-      task->return_code_ = 2;  // Error: Invalid size (zero)
+      task->return_code_ = 2;
       co_return;
     }
-
     if (blob_data.IsNull()) {
-      task->return_code_ = 3;  // Error: Null data pointer
+      task->return_code_ = 3;
       co_return;
     }
-
-    // Validate that blob_name is provided
     if (blob_name.empty()) {
-      task->return_code_ = 4;  // Error: No blob name provided
+      task->return_code_ = 4;
       co_return;
     }
 
-    // Step 1: Check if blob exists
-    timer.Resume();
+    // Check if blob exists and resolve score
     BlobInfo *blob_info_ptr = CheckBlobExists(blob_name, tag_id);
     bool blob_found = (blob_info_ptr != nullptr);
-
-    // Step 1.5: Resolve score based on blob existence
-    // -1.0 means "unknown" - use defaults based on context
     if (blob_score < 0.0f) {
-      if (blob_found) {
-        // Existing blob: preserve current score
-        blob_score = blob_info_ptr->score_;
-      } else {
-        // New blob: use high priority (fast tier)
-        blob_score = 1.0f;
-      }
+      blob_score = blob_found ? blob_info_ptr->score_ : 1.0f;
     }
 
-    // Step 1.6: Handle explicit score change for entire blob replacement
-    // If score is explicit (0.0-1.0) and we're replacing the entire blob,
-    // free existing blocks so new allocation goes to appropriate tier
+    // Step 1: ClearBlob — free blocks if full replacement
     chi::u64 old_blob_size = 0;
-    if (blob_found && blob_score >= 0.0f && blob_score <= 1.0f) {
-      chi::u64 current_blob_size = blob_info_ptr->GetTotalSize();
-      bool is_entire_blob_replacement =
-          (offset == 0 && size >= current_blob_size);
-
-      if (is_entire_blob_replacement && current_blob_size > 0) {
-        // Check if score is actually changing to a different tier
-        float current_score = blob_info_ptr->score_;
-        const Config &config = GetConfig();
-        float score_diff_threshold =
-            config.performance_.score_difference_threshold_;
-
-        if (std::abs(blob_score - current_score) >= score_diff_threshold) {
-          HLOG(kDebug,
-               "PutBlob: Score change detected for entire blob replacement. "
-               "blob={}, old_score={}, new_score={}, freeing old blocks",
-               blob_name, current_score, blob_score);
-
-          // Free all existing blocks (updates target capacities)
-          chi::u32 free_result = 0;
-          co_await FreeAllBlobBlocks(*blob_info_ptr, free_result);
-
-          if (free_result != 0) {
-            HLOG(kWarning,
-                 "PutBlob: Failed to free old blocks during score change, "
-                 "continuing with overwrite. blob={}, error={}",
-                 blob_name, free_result);
-          }
-          // Blob metadata remains intact, blocks are now empty
-          // old_blob_size stays 0 since blocks were freed
-        } else {
-          // Score not changing significantly, track existing size
-          old_blob_size = current_blob_size;
-        }
-      } else {
-        // Not entire blob replacement, track existing size
-        old_blob_size = current_blob_size;
+    if (blob_found) {
+      bool cleared = false;
+      co_await ClearBlob(*blob_info_ptr, blob_score, offset, size, cleared);
+      if (!cleared) {
+        old_blob_size = blob_info_ptr->GetTotalSize();
       }
-    } else if (blob_found) {
-      // Score is unknown (-1), track existing size
-      old_blob_size = blob_info_ptr->GetTotalSize();
     }
 
-    // Step 2: Create blob if it doesn't exist
+    // Create blob metadata if new
     if (!blob_found) {
       blob_info_ptr = CreateNewBlob(blob_name, tag_id, blob_score);
-      if (blob_info_ptr == nullptr) {
-        task->return_code_ = 5;  // Error: Failed to create blob
+      if (!blob_info_ptr) {
+        task->return_code_ = 5;
         co_return;
       }
     }
 
-    // Step 3: Allocate additional space if needed for blob extension
-    // (no lock held during expensive bdev allocation)
-    timer.Pause();
-    t_check_ms += timer.GetMsec();
-    timer.Reset();
-
-    chi::u32 allocation_result = 0;
-    timer.Resume();
-    co_await AllocateNewData(*blob_info_ptr, offset, size, blob_score,
-                             allocation_result,
-                             task->context_.min_persistence_level_);
-    timer.Pause();
-    t_alloc_ms += timer.GetMsec();
-    timer.Reset();
-
-    if (allocation_result != 0) {
-      HLOG(kError, "Allocation failure: {}", allocation_result);
-      task->return_code_ =
-          10 + allocation_result;  // Error: Allocation failure (10-19 range)
+    // Step 2: ExtendBlob — allocate new blocks if needed
+    chi::u32 alloc_result = 0;
+    co_await ExtendBlob(*blob_info_ptr, offset, size, blob_score, alloc_result,
+                        task->context_.min_persistence_level_);
+    if (alloc_result != 0) {
+      task->return_code_ = 10 + alloc_result;
       co_return;
     }
 
-    // Step 4: Write data to blob blocks (compressed or uncompressed)
-    // (no lock held during expensive I/O operations)
+    // Step 3: ModifyExistingData — write data to blocks
     chi::u32 write_result = 0;
-    timer.Resume();
     co_await ModifyExistingData(blob_info_ptr->blocks_, blob_data, size, offset,
                                 write_result);
-    timer.Pause();
-    t_write_ms += timer.GetMsec();
-    timer.Reset();
-
     if (write_result != 0) {
-      task->return_code_ =
-          20 + write_result;  // Error: Write failure (20-29 range)
+      task->return_code_ = 20 + write_result;
       co_return;
     }
 
-    // Store compression metadata in BlobInfo for future decompression
-    timer.Resume();
+    // Update compression metadata
     Context &context = task->context_;
     blob_info_ptr->compress_lib_ = context.compress_lib_;
     blob_info_ptr->compress_preset_ = context.compress_preset_;
     blob_info_ptr->trace_key_ = context.trace_key_;
 
-    // Step 5: Calculate size change after I/O completes
+    // Update tag size
     chi::u64 new_blob_size = blob_info_ptr->GetTotalSize();
     chi::i64 size_change = static_cast<chi::i64>(new_blob_size) -
                            static_cast<chi::i64>(old_blob_size);
-
-    // Step 6: Update metadata (read lock only for map access - not modifying
-    // map structure)
     auto now = std::chrono::steady_clock::now();
-    size_t tag_lock_index = GetTagLockIndex(tag_id);
-    size_t tag_total_size = 0;
-
-    // Update blob timestamp and score (blob_info_ptr already obtained, no
-    // additional lock needed)
     blob_info_ptr->last_modified_ = now;
     blob_info_ptr->score_ = blob_score;
-
-    // Acquire read lock for tag map access and value updates
     {
+      size_t tag_lock_index = GetTagLockIndex(tag_id);
       chi::ScopedCoRwReadLock tag_lock(*tag_locks_[tag_lock_index]);
-
-      // Update tag's total_size_ and timestamps
       TagInfo *tag_info_ptr = tag_id_to_info_.find(tag_id);
-      if (tag_info_ptr != nullptr) {
+      if (tag_info_ptr) {
         tag_info_ptr->last_modified_ = now;
-
-        // Use signed arithmetic to handle size decreases
         if (size_change >= 0) {
           tag_info_ptr->total_size_.fetch_add(static_cast<size_t>(size_change));
         } else {
-          HLOG(kError, "Size should not decrese");
+          HLOG(kError, "Size should not decrease");
           task->return_code_ = 1;
           co_return;
         }
       }
-    }  // Release read lock
-    timer.Pause();
-    t_meta_ms += timer.GetMsec();
-    timer.Reset();
-
-    // Log telemetry and success messages
-    LogTelemetry(CteOp::kPutBlob, offset, size, tag_id, now,
-                 blob_info_ptr->last_read_);
-
-    task->return_code_ = 0;
-
-    // Print timing every 100 ops
-    ++put_count;
-    if (put_count % 100 == 0) {
-      fprintf(stderr,
-              "[PutBlob] ops=%zu check=%.3f ms alloc=%.3f ms "
-              "write=%.3f ms meta=%.3f ms\n",
-              put_count, t_check_ms, t_alloc_ms, t_write_ms, t_meta_ms);
-      t_check_ms = t_alloc_ms = t_write_ms = t_meta_ms = 0;
     }
 
+    LogTelemetry(CteOp::kPutBlob, offset, size, tag_id, now,
+                 blob_info_ptr->last_read_);
+    task->return_code_ = 0;
   } catch (const std::exception &e) {
     HLOG(kError, "PutBlob failed with exception: {}", e.what());
-    task->return_code_ = 1;  // Error: General exception
+    task->return_code_ = 1;
   }
   co_return;
 }
@@ -962,8 +857,6 @@ chi::TaskResume Runtime::GetBlob(hipc::FullPtr<GetBlobTask> task,
     // Step 3: Update timestamp (no lock needed - just updating values, not
     // modifying map structure)
     auto now = std::chrono::steady_clock::now();
-    size_t tag_lock_index = GetTagLockIndex(tag_id);
-    (void)tag_lock_index;  // Suppress unused variable warning
     size_t num_blocks = 0;
     blob_info_ptr->last_read_ = now;
     num_blocks = blob_info_ptr->blocks_.size();
@@ -1486,20 +1379,75 @@ chi::TaskResume Runtime::FlushMetadata(hipc::FullPtr<FlushMetadataTask> task,
       co_return;
     }
 
-    // Write tag_name_to_id_ entries
-    tag_name_to_id_.for_each([&](const std::string &name, const TagId &id) {
-      uint8_t entry_type = 0;  // tag_name_to_id entry
-      uint32_t key_len = static_cast<uint32_t>(name.size());
-      ofs.write(reinterpret_cast<const char*>(&entry_type), sizeof(entry_type));
-      ofs.write(reinterpret_cast<const char*>(&key_len), sizeof(key_len));
-      ofs.write(name.data(), key_len);
-      ofs.write(reinterpret_cast<const char*>(&id), sizeof(id));
+    // Write TagInfo entries (entry_type 0)
+    tag_id_to_info_.for_each([&](const TagId &id, const TagInfo &info) {
+      uint8_t entry_type = 0;
+      uint32_t name_len = static_cast<uint32_t>(info.tag_name_.size());
+      chi::u64 total_size = info.total_size_.load();
+      ofs.write(reinterpret_cast<const char *>(&entry_type),
+                sizeof(entry_type));
+      ofs.write(reinterpret_cast<const char *>(&name_len), sizeof(name_len));
+      ofs.write(info.tag_name_.data(), name_len);
+      ofs.write(reinterpret_cast<const char *>(&id), sizeof(id));
+      ofs.write(reinterpret_cast<const char *>(&total_size),
+                sizeof(total_size));
+      task->entries_flushed_++;
+    });
+
+    // Write BlobInfo entries (entry_type 1)
+    tag_blob_name_to_info_.for_each([&](const std::string &key,
+                                        const BlobInfo &blob_info) {
+      uint8_t entry_type = 1;
+      uint32_t key_len = static_cast<uint32_t>(key.size());
+      uint32_t blob_name_len =
+          static_cast<uint32_t>(blob_info.blob_name_.size());
+      float score = blob_info.score_;
+      int32_t compress_lib = blob_info.compress_lib_;
+      int32_t compress_preset = blob_info.compress_preset_;
+      chi::u64 trace_key = blob_info.trace_key_;
+      uint32_t num_blocks = static_cast<uint32_t>(blob_info.blocks_.size());
+
+      ofs.write(reinterpret_cast<const char *>(&entry_type),
+                sizeof(entry_type));
+      ofs.write(reinterpret_cast<const char *>(&key_len), sizeof(key_len));
+      ofs.write(key.data(), key_len);
+      ofs.write(reinterpret_cast<const char *>(&blob_name_len),
+                sizeof(blob_name_len));
+      ofs.write(blob_info.blob_name_.data(), blob_name_len);
+      ofs.write(reinterpret_cast<const char *>(&score), sizeof(score));
+      ofs.write(reinterpret_cast<const char *>(&compress_lib),
+                sizeof(compress_lib));
+      ofs.write(reinterpret_cast<const char *>(&compress_preset),
+                sizeof(compress_preset));
+      ofs.write(reinterpret_cast<const char *>(&trace_key), sizeof(trace_key));
+      ofs.write(reinterpret_cast<const char *>(&num_blocks),
+                sizeof(num_blocks));
+
+      // Write per-block data
+      for (const auto &block : blob_info.blocks_) {
+        chi::u32 bdev_major = block.bdev_client_.pool_id_.major_;
+        chi::u32 bdev_minor = block.bdev_client_.pool_id_.minor_;
+        ofs.write(reinterpret_cast<const char *>(&bdev_major),
+                  sizeof(bdev_major));
+        ofs.write(reinterpret_cast<const char *>(&bdev_minor),
+                  sizeof(bdev_minor));
+
+        // Write target_query as raw bytes (POD-like struct)
+        ofs.write(reinterpret_cast<const char *>(&block.target_query_),
+                  sizeof(chi::PoolQuery));
+
+        chi::u64 offset = block.target_offset_;
+        chi::u64 size = block.size_;
+        ofs.write(reinterpret_cast<const char *>(&offset), sizeof(offset));
+        ofs.write(reinterpret_cast<const char *>(&size), sizeof(size));
+      }
       task->entries_flushed_++;
     });
 
     ofs.close();
     task->return_code_ = 0;
-    HLOG(kDebug, "FlushMetadata: Flushed {} entries to {}", task->entries_flushed_, log_path);
+    HLOG(kDebug, "FlushMetadata: Flushed {} entries to {}",
+         task->entries_flushed_, log_path);
   } catch (const std::exception &e) {
     HLOG(kError, "FlushMetadata: Exception: {}", e.what());
     task->return_code_ = 99;
@@ -1517,49 +1465,315 @@ chi::TaskResume Runtime::FlushData(hipc::FullPtr<FlushDataTask> task,
 
   // Find non-volatile targets that meet the persistence level requirement
   std::vector<chi::PoolId> nonvolatile_targets;
-  registered_targets_.for_each([&](const chi::PoolId &id, const TargetInfo &info) {
-    if (static_cast<int>(info.persistence_level_) >= target_level) {
-      nonvolatile_targets.push_back(id);
-    }
-  });
+  registered_targets_.for_each(
+      [&](const chi::PoolId &id, const TargetInfo &info) {
+        if (static_cast<int>(info.persistence_level_) >= target_level) {
+          nonvolatile_targets.push_back(id);
+        }
+      });
 
   if (nonvolatile_targets.empty()) {
-    HLOG(kDebug, "FlushData: No non-volatile targets available at level >= {}", target_level);
+    HLOG(kDebug, "FlushData: No non-volatile targets available at level >= {}",
+         target_level);
     task->return_code_ = 0;
     (void)ctx;
     co_return;
   }
 
-  // Iterate all blobs and check if they have blocks on volatile targets
-  chi::u64 blobs_checked = 0;
-  tag_blob_name_to_info_.for_each([&](const std::string &key, const BlobInfo &blob_info) {
-    blobs_checked++;
+  // Collect blobs that have volatile blocks
+  struct FlushEntry {
+    std::string composite_key;
+    std::string blob_name;
+    TagId tag_id;
+    chi::u64 total_size;
+    float score;
+  };
+  std::vector<FlushEntry> blobs_to_flush;
+
+  tag_blob_name_to_info_.for_each([&](const std::string &key,
+                                      const BlobInfo &blob_info) {
+    if (blob_info.blocks_.empty()) return;
+
     bool has_volatile_blocks = false;
     for (const auto &block : blob_info.blocks_) {
-      // Check if this block's target is below the required persistence level
-      // by examining the target_query_ pool_id against registered targets
-      (void)block;
-      // Blocks don't carry a target_id directly; we identify volatile blocks
-      // by comparing against known non-volatile target set.
-      // For now, conservatively count all blobs as needing evaluation.
-      has_volatile_blocks = true;
-      break;
-    }
-    if (has_volatile_blocks && !blob_info.blocks_.empty()) {
-      // TODO: Read data from volatile target and write to non-volatile target
-      // For now, just count the blobs that would need flushing
-      task->blobs_flushed_++;
-      for (const auto &block : blob_info.blocks_) {
-        task->bytes_flushed_ += block.size_;
+      chi::PoolId pool_id = block.bdev_client_.pool_id_;
+      TargetInfo *tinfo = registered_targets_.find(pool_id);
+      if (tinfo && static_cast<int>(tinfo->persistence_level_) < target_level) {
+        has_volatile_blocks = true;
+        break;
       }
+    }
+
+    if (has_volatile_blocks) {
+      FlushEntry entry;
+      entry.composite_key = key;
+      entry.blob_name = blob_info.blob_name_;
+      entry.total_size = blob_info.GetTotalSize();
+      entry.score = blob_info.score_;
+
+      // Parse tag_id from composite key: "major.minor.blob_name"
+      size_t first_dot = key.find('.');
+      size_t second_dot = key.find('.', first_dot + 1);
+      if (first_dot != std::string::npos && second_dot != std::string::npos) {
+        entry.tag_id.major_ =
+            static_cast<chi::u32>(std::stoul(key.substr(0, first_dot)));
+        entry.tag_id.minor_ = static_cast<chi::u32>(
+            std::stoul(key.substr(first_dot + 1, second_dot - first_dot - 1)));
+      }
+
+      blobs_to_flush.push_back(std::move(entry));
     }
   });
 
+  HLOG(kDebug, "FlushData: Found {} blobs with volatile blocks to flush",
+       blobs_to_flush.size());
+
+  // Flush each blob: read data, free volatile blocks, re-put with persistence
+  for (const auto &entry : blobs_to_flush) {
+    BlobInfo *blob_info_ptr = tag_blob_name_to_info_.find(entry.composite_key);
+    if (!blob_info_ptr || blob_info_ptr->blocks_.empty()) continue;
+
+    chi::u64 total_size = entry.total_size;
+    if (total_size == 0) continue;
+
+    // Step 1: Allocate buffer and read data from current blocks
+    auto *ipc_manager = CHI_IPC;
+    hipc::FullPtr<char> buffer = ipc_manager->AllocateBuffer(total_size);
+    if (buffer.IsNull()) {
+      HLOG(kError,
+           "FlushData: Failed to allocate buffer of size {} for blob {}",
+           total_size, entry.blob_name);
+      continue;
+    }
+
+    hipc::ShmPtr<> shm_ptr(buffer.shm_);
+    chi::u32 read_error = 0;
+    co_await ReadData(blob_info_ptr->blocks_, shm_ptr, total_size, 0,
+                      read_error);
+    if (read_error != 0) {
+      HLOG(kError, "FlushData: Failed to read blob data for {}",
+           entry.blob_name);
+      ipc_manager->FreeBuffer(buffer);
+      continue;
+    }
+
+    // Step 2: Free only volatile blocks
+    std::vector<BlobBlock> nonvolatile_blocks;
+    std::unordered_map<
+        chi::PoolId,
+        std::pair<chi::PoolQuery, std::vector<chimaera::bdev::Block>>>
+        volatile_blocks_by_pool;
+
+    for (const auto &block : blob_info_ptr->blocks_) {
+      chi::PoolId pool_id = block.bdev_client_.pool_id_;
+      TargetInfo *tinfo = registered_targets_.find(pool_id);
+      if (tinfo && static_cast<int>(tinfo->persistence_level_) < target_level) {
+        // Volatile block - collect for freeing
+        chimaera::bdev::Block bdev_block;
+        bdev_block.offset_ = block.target_offset_;
+        bdev_block.size_ = block.size_;
+        bdev_block.block_type_ = 0;
+        if (volatile_blocks_by_pool.find(pool_id) ==
+            volatile_blocks_by_pool.end()) {
+          volatile_blocks_by_pool[pool_id] = std::make_pair(
+              block.target_query_, std::vector<chimaera::bdev::Block>());
+        }
+        volatile_blocks_by_pool[pool_id].second.push_back(bdev_block);
+      } else {
+        // Nonvolatile block - keep
+        nonvolatile_blocks.push_back(block);
+      }
+    }
+
+    // Free volatile blocks from bdevs
+    for (const auto &pool_entry : volatile_blocks_by_pool) {
+      const chi::PoolId &pool_id = pool_entry.first;
+      const chi::PoolQuery &target_query = pool_entry.second.first;
+      const std::vector<chimaera::bdev::Block> &blocks =
+          pool_entry.second.second;
+
+      chi::u64 bytes_freed = 0;
+      for (const auto &block : blocks) {
+        bytes_freed += block.size_;
+      }
+
+      chimaera::bdev::Client bdev_client(pool_id);
+      auto free_task = bdev_client.AsyncFreeBlocks(target_query, blocks);
+      co_await free_task;
+      if (free_task->GetReturnCode() == 0) {
+        TargetInfo *target_info = registered_targets_.find(pool_id);
+        if (target_info) {
+          target_info->remaining_space_ += bytes_freed;
+        }
+      }
+    }
+
+    // Update blob blocks to only keep nonvolatile blocks
+    blob_info_ptr->blocks_ = nonvolatile_blocks;
+
+    // Step 3: Re-put data using AsyncPutBlob with persistence context
+    Context flush_ctx;
+    flush_ctx.min_persistence_level_ = target_level;
+    auto put_task =
+        client_.AsyncPutBlob(entry.tag_id, entry.blob_name, 0, total_size,
+                             shm_ptr, entry.score, flush_ctx);
+    co_await put_task;
+
+    if (put_task->GetReturnCode() != 0) {
+      HLOG(kError, "FlushData: PutBlob failed for blob {} (error {})",
+           entry.blob_name, put_task->GetReturnCode());
+    } else {
+      task->blobs_flushed_++;
+      task->bytes_flushed_ += total_size;
+    }
+
+    ipc_manager->FreeBuffer(buffer);
+  }
+
   task->return_code_ = 0;
-  HLOG(kDebug, "FlushData: Checked {} blobs, {} need flushing ({} bytes)",
-       blobs_checked, task->blobs_flushed_, task->bytes_flushed_);
+  HLOG(kDebug, "FlushData: Flushed {} blobs ({} bytes)", task->blobs_flushed_,
+       task->bytes_flushed_);
   (void)ctx;
   co_return;
+}
+
+void Runtime::RestoreMetadataFromLog() {
+  const std::string &log_path = config_.performance_.metadata_log_path_;
+  if (log_path.empty()) {
+    HLOG(kInfo, "RestoreMetadataFromLog: No metadata log path configured");
+    return;
+  }
+
+  namespace fs = std::filesystem;
+  if (!fs::exists(log_path)) {
+    HLOG(kInfo, "RestoreMetadataFromLog: No log file found at {}", log_path);
+    return;
+  }
+
+  std::ifstream ifs(log_path, std::ios::binary);
+  if (!ifs.is_open()) {
+    HLOG(kError, "RestoreMetadataFromLog: Failed to open log file: {}",
+         log_path);
+    return;
+  }
+
+  chi::u32 max_minor = 0;
+  chi::u32 tags_restored = 0;
+  chi::u32 blobs_restored = 0;
+
+  while (ifs.peek() != EOF) {
+    uint8_t entry_type;
+    ifs.read(reinterpret_cast<char *>(&entry_type), sizeof(entry_type));
+    if (!ifs.good()) break;
+
+    if (entry_type == 0) {
+      // TagInfo entry
+      uint32_t name_len;
+      ifs.read(reinterpret_cast<char *>(&name_len), sizeof(name_len));
+      std::string tag_name(name_len, '\0');
+      ifs.read(tag_name.data(), name_len);
+      TagId tag_id;
+      ifs.read(reinterpret_cast<char *>(&tag_id), sizeof(tag_id));
+      chi::u64 total_size;
+      ifs.read(reinterpret_cast<char *>(&total_size), sizeof(total_size));
+
+      if (!ifs.good()) break;
+
+      // Populate maps
+      tag_name_to_id_.insert_or_assign(tag_name, tag_id);
+      TagInfo tag_info(tag_name, tag_id);
+      tag_info.total_size_.store(total_size);
+      tag_id_to_info_.insert_or_assign(tag_id, tag_info);
+
+      if (tag_id.minor_ >= max_minor) {
+        max_minor = tag_id.minor_ + 1;
+      }
+      tags_restored++;
+
+    } else if (entry_type == 1) {
+      // BlobInfo entry
+      uint32_t key_len;
+      ifs.read(reinterpret_cast<char *>(&key_len), sizeof(key_len));
+      std::string composite_key(key_len, '\0');
+      ifs.read(composite_key.data(), key_len);
+
+      uint32_t blob_name_len;
+      ifs.read(reinterpret_cast<char *>(&blob_name_len), sizeof(blob_name_len));
+      std::string blob_name(blob_name_len, '\0');
+      ifs.read(blob_name.data(), blob_name_len);
+
+      float score;
+      ifs.read(reinterpret_cast<char *>(&score), sizeof(score));
+      int32_t compress_lib;
+      ifs.read(reinterpret_cast<char *>(&compress_lib), sizeof(compress_lib));
+      int32_t compress_preset;
+      ifs.read(reinterpret_cast<char *>(&compress_preset),
+               sizeof(compress_preset));
+      chi::u64 trace_key;
+      ifs.read(reinterpret_cast<char *>(&trace_key), sizeof(trace_key));
+      uint32_t num_blocks;
+      ifs.read(reinterpret_cast<char *>(&num_blocks), sizeof(num_blocks));
+
+      if (!ifs.good()) break;
+
+      BlobInfo blob_info;
+      blob_info.blob_name_ = blob_name;
+      blob_info.score_ = score;
+      blob_info.compress_lib_ = compress_lib;
+      blob_info.compress_preset_ = compress_preset;
+      blob_info.trace_key_ = trace_key;
+
+      // Read per-block data
+      for (uint32_t i = 0; i < num_blocks; i++) {
+        chi::u32 bdev_major, bdev_minor;
+        ifs.read(reinterpret_cast<char *>(&bdev_major), sizeof(bdev_major));
+        ifs.read(reinterpret_cast<char *>(&bdev_minor), sizeof(bdev_minor));
+
+        // Read target_query as raw bytes (POD-like struct)
+        chi::PoolQuery target_query;
+        ifs.read(reinterpret_cast<char *>(&target_query),
+                 sizeof(chi::PoolQuery));
+
+        chi::u64 offset, size;
+        ifs.read(reinterpret_cast<char *>(&offset), sizeof(offset));
+        ifs.read(reinterpret_cast<char *>(&size), sizeof(size));
+
+        if (!ifs.good()) break;
+
+        // Filter by persistence level: skip volatile blocks
+        chi::PoolId bdev_pool_id(bdev_major, bdev_minor);
+        TargetInfo *tinfo = registered_targets_.find(bdev_pool_id);
+        if (tinfo && tinfo->persistence_level_ ==
+                         chimaera::bdev::PersistenceLevel::kVolatile) {
+          continue;  // Volatile data is lost on restart
+        }
+
+        // Reconstruct block
+        chimaera::bdev::Client bdev_client(bdev_pool_id);
+        BlobBlock block(bdev_client, target_query, offset, size);
+        blob_info.blocks_.push_back(block);
+      }
+
+      tag_blob_name_to_info_.insert_or_assign(composite_key, blob_info);
+      blobs_restored++;
+
+    } else {
+      HLOG(kWarning, "RestoreMetadataFromLog: Unknown entry type {}",
+           entry_type);
+      break;
+    }
+  }
+
+  ifs.close();
+
+  // Update next_tag_id_minor_ to be past any restored tag IDs
+  chi::u32 current_minor = next_tag_id_minor_.load();
+  if (max_minor > current_minor) {
+    next_tag_id_minor_.store(max_minor);
+  }
+
+  HLOG(kInfo, "RestoreMetadataFromLog: Restored {} tags and {} blobs from {}",
+       tags_restored, blobs_restored, log_path);
 }
 
 // GetWorkRemaining implementation (required pure virtual method)
@@ -1660,11 +1874,10 @@ BlobInfo *Runtime::CreateNewBlob(const std::string &blob_name,
   return blob_info_ptr;
 }
 
-chi::TaskResume Runtime::AllocateNewData(BlobInfo &blob_info, chi::u64 offset,
-                                         chi::u64 size, float blob_score,
-                                         chi::u32 &error_code,
-                                         int min_persistence_level) {
-  HLOG(kDebug, "AllocateNewData");
+chi::TaskResume Runtime::ExtendBlob(BlobInfo &blob_info, chi::u64 offset,
+                                    chi::u64 size, float blob_score,
+                                    chi::u32 &error_code,
+                                    int min_persistence_level) {
   // Calculate required additional space
   chi::u64 current_blob_size = blob_info.GetTotalSize();
   chi::u64 required_size = offset + size;
@@ -1677,27 +1890,15 @@ chi::TaskResume Runtime::AllocateNewData(BlobInfo &blob_info, chi::u64 offset,
 
   chi::u64 additional_size = required_size - current_blob_size;
 
-  // Get all available targets for data placement (filtered by persistence level)
+  // Get ALL available targets for data placement (no pre-filtering)
   std::vector<TargetInfo> available_targets;
   available_targets.reserve(registered_targets_.size());
   registered_targets_.for_each(
-      [&available_targets, min_persistence_level](const chi::PoolId &target_id,
+      [&available_targets](const chi::PoolId &target_id,
                            const TargetInfo &target_info) {
-        // Filter by minimum persistence level
-        if (static_cast<int>(target_info.persistence_level_) < min_persistence_level) {
-          return;
-        }
-        HLOG(kDebug,
-             "AllocateNewData: for_each - key=({},{}), "
-             "value.bdev_client_.pool_id_=({},{}), remaining_space={}",
-             target_id.major_, target_id.minor_,
-             target_info.bdev_client_.pool_id_.major_,
-             target_info.bdev_client_.pool_id_.minor_,
-             target_info.remaining_space_);
+        (void)target_id;
         available_targets.push_back(target_info);
       });
-  HLOG(kDebug, "AllocateNewData: Ordered targets: {}",
-       available_targets.size());
   if (available_targets.empty()) {
     error_code = 1;
     co_return;
@@ -1708,65 +1909,46 @@ chi::TaskResume Runtime::AllocateNewData(BlobInfo &blob_info, chi::u64 offset,
   std::unique_ptr<DataPlacementEngine> dpe =
       DpeFactory::CreateDpe(config.dpe_.dpe_type_);
 
-  // Select targets using DPE algorithm before allocation loop
-  HLOG(kDebug,
-       "AllocateNewData: Before SelectTargets, "
-       "available_targets[0].bdev_client_.pool_id_=({},{})",
-       available_targets[0].bdev_client_.pool_id_.major_,
-       available_targets[0].bdev_client_.pool_id_.minor_);
+  // DPE selects targets from ALL available targets
   std::vector<TargetInfo> ordered_targets =
       dpe->SelectTargets(available_targets, blob_score, additional_size);
+
+  // Filter AFTER DPE by persistence level
+  if (min_persistence_level > 0) {
+    ordered_targets.erase(
+        std::remove_if(ordered_targets.begin(), ordered_targets.end(),
+                       [min_persistence_level](const TargetInfo &t) {
+                         return static_cast<int>(t.persistence_level_) <
+                                min_persistence_level;
+                       }),
+        ordered_targets.end());
+  }
 
   if (ordered_targets.empty()) {
     error_code = 2;
     co_return;
   }
 
-  HLOG(kDebug,
-       "AllocateNewData: After SelectTargets, "
-       "ordered_targets[0].bdev_client_.pool_id_=({},{})",
-       ordered_targets[0].bdev_client_.pool_id_.major_,
-       ordered_targets[0].bdev_client_.pool_id_.minor_);
-
-  // Use for loop to iterate over pre-selected targets in order
+  // Allocate from pre-selected targets in order
   chi::u64 remaining_to_allocate = additional_size;
   for (const auto &selected_target_info : ordered_targets) {
-    // Termination condition: exit when no more space to allocate
     if (remaining_to_allocate == 0) {
       break;
     }
 
-    HLOG(kDebug,
-         "AllocateNewData: In loop, "
-         "selected_target_info.bdev_client_.pool_id_=({},{}), name={}",
-         selected_target_info.bdev_client_.pool_id_.major_,
-         selected_target_info.bdev_client_.pool_id_.minor_,
-         selected_target_info.target_name_);
     chi::PoolId selected_target_id = selected_target_info.bdev_client_.pool_id_;
-    HLOG(kDebug,
-         "AllocateNewData: After copy, selected_target_id=({},{}) ToU64={}",
-         selected_target_id.major_, selected_target_id.minor_,
-         selected_target_id.ToU64());
 
     // Find the selected target info for allocation using TargetId
     TargetInfo *target_info = registered_targets_.find(selected_target_id);
     if (target_info == nullptr) {
-      continue;  // Try next target
+      continue;
     }
 
     // Calculate how much we can allocate from this target
     chi::u64 allocate_size =
         std::min(remaining_to_allocate, target_info->remaining_space_);
 
-    HLOG(kDebug,
-         "Target [{}]: remaining_space={} bytes, allocate_size={} bytes, "
-         "remaining_to_allocate={} bytes",
-         selected_target_id.ToU64(), target_info->remaining_space_,
-         allocate_size, remaining_to_allocate);
-
     if (allocate_size == 0) {
-      // No space available, try next target
-      HLOG(kDebug, "No space available, trying next target?");
       continue;
     }
 
@@ -2098,6 +2280,28 @@ chi::TaskResume Runtime::AllocateFromTarget(TargetInfo &target_info,
     success = false;
     co_return;
   }
+}
+
+chi::TaskResume Runtime::ClearBlob(BlobInfo &blob_info, float blob_score,
+                                   chi::u64 offset, chi::u64 size,
+                                   bool &cleared) {
+  cleared = false;
+  // Score must be in [0, 1]
+  if (blob_score < 0.0f || blob_score > 1.0f) {
+    co_return;
+  }
+  // Must be full-blob replacement
+  chi::u64 current_size = blob_info.GetTotalSize();
+  if (offset != 0 || size < current_size || current_size == 0) {
+    co_return;
+  }
+  // Free all existing blocks
+  chi::u32 free_result = 0;
+  co_await FreeAllBlobBlocks(blob_info, free_result);
+  if (free_result == 0) {
+    cleared = true;
+  }
+  co_return;
 }
 
 chi::TaskResume Runtime::FreeAllBlobBlocks(BlobInfo &blob_info,

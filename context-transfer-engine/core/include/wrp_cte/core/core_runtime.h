@@ -151,6 +151,8 @@ public:
   // Pure virtual methods - implementations are in autogen/core_lib_exec.cc
   void Init(const chi::PoolId &pool_id, const std::string &pool_name,
             chi::u32 container_id = 0) override;
+  void Restart(const chi::PoolId &pool_id, const std::string &pool_name,
+               chi::u32 container_id = 0) override;
   chi::TaskResume Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
                       chi::RunContext &rctx) override;
   chi::u64 GetWorkRemaining() const override;
@@ -216,6 +218,9 @@ private:
 
   // CTE configuration (replaces ConfigManager singleton)
   Config config_;
+
+  // Restart flag: set by Restart() before calling Init()/Create()
+  bool is_restart_ = false;
 
   // Telemetry ring buffer for performance monitoring
   static inline constexpr size_t kTelemetryRingSize = 1024; // Ring buffer size
@@ -313,17 +318,31 @@ private:
                           float blob_score);
 
   /**
-   * Allocate new data blocks for blob expansion
-   * @param blob_info Blob to extend with new data blocks
-   * @param offset Offset where data starts (for determining required size)
-   * @param size Size of data to accommodate
-   * @param blob_score Score for target selection
-   * @param error_code Output: 0 for success, 1 for failure
-   * Returns TaskResume for coroutine-based async operations
+   * Clear all blocks from a blob if this is a full replacement.
+   * Conditions: score in [0,1], offset == 0, size >= current blob size.
+   * @param blob_info Blob to potentially clear
+   * @param blob_score Score of the incoming put
+   * @param offset Write offset
+   * @param size Write size
+   * @param cleared Output: true if blocks were cleared
    */
-  chi::TaskResume AllocateNewData(BlobInfo &blob_info, chi::u64 offset, chi::u64 size,
-                                  float blob_score, chi::u32 &error_code,
-                                  int min_persistence_level = 0);
+  chi::TaskResume ClearBlob(BlobInfo &blob_info, float blob_score,
+                            chi::u64 offset, chi::u64 size, bool &cleared);
+
+  /**
+   * Extend blob by allocating new data blocks if offset + size > current size.
+   * If offset + size <= current size, returns immediately (no-op).
+   * Runs DPE to select targets, then allocates from bdev.
+   * @param blob_info Blob to extend
+   * @param offset Offset where data starts
+   * @param size Size of data to write
+   * @param blob_score Score for target selection
+   * @param error_code Output: 0 for success, non-zero for failure
+   * @param min_persistence_level Minimum persistence level for target filtering
+   */
+  chi::TaskResume ExtendBlob(BlobInfo &blob_info, chi::u64 offset, chi::u64 size,
+                             float blob_score, chi::u32 &error_code,
+                             int min_persistence_level = 0);
 
   /**
    * Write data to existing blob blocks
@@ -374,6 +393,11 @@ private:
    * @return Capacity in bytes
    */
   chi::u64 ParseCapacityToBytes(const std::string &capacity_str);
+
+  /**
+   * Restore metadata from persistent log during restart
+   */
+  void RestoreMetadataFromLog();
 
   /**
    * Retrieve telemetry entries for analysis (non-destructive peek)

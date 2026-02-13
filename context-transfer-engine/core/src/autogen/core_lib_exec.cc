@@ -27,6 +27,12 @@ void Runtime::Init(const chi::PoolId &pool_id, const std::string &pool_name,
   client_ = Client(pool_id);
 }
 
+void Runtime::Restart(const chi::PoolId &pool_id, const std::string &pool_name,
+                      chi::u32 container_id) {
+  is_restart_ = true;
+  Init(pool_id, pool_name, container_id);
+}
+
 chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) {
   switch (method) {
     case Method::kCreate: {
