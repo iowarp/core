@@ -414,6 +414,175 @@ void TestFactory() {
   std::cout << "[SHM Factory] Test passed!\n";
 }
 
+void TestShmGetAddress() {
+  std::cout << "\n==== Testing SHM GetAddress ====\n";
+
+  ShmTransport server(TransportMode::kServer);
+  assert(server.GetAddress() == "shm");
+
+  ShmTransport client(TransportMode::kClient);
+  assert(client.GetAddress() == "shm");
+
+  std::cout << "[SHM GetAddress] Test passed!\n";
+}
+
+void TestShmGetFd() {
+  std::cout << "\n==== Testing SHM GetFd ====\n";
+
+  ShmTransport server(TransportMode::kServer);
+  ShmTransport client(TransportMode::kClient);
+
+  // SHM transport has no file descriptor
+  assert(server.GetFd() == -1);
+  assert(client.GetFd() == -1);
+
+  std::cout << "[SHM GetFd] Test passed!\n";
+}
+
+void TestShmClearRecvHandles() {
+  std::cout << "\n==== Testing SHM ClearRecvHandles ====\n";
+
+  ShmTestContext shared;
+  ShmTransport client(TransportMode::kClient);
+  ShmTransport server(TransportMode::kServer);
+  LbmContext ctx = MakeCtx(shared);
+
+  // Create data larger than copy_space to force malloc on recv
+  std::string data(kCopySpaceSize * 2 + 10, 'Z');
+
+  LbmMeta send_meta;
+  Bulk bulk = client.Expose(
+      hipc::FullPtr<char>(const_cast<char*>(data.data())),
+      data.size(), BULK_XFER);
+  send_meta.send.push_back(bulk);
+  send_meta.send_bulks = 1;
+
+  int send_rc = -1;
+  std::thread sender([&]() {
+    send_rc = client.Send(send_meta, ctx);
+  });
+
+  LbmMeta recv_meta;
+  auto info = server.Recv(recv_meta, ctx);
+  assert(info.rc == 0);
+
+  sender.join();
+  assert(send_rc == 0);
+
+  // Verify data was received
+  assert(recv_meta.recv[0].data.ptr_ != nullptr);
+
+  // Clear should free the buffer
+  server.ClearRecvHandles(recv_meta);
+
+  std::cout << "[SHM ClearRecvHandles] Test passed!\n";
+}
+
+void TestShmBulkExposeFlag() {
+  std::cout << "\n==== Testing SHM BULK_EXPOSE Flag ====\n";
+
+  ShmTestContext shared;
+  ShmTransport client(TransportMode::kClient);
+  ShmTransport server(TransportMode::kServer);
+  LbmContext ctx = MakeCtx(shared);
+
+  // Create a BULK_EXPOSE entry with a ShmPtr
+  hipc::FullPtr<char> shm_ptr;
+  shm_ptr.ptr_ = reinterpret_cast<char*>(0xBAADF00D);
+  shm_ptr.shm_.alloc_id_ = hipc::AllocatorId(5, 6);
+  shm_ptr.shm_.off_ = 0xABCD;
+
+  LbmMeta send_meta;
+  Bulk bulk;
+  bulk.data = shm_ptr;
+  bulk.size = 2048;
+  bulk.flags = hshm::bitfield32_t(BULK_EXPOSE);
+  send_meta.send.push_back(bulk);
+  send_meta.send_bulks = 0;  // No BULK_XFER entries
+
+  int send_rc = -1;
+  std::thread sender([&]() {
+    send_rc = client.Send(send_meta, ctx);
+  });
+
+  LbmMeta recv_meta;
+  auto info = server.Recv(recv_meta, ctx);
+  assert(info.rc == 0);
+
+  sender.join();
+  assert(send_rc == 0);
+
+  // BULK_EXPOSE: only ShmPtr is sent, no data
+  assert(recv_meta.recv.size() == 1);
+  assert(recv_meta.recv[0].data.ptr_ == nullptr);
+  assert(recv_meta.recv[0].data.shm_.alloc_id_ == hipc::AllocatorId(5, 6));
+  assert(recv_meta.recv[0].data.shm_.off_.load() == 0xABCD);
+  assert(recv_meta.recv[0].size == 2048);
+
+  std::cout << "[SHM BULK_EXPOSE Flag] Test passed!\n";
+}
+
+void TestShmIsServerIsClient() {
+  std::cout << "\n==== Testing SHM IsServer/IsClient ====\n";
+
+  ShmTransport server(TransportMode::kServer);
+  ShmTransport client(TransportMode::kClient);
+
+  assert(server.IsServer());
+  assert(!server.IsClient());
+  assert(client.IsClient());
+  assert(!client.IsServer());
+
+  std::cout << "[SHM IsServer/IsClient] Test passed!\n";
+}
+
+void TestShmFactoryWithDomain() {
+  std::cout << "\n==== Testing SHM Factory With Domain ====\n";
+
+  auto server = TransportFactory::Get(
+      "", TransportType::kShm, TransportMode::kServer,
+      "", 0, "test_domain");
+  auto client = TransportFactory::Get(
+      "", TransportType::kShm, TransportMode::kClient,
+      "", 0, "test_domain");
+
+  assert(server != nullptr);
+  assert(client != nullptr);
+  assert(server->GetAddress() == "shm");
+  assert(server->IsServer());
+  assert(client->IsClient());
+
+  std::cout << "[SHM Factory With Domain] Test passed!\n";
+}
+
+void TestLbmContextFlags() {
+  std::cout << "\n==== Testing LbmContext Flags ====\n";
+
+  // Default context
+  LbmContext ctx_default;
+  assert(!ctx_default.IsSync());
+  assert(!ctx_default.HasTimeout());
+
+  // Sync context
+  LbmContext ctx_sync(LBM_SYNC);
+  assert(ctx_sync.IsSync());
+  assert(!ctx_sync.HasTimeout());
+
+  // Sync with timeout
+  LbmContext ctx_both(LBM_SYNC, 5000);
+  assert(ctx_both.IsSync());
+  assert(ctx_both.HasTimeout());
+  assert(ctx_both.timeout_ms == 5000);
+
+  // Timeout only (no sync)
+  LbmContext ctx_timeout(0, 1000);
+  assert(!ctx_timeout.IsSync());
+  assert(ctx_timeout.HasTimeout());
+  assert(ctx_timeout.timeout_ms == 1000);
+
+  std::cout << "[LbmContext Flags] Test passed!\n";
+}
+
 int main() {
   TestBasicShmTransfer();
   TestMultipleBulks();
@@ -422,6 +591,13 @@ int main() {
   TestShmPtrPassthrough();
   TestMixedBulks();
   TestFactory();
+  TestShmGetAddress();
+  TestShmGetFd();
+  TestShmClearRecvHandles();
+  TestShmBulkExposeFlag();
+  TestShmIsServerIsClient();
+  TestShmFactoryWithDomain();
+  TestLbmContextFlags();
   std::cout << "\nAll SHM transport tests passed!" << std::endl;
   return 0;
 }

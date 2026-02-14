@@ -34,6 +34,39 @@ install(TARGETS shm_transport_test
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
+# EventManager test (always enabled - uses pipe/epoll + socket transport)
+add_executable(event_manager_test event_manager_test.cc)
+target_link_libraries(event_manager_test hermes_shm_host hshm::lightbeam hshm::serialize)
+if(WRP_CORE_ENABLE_ZMQ)
+    target_compile_definitions(event_manager_test PRIVATE HSHM_ENABLE_ZMQ)
+endif()
+add_test(NAME ctp_event_manager COMMAND event_manager_test)
+install(TARGETS event_manager_test
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
+# ZMQ transport full test (conditional on ZMQ)
+if(WRP_CORE_ENABLE_ZMQ)
+    add_executable(zmq_transport_full_test zmq_transport_full_test.cc)
+    target_link_libraries(zmq_transport_full_test hermes_shm_host hshm::lightbeam hshm::serialize)
+    target_compile_definitions(zmq_transport_full_test PRIVATE HSHM_ENABLE_ZMQ)
+    add_test(NAME ctp_zmq_transport_full COMMAND zmq_transport_full_test)
+    install(TARGETS zmq_transport_full_test
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
+
+# Socket transport full test (always enabled)
+add_executable(socket_transport_full_test socket_transport_full_test.cc)
+target_link_libraries(socket_transport_full_test hermes_shm_host hshm::lightbeam hshm::serialize)
+add_test(NAME ctp_socket_transport_full COMMAND socket_transport_full_test)
+install(TARGETS socket_transport_full_test
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
 # distributed_lightbeam_test requires MPI
 if(WRP_CORE_ENABLE_MPI AND WRP_CORE_ENABLE_ZMQ)
     add_executable(distributed_lightbeam_test distributed_lightbeam_test.cc)

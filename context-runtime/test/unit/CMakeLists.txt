@@ -1029,6 +1029,62 @@ install(TARGETS
 # Note: Distributed tests are run via Docker using the chimaera_bdev_chimod_tests binary
 # See test/unit/distributed/docker-compose.yml and run_tests.sh for distributed test execution
 
+# MPI BDev Transport Integration Test
+if(WRP_CORE_ENABLE_MPI)
+  set(MPI_BDEV_TRANSPORT_TEST_TARGET chimaera_mpi_bdev_transport_tests)
+  add_executable(${MPI_BDEV_TRANSPORT_TEST_TARGET} test_mpi_bdev_transport.cc)
+
+  target_include_directories(${MPI_BDEV_TRANSPORT_TEST_TARGET} PRIVATE
+    ${CHIMAERA_ROOT}/include
+    ${CHIMAERA_ROOT}/test
+    ${CHIMAERA_ROOT}/modules/bdev/include
+    ${CHIMAERA_ROOT}/modules/admin/include
+  )
+
+  target_link_libraries(${MPI_BDEV_TRANSPORT_TEST_TARGET}
+    chimaera_cxx
+    chimaera_bdev_client
+    chimaera_admin_client
+    hshm::cxx
+    hshm::mpi
+    ${CMAKE_THREAD_LIBS_INIT}
+  )
+
+  set_target_properties(${MPI_BDEV_TRANSPORT_TEST_TARGET} PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+
+  install(TARGETS ${MPI_BDEV_TRANSPORT_TEST_TARGET}
+    RUNTIME DESTINATION bin
+  )
+
+  if(WRP_CORE_ENABLE_TESTS)
+    # 4-rank test: server + SHM + TCP + IPC clients
+    add_test(
+      NAME cr_mpi_bdev_transport_all_modes
+      COMMAND mpirun -n 4 ${CMAKE_BINARY_DIR}/bin/${MPI_BDEV_TRANSPORT_TEST_TARGET}
+      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    )
+    set_tests_properties(cr_mpi_bdev_transport_all_modes PROPERTIES
+      ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+      TIMEOUT 300
+    )
+
+    # 2-rank test: server + TCP client (minimal)
+    add_test(
+      NAME cr_mpi_bdev_transport_minimal
+      COMMAND mpirun -n 2 ${CMAKE_BINARY_DIR}/bin/${MPI_BDEV_TRANSPORT_TEST_TARGET}
+      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    )
+    set_tests_properties(cr_mpi_bdev_transport_minimal PROPERTIES
+      ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+      TIMEOUT 180
+    )
+  endif()
+endif()
+
 # Print configuration summary
 message(STATUS "Chimaera core unit tests configured:")
 message(STATUS "  Test target: ${TEST_TARGET}")
