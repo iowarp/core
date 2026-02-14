@@ -1616,8 +1616,9 @@ void IpcManager::RecvZmqClientThread() {
       int rc = info.rc;
       if (rc == EAGAIN) break;
       if (rc != 0) {
-        HLOG(kError, "RecvZmqClientThread: Recv failed: {}", rc);
         zmq_transport_->ClearRecvHandles(*archive);
+        if (!zmq_recv_running_.load()) break;
+        HLOG(kDebug, "RecvZmqClientThread: Recv returned: {}", rc);
         continue;
       }
       got_message = true;
