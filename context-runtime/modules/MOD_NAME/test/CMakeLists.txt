@@ -638,8 +638,38 @@ set_target_properties(${MIGRATE_TEST_TARGET} PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
+# Recovery test executable (integration test binary for node failure recovery)
+set(RECOVERY_TEST_TARGET chimaera_recovery_tests)
+set(RECOVERY_TEST_SOURCES
+  ${CHIMAERA_ROOT}/test/integration/recovery/test_recovery.cc
+)
+
+add_executable(${RECOVERY_TEST_TARGET} ${RECOVERY_TEST_SOURCES})
+
+target_include_directories(${RECOVERY_TEST_TARGET} PRIVATE
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/admin/include
+  ${CHIMAERA_ROOT}/modules/MOD_NAME/include
+)
+
+target_link_libraries(${RECOVERY_TEST_TARGET}
+  chimaera_admin_runtime
+  chimaera_admin_client
+  chimaera_MOD_NAME_runtime
+  chimaera_MOD_NAME_client
+  hshm::cxx
+  ${CMAKE_THREAD_LIBS_INIT}
+)
+
+set_target_properties(${RECOVERY_TEST_TARGET} PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
 # Install test executables
-install(TARGETS ${FLUSH_TEST_TARGET} ${COMUTEX_TEST_TARGET} ${WAIT_FUNCTIONALITY_TEST_TARGET} ${STREAMING_TEST_TARGET} ${GPU_SUBMISSION_TEST_TARGET} ${MIGRATE_TEST_TARGET}
+install(TARGETS ${FLUSH_TEST_TARGET} ${COMUTEX_TEST_TARGET} ${WAIT_FUNCTIONALITY_TEST_TARGET} ${STREAMING_TEST_TARGET} ${GPU_SUBMISSION_TEST_TARGET} ${MIGRATE_TEST_TARGET} ${RECOVERY_TEST_TARGET}
   RUNTIME DESTINATION bin
 )
 
@@ -650,3 +680,4 @@ message(STATUS "  Wait Functionality test target: ${WAIT_FUNCTIONALITY_TEST_TARG
 message(STATUS "  Streaming test target: ${STREAMING_TEST_TARGET}")
 message(STATUS "  GPU Submission test target: ${GPU_SUBMISSION_TEST_TARGET}")
 message(STATUS "  Migrate test target: ${MIGRATE_TEST_TARGET}")
+message(STATUS "  Recovery test target: ${RECOVERY_TEST_TARGET}")
