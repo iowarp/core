@@ -42,6 +42,8 @@
 #include <chimaera/unordered_map_ll.h>
 
 #include <deque>
+#include <random>
+#include <unordered_set>
 
 namespace chimaera::admin {
 
@@ -277,6 +279,24 @@ public:
   chi::TaskResume Heartbeat(hipc::FullPtr<HeartbeatTask> task, chi::RunContext &rctx);
 
   /**
+   * Handle HeartbeatProbe - Periodic SWIM failure detector
+   * Sends direct probes, escalates to indirect probes, manages suspicion
+   */
+  chi::TaskResume HeartbeatProbe(hipc::FullPtr<HeartbeatProbeTask> task, chi::RunContext &rctx);
+
+  /**
+   * Handle ProbeRequest - Indirect probe on behalf of another node
+   * Probes target node and returns result to requester
+   */
+  chi::TaskResume ProbeRequest(hipc::FullPtr<ProbeRequestTask> task, chi::RunContext &rctx);
+
+  /**
+   * Handle RecoverContainers - Recreate containers from dead nodes
+   * All nodes update address_map_, only dest node creates the container
+   */
+  chi::TaskResume RecoverContainers(hipc::FullPtr<RecoverContainersTask> task, chi::RunContext &rctx);
+
+  /**
    * Helper: Receive task inputs from remote node
    */
   void RecvIn(hipc::FullPtr<RecvTask> task, chi::LoadTaskArchive& archive, hshm::lbm::Transport* lbm_transport);
@@ -349,7 +369,25 @@ public:
                  hipc::FullPtr<chi::Task> replica_task_ptr) override;
 
   /**
-   * Process retry queues: retry sends to revived nodes, timeout stale entries
+   * Attempt to send a retried task to the given node
+   * @param entry The retry entry containing the task
+   * @param node_id The node to send to
+   * @return true if send succeeded
+   */
+  bool RetrySendToNode(RetryEntry &entry, chi::u64 node_id);
+
+  /**
+   * Re-resolve target node for a retried task whose original target is dead.
+   * Uses the task's pool_query_ to look up the current container-to-node
+   * mapping from the address_map_, which may have been updated by recovery.
+   * @param entry The retry entry to re-resolve
+   * @return New node ID, or 0 if re-resolution failed
+   */
+  chi::u64 RerouteRetryEntry(RetryEntry &entry);
+
+  /**
+   * Process retry queues: retry sends to revived nodes, re-route via
+   * recovery address map updates, timeout stale entries
    */
   void ProcessRetryQueues();
 
@@ -367,6 +405,34 @@ private:
   // Retry queues for tasks that failed to send due to dead nodes
   std::deque<RetryEntry> send_in_retry_;
   std::deque<RetryEntry> send_out_retry_;
+
+  // SWIM failure detection state
+  struct PendingProbe {
+    chi::Future<HeartbeatTask> future;
+    chi::u64 target_node_id;
+    std::chrono::steady_clock::time_point sent_at;
+  };
+  struct PendingIndirectProbe {
+    chi::Future<ProbeRequestTask> future;
+    chi::u64 target_node_id;   // suspected node
+    chi::u64 helper_node_id;   // node doing the probe
+    std::chrono::steady_clock::time_point sent_at;
+  };
+
+  size_t probe_round_robin_idx_ = 0;
+  std::vector<PendingProbe> pending_direct_probes_;
+  std::vector<PendingIndirectProbe> pending_indirect_probes_;
+  std::mt19937 probe_rng_{std::random_device{}()};
+
+  static constexpr float kDirectProbeTimeoutSec = 5.0f;
+  static constexpr float kIndirectProbeTimeoutSec = 3.0f;
+  static constexpr size_t kIndirectProbeHelpers = 3;
+  static constexpr float kSuspicionTimeoutSec = 10.0f;
+
+  // Recovery state
+  std::vector<chi::RecoveryAssignment> ComputeRecoveryPlan(chi::u64 dead_node_id);
+  void TriggerRecovery(chi::u64 dead_node_id);
+  std::unordered_set<chi::u64> recovery_initiated_;
 };
 
 } // namespace chimaera::admin

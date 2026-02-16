@@ -45,8 +45,9 @@
  *
  * Phase 2 (post-failure):
  *   1. Connect to surviving 3-node cluster
- *   2. Submit CoMutexTest with DirectHash(3) — should route to recovered container
- *   3. Submit CoMutexTest with Broadcast() — should succeed across surviving nodes
+ *   2. Reuse pool from Phase 1 (container 3 should have been recovered)
+ *   3. Submit CoMutexTest with DirectHash(3) — should route to recovered container
+ *   4. Submit CoMutexTest with Broadcast() — should succeed across surviving nodes
  */
 
 #include "simple_test.h"
@@ -71,21 +72,17 @@ using namespace std::chrono_literals;
 namespace {
 bool g_initialized = false;
 
-chi::PoolId generateTestPoolId() {
-  auto now = std::chrono::high_resolution_clock::now();
-  auto duration = now.time_since_epoch();
-  auto microseconds =
-      std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
-  return chi::PoolId(static_cast<chi::u32>(microseconds & 0xFFFFFFFF) + 2000,
-                     0);
-}
+// Fixed pool ID shared between Phase 1 and Phase 2
+// Phase 2 reuses the pool created by Phase 1 (no new pool creation
+// since Dynamic() would try to reach the dead node)
+const chi::PoolId kRecoveryPoolId(50000, 0);
 
 constexpr chi::u32 kHoldMs = 100;
 }  // namespace
 
 class RecoveryTestFixture {
  public:
-  RecoveryTestFixture() : test_pool_id_(generateTestPoolId()) {
+  RecoveryTestFixture() {
     if (!g_initialized) {
       INFO("Initializing Chimaera for Recovery tests...");
       bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
@@ -103,29 +100,26 @@ class RecoveryTestFixture {
     }
   }
 
-  chi::PoolId getTestPoolId() const { return test_pool_id_; }
+  chi::PoolId getTestPoolId() const { return kRecoveryPoolId; }
 
   bool createModNamePool(const std::string &pool_name) {
     try {
       chi::PoolQuery pool_query = chi::PoolQuery::Dynamic();
-      chimaera::MOD_NAME::Client mod_name_client(test_pool_id_);
+      chimaera::MOD_NAME::Client mod_name_client(kRecoveryPoolId);
       auto create_task =
-          mod_name_client.AsyncCreate(pool_query, pool_name, test_pool_id_);
+          mod_name_client.AsyncCreate(pool_query, pool_name, kRecoveryPoolId);
       create_task.Wait();
       mod_name_client.pool_id_ = create_task->new_pool_id_;
       mod_name_client.return_code_ = create_task->return_code_;
       bool success = (create_task->return_code_ == 0);
       REQUIRE(success);
-      INFO("MOD_NAME pool created with ID: " << test_pool_id_.ToU64());
+      INFO("MOD_NAME pool created with ID: " << kRecoveryPoolId.ToU64());
       return true;
     } catch (const std::exception &e) {
       FAIL("Exception creating MOD_NAME pool: " << e.what());
       return false;
     }
   }
-
- private:
-  chi::PoolId test_pool_id_;
 };
 
 TEST_CASE("Pre-failure: verify tasks work on all nodes",
@@ -136,11 +130,11 @@ TEST_CASE("Pre-failure: verify tasks work on all nodes",
     REQUIRE(g_initialized);
     REQUIRE(fixture.createModNamePool("test_recovery_pool"));
 
-    chimaera::MOD_NAME::Client mod_name_client(fixture.getTestPoolId());
+    chimaera::MOD_NAME::Client mod_name_client(kRecoveryPoolId);
     chi::PoolQuery create_query = chi::PoolQuery::Dynamic();
     std::string pool_name = "test_recovery_pool";
     auto create_task = mod_name_client.AsyncCreate(
-        create_query, pool_name, fixture.getTestPoolId());
+        create_query, pool_name, kRecoveryPoolId);
     create_task.Wait();
     mod_name_client.pool_id_ = create_task->new_pool_id_;
     REQUIRE(create_task->return_code_ == 0);
@@ -174,19 +168,14 @@ TEST_CASE("Post-failure: verify recovery re-routes tasks",
 
   SECTION("post_failure_direct_and_broadcast") {
     REQUIRE(g_initialized);
-    REQUIRE(fixture.createModNamePool("test_recovery_post_pool"));
 
-    chimaera::MOD_NAME::Client mod_name_client(fixture.getTestPoolId());
-    chi::PoolQuery create_query = chi::PoolQuery::Dynamic();
-    std::string pool_name = "test_recovery_post_pool";
-    auto create_task = mod_name_client.AsyncCreate(
-        create_query, pool_name, fixture.getTestPoolId());
-    create_task.Wait();
-    mod_name_client.pool_id_ = create_task->new_pool_id_;
-    REQUIRE(create_task->return_code_ == 0);
-
-    chi::PoolId pool_id = mod_name_client.pool_id_;
-    INFO("Pool created: " << pool_id.ToU64());
+    // Reuse the pool created by Phase 1 — do NOT create a new pool
+    // because Dynamic() would try to reach the dead node and hang.
+    // The recovery system should have re-created container 3 on a
+    // surviving node after SWIM detected node 4's death.
+    chimaera::MOD_NAME::Client mod_name_client(kRecoveryPoolId);
+    mod_name_client.pool_id_ = kRecoveryPoolId;
+    INFO("Reusing pool from Phase 1: " << kRecoveryPoolId.ToU64());
 
     // Step 1: Submit CoMutexTest targeting container 3
     // Originally on node 4 (now dead), should route to recovery destination

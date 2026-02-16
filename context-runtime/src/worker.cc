@@ -872,11 +872,12 @@ std::vector<PoolQuery> Worker::ResolveDirectHashQuery(
     return {PoolQuery::Local()};
   }
 
-  // Get the physical node ID for this container
-  u32 node_id = pool_manager->GetContainerNodeId(pool_id, container_id);
-
-  // Create a Physical PoolQuery to that node
-  return {PoolQuery::Physical(node_id)};
+  // Resolve to DirectId so SendIn can dynamically look up the current
+  // node via GetContainerNodeId.  This preserves the container_id through
+  // the routing chain, which is required for retry-after-recovery: if the
+  // original node dies and the container is recovered elsewhere, the retry
+  // queue re-resolves DirectId to the new node.
+  return {PoolQuery::DirectId(container_id)};
 }
 
 std::vector<PoolQuery> Worker::ResolveRangeQuery(
@@ -912,9 +913,8 @@ std::vector<PoolQuery> Worker::ResolveRangeQuery(
       // Container is local, resolve to Local query
       return {PoolQuery::Local()};
     }
-    // Container is not local — route to the node that owns it
-    u32 node_id = pool_manager->GetContainerNodeId(pool_id, container_id);
-    return {PoolQuery::Physical(node_id)};
+    // Resolve to DirectId to preserve container info for retry-after-recovery
+    return {PoolQuery::DirectId(container_id)};
   }
 
   std::vector<PoolQuery> result_queries;

@@ -121,6 +121,9 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
   // This task reaps shared memory segments from dead processes
   client_.AsyncWreapDeadIpcs(chi::PoolQuery::Local(), 1000000);
 
+  // Spawn periodic HeartbeatProbe task (SWIM failure detector, 2s period)
+  client_.AsyncHeartbeatProbe(chi::PoolQuery::Local(), 2000000);
+
   HLOG(kDebug,
        "Admin: Container created and initialized for pool: {} (ID: {}, count: "
        "{})",
@@ -1538,10 +1541,71 @@ chi::TaskResume Runtime::MigrateContainers(
   co_return;
 }
 
-void Runtime::ProcessRetryQueues() {
+/**
+ * Attempt to send a retried task to the given node
+ * @param entry The retry entry containing the task
+ * @param node_id The node to send to
+ * @return true if send succeeded
+ */
+bool Runtime::RetrySendToNode(RetryEntry &entry, chi::u64 node_id) {
   auto *ipc_manager = CHI_IPC;
   auto *pool_manager = CHI_POOL_MANAGER;
   auto *config_manager = CHI_CONFIG_MANAGER;
+
+  const chi::Host *target_host = ipc_manager->GetHost(node_id);
+  if (!target_host) {
+    return false;
+  }
+  int port = static_cast<int>(config_manager->GetPort());
+  hshm::lbm::Transport *lbm_transport =
+      ipc_manager->GetOrCreateClient(target_host->ip_address, port);
+  if (!lbm_transport) {
+    return false;
+  }
+  chi::Container *container =
+      pool_manager->GetStaticContainer(entry.task->pool_id_);
+  if (!container) {
+    return false;
+  }
+  chi::SaveTaskArchive archive(chi::MsgType::kSerializeIn, lbm_transport);
+  container->SaveTask(entry.task->method_, archive, entry.task);
+  hshm::lbm::LbmContext ctx(0);
+  int rc = lbm_transport->Send(archive, ctx);
+  return rc == 0;
+}
+
+/**
+ * Re-resolve target node for a retried task whose original target is dead.
+ * Uses the task's pool_query_ to look up the current container→node mapping
+ * from the address_map_, which may have been updated by recovery.
+ * @param entry The retry entry to re-resolve
+ * @return New node ID, or 0 if re-resolution failed
+ */
+chi::u64 Runtime::RerouteRetryEntry(RetryEntry &entry) {
+  auto *pool_manager = CHI_POOL_MANAGER;
+  const chi::PoolQuery &query = entry.task->pool_query_;
+
+  if (query.IsDirectIdMode()) {
+    chi::ContainerId container_id = query.GetContainerId();
+    chi::u32 new_node = pool_manager->GetContainerNodeId(
+        entry.task->pool_id_, container_id);
+    if (new_node != 0 && new_node != entry.target_node_id) {
+      return new_node;
+    }
+  } else if (query.IsRangeMode()) {
+    chi::u32 offset = query.GetRangeOffset();
+    chi::ContainerId container_id(offset);
+    chi::u32 new_node = pool_manager->GetContainerNodeId(
+        entry.task->pool_id_, container_id);
+    if (new_node != 0 && new_node != entry.target_node_id) {
+      return new_node;
+    }
+  }
+  return 0;
+}
+
+void Runtime::ProcessRetryQueues() {
+  auto *ipc_manager = CHI_IPC;
   auto now = std::chrono::steady_clock::now();
 
   // Process send_in retry queue
@@ -1555,32 +1619,29 @@ void Runtime::ProcessRetryQueues() {
       it->task->SetReturnCode(kNetworkTimeoutRC);
       it = send_in_retry_.erase(it);
     } else if (ipc_manager->IsAlive(it->target_node_id)) {
-      // Node came back: retry the send
-      const chi::Host *target_host = ipc_manager->GetHost(it->target_node_id);
-      if (target_host) {
-        int port = static_cast<int>(config_manager->GetPort());
-        hshm::lbm::Transport *lbm_transport =
-            ipc_manager->GetOrCreateClient(target_host->ip_address, port);
-        if (lbm_transport) {
-          chi::Container *container =
-              pool_manager->GetStaticContainer(it->task->pool_id_);
-          if (container) {
-            chi::SaveTaskArchive archive(chi::MsgType::kSerializeIn, lbm_transport);
-            container->SaveTask(it->task->method_, archive, it->task);
-            hshm::lbm::LbmContext ctx(0);
-            int rc = lbm_transport->Send(archive, ctx);
-            if (rc == 0) {
-              HLOG(kInfo, "[RetryQueue] SendIn retry succeeded for node {}",
-                   it->target_node_id);
-              it = send_in_retry_.erase(it);
-              continue;
-            }
-          }
-        }
+      // Original node came back: retry the send
+      if (RetrySendToNode(*it, it->target_node_id)) {
+        HLOG(kInfo, "[RetryQueue] SendIn retry succeeded for node {}",
+             it->target_node_id);
+        it = send_in_retry_.erase(it);
+        continue;
       }
       // Retry failed, keep in queue
       ++it;
     } else {
+      // Original node still dead — try re-routing via updated address_map
+      chi::u64 new_node = RerouteRetryEntry(*it);
+      if (new_node != 0 && ipc_manager->IsAlive(new_node)) {
+        HLOG(kInfo, "[RetryQueue] Re-routing task from dead node {} to "
+             "recovered node {}", it->target_node_id, new_node);
+        it->target_node_id = new_node;
+        if (RetrySendToNode(*it, new_node)) {
+          HLOG(kInfo, "[RetryQueue] SendIn re-routed retry succeeded "
+               "for node {}", new_node);
+          it = send_in_retry_.erase(it);
+          continue;
+        }
+      }
       ++it;
     }
   }
@@ -1664,9 +1725,347 @@ chi::TaskResume Runtime::Heartbeat(hipc::FullPtr<HeartbeatTask> task,
   co_return;
 }
 
+chi::TaskResume Runtime::HeartbeatProbe(hipc::FullPtr<HeartbeatProbeTask> task,
+                                        chi::RunContext &rctx) {
+  auto *ipc_manager = CHI_IPC;
+  auto now = std::chrono::steady_clock::now();
+  chi::u64 self_node_id = ipc_manager->GetNodeId();
+  bool did_work = false;
+
+  // 1. Check pending direct probes
+  for (auto it = pending_direct_probes_.begin();
+       it != pending_direct_probes_.end();) {
+    if (it->future.IsComplete()) {
+      // Direct probe succeeded - node is alive
+      ipc_manager->SetNodeState(it->target_node_id, chi::NodeState::kAlive);
+      it = pending_direct_probes_.erase(it);
+      did_work = true;
+    } else {
+      float elapsed =
+          std::chrono::duration<float>(now - it->sent_at).count();
+      if (elapsed > kDirectProbeTimeoutSec) {
+        // Direct probe timed out - escalate to indirect probing
+        ipc_manager->SetNodeState(it->target_node_id,
+                                  chi::NodeState::kProbeFailed);
+        HLOG(kWarning,
+             "SWIM: Direct probe to node {} timed out, starting indirect probes",
+             it->target_node_id);
+
+        // Select k random alive helpers (excluding self and target)
+        const auto &hosts = ipc_manager->GetAllHosts();
+        std::vector<chi::u64> candidates;
+        for (const auto &h : hosts) {
+          if (h.node_id != self_node_id &&
+              h.node_id != it->target_node_id && h.IsAlive()) {
+            candidates.push_back(h.node_id);
+          }
+        }
+        std::shuffle(candidates.begin(), candidates.end(), probe_rng_);
+        size_t num_helpers =
+            std::min(kIndirectProbeHelpers, candidates.size());
+        for (size_t i = 0; i < num_helpers; ++i) {
+          auto future = client_.AsyncProbeRequest(
+              chi::PoolQuery::Physical(candidates[i]),
+              it->target_node_id);
+          pending_indirect_probes_.push_back(
+              {std::move(future), it->target_node_id, candidates[i],
+               std::chrono::steady_clock::now()});
+        }
+
+        it = pending_direct_probes_.erase(it);
+        did_work = true;
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  // 2. Check pending indirect probes
+  for (auto it = pending_indirect_probes_.begin();
+       it != pending_indirect_probes_.end();) {
+    if (it->future.IsComplete()) {
+      it->future.Wait(0);  // Finalize
+      if (it->future->probe_result_ == 0) {
+        // Indirect probe succeeded - node is alive
+        ipc_manager->SetNodeState(it->target_node_id,
+                                  chi::NodeState::kAlive);
+        HLOG(kInfo,
+             "SWIM: Indirect probe via node {} confirmed node {} alive",
+             it->helper_node_id, it->target_node_id);
+        // Remove all pending indirects for this target
+        chi::u64 alive_target = it->target_node_id;
+        pending_indirect_probes_.erase(
+            std::remove_if(pending_indirect_probes_.begin(),
+                           pending_indirect_probes_.end(),
+                           [alive_target](const PendingIndirectProbe &p) {
+                             return p.target_node_id == alive_target;
+                           }),
+            pending_indirect_probes_.end());
+        did_work = true;
+        break;  // Iterator invalidated, restart on next invocation
+      } else {
+        it = pending_indirect_probes_.erase(it);
+        did_work = true;
+      }
+    } else {
+      float elapsed =
+          std::chrono::duration<float>(now - it->sent_at).count();
+      if (elapsed > kIndirectProbeTimeoutSec) {
+        chi::u64 target = it->target_node_id;
+        it = pending_indirect_probes_.erase(it);
+        did_work = true;
+        // If no more pending indirects for this target, move to suspected
+        bool has_more = false;
+        for (const auto &p : pending_indirect_probes_) {
+          if (p.target_node_id == target) {
+            has_more = true;
+            break;
+          }
+        }
+        if (!has_more &&
+            ipc_manager->GetNodeState(target) ==
+                chi::NodeState::kProbeFailed) {
+          ipc_manager->SetNodeState(target, chi::NodeState::kSuspected);
+          HLOG(kWarning,
+               "SWIM: All indirect probes for node {} failed, marking suspected",
+               target);
+        }
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  // 3. Check suspicion timeouts
+  {
+    const auto &hosts = ipc_manager->GetAllHosts();
+    for (const auto &h : hosts) {
+      if (h.state == chi::NodeState::kSuspected) {
+        float since_change =
+            std::chrono::duration<float>(now - h.state_changed_at).count();
+        if (since_change >= kSuspicionTimeoutSec) {
+          HLOG(kError, "SWIM: Node {} confirmed dead after suspicion timeout",
+               h.node_id);
+          ipc_manager->SetDead(h.node_id);
+          did_work = true;
+          TriggerRecovery(h.node_id);
+        }
+      }
+    }
+  }
+
+  // 4. Self-fencing: if majority of other nodes are suspected/dead, fence self
+  {
+    const auto &hosts = ipc_manager->GetAllHosts();
+    size_t other_count = 0;
+    size_t bad_count = 0;
+    for (const auto &h : hosts) {
+      if (h.node_id == self_node_id) continue;
+      other_count++;
+      if (h.state == chi::NodeState::kSuspected ||
+          h.state == chi::NodeState::kDead) {
+        bad_count++;
+      }
+    }
+    if (other_count > 0 && bad_count * 2 > other_count) {
+      if (!ipc_manager->IsSelfFenced()) {
+        HLOG(kFatal,
+             "SWIM: Self-fencing! {} of {} other nodes are suspected/dead",
+             bad_count, other_count);
+        ipc_manager->SetSelfFenced(true);
+      }
+    } else {
+      if (ipc_manager->IsSelfFenced()) {
+        HLOG(kInfo, "SWIM: Clearing self-fence, cluster connectivity restored");
+        ipc_manager->SetSelfFenced(false);
+      }
+    }
+  }
+
+  // 5. Send new direct probe (round-robin, one per invocation)
+  {
+    const auto &hosts = ipc_manager->GetAllHosts();
+    if (hosts.size() > 1) {
+      size_t start_idx = probe_round_robin_idx_;
+      for (size_t i = 0; i < hosts.size(); ++i) {
+        size_t idx = (start_idx + i) % hosts.size();
+        const auto &h = hosts[idx];
+        if (h.node_id == self_node_id) continue;
+        if (h.state == chi::NodeState::kDead) continue;
+        // Skip suspected nodes — let the suspicion timeout fire
+        // before re-probing, otherwise the state cycles
+        // kSuspected→kProbeFailed→kSuspected and resets the timer
+        if (h.state == chi::NodeState::kSuspected) continue;
+        if (h.state == chi::NodeState::kProbeFailed) continue;
+        // Skip if already probing this node
+        bool already_probing = false;
+        for (const auto &p : pending_direct_probes_) {
+          if (p.target_node_id == h.node_id) {
+            already_probing = true;
+            break;
+          }
+        }
+        if (already_probing) continue;
+
+        // Send direct probe
+        auto future = client_.AsyncHeartbeat(
+            chi::PoolQuery::Physical(h.node_id));
+        pending_direct_probes_.push_back(
+            {std::move(future), h.node_id,
+             std::chrono::steady_clock::now()});
+        probe_round_robin_idx_ = (idx + 1) % hosts.size();
+        did_work = true;
+        break;  // One probe per invocation
+      }
+    }
+  }
+
+  rctx.did_work_ = did_work;
+  task->SetReturnCode(0);
+  co_return;
+}
+
+chi::TaskResume Runtime::ProbeRequest(hipc::FullPtr<ProbeRequestTask> task,
+                                      chi::RunContext &rctx) {
+  // Probe the target node on behalf of the requester using cooperative yield
+  auto future = client_.AsyncHeartbeat(
+      chi::PoolQuery::Physical(task->target_node_id_));
+  auto start = std::chrono::steady_clock::now();
+
+  while (!future.IsComplete()) {
+    float elapsed = std::chrono::duration<float>(
+        std::chrono::steady_clock::now() - start).count();
+    if (elapsed >= kIndirectProbeTimeoutSec) break;
+    co_await chi::yield();
+  }
+
+  if (future.IsComplete()) {
+    future.Wait(0);  // Finalize (already complete)
+    task->probe_result_ = 0;  // alive
+  } else {
+    task->probe_result_ = -1;  // unreachable
+  }
+
+  task->SetReturnCode(0);
+  rctx.did_work_ = true;
+  co_return;
+}
+
 chi::u64 Runtime::GetWorkRemaining() const {
   // Note: No lock needed - single net worker processes all Send/Recv tasks
   return send_map_.size() + recv_map_.size();
+}
+
+//===========================================================================
+// Recovery Methods
+//===========================================================================
+
+std::vector<chi::RecoveryAssignment> Runtime::ComputeRecoveryPlan(
+    chi::u64 dead_node_id) {
+  auto *pool_manager = CHI_POOL_MANAGER;
+  auto *ipc_manager = CHI_IPC;
+
+  // Collect alive nodes for round-robin assignment
+  std::vector<chi::u64> alive_nodes;
+  for (const auto &h : ipc_manager->GetAllHosts()) {
+    if (h.IsAlive()) alive_nodes.push_back(h.node_id);
+  }
+  if (alive_nodes.empty()) return {};
+
+  std::vector<chi::RecoveryAssignment> assignments;
+  size_t rr_idx = 0;
+
+  for (const auto &pool_id : pool_manager->GetAllPoolIds()) {
+    const chi::PoolInfo *info = pool_manager->GetPoolInfo(pool_id);
+    if (!info) continue;
+    for (const auto &[container_id, node_id] : info->address_map_) {
+      if (node_id == static_cast<chi::u32>(dead_node_id)) {
+        chi::RecoveryAssignment ra;
+        ra.pool_id_ = pool_id;
+        ra.chimod_name_ = info->chimod_name_;
+        ra.pool_name_ = info->pool_name_;
+        ra.chimod_params_ = info->chimod_params_;
+        ra.container_id_ = container_id;
+        ra.dead_node_id_ = static_cast<chi::u32>(dead_node_id);
+        ra.dest_node_id_ = static_cast<chi::u32>(
+            alive_nodes[rr_idx % alive_nodes.size()]);
+        rr_idx++;
+        assignments.push_back(std::move(ra));
+      }
+    }
+  }
+  return assignments;
+}
+
+void Runtime::TriggerRecovery(chi::u64 dead_node_id) {
+  auto *ipc_manager = CHI_IPC;
+  if (!ipc_manager->IsLeader()) return;
+  if (recovery_initiated_.count(dead_node_id)) return;
+  recovery_initiated_.insert(dead_node_id);
+  if (ipc_manager->IsSelfFenced()) {
+    HLOG(kWarning, "Recovery: Skipping for node {} - self-fenced",
+         dead_node_id);
+    return;
+  }
+
+  HLOG(kInfo, "Recovery: Leader initiating for dead node {}", dead_node_id);
+  auto assignments = ComputeRecoveryPlan(dead_node_id);
+  if (assignments.empty()) {
+    HLOG(kInfo, "Recovery: No containers to recover from node {}",
+         dead_node_id);
+    return;
+  }
+
+  HLOG(kInfo, "Recovery: {} containers to redistribute from node {}",
+       assignments.size(), dead_node_id);
+  client_.AsyncRecoverContainers(
+      chi::PoolQuery::Broadcast(), assignments, dead_node_id);
+}
+
+chi::TaskResume Runtime::RecoverContainers(
+    hipc::FullPtr<RecoverContainersTask> task, chi::RunContext &rctx) {
+  auto *ipc_manager = CHI_IPC;
+  auto *pool_manager = CHI_POOL_MANAGER;
+  auto *module_manager = CHI_MODULE_MANAGER;
+  chi::u64 self_node_id = ipc_manager->GetNodeId();
+  task->num_recovered_ = 0;
+
+  // Deserialize assignments
+  std::vector<chi::RecoveryAssignment> assignments;
+  {
+    std::istringstream is(task->assignments_data_.str());
+    cereal::BinaryInputArchive ar(is);
+    ar(assignments);
+  }
+
+  for (const auto &ra : assignments) {
+    // ALL nodes update address_map_
+    pool_manager->UpdateContainerNodeMapping(
+        ra.pool_id_, ra.container_id_, ra.dest_node_id_);
+    pool_manager->WriteAddressTableWAL(
+        ra.pool_id_, ra.container_id_, ra.dead_node_id_, ra.dest_node_id_);
+
+    // Only dest node creates the container
+    if (static_cast<chi::u64>(ra.dest_node_id_) != self_node_id) continue;
+
+    HLOG(kInfo, "Recovery: Creating container {} for pool {} ({})",
+         ra.container_id_, ra.pool_name_, ra.chimod_name_);
+    chi::Container *container = module_manager->CreateContainer(
+        ra.chimod_name_, ra.pool_id_, ra.pool_name_);
+    if (!container) {
+      HLOG(kError, "Recovery: Failed to create container for {}",
+           ra.chimod_name_);
+      continue;
+    }
+    container->Restart(ra.pool_id_, ra.pool_name_, ra.container_id_);
+    pool_manager->RegisterContainer(
+        ra.pool_id_, ra.container_id_, container, false);
+    task->num_recovered_++;
+  }
+
+  task->SetReturnCode(0);
+  rctx.did_work_ = true;
+  co_return;
 }
 
 //===========================================================================
