@@ -1,0 +1,29 @@
+# Redis Benchmark
+# Purpose: Measure Redis Set/Get performance for 4KB, 16KB, and 1MB I/O sizes
+
+config:
+  name: redis_bench
+  pkgs:
+    - pkg_type: jarvis_iowarp.redis
+      pkg_name: redis
+      port: 6379
+
+    - pkg_type: jarvis_iowarp.redis_benchmark
+      pkg_name: redis_bench
+      port: 6379
+      count: 1000
+      write: true
+      read: true
+      nthreads: 4
+      pipeline: 1
+      req_size: 4096
+
+vars:
+  redis_bench.req_size: [4096, 16384, 1048576]
+
+loop:
+  - [redis_bench.req_size]
+
+repeat: 3
+
+output: "${HOME}/redis_bench_results"

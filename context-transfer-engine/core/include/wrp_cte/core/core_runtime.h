@@ -205,6 +205,10 @@ private:
   std::atomic<chi::u32>
       next_tag_id_minor_; // Minor counter for TagId UniqueId generation
 
+  // Map sizes for data structures (must be large enough for expected entries)
+  static const size_t kBlobMapSize = 1000000;  // 1M blobs
+  static const size_t kTagMapSize = 100000;    // 100K tags
+
   // Synchronization primitives for thread-safe access to data structures
   // Use a set of locks based on maximum number of lanes for better concurrency
   static const size_t kMaxLocks =

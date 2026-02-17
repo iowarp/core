@@ -111,16 +111,17 @@ chi::u64 Runtime::ParseCapacityToBytes(const std::string &capacity_str) {
 
 chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
                                 chi::RunContext &ctx) {
-  // Initialize unordered_map_ll instances with 64 buckets to match lock count
-  // This ensures each bucket can have its own lock for maximum concurrency
+  // Initialize unordered_map_ll instances with appropriately sized bucket counts
+  // Tag/blob maps are large to avoid excessive collisions at scale
+  // Target maps use tag size since target counts are similar
   registered_targets_ =
-      chi::unordered_map_ll<chi::PoolId, TargetInfo>(kMaxLocks);
+      chi::unordered_map_ll<chi::PoolId, TargetInfo>(kTagMapSize);
   target_name_to_id_ =
-      chi::unordered_map_ll<std::string, chi::PoolId>(kMaxLocks);
-  tag_name_to_id_ = chi::unordered_map_ll<std::string, TagId>(kMaxLocks);
-  tag_id_to_info_ = chi::unordered_map_ll<TagId, TagInfo>(kMaxLocks);
+      chi::unordered_map_ll<std::string, chi::PoolId>(kTagMapSize);
+  tag_name_to_id_ = chi::unordered_map_ll<std::string, TagId>(kTagMapSize);
+  tag_id_to_info_ = chi::unordered_map_ll<TagId, TagInfo>(kTagMapSize);
   tag_blob_name_to_info_ =
-      chi::unordered_map_ll<std::string, BlobInfo>(kMaxLocks);
+      chi::unordered_map_ll<std::string, BlobInfo>(kBlobMapSize);
 
   // Initialize lock vectors for concurrent access
   target_locks_.reserve(kMaxLocks);
