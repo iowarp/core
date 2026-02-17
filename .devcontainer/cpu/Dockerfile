@@ -4,6 +4,8 @@
 # This devcontainer adds development-specific tools like Claude Code.
 #
 FROM iowarp/deps-cpu:latest
+USER root
+RUN userdel -r ubuntu || true
 
 # The deps-cpu image already includes:
 # - All conda dependencies (boost, hdf5, yaml-cpp, zeromq, cereal, etc.)

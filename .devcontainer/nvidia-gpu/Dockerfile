@@ -4,6 +4,8 @@
 # This devcontainer adds development-specific tools like Claude Code.
 #
 FROM iowarp/deps-nvidia:latest
+USER root
+RUN userdel -r ubuntu || true
 
 # The deps-nvidia image already includes (inherited from deps-cpu):
 # - All conda dependencies (boost, hdf5, yaml-cpp, zeromq, cereal, etc.)
