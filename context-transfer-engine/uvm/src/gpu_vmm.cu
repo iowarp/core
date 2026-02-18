@@ -89,7 +89,6 @@ CUresult GpuVirtualMemoryManager::init(const GpuVmmConfig &config) {
   if (page_size_ < granularity) {
     page_size_ = granularity;
   }
-  // Round up to multiple of granularity
   page_size_ = ((page_size_ + granularity - 1) / granularity) * granularity;
 
   // Align total VA size to page_size
@@ -97,6 +96,7 @@ CUresult GpuVirtualMemoryManager::init(const GpuVmmConfig &config) {
   va_size_ = ((va_size_ + page_size_ - 1) / page_size_) * page_size_;
 
   fill_value_ = config.fill_value;
+  prefetch_window_ = config.prefetch_window;
   total_pages_ = va_size_ / page_size_;
 
   // Reserve virtual address range -- no physical memory is consumed here
@@ -113,16 +113,22 @@ CUresult GpuVirtualMemoryManager::init(const GpuVmmConfig &config) {
   // Initialize the software page table (all pages start unmapped)
   page_table_.resize(total_pages_);
 
+  // Create CUDA streams for async overlap
+  cudaStreamCreate(&transfer_stream_);
+  cudaStreamCreate(&compute_stream_);
+
   fprintf(stdout,
           "GpuVmm: Initialized\n"
           "  VA base:       0x%llx\n"
           "  VA size:       %zu bytes (%.2f TB)\n"
           "  Page size:     %zu bytes (%.2f MB)\n"
           "  Total pages:   %zu\n"
-          "  HW granularity: %zu bytes\n",
+          "  HW granularity: %zu bytes\n"
+          "  Prefetch window: %zu pages\n",
           (unsigned long long)va_base_, va_size_,
           (double)va_size_ / (1024.0 * 1024 * 1024 * 1024), page_size_,
-          (double)page_size_ / (1024.0 * 1024), total_pages_, granularity);
+          (double)page_size_ / (1024.0 * 1024), total_pages_, granularity,
+          prefetch_window_);
 
   return CUDA_SUCCESS;
 }
@@ -143,6 +149,19 @@ void GpuVirtualMemoryManager::destroy() {
     }
   }
 
+  // Free all host backing store buffers
+  freeHostBackingStore_();
+
+  // Destroy CUDA streams
+  if (transfer_stream_) {
+    cudaStreamDestroy(transfer_stream_);
+    transfer_stream_ = nullptr;
+  }
+  if (compute_stream_) {
+    cudaStreamDestroy(compute_stream_);
+    compute_stream_ = nullptr;
+  }
+
   // Release the VA reservation
   cuMemAddressFree(va_base_, va_size_);
   va_base_ = 0;
@@ -160,21 +179,20 @@ size_t GpuVirtualMemoryManager::getMappedPageCount() const {
   return count;
 }
 
-CUresult GpuVirtualMemoryManager::touchPage(size_t page_index) {
+size_t GpuVirtualMemoryManager::getEvictedPageCount() const {
   std::lock_guard<std::mutex> lock(mutex_);
-
-  if (page_index >= total_pages_) {
-    fprintf(stderr, "GpuVmm: touchPage: page_index %zu out of range [0, %zu)\n",
-            page_index, total_pages_);
-    return CUDA_ERROR_INVALID_VALUE;
+  size_t count = 0;
+  for (const auto &entry : page_table_) {
+    if (entry.evicted_to_host) ++count;
   }
+  return count;
+}
 
+CUresult GpuVirtualMemoryManager::mapAndBackPage_(size_t page_index) {
+  // Caller must hold mutex_
   PageEntry &entry = page_table_[page_index];
-  if (entry.mapped) {
-    return CUDA_SUCCESS;  // Already backed
-  }
 
-  // 1. Allocate physical memory (a "handle" -- not yet mapped anywhere)
+  // Allocate physical memory
   CUmemAllocationProp prop = {};
   prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
@@ -187,7 +205,7 @@ CUresult GpuVirtualMemoryManager::touchPage(size_t page_index) {
     return res;
   }
 
-  // 2. Map the physical allocation into the reserved VA slot
+  // Map into VA slot
   CUdeviceptr page_addr = va_base_ + page_index * page_size_;
   res = cuMemMap(page_addr, page_size_, 0, entry.alloc_handle, 0);
   if (res != CUDA_SUCCESS) {
@@ -197,7 +215,7 @@ CUresult GpuVirtualMemoryManager::touchPage(size_t page_index) {
     return res;
   }
 
-  // 3. Set access permissions (read+write for this device)
+  // Set access permissions
   CUmemAccessDesc access = {};
   access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   access.location.id = device_;
@@ -213,13 +231,90 @@ CUresult GpuVirtualMemoryManager::touchPage(size_t page_index) {
   }
 
   entry.mapped = true;
+  return CUDA_SUCCESS;
+}
 
-  // 4. Fill the page with the configured value using a GPU kernel
-  size_t num_ints = page_size_ / sizeof(int);
-  int threads = 256;
-  int blocks = (int)((num_ints + threads - 1) / threads);
-  fillKernel<<<blocks, threads>>>((int *)page_addr, fill_value_, num_ints);
-  cudaDeviceSynchronize();
+CUresult GpuVirtualMemoryManager::touchPage(size_t page_index) {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (page_index >= total_pages_) {
+      fprintf(stderr, "GpuVmm: touchPage: page_index %zu out of range [0, %zu)\n",
+              page_index, total_pages_);
+      return CUDA_ERROR_INVALID_VALUE;
+    }
+
+    PageEntry &entry = page_table_[page_index];
+    if (entry.mapped) {
+      return CUDA_SUCCESS;  // Already backed
+    }
+
+    // Allocate + map + set access
+    CUresult res = mapAndBackPage_(page_index);
+    if (res != CUDA_SUCCESS) return res;
+
+    CUdeviceptr page_addr = va_base_ + page_index * page_size_;
+
+    // Restore from host backing store or fill with default value
+    auto it = host_backing_store_.find(page_index);
+    if (entry.evicted_to_host && it != host_backing_store_.end()) {
+      // Restore saved data from host RAM
+      cudaMemcpy((void *)page_addr, it->second, page_size_,
+                 cudaMemcpyHostToDevice);
+      // Free the host buffer
+      cudaFreeHost(it->second);
+      host_backing_store_.erase(it);
+      entry.evicted_to_host = false;
+    } else {
+      // Fresh page: fill with configured value
+      size_t num_ints = page_size_ / sizeof(int);
+      int threads = 256;
+      int blocks = (int)((num_ints + threads - 1) / threads);
+      fillKernel<<<blocks, threads>>>((int *)page_addr, fill_value_, num_ints);
+      cudaDeviceSynchronize();
+      entry.evicted_to_host = false;
+    }
+  }
+
+  // Prefetch ahead (outside mutex)
+  prefetchAhead(page_index);
+
+  return CUDA_SUCCESS;
+}
+
+CUresult GpuVirtualMemoryManager::touchPageAsync(size_t page_index) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  if (page_index >= total_pages_) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  PageEntry &entry = page_table_[page_index];
+  if (entry.mapped) {
+    return CUDA_SUCCESS;
+  }
+
+  CUresult res = mapAndBackPage_(page_index);
+  if (res != CUDA_SUCCESS) return res;
+
+  CUdeviceptr page_addr = va_base_ + page_index * page_size_;
+
+  auto it = host_backing_store_.find(page_index);
+  if (entry.evicted_to_host && it != host_backing_store_.end()) {
+    // Async restore from host
+    cudaMemcpyAsync((void *)page_addr, it->second, page_size_,
+                    cudaMemcpyHostToDevice, transfer_stream_);
+    // Note: host buffer freed after sync (kept alive for async safety)
+    entry.evicted_to_host = false;
+  } else {
+    // Async fill
+    size_t num_ints = page_size_ / sizeof(int);
+    int threads = 256;
+    int blocks = (int)((num_ints + threads - 1) / threads);
+    fillKernel<<<blocks, threads, 0, transfer_stream_>>>(
+        (int *)page_addr, fill_value_, num_ints);
+    entry.evicted_to_host = false;
+  }
 
   return CUDA_SUCCESS;
 }
@@ -243,6 +338,12 @@ bool GpuVirtualMemoryManager::isMapped(size_t page_index) const {
   return page_table_[page_index].mapped;
 }
 
+bool GpuVirtualMemoryManager::isEvictedToHost(size_t page_index) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (page_index >= total_pages_) return false;
+  return page_table_[page_index].evicted_to_host;
+}
+
 CUresult GpuVirtualMemoryManager::evictPage(size_t page_index) {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -257,6 +358,24 @@ CUresult GpuVirtualMemoryManager::evictPage(size_t page_index) {
 
   CUdeviceptr page_addr = va_base_ + page_index * page_size_;
 
+  // Save page contents to pinned host RAM
+  char *host_buf = nullptr;
+  auto it = host_backing_store_.find(page_index);
+  if (it != host_backing_store_.end()) {
+    host_buf = it->second;  // Reuse existing buffer
+  } else {
+    cudaError_t err = cudaMallocHost(&host_buf, page_size_);
+    if (err != cudaSuccess) {
+      fprintf(stderr, "GpuVmm: cudaMallocHost failed for page %zu: %d\n",
+              page_index, err);
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+  }
+
+  cudaMemcpy(host_buf, (void *)page_addr, page_size_, cudaMemcpyDeviceToHost);
+  host_backing_store_[page_index] = host_buf;
+
+  // Unmap and release GPU physical memory
   CUresult res = cuMemUnmap(page_addr, page_size_);
   if (res != CUDA_SUCCESS) {
     fprintf(stderr, "GpuVmm: cuMemUnmap failed for page %zu: %d\n",
@@ -273,12 +392,97 @@ CUresult GpuVirtualMemoryManager::evictPage(size_t page_index) {
 
   entry.mapped = false;
   entry.alloc_handle = 0;
+  entry.evicted_to_host = true;
+
   return CUDA_SUCCESS;
+}
+
+CUresult GpuVirtualMemoryManager::evictPageAsync(size_t page_index) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  if (page_index >= total_pages_) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  PageEntry &entry = page_table_[page_index];
+  if (!entry.mapped) {
+    return CUDA_SUCCESS;
+  }
+
+  CUdeviceptr page_addr = va_base_ + page_index * page_size_;
+
+  // Allocate or reuse pinned host buffer
+  char *host_buf = nullptr;
+  auto it = host_backing_store_.find(page_index);
+  if (it != host_backing_store_.end()) {
+    host_buf = it->second;
+  } else {
+    cudaError_t err = cudaMallocHost(&host_buf, page_size_);
+    if (err != cudaSuccess) {
+      fprintf(stderr, "GpuVmm: cudaMallocHost failed for page %zu: %d\n",
+              page_index, err);
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+  }
+
+  // Async copy GPU -> host on transfer stream
+  cudaMemcpyAsync(host_buf, (void *)page_addr, page_size_,
+                  cudaMemcpyDeviceToHost, transfer_stream_);
+
+  // Must sync transfer stream before cuMemUnmap (driver API, not stream-able)
+  cudaStreamSynchronize(transfer_stream_);
+
+  host_backing_store_[page_index] = host_buf;
+
+  // Unmap and release
+  CUresult res = cuMemUnmap(page_addr, page_size_);
+  if (res != CUDA_SUCCESS) {
+    fprintf(stderr, "GpuVmm: cuMemUnmap failed for page %zu: %d\n",
+            page_index, res);
+    return res;
+  }
+
+  res = cuMemRelease(entry.alloc_handle);
+  if (res != CUDA_SUCCESS) {
+    fprintf(stderr, "GpuVmm: cuMemRelease failed for page %zu: %d\n",
+            page_index, res);
+    return res;
+  }
+
+  entry.mapped = false;
+  entry.alloc_handle = 0;
+  entry.evicted_to_host = true;
+
+  return CUDA_SUCCESS;
+}
+
+void GpuVirtualMemoryManager::prefetchAhead(size_t page_index) {
+  for (size_t i = 1; i <= prefetch_window_; ++i) {
+    size_t target = page_index + i;
+    if (target >= total_pages_) break;
+    if (isMapped(target)) continue;
+    touchPageAsync(target);
+  }
 }
 
 CUdeviceptr GpuVirtualMemoryManager::getPagePtr(size_t page_index) const {
   if (page_index >= total_pages_) return 0;
   return va_base_ + page_index * page_size_;
+}
+
+void GpuVirtualMemoryManager::syncTransfer() {
+  cudaStreamSynchronize(transfer_stream_);
+}
+
+void GpuVirtualMemoryManager::syncCompute() {
+  cudaStreamSynchronize(compute_stream_);
+}
+
+void GpuVirtualMemoryManager::freeHostBackingStore_() {
+  for (auto &pair : host_backing_store_) {
+    cudaFreeHost(pair.second);
+  }
+  host_backing_store_.clear();
 }
 
 }  // namespace wrp_cte::uvm

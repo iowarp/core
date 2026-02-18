@@ -43,6 +43,14 @@
 
 using namespace wrp_cte::uvm;
 
+/** Kernel to write a specific value to every int in a GPU memory region */
+__global__ void writeKernel(int *ptr, int value, size_t count) {
+  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < count) {
+    ptr[idx] = value;
+  }
+}
+
 /** Kernel to read values from GPU memory into an output buffer */
 __global__ void readKernel(const int *src, int *dst, size_t count) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -104,6 +112,7 @@ static void testBasicDemandPaging() {
   GpuVmmConfig cfg;
   cfg.va_size_bytes = 64ULL * 1024 * 1024;  // 64 MB for testing
   cfg.fill_value = 5;
+  cfg.prefetch_window = 0;  // Disable prefetch for this test
 
   CUresult res = vmm.init(cfg);
   assert(res == CUDA_SUCCESS);
@@ -154,6 +163,7 @@ static void testEviction() {
   GpuVmmConfig cfg;
   cfg.va_size_bytes = 64ULL * 1024 * 1024;
   cfg.fill_value = 5;
+  cfg.prefetch_window = 0;  // Disable prefetch for this test
 
   CUresult res = vmm.init(cfg);
   assert(res == CUDA_SUCCESS);
@@ -193,6 +203,7 @@ static void testTouchRange() {
   GpuVmmConfig cfg;
   cfg.va_size_bytes = 64ULL * 1024 * 1024;
   cfg.fill_value = 5;
+  cfg.prefetch_window = 0;  // Disable prefetch for this test
 
   CUresult res = vmm.init(cfg);
   assert(res == CUDA_SUCCESS);
@@ -222,6 +233,7 @@ static void testLargeVaReservation() {
   GpuVirtualMemoryManager vmm;
   GpuVmmConfig cfg;
   cfg.va_size_bytes = 512ULL * 1024 * 1024 * 1024;  // 512 GB
+  cfg.prefetch_window = 0;  // Disable prefetch for this test
 
   CUresult res = vmm.init(cfg);
   assert(res == CUDA_SUCCESS);
@@ -269,6 +281,7 @@ static void testKernelAccessFullVaSpace() {
   GpuVmmConfig cfg;
   cfg.va_size_bytes = 512ULL * 1024 * 1024 * 1024;  // 512 GB
   cfg.fill_value = 5;
+  cfg.prefetch_window = 0;  // Disable prefetch for this test
 
   CUresult res = vmm.init(cfg);
   assert(res == CUDA_SUCCESS);
@@ -362,6 +375,210 @@ static void testKernelAccessFullVaSpace() {
   printf("  Cleanup: PASSED\n\n");
 }
 
+/** Helper: write a custom value to every int in a GPU page */
+static void fillPageWith(CUdeviceptr page_ptr, size_t page_size, int value) {
+  size_t num_ints = page_size / sizeof(int);
+  int threads = 256;
+  int blocks = (int)((num_ints + threads - 1) / threads);
+  writeKernel<<<blocks, threads>>>((int *)page_ptr, value, num_ints);
+  cudaDeviceSynchronize();
+}
+
+static void testEvictAndRestore() {
+  printf("=== Test: Evict and Restore (Data Preservation) ===\n");
+
+  GpuVirtualMemoryManager vmm;
+  GpuVmmConfig cfg;
+  cfg.va_size_bytes = 64ULL * 1024 * 1024;
+  cfg.fill_value = 5;
+  cfg.prefetch_window = 0;
+
+  CUresult res = vmm.init(cfg);
+  assert(res == CUDA_SUCCESS);
+
+  // Touch page 0 (filled with 5)
+  res = vmm.touchPage(0);
+  assert(res == CUDA_SUCCESS);
+
+  // Overwrite page 0 with value 42
+  fillPageWith(vmm.getPagePtr(0), vmm.getPageSize(), 42);
+  bool ok = verifyPage(vmm.getPagePtr(0), vmm.getPageSize(), 42);
+  assert(ok);
+  printf("  Page 0 written with 42: PASSED\n");
+
+  // Evict page 0 (saves to host RAM)
+  res = vmm.evictPage(0);
+  assert(res == CUDA_SUCCESS);
+  assert(!vmm.isMapped(0));
+  assert(vmm.isEvictedToHost(0));
+  assert(vmm.getEvictedPageCount() == 1);
+  printf("  Page 0 evicted to host: PASSED\n");
+
+  // Re-touch page 0 (should restore 42, NOT fill with 5)
+  res = vmm.touchPage(0);
+  assert(res == CUDA_SUCCESS);
+  assert(vmm.isMapped(0));
+  assert(!vmm.isEvictedToHost(0));
+
+  ok = verifyPage(vmm.getPagePtr(0), vmm.getPageSize(), 42);
+  assert(ok);
+  printf("  Page 0 restored with value 42: PASSED\n");
+
+  vmm.destroy();
+  printf("  Cleanup: PASSED\n\n");
+}
+
+static void testPrefetch() {
+  printf("=== Test: Prefetch Window ===\n");
+
+  GpuVirtualMemoryManager vmm;
+  GpuVmmConfig cfg;
+  cfg.va_size_bytes = 64ULL * 1024 * 1024;
+  cfg.fill_value = 5;
+  cfg.prefetch_window = 3;  // Prefetch 3 pages ahead
+
+  CUresult res = vmm.init(cfg);
+  assert(res == CUDA_SUCCESS);
+
+  // Touch page 0 — should also prefetch pages 1, 2, 3
+  res = vmm.touchPage(0);
+  assert(res == CUDA_SUCCESS);
+
+  // Sync transfer stream to wait for async prefetch
+  vmm.syncTransfer();
+
+  // Pages 0-3 should all be mapped
+  for (size_t i = 0; i <= 3; ++i) {
+    assert(vmm.isMapped(i));
+  }
+  printf("  Prefetch window of 3: pages 0-3 mapped: PASSED\n");
+
+  // Page 4 should NOT be mapped (outside window)
+  assert(!vmm.isMapped(4));
+  printf("  Page 4 not mapped (outside window): PASSED\n");
+
+  // Verify prefetched pages contain fill value
+  for (size_t i = 0; i <= 3; ++i) {
+    bool ok = verifyPage(vmm.getPagePtr(i), vmm.getPageSize(), 5);
+    assert(ok);
+  }
+  printf("  All prefetched pages contain fill value: PASSED\n");
+
+  vmm.destroy();
+  printf("  Cleanup: PASSED\n\n");
+}
+
+static void testAsyncOverlap() {
+  printf("=== Test: Async Overlap (Evict + Compute) ===\n");
+
+  GpuVirtualMemoryManager vmm;
+  GpuVmmConfig cfg;
+  cfg.va_size_bytes = 64ULL * 1024 * 1024;
+  cfg.fill_value = 5;
+  cfg.prefetch_window = 0;
+
+  CUresult res = vmm.init(cfg);
+  assert(res == CUDA_SUCCESS);
+
+  // Touch pages 0 and 1
+  res = vmm.touchPage(0);
+  assert(res == CUDA_SUCCESS);
+  res = vmm.touchPage(1);
+  assert(res == CUDA_SUCCESS);
+
+  // Write value 99 to page 0
+  fillPageWith(vmm.getPagePtr(0), vmm.getPageSize(), 99);
+
+  // Write value 77 to page 1
+  fillPageWith(vmm.getPagePtr(1), vmm.getPageSize(), 77);
+
+  // Launch a kernel on compute stream that reads page 1
+  size_t num_ints = vmm.getPageSize() / sizeof(int);
+  int *d_out = nullptr;
+  cudaMalloc(&d_out, vmm.getPageSize());
+  int threads = 256;
+  int blocks = (int)((num_ints + threads - 1) / threads);
+  readKernel<<<blocks, threads, 0, vmm.getComputeStream()>>>(
+      (const int *)vmm.getPagePtr(1), d_out, num_ints);
+
+  // Evict page 0 async (on transfer stream) while compute runs on page 1
+  res = vmm.evictPageAsync(0);
+  assert(res == CUDA_SUCCESS);
+  assert(!vmm.isMapped(0));
+  assert(vmm.isEvictedToHost(0));
+  printf("  Evict page 0 async while computing on page 1: PASSED\n");
+
+  // Sync compute stream and verify page 1 read correctly
+  vmm.syncCompute();
+  std::vector<int> host_buf(num_ints);
+  cudaMemcpy(host_buf.data(), d_out, vmm.getPageSize(), cudaMemcpyDeviceToHost);
+  cudaFree(d_out);
+
+  bool ok = true;
+  for (size_t i = 0; i < num_ints; ++i) {
+    if (host_buf[i] != 77) { ok = false; break; }
+  }
+  assert(ok);
+  printf("  Compute on page 1 verified (value 77): PASSED\n");
+
+  // Restore page 0 and verify value 99 was preserved
+  res = vmm.touchPage(0);
+  assert(res == CUDA_SUCCESS);
+  ok = verifyPage(vmm.getPagePtr(0), vmm.getPageSize(), 99);
+  assert(ok);
+  printf("  Page 0 restored with value 99: PASSED\n");
+
+  vmm.destroy();
+  printf("  Cleanup: PASSED\n\n");
+}
+
+static void testMultipleEvictRestore() {
+  printf("=== Test: Multi-Page Evict and Restore Round-Trip ===\n");
+
+  GpuVirtualMemoryManager vmm;
+  GpuVmmConfig cfg;
+  cfg.va_size_bytes = 64ULL * 1024 * 1024;
+  cfg.fill_value = 5;
+  cfg.prefetch_window = 0;
+
+  CUresult res = vmm.init(cfg);
+  assert(res == CUDA_SUCCESS);
+
+  const size_t NUM_PAGES = 5;
+
+  // Touch 5 pages and write distinct values (100, 101, 102, 103, 104)
+  for (size_t i = 0; i < NUM_PAGES; ++i) {
+    res = vmm.touchPage(i);
+    assert(res == CUDA_SUCCESS);
+    fillPageWith(vmm.getPagePtr(i), vmm.getPageSize(), 100 + (int)i);
+  }
+  assert(vmm.getMappedPageCount() == NUM_PAGES);
+  printf("  Wrote values 100-104 to pages 0-4: PASSED\n");
+
+  // Evict all 5 pages
+  for (size_t i = 0; i < NUM_PAGES; ++i) {
+    res = vmm.evictPage(i);
+    assert(res == CUDA_SUCCESS);
+  }
+  assert(vmm.getMappedPageCount() == 0);
+  assert(vmm.getEvictedPageCount() == NUM_PAGES);
+  printf("  Evicted all 5 pages: PASSED\n");
+
+  // Restore all 5 pages and verify each has its original value
+  for (size_t i = 0; i < NUM_PAGES; ++i) {
+    res = vmm.touchPage(i);
+    assert(res == CUDA_SUCCESS);
+    bool ok = verifyPage(vmm.getPagePtr(i), vmm.getPageSize(), 100 + (int)i);
+    assert(ok);
+  }
+  assert(vmm.getMappedPageCount() == NUM_PAGES);
+  assert(vmm.getEvictedPageCount() == 0);
+  printf("  Restored 5 pages with correct values (100-104): PASSED\n");
+
+  vmm.destroy();
+  printf("  Cleanup: PASSED\n\n");
+}
+
 int main() {
   printf("GPU Virtual Memory Manager -- Demand Paging Tests\n");
   printf("==================================================\n\n");
@@ -374,6 +591,10 @@ int main() {
   testTouchRange();
   testLargeVaReservation();
   testKernelAccessFullVaSpace();
+  testEvictAndRestore();
+  testPrefetch();
+  testAsyncOverlap();
+  testMultipleEvictRestore();
 
   printf("All tests PASSED.\n");
   return 0;

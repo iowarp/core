@@ -35,6 +35,7 @@
 #define WRP_CTE_UVM_GPU_VMM_H_
 
 #include <cuda.h>
+#include <cuda_runtime.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -47,22 +48,22 @@ namespace wrp_cte::uvm {
 /** Configuration for the GPU Virtual Memory Manager */
 struct GpuVmmConfig {
   size_t va_size_bytes = 512ULL * 1024 * 1024 * 1024;  // 512 GB (safe for most GPUs)
-  size_t page_size = 2ULL * 1024 * 1024;                      // 2 MB (GPU granularity)
-  int fill_value = 5;                                          // Default fill value
-  int device = 0;                                              // CUDA device ordinal
+  size_t page_size = 2ULL * 1024 * 1024;               // 2 MB (GPU granularity)
+  int fill_value = 5;                                   // Default fill value
+  int device = 0;                                       // CUDA device ordinal
+  size_t prefetch_window = 4;                           // Pages to prefetch ahead on touch
 };
 
 /**
  * Software-managed demand paging for GPU virtual memory.
  *
- * Reserves a large virtual address range (up to 16TB) using CUDA driver APIs
+ * Reserves a large virtual address range using CUDA driver APIs
  * (cuMemAddressReserve). Physical memory is NOT allocated upfront. Instead,
  * pages are backed on-demand when explicitly accessed through touchPage().
  *
- * Since true GPU page fault interception is impossible in userspace without
- * UVM, this class provides a software-managed page table that tracks which
- * virtual pages have physical backing. The caller must check isMapped()
- * before accessing memory, or use touchPage() to ensure backing exists.
+ * Evicted pages are saved to pinned host RAM and restored on re-touch,
+ * preserving data across eviction cycles. Async variants and prefetching
+ * allow overlapping data transfer with GPU compute.
  *
  * This runs entirely in userspace with no root privileges required.
  */
@@ -74,10 +75,10 @@ class GpuVirtualMemoryManager {
   GpuVirtualMemoryManager(const GpuVirtualMemoryManager &) = delete;
   GpuVirtualMemoryManager &operator=(const GpuVirtualMemoryManager &) = delete;
 
-  /** Initialize the VMM: reserve VA space and prepare physical allocation pool */
+  /** Initialize the VMM: reserve VA space, create streams, prepare page table */
   CUresult init(const GpuVmmConfig &config = GpuVmmConfig());
 
-  /** Destroy the VMM: unmap all pages, free physical memory, release VA */
+  /** Destroy the VMM: unmap all pages, free backing store, release VA */
   void destroy();
 
   /** Get the base device pointer for the entire VA range */
@@ -92,56 +93,93 @@ class GpuVirtualMemoryManager {
   /** Get number of currently backed (physically mapped) pages */
   size_t getMappedPageCount() const;
 
+  /** Get number of pages currently held in host backing store */
+  size_t getEvictedPageCount() const;
+
   /**
-   * Ensure a page is backed by physical memory.
-   * If the page at the given index is already mapped, this is a no-op.
-   * Otherwise, allocates physical memory, maps it into the VA range,
-   * sets access permissions, and fills with the configured fill_value.
-   *
-   * @param page_index Zero-based page index within the VA range
-   * @return CUDA_SUCCESS on success, error code otherwise
+   * Ensure a page is backed by physical memory (synchronous).
+   * If previously evicted, restores from host RAM. Otherwise fills with fill_value.
+   * Triggers prefetchAhead for subsequent pages.
    */
   CUresult touchPage(size_t page_index);
 
   /**
+   * Ensure a page is backed by physical memory (async on transfer stream).
+   * Does NOT trigger prefetch. Caller must syncTransfer() before accessing.
+   */
+  CUresult touchPageAsync(size_t page_index);
+
+  /**
    * Touch all pages covering the given byte range [offset, offset+size).
-   *
-   * @param offset Byte offset from VA base
-   * @param size Number of bytes in the range
-   * @return CUDA_SUCCESS on success, error code otherwise
    */
   CUresult touchRange(size_t offset, size_t size);
 
   /** Check whether a page is currently backed by physical memory */
   bool isMapped(size_t page_index) const;
 
+  /** Check whether a page has data saved in the host backing store */
+  bool isEvictedToHost(size_t page_index) const;
+
   /**
-   * Evict a page: unmap physical memory and free it.
-   * The VA range slot remains reserved but becomes unbacked.
-   *
-   * @param page_index Zero-based page index
-   * @return CUDA_SUCCESS on success, error code otherwise
+   * Evict a page (synchronous): save to host RAM, then unmap and release.
+   * The VA slot remains reserved. Data is preserved for future touchPage.
    */
   CUresult evictPage(size_t page_index);
+
+  /**
+   * Evict a page (async copy on transfer stream, sync before unmap).
+   * Compute stream continues unblocked during the D2H copy.
+   */
+  CUresult evictPageAsync(size_t page_index);
+
+  /** Prefetch pages [page_index+1 .. page_index+window] asynchronously */
+  void prefetchAhead(size_t page_index);
 
   /** Get the device pointer for a specific page */
   CUdeviceptr getPagePtr(size_t page_index) const;
 
+  /** Get the transfer stream (for caller synchronization) */
+  cudaStream_t getTransferStream() const { return transfer_stream_; }
+
+  /** Get the compute stream (for caller kernel launches) */
+  cudaStream_t getComputeStream() const { return compute_stream_; }
+
+  /** Synchronize the transfer stream */
+  void syncTransfer();
+
+  /** Synchronize the compute stream */
+  void syncCompute();
+
  private:
-  CUdeviceptr va_base_ = 0;              // Start of reserved VA range
-  size_t va_size_ = 0;                   // Total VA size in bytes
-  size_t page_size_ = 0;                 // Page size in bytes (GPU allocation granularity)
-  size_t total_pages_ = 0;              // Total pages in VA range
-  int fill_value_ = 5;                  // Value to fill new pages with
-  CUdevice device_ = 0;                 // CUDA device handle
+  CUdeviceptr va_base_ = 0;
+  size_t va_size_ = 0;
+  size_t page_size_ = 0;
+  size_t total_pages_ = 0;
+  int fill_value_ = 5;
+  CUdevice device_ = 0;
+  size_t prefetch_window_ = 4;
 
   struct PageEntry {
     CUmemGenericAllocationHandle alloc_handle = 0;
     bool mapped = false;
+    bool evicted_to_host = false;
   };
 
-  std::vector<PageEntry> page_table_;    // Software page table
-  mutable std::mutex mutex_;             // Thread safety for page table ops
+  std::vector<PageEntry> page_table_;
+  mutable std::mutex mutex_;
+
+  // Host RAM backing store: page_index -> pinned host buffer
+  std::unordered_map<size_t, char *> host_backing_store_;
+
+  // CUDA streams for async overlap
+  cudaStream_t transfer_stream_ = nullptr;
+  cudaStream_t compute_stream_ = nullptr;
+
+  /** Allocate physical memory, map into VA, set access (no fill) */
+  CUresult mapAndBackPage_(size_t page_index);
+
+  /** Free all pinned host backing store buffers */
+  void freeHostBackingStore_();
 };
 
 }  // namespace wrp_cte::uvm
