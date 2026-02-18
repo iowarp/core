@@ -1,8 +1,8 @@
 # IOWarp CPU Deploy Container
 # Minimal deployment container with only runtime binaries
 #
-# This container copies the installed binaries from build-cpu, reducing
-# overall container size without sacrificing functionality.
+# Builds IOWarp from source using deps-cpu, then copies only the
+# installed binaries into a minimal Ubuntu image.
 #
 # Usage:
 #   docker build -t iowarp/deploy-cpu:latest -f docker/deploy-cpu.Dockerfile .
@@ -18,14 +18,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 # Install minimal runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    git \
-    openssh-client \
     libgomp1 \
     libelf1 \
     openmpi-bin \
     libopenmpi3t64 \
-    python3 \
-    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Create iowarp user
@@ -38,12 +34,26 @@ ENV OMPI_ALLOW_RUN_AS_ROOT=1
 ENV OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
 
 #------------------------------------------------------------
-# Copy from Build Container
+# Build from deps-cpu
 #------------------------------------------------------------
 
-FROM iowarp/build-cpu:latest AS builder
+FROM iowarp/deps-cpu:latest AS builder
 
-# The build container already has everything installed in /usr/local
+WORKDIR /workspace
+COPY . /workspace/
+
+RUN sudo chown -R $(whoami):$(whoami) /workspace && \
+    git submodule update --init --recursive && \
+    mkdir -p build && \
+    cd build && \
+    cmake --preset build-cpu-release ../ && \
+    sudo make -j$(nproc) install
+
+# Create runtime configuration files
+RUN sudo mkdir -p /etc/iowarp && \
+    sudo touch /etc/iowarp/wrp_conf.yaml && \
+    sudo touch /etc/iowarp/wrp_config.yaml && \
+    sudo touch /etc/iowarp/hostfile
 
 #------------------------------------------------------------
 # Final Deploy Image
@@ -74,16 +84,6 @@ ENV WRP_RUNTIME_CONF=/etc/iowarp/wrp_conf.yaml
 
 # Update library cache
 RUN ldconfig
-
-# Install runtime-deployment (jarvis_cd)
-# Try SSH clone first, fall back to HTTPS if SSH is unavailable
-ARG RUNTIME_DEPLOY_REPO_SSH=git@github.com:iowarp/runtime-deployment.git
-ARG RUNTIME_DEPLOY_REPO_HTTPS=https://github.com/iowarp/runtime-deployment.git
-RUN mkdir -p /tmp/runtime-deployment && \
-    (git clone ${RUNTIME_DEPLOY_REPO_SSH} /tmp/runtime-deployment 2>/dev/null || \
-     git clone ${RUNTIME_DEPLOY_REPO_HTTPS} /tmp/runtime-deployment) && \
-    pip install --break-system-packages /tmp/runtime-deployment && \
-    rm -rf /tmp/runtime-deployment
 
 # Set ownership for iowarp user
 RUN chown -R iowarp:iowarp /home/iowarp

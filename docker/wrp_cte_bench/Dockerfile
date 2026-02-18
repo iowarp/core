@@ -7,7 +7,19 @@
 #
 # Note: This container uses environment variables only and automatically stops the Chimaera runtime after benchmark completion
 
-FROM iowarp/build-cpu:latest
+FROM iowarp/deps-cpu:latest
+
+WORKDIR /workspace
+COPY . /workspace/
+
+# Build and install IOWarp
+RUN sudo chown -R $(whoami):$(whoami) /workspace && \
+    git submodule update --init --recursive && \
+    mkdir -p build && \
+    cd build && \
+    cmake --preset build-cpu-release ../ && \
+    sudo make -j$(nproc) install && \
+    sudo rm -rf /workspace
 
 # Create benchmark directory
 RUN sudo mkdir -p /benchmarks && \

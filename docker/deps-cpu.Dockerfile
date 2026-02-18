@@ -291,8 +291,10 @@ RUN source /home/iowarp/miniconda3/etc/profile.d/conda.sh \
     && conda install -y libaio -c conda-forge
 
 # Install Jarvis (IOWarp runtime deployment tool)
+# Try SSH clone first, fall back to HTTPS if SSH is unavailable
 RUN cd /home/iowarp \
-    && git clone https://github.com/iowarp/runtime-deployment.git \
+    && (git clone git@github.com:iowarp/runtime-deployment.git 2>/dev/null || \
+        git clone https://github.com/iowarp/runtime-deployment.git) \
     && cd runtime-deployment \
     && source /home/iowarp/miniconda3/etc/profile.d/conda.sh \
     && conda activate base \
@@ -300,6 +302,20 @@ RUN cd /home/iowarp \
     && jarvis init \
     && jarvis rg build \
     && jarvis repo add /workspace/jarvis_iowarp
+
+# Install Node.js 22 LTS (required by Docusaurus docs site)
+USER root
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
+USER iowarp
+
+# Install docs site (Docusaurus) dependencies
+# Try SSH clone first, fall back to HTTPS if SSH is unavailable
+RUN cd /home/iowarp \
+    && (git clone -b iowarp-dev git@github.com:iowarp/docs.git 2>/dev/null || \
+        git clone -b iowarp-dev https://github.com/iowarp/docs.git) \
+    && cd docs && npm install
 
 # Configure Spack to use conda packages
 RUN mkdir -p ~/.spack && \

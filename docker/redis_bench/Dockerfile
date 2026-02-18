@@ -7,7 +7,19 @@
 #   docker run iowarp/cte-redis-bench:latest SetGet 4 1m 10000
 #   docker run iowarp/cte-redis-bench:latest All 4 1m 10000
 
-FROM iowarp/build-cpu:latest
+FROM iowarp/deps-cpu:latest
+
+WORKDIR /workspace
+COPY . /workspace/
+
+# Build and install IOWarp
+RUN sudo chown -R $(whoami):$(whoami) /workspace && \
+    git submodule update --init --recursive && \
+    mkdir -p build && \
+    cd build && \
+    cmake --preset build-cpu-release ../ && \
+    sudo make -j$(nproc) install && \
+    sudo rm -rf /workspace
 
 # Install Redis server and tools
 # Using redis from Ubuntu repositories for simplicity and stability

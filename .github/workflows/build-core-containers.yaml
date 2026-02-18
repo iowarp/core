@@ -8,7 +8,6 @@ on:
     branches:
       - main
     paths:
-      - 'docker/build-cpu.Dockerfile'
       - 'docker/deploy-cpu.Dockerfile'
       - 'CMakeLists.txt'
       - 'CMakePresets.json'
@@ -19,96 +18,16 @@ on:
       - 'context-transport-primitives/**'
 
 jobs:
-  # Build AMD64 on native x86_64 runner
-  build-cpu-amd64:
-    name: Build CPU Container (AMD64)
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push build-cpu (AMD64)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./docker/build-cpu.Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: iowarp/build-cpu:latest-amd64
-          cache-from: type=registry,ref=iowarp/build-cpu:buildcache-amd64
-          cache-to: type=registry,ref=iowarp/build-cpu:buildcache-amd64,mode=max
-
-  # Build ARM64 on native ARM64 runner (much faster than QEMU emulation)
-  build-cpu-arm64:
-    name: Build CPU Container (ARM64)
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push build-cpu (ARM64)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./docker/build-cpu.Dockerfile
-          platforms: linux/arm64
-          push: true
-          tags: iowarp/build-cpu:latest-arm64
-          cache-from: type=registry,ref=iowarp/build-cpu:buildcache-arm64
-          cache-to: type=registry,ref=iowarp/build-cpu:buildcache-arm64,mode=max
-
-  # Create multi-arch manifest for build-cpu
-  create-build-cpu-manifest:
-    name: Create Multi-Arch Manifest (build-cpu)
-    runs-on: ubuntu-latest
-    needs: [build-cpu-amd64, build-cpu-arm64]
-    steps:
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-
-      - name: Create and push multi-arch manifest
-        run: |
-          docker buildx imagetools create \
-            --tag iowarp/build-cpu:latest \
-            iowarp/build-cpu:latest-amd64 \
-            iowarp/build-cpu:latest-arm64
-
   # Deploy containers - AMD64
   deploy-cpu-amd64:
     name: Build Deploy Container (AMD64)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: create-build-cpu-manifest
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -134,11 +53,12 @@ jobs:
   deploy-cpu-arm64:
     name: Build Deploy Container (ARM64)
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    needs: create-build-cpu-manifest
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -183,11 +103,12 @@ jobs:
   build-benchmarks-amd64:
     name: Build Benchmarks (AMD64)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: create-build-cpu-manifest
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -220,11 +141,12 @@ jobs:
   build-benchmarks-arm64:
     name: Build Benchmarks (ARM64)
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    needs: create-build-cpu-manifest
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
