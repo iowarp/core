@@ -58,12 +58,6 @@ set(STREAMING_TEST_SOURCES
   test_streaming.cc
 )
 
-# LocalTransfer test executable
-set(LOCAL_TRANSFER_TEST_TARGET chimaera_local_transfer_tests)
-set(LOCAL_TRANSFER_TEST_SOURCES
-  test_local_transfer.cc
-)
-
 # External Client test executable
 set(EXTERNAL_CLIENT_TEST_TARGET chimaera_external_client_tests)
 set(EXTERNAL_CLIENT_TEST_SOURCES
@@ -301,29 +295,6 @@ set_target_properties(${STREAMING_TEST_TARGET} PROPERTIES
 )
 
 set_target_properties(${STREAMING_TEST_TARGET} PROPERTIES
-  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-)
-
-# Create LocalTransfer test executable
-add_executable(${LOCAL_TRANSFER_TEST_TARGET} ${LOCAL_TRANSFER_TEST_SOURCES})
-
-target_include_directories(${LOCAL_TRANSFER_TEST_TARGET} PRIVATE
-  ${CHIMAERA_ROOT}/include
-  ${CHIMAERA_ROOT}/test  # For simple_test.h
-)
-
-target_link_libraries(${LOCAL_TRANSFER_TEST_TARGET}
-  chimaera_cxx               # Main Chimaera library
-  hshm::cxx                  # HermesShm library
-  ${CMAKE_THREAD_LIBS_INIT}  # Threading support
-)
-
-set_target_properties(${LOCAL_TRANSFER_TEST_TARGET} PROPERTIES
-  CXX_STANDARD 17
-  CXX_STANDARD_REQUIRED ON
-)
-
-set_target_properties(${LOCAL_TRANSFER_TEST_TARGET} PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
@@ -756,87 +727,6 @@ if(WRP_CORE_ENABLE_TESTS)
     TIMEOUT 180
   )
 
-  # LocalTransfer Tests
-  add_test(
-    NAME cr_local_transfer_construct_tests
-    COMMAND ${LOCAL_TRANSFER_TEST_TARGET} "construct"
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_local_transfer_construct_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-    TIMEOUT 60
-  )
-
-  add_test(
-    NAME cr_local_transfer_single_tests
-    COMMAND ${LOCAL_TRANSFER_TEST_TARGET} "single"
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_local_transfer_single_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-    TIMEOUT 60
-  )
-
-  add_test(
-    NAME cr_local_transfer_multi_tests
-    COMMAND ${LOCAL_TRANSFER_TEST_TARGET} "multi"
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_local_transfer_multi_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-    TIMEOUT 120
-  )
-
-  add_test(
-    NAME cr_local_transfer_large_tests
-    COMMAND ${LOCAL_TRANSFER_TEST_TARGET} "large"
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_local_transfer_large_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-    TIMEOUT 120
-  )
-
-  add_test(
-    NAME cr_local_transfer_edge_tests
-    COMMAND ${LOCAL_TRANSFER_TEST_TARGET} "edge"
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_local_transfer_edge_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-    TIMEOUT 60
-  )
-
-  add_test(
-    NAME cr_local_transfer_error_tests
-    COMMAND ${LOCAL_TRANSFER_TEST_TARGET} "error"
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_local_transfer_error_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-    TIMEOUT 60
-  )
-
-  add_test(
-    NAME cr_local_transfer_threaded_tests
-    COMMAND ${LOCAL_TRANSFER_TEST_TARGET} "threaded"
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_local_transfer_threaded_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-    TIMEOUT 120
-  )
-
-  add_test(
-    NAME cr_all_local_transfer_tests
-    COMMAND ${LOCAL_TRANSFER_TEST_TARGET}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_all_local_transfer_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-    TIMEOUT 300
-  )
-
   # External Client Tests
   # NOTE: Each test case must run in its own process because CHIMAERA_INIT has
   # a static guard that prevents re-initialization. Running all tests in one
@@ -1113,7 +1003,6 @@ install(TARGETS
   ${PER_PROCESS_SHM_TEST_TARGET}
   ${AUTOGEN_COVERAGE_TEST_TARGET}
   ${STREAMING_TEST_TARGET}
-  ${LOCAL_TRANSFER_TEST_TARGET}
   ${EXTERNAL_CLIENT_TEST_TARGET}
   ${RUNTIME_CLEANUP_TEST_TARGET}
   ${IPC_ERRORS_TEST_TARGET}

@@ -32,19 +32,20 @@
  */
 
 /**
- * GPU unit test for LocalTransfer with GpuShmMmap backend
+ * GPU unit test for ShmTransport with GpuShmMmap backend
  *
  * This test verifies that data transfer works correctly with GPU-accessible
- * pinned memory:
+ * pinned memory using ShmTransferInfo and ShmTransport::WriteTransfer/ReadTransfer:
  * 1. Allocates pinned host memory using GpuShmMmap backend for copy space
- * 2. Uses 16KB transfer granularity
- * 3. GPU kernel fills a 64KB buffer with pattern (memset to 1)
- * 4. Data is transferred in chunks via the copy space
+ * 2. Uses ShmTransferInfo for SPSC ring buffer metadata
+ * 3. GPU kernel writes data via ShmTransport::WriteTransfer
+ * 4. CPU reads data via ShmTransport::ReadTransfer
  * 5. CPU verifies the transferred data
  */
 
 #include <catch2/catch_all.hpp>
 
+#include "hermes_shm/lightbeam/shm_transport.h"
 #include "hermes_shm/memory/allocator/arena_allocator.h"
 #include "hermes_shm/memory/backend/gpu_shm_mmap.h"
 #include "hermes_shm/util/gpu_api.h"
@@ -52,13 +53,12 @@
 using hshm::ipc::ArenaAllocator;
 using hshm::ipc::GpuShmMmap;
 using hshm::ipc::MemoryBackendId;
+using hshm::lbm::LbmContext;
+using hshm::lbm::ShmTransferInfo;
+using hshm::lbm::ShmTransport;
 
 /**
  * GPU kernel to fill a buffer with a pattern
- *
- * @param buffer Pointer to the buffer to fill
- * @param size Size of the buffer
- * @param pattern Value to fill with
  */
 __global__ void FillBufferKernel(char *buffer, size_t size, char pattern) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -70,32 +70,22 @@ __global__ void FillBufferKernel(char *buffer, size_t size, char pattern) {
 }
 
 /**
- * GPU kernel to copy a chunk of data to copy space
- *
- * This simulates the sender-side transfer: GPU copies data to the copy space
- * that will be read by the CPU.
- *
- * @param src_buffer Source buffer (GPU-side data)
- * @param copy_space Destination copy space (pinned memory)
- * @param offset Offset into source buffer
- * @param chunk_size Size of chunk to copy
+ * GPU kernel that writes data to copy_space via ShmTransport::WriteTransfer
+ * Uses the GPU-compatible SPSC ring buffer to transfer data.
+ * Only thread 0 performs the transfer (single-producer).
  */
-__global__ void CopyChunkKernel(const char *src_buffer, char *copy_space,
-                                size_t offset, size_t chunk_size) {
-  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-  size_t stride = blockDim.x * gridDim.x;
-
-  for (size_t i = idx; i < chunk_size; i += stride) {
-    copy_space[i] = src_buffer[offset + i];
+__global__ void GpuWriteTransferKernel(const char *src_buffer, size_t data_size,
+                                        char *copy_space, ShmTransferInfo *shm_info) {
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    LbmContext ctx;
+    ctx.copy_space = copy_space;
+    ctx.shm_info_ = shm_info;
+    ShmTransport::WriteTransfer(src_buffer, data_size, ctx);
   }
 }
 
 /**
  * GPU kernel to set a value at a specific location (for simple tests)
- *
- * @param buffer Pointer to the buffer
- * @param index Index to set
- * @param value Value to set
  */
 __global__ void SetValueKernel(char *buffer, size_t index, char value) {
   if (threadIdx.x == 0 && blockIdx.x == 0) {
@@ -104,9 +94,9 @@ __global__ void SetValueKernel(char *buffer, size_t index, char value) {
 }
 
 /**
- * Test GPU to CPU data transfer using GpuShmMmap pinned memory
+ * Test GPU to CPU data transfer using ShmTransferInfo SPSC ring buffer
  */
-TEST_CASE("LocalTransfer GPU", "[gpu][transfer]") {
+TEST_CASE("ShmTransfer GPU", "[gpu][transfer]") {
   constexpr size_t kBackendSize = 16 * 1024 * 1024;  // 16MB
   constexpr size_t kCopySpaceSize = 16 * 1024;       // 16KB transfer granularity
   constexpr size_t kDataSize = 64 * 1024;            // 64KB buffer
@@ -126,13 +116,18 @@ TEST_CASE("LocalTransfer GPU", "[gpu][transfer]") {
     AllocT *alloc_ptr = backend.MakeAlloc<AllocT>();
     REQUIRE(alloc_ptr != nullptr);
 
-    // Step 3: Allocate copy space from the allocator (pinned memory)
+    // Step 3: Allocate copy space and ShmTransferInfo from pinned memory
     auto copy_space_ptr = alloc_ptr->AllocateObjs<char>(kCopySpaceSize);
     char *copy_space = copy_space_ptr.ptr_;
     REQUIRE(copy_space != nullptr);
 
-    // Step 4: Allocate GPU source buffer (device memory or pinned)
-    // We use pinned memory so both GPU and CPU can access
+    auto shm_info_ptr = alloc_ptr->AllocateObjs<ShmTransferInfo>(1);
+    ShmTransferInfo *shm_info = shm_info_ptr.ptr_;
+    REQUIRE(shm_info != nullptr);
+    new (shm_info) ShmTransferInfo();
+    shm_info->copy_space_size_ = kCopySpaceSize;
+
+    // Step 4: Allocate GPU source buffer (pinned so both GPU and CPU can access)
     char *gpu_buffer;
     cudaMallocHost(&gpu_buffer, kDataSize);
     REQUIRE(gpu_buffer != nullptr);
@@ -145,33 +140,24 @@ TEST_CASE("LocalTransfer GPU", "[gpu][transfer]") {
     cudaError_t err = cudaDeviceSynchronize();
     REQUIRE(err == cudaSuccess);
 
-    // Step 6: Transfer data in chunks (16KB at a time)
-    std::vector<char> received_data;
-    received_data.reserve(kDataSize);
+    // Step 6: GPU writes data via ShmTransport::WriteTransfer (SPSC ring buffer)
+    // Launch with single thread since WriteTransfer is single-producer
+    GpuWriteTransferKernel<<<1, 1>>>(gpu_buffer, kDataSize, copy_space, shm_info);
 
-    size_t bytes_transferred = 0;
-    while (bytes_transferred < kDataSize) {
-      // Calculate chunk size
-      size_t remaining = kDataSize - bytes_transferred;
-      size_t chunk_size = std::min(remaining, kCopySpaceSize);
+    // Step 7: CPU reads data via ShmTransport::ReadTransfer
+    std::vector<char> received_data(kDataSize);
+    LbmContext ctx;
+    ctx.copy_space = copy_space;
+    ctx.shm_info_ = shm_info;
+    ShmTransport::ReadTransfer(received_data.data(), kDataSize, ctx);
 
-      // GPU copies chunk to copy space
-      CopyChunkKernel<<<numBlocks, blockSize>>>(gpu_buffer, copy_space,
-                                                bytes_transferred, chunk_size);
-      err = cudaDeviceSynchronize();
-      REQUIRE(err == cudaSuccess);
+    // Wait for GPU kernel to complete
+    err = cudaDeviceSynchronize();
+    REQUIRE(err == cudaSuccess);
 
-      // CPU reads from copy space (since it's pinned memory, CPU can read directly)
-      received_data.insert(received_data.end(), copy_space,
-                           copy_space + chunk_size);
-
-      bytes_transferred += chunk_size;
-    }
-
-    // Step 7: Verify all data was transferred
+    // Step 8: Verify all data was transferred
     REQUIRE(received_data.size() == kDataSize);
 
-    // Step 8: Verify data integrity - all bytes should be 1
     bool all_ones = true;
     for (size_t i = 0; i < kDataSize; ++i) {
       if (received_data[i] != kPattern) {
@@ -201,6 +187,12 @@ TEST_CASE("LocalTransfer GPU", "[gpu][transfer]") {
     char *copy_space = copy_space_ptr.ptr_;
     REQUIRE(copy_space != nullptr);
 
+    auto shm_info_ptr = alloc_ptr->AllocateObjs<ShmTransferInfo>(1);
+    ShmTransferInfo *shm_info = shm_info_ptr.ptr_;
+    REQUIRE(shm_info != nullptr);
+    new (shm_info) ShmTransferInfo();
+    shm_info->copy_space_size_ = kCopySpaceSize;
+
     // Allocate and initialize GPU buffer with pattern
     char *gpu_buffer;
     cudaMallocHost(&gpu_buffer, kDataSize);
@@ -211,35 +203,18 @@ TEST_CASE("LocalTransfer GPU", "[gpu][transfer]") {
       gpu_buffer[i] = static_cast<char>(i % 256);
     }
 
-    // Transfer in chunks
-    std::vector<char> received_data;
-    received_data.reserve(kDataSize);
+    // GPU writes via SPSC ring buffer
+    GpuWriteTransferKernel<<<1, 1>>>(gpu_buffer, kDataSize, copy_space, shm_info);
 
-    size_t bytes_transferred = 0;
-    size_t chunk_count = 0;
-    int blockSize = 256;
-    int numBlocks = (kCopySpaceSize + blockSize - 1) / blockSize;
+    // CPU reads via SPSC ring buffer
+    std::vector<char> received_data(kDataSize);
+    LbmContext ctx;
+    ctx.copy_space = copy_space;
+    ctx.shm_info_ = shm_info;
+    ShmTransport::ReadTransfer(received_data.data(), kDataSize, ctx);
 
-    while (bytes_transferred < kDataSize) {
-      size_t remaining = kDataSize - bytes_transferred;
-      size_t chunk_size = std::min(remaining, kCopySpaceSize);
-
-      // GPU copies chunk to copy space
-      CopyChunkKernel<<<numBlocks, blockSize>>>(gpu_buffer, copy_space,
-                                                bytes_transferred, chunk_size);
-      cudaError_t err = cudaDeviceSynchronize();
-      REQUIRE(err == cudaSuccess);
-
-      // CPU reads from copy space
-      received_data.insert(received_data.end(), copy_space,
-                           copy_space + chunk_size);
-
-      bytes_transferred += chunk_size;
-      chunk_count++;
-    }
-
-    // Verify chunk count (64KB / 16KB = 4 chunks)
-    REQUIRE(chunk_count == 4);
+    cudaError_t err = cudaDeviceSynchronize();
+    REQUIRE(err == cudaSuccess);
 
     // Verify data integrity
     REQUIRE(received_data.size() == kDataSize);
@@ -314,6 +289,12 @@ TEST_CASE("LocalTransfer GPU", "[gpu][transfer]") {
     char *copy_space = copy_space_ptr.ptr_;
     REQUIRE(copy_space != nullptr);
 
+    auto shm_info_ptr = alloc_ptr->AllocateObjs<ShmTransferInfo>(1);
+    ShmTransferInfo *shm_info = shm_info_ptr.ptr_;
+    REQUIRE(shm_info != nullptr);
+    new (shm_info) ShmTransferInfo();
+    shm_info->copy_space_size_ = kCopySpaceSize;
+
     // Allocate GPU buffer
     char *gpu_buffer;
     cudaMallocHost(&gpu_buffer, kLargeDataSize);
@@ -328,27 +309,18 @@ TEST_CASE("LocalTransfer GPU", "[gpu][transfer]") {
     cudaError_t err = cudaDeviceSynchronize();
     REQUIRE(err == cudaSuccess);
 
-    // Transfer in 16KB chunks
-    std::vector<char> received_data;
-    received_data.reserve(kLargeDataSize);
+    // GPU writes via SPSC ring buffer
+    GpuWriteTransferKernel<<<1, 1>>>(gpu_buffer, kLargeDataSize, copy_space, shm_info);
 
-    size_t bytes_transferred = 0;
-    numBlocks = (kCopySpaceSize + blockSize - 1) / blockSize;
+    // CPU reads via SPSC ring buffer
+    std::vector<char> received_data(kLargeDataSize);
+    LbmContext ctx;
+    ctx.copy_space = copy_space;
+    ctx.shm_info_ = shm_info;
+    ShmTransport::ReadTransfer(received_data.data(), kLargeDataSize, ctx);
 
-    while (bytes_transferred < kLargeDataSize) {
-      size_t remaining = kLargeDataSize - bytes_transferred;
-      size_t chunk_size = std::min(remaining, kCopySpaceSize);
-
-      CopyChunkKernel<<<numBlocks, blockSize>>>(gpu_buffer, copy_space,
-                                                bytes_transferred, chunk_size);
-      err = cudaDeviceSynchronize();
-      REQUIRE(err == cudaSuccess);
-
-      received_data.insert(received_data.end(), copy_space,
-                           copy_space + chunk_size);
-
-      bytes_transferred += chunk_size;
-    }
+    err = cudaDeviceSynchronize();
+    REQUIRE(err == cudaSuccess);
 
     // Verify
     REQUIRE(received_data.size() == kLargeDataSize);

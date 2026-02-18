@@ -114,14 +114,14 @@ struct LbmContext {
   char* copy_space = nullptr;                      /**< Shared buffer for chunked transfer */
   ShmTransferInfo* shm_info_ = nullptr;            /**< Transfer info in shared memory */
 
-  LbmContext() : flags(0), timeout_ms(0) {}
+  HSHM_CROSS_FUN LbmContext() : flags(0), timeout_ms(0) {}
 
-  explicit LbmContext(uint32_t f) : flags(f), timeout_ms(0) {}
+  HSHM_CROSS_FUN explicit LbmContext(uint32_t f) : flags(f), timeout_ms(0) {}
 
-  LbmContext(uint32_t f, int timeout) : flags(f), timeout_ms(timeout) {}
+  HSHM_CROSS_FUN LbmContext(uint32_t f, int timeout) : flags(f), timeout_ms(timeout) {}
 
-  bool IsSync() const { return (flags & LBM_SYNC) != 0; }
-  bool HasTimeout() const { return timeout_ms > 0; }
+  HSHM_CROSS_FUN bool IsSync() const { return (flags & LBM_SYNC) != 0; }
+  HSHM_CROSS_FUN bool HasTimeout() const { return timeout_ms > 0; }
 };
 
 // --- Transport Type Enum ---

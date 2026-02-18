@@ -57,7 +57,6 @@
 #include "chimaera/singletons.h"
 #include "chimaera/task.h"
 #include "chimaera/task_archives.h"
-#include "chimaera/task_queue.h"
 #include "chimaera/work_orchestrator.h"
 
 namespace chi {
@@ -243,13 +242,6 @@ void Worker::Run() {
 
     // Check blocked queue for completed tasks at end of each iteration
     ContinueBlockedTasks(false);
-
-    // Copy task output data to copy space for streaming (low-priority
-    // operation) Only do this when worker would otherwise idle, with minimal
-    // time budget
-    if (!did_work_) {
-      CopyTaskOutputToClient();
-    }
 
     // Increment iteration counter
     iteration_count_++;
@@ -1709,30 +1701,5 @@ RunContext *GetCurrentRunContextFromWorker() {
   return nullptr;
 }
 
-void Worker::CopyTaskOutputToClient() {
-  // Process transfers in client_copy_ queue
-  // Mark did_work_ if there are any transfers to prevent worker suspension
-  if (!client_copy_.empty()) {
-    did_work_ = true;
-  }
-
-  while (!client_copy_.empty()) {
-    LocalTransfer &transfer = client_copy_.front();
-
-    // Try to send data using LocalTransfer (5ms = 5000us time budget)
-    bool send_complete = transfer.Send(5000);
-
-    if (send_complete) {
-      // Transfer complete - remove from queue
-      client_copy_.pop();
-    } else {
-      // Transfer not complete - move to back of queue for fairness
-      LocalTransfer t = std::move(client_copy_.front());
-      client_copy_.pop();
-      client_copy_.push(std::move(t));
-      break;  // Process other work before continuing this transfer
-    }
-  }
-}
 
 }  // namespace chi

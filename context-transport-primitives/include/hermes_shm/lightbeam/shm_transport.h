@@ -33,7 +33,6 @@
 
 #pragma once
 
-#include <algorithm>
 #include <atomic>
 #include <cstring>
 
@@ -67,6 +66,7 @@ class ShmTransport : public Transport {
 
   ~ShmTransport() override = default;
 
+  HSHM_CROSS_FUN
   Bulk Expose(const hipc::FullPtr<char>& ptr, size_t data_size,
               u32 flags) override {
     Bulk bulk;
@@ -185,7 +185,27 @@ class ShmTransport : public Transport {
   }
 
  private:
+  // GPU-safe min of three values
+  HSHM_CROSS_FUN
+  static size_t Min3(size_t a, size_t b, size_t c) {
+    size_t m = (a < b) ? a : b;
+    return (m < c) ? m : c;
+  }
+
+  // GPU-safe memcpy
+  HSHM_CROSS_FUN
+  static void MemCopy(char* dst, const char* src, size_t n) {
+#if HSHM_IS_HOST
+    std::memcpy(dst, src, n);
+#else
+    for (size_t i = 0; i < n; ++i) {
+      dst[i] = src[i];
+    }
+#endif
+  }
+
   // SPSC ring buffer write
+  HSHM_CROSS_FUN
   static void WriteTransfer(const char* data, size_t size, const LbmContext& ctx) {
     size_t offset = 0;
     size_t total_written = ctx.shm_info_->total_written_.load();
@@ -194,13 +214,15 @@ class ShmTransport : public Transport {
       size_t space =
           ctx.shm_info_->copy_space_size_ - (total_written - total_read);
       if (space == 0) {
+#if HSHM_IS_HOST
         HSHM_THREAD_MODEL->Yield();
+#endif
         continue;
       }
       size_t write_pos = total_written % ctx.shm_info_->copy_space_size_;
       size_t contig = ctx.shm_info_->copy_space_size_ - write_pos;
-      size_t chunk = std::min({size - offset, space, contig});
-      std::memcpy(ctx.copy_space + write_pos, data + offset, chunk);
+      size_t chunk = Min3(size - offset, space, contig);
+      MemCopy(ctx.copy_space + write_pos, data + offset, chunk);
       offset += chunk;
       total_written += chunk;
       ctx.shm_info_->total_written_.store(total_written,
@@ -209,6 +231,7 @@ class ShmTransport : public Transport {
   }
 
   // SPSC ring buffer read
+  HSHM_CROSS_FUN
   static void ReadTransfer(char* buf, size_t size, const LbmContext& ctx) {
     size_t offset = 0;
     size_t total_read = ctx.shm_info_->total_read_.load();
@@ -216,13 +239,15 @@ class ShmTransport : public Transport {
       size_t total_written = ctx.shm_info_->total_written_.load();
       size_t avail = total_written - total_read;
       if (avail == 0) {
+#if HSHM_IS_HOST
         HSHM_THREAD_MODEL->Yield();
+#endif
         continue;
       }
       size_t read_pos = total_read % ctx.shm_info_->copy_space_size_;
       size_t contig = ctx.shm_info_->copy_space_size_ - read_pos;
-      size_t chunk = std::min({size - offset, avail, contig});
-      std::memcpy(buf + offset, ctx.copy_space + read_pos, chunk);
+      size_t chunk = Min3(size - offset, avail, contig);
+      MemCopy(buf + offset, ctx.copy_space + read_pos, chunk);
       offset += chunk;
       total_read += chunk;
       ctx.shm_info_->total_read_.store(total_read, std::memory_order_release);

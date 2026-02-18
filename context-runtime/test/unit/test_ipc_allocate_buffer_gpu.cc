@@ -419,8 +419,8 @@ __global__ void test_gpu_serialize_deserialize_kernel(
 
 /**
  * GPU kernel for testing task serialization on GPU for CPU deserialization
- * Creates task, serializes with LocalSaveTaskArchive, ready for LocalTransfer
- * to CPU
+ * Creates task, serializes with LocalSaveTaskArchive, ready for ShmTransport
+ * transfer to CPU
  */
 __global__ void test_gpu_serialize_for_cpu_kernel(
     const hipc::MemoryBackend backend, char *output_buffer, size_t *output_size,
@@ -728,10 +728,10 @@ TEST_CASE("GPU IPC AllocateBuffer basic functionality",
 
   SECTION("GPU serialize -> CPU deserialize") {
     INFO(
-        "Testing GPU task serialization -> LocalTransfer -> CPU "
+        "Testing GPU task serialization -> ShmTransport -> CPU "
         "deserialization");
 
-    // Allocate pinned host buffer for transfer (LocalTransfer requires pinned
+    // Allocate pinned host buffer for transfer (ShmTransport requires pinned
     // memory)
     size_t buffer_size = 1024;
     char *h_buffer = nullptr;
@@ -760,7 +760,7 @@ TEST_CASE("GPU IPC AllocateBuffer basic functionality",
     hshm::GpuApi::Memcpy(&h_output_size, d_output_size, sizeof(size_t));
     INFO("Serialized task size: " + std::to_string(h_output_size) + " bytes");
 
-    // LocalTransfer: Copy serialized data from GPU to pinned host memory
+    // ShmTransport: Copy serialized data from GPU to pinned host memory
     hshm::GpuApi::Memcpy(h_buffer, d_buffer, h_output_size);
 
     // Deserialize on CPU using LocalLoadTaskArchive
@@ -782,7 +782,7 @@ TEST_CASE("GPU IPC AllocateBuffer basic functionality",
     REQUIRE(cpu_task.result_value_ == 0);
 
     INFO(
-        "SUCCESS: GPU serialized task -> LocalTransfer -> CPU deserialized "
+        "SUCCESS: GPU serialized task -> ShmTransport -> CPU deserialized "
         "correctly!");
 
     // Cleanup
