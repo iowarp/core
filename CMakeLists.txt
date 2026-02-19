@@ -231,17 +231,27 @@ if(yaml-cpp_FOUND)
     resolve_yaml_cpp_target()
 endif()
 
-# When static deps are enabled, override yaml-cpp target to use the .a file
-# find_package creates an imported target pointing to the .so, so we must
-# replace it with the static archive for self-contained wheels.
+# When static deps are enabled, override yaml-cpp target to use the .a file.
+# find_package creates an imported target whose per-config properties
+# (IMPORTED_LOCATION_RELEASE, IMPORTED_SONAME_RELEASE) take precedence
+# over the generic IMPORTED_LOCATION.  We must override every config that
+# was registered so the linker always picks the static archive.
 if(WRP_CORE_STATIC_DEPS)
     find_library(YAML_CPP_STATIC_LIB NAMES libyaml-cpp.a REQUIRED)
     if(YAML_CPP_STATIC_LIB)
         message(STATUS "Static yaml-cpp: ${YAML_CPP_STATIC_LIB}")
+        # Override every registered configuration
+        get_property(_yaml_configs TARGET yaml-cpp::yaml-cpp
+                     PROPERTY IMPORTED_CONFIGURATIONS)
+        foreach(_cfg ${_yaml_configs})
+            set_property(TARGET yaml-cpp::yaml-cpp
+                         PROPERTY IMPORTED_LOCATION_${_cfg} "${YAML_CPP_STATIC_LIB}")
+            set_property(TARGET yaml-cpp::yaml-cpp
+                         PROPERTY IMPORTED_SONAME_${_cfg} "")
+        endforeach()
+        # Also set the generic fallback
         set_target_properties(yaml-cpp::yaml-cpp PROPERTIES
-            IMPORTED_LOCATION "${YAML_CPP_STATIC_LIB}"
-            IMPORTED_LOCATION_NONE "${YAML_CPP_STATIC_LIB}")
-        set_property(TARGET yaml-cpp::yaml-cpp PROPERTY IMPORTED_SONAME_NONE "")
+            IMPORTED_LOCATION "${YAML_CPP_STATIC_LIB}")
     endif()
 endif()
 
