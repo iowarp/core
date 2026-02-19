@@ -55,22 +55,19 @@ struct EventInfo;
 class EventAction {
  public:
   virtual ~EventAction() = default;
-  virtual void Run(const EventInfo &event) = 0;
+  virtual void Run(const EventInfo& event) = 0;
 };
 
 struct EventInfo {
   EventTrigger trigger_;
   uint32_t epoll_events_;
-  EventAction *action_;
+  EventAction* action_;
 };
 
 class EventManager {
  public:
   EventManager()
-      : epoll_fd_(epoll_create1(0)),
-        signal_fd_(-1),
-        next_event_id_(0) {
-  }
+      : epoll_fd_(epoll_create1(0)), signal_fd_(-1), next_event_id_(0) {}
 
   ~EventManager() {
     if (signal_fd_ >= 0) {
@@ -81,15 +78,26 @@ class EventManager {
     }
   }
 
-  EventManager(const EventManager &) = delete;
-  EventManager &operator=(const EventManager &) = delete;
+  EventManager(const EventManager&) = delete;
+  EventManager& operator=(const EventManager&) = delete;
 
   int AddEvent(int fd, uint32_t events = EPOLLIN,
-               EventAction *action = nullptr) {
-    int event_id = next_event_id_++;
+               EventAction* action = nullptr) {
     struct epoll_event ev;
     ev.events = events;
     ev.data.fd = fd;
+    auto it = fd_to_reg_.find(fd);
+    if (it != fd_to_reg_.end()) {
+      if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev) == -1) {
+        HLOG(kError,
+             "EventManager::AddEvent: epoll_ctl MOD failed for fd={}: {}", fd,
+             strerror(errno));
+        return -1;
+      }
+      it->second.action = action;
+      return it->second.event_id;
+    }
+    int event_id = next_event_id_++;
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev) == -1) {
       HLOG(kError, "EventManager::AddEvent: epoll_ctl ADD failed for fd={}: {}",
            fd, strerror(errno));
@@ -99,7 +107,7 @@ class EventManager {
     return event_id;
   }
 
-  int AddSignalEvent(EventAction *action = nullptr) {
+  int AddSignalEvent(EventAction* action = nullptr) {
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGUSR1);
@@ -135,7 +143,7 @@ class EventManager {
       int fd = epoll_events_[i].data.fd;
       auto it = fd_to_reg_.find(fd);
       if (it == fd_to_reg_.end()) continue;
-      const EventRegistration &reg = it->second;
+      const EventRegistration& reg = it->second;
       if (fd == signal_fd_) {
         struct signalfd_siginfo si;
         ssize_t bytes = read(signal_fd_, &si, sizeof(si));
@@ -166,7 +174,7 @@ class EventManager {
   struct EventRegistration {
     int fd_;
     int event_id_;
-    EventAction *action_;
+    EventAction* action_;
   };
   std::unordered_map<int, EventRegistration> fd_to_reg_;
 };
