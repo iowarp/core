@@ -278,6 +278,17 @@ public:
   }
 
 private:
+#if !HSHM_IS_HOST
+  /** GPU helper: write raw bytes into the raw buffer.
+   * Not needed on host where serializer_ handles writes. */
+  HSHM_INLINE_CROSS_FUN void GpuWrite(const void *src, size_t len) {
+    if (offset_ + len <= capacity_) {
+      memcpy(buffer_ + offset_, src, len);
+      offset_ += len;
+    }
+  }
+#endif
+
   /** Helper to serialize individual arguments - handles Tasks specially */
   template <typename T>
   HSHM_CROSS_FUN void SerializeArg(T &arg) {
