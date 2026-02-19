@@ -299,3 +299,148 @@ TEST_CASE("ShmTransfer - Concurrent with Delays", "[shm_transfer][threaded]") {
 
   REQUIRE(VerifyTestData(recv_data, DATA_SIZE));
 }
+
+// ============================================================================
+// SendMsg/RecvMsg API Tests (full serialization path)
+// ============================================================================
+
+TEST_CASE("ShmTransfer - Send/Recv Basic", "[shm_transfer][sendrecv]") {
+  constexpr size_t COPY_SPACE_SIZE = 4096;
+  constexpr size_t DATA_SIZE = 512;
+
+  TestTransferContext<COPY_SPACE_SIZE> ctx_store;
+
+  // Prepare send metadata with one bulk descriptor
+  LbmMeta<> send_meta;
+  std::vector<char> bulk_data = GenerateTestData(DATA_SIZE);
+  Bulk bulk;
+  bulk.data.ptr_ = bulk_data.data();
+  bulk.data.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
+  bulk.data.shm_.off_ = 0;
+  bulk.size = DATA_SIZE;
+  bulk.flags = hshm::bitfield32_t(BULK_XFER);
+  send_meta.send.push_back(bulk);
+  send_meta.send_bulks = 1;
+
+  int send_rc = -1;
+  LbmMeta<> recv_meta;
+  int recv_rc = -1;
+
+  std::thread sender([&]() {
+    auto ctx = ctx_store.MakeCtx();
+    send_rc = ShmTransport::Send(send_meta, ctx);
+  });
+
+  std::thread receiver([&]() {
+    auto ctx = ctx_store.MakeCtx();
+    auto info = ShmTransport::Recv(recv_meta, ctx);
+    recv_rc = info.rc;
+  });
+
+  sender.join();
+  receiver.join();
+
+  REQUIRE(send_rc == 0);
+  REQUIRE(recv_rc == 0);
+  REQUIRE(recv_meta.send.size() == 1);
+  REQUIRE(recv_meta.recv.size() == 1);
+  REQUIRE(recv_meta.recv[0].size == DATA_SIZE);
+  REQUIRE(recv_meta.recv[0].data.ptr_ != nullptr);
+
+  // Verify received data matches
+  bool data_correct = true;
+  for (size_t i = 0; i < DATA_SIZE; ++i) {
+    if (recv_meta.recv[0].data.ptr_[i] != static_cast<char>(i % 256)) {
+      data_correct = false;
+      break;
+    }
+  }
+  REQUIRE(data_correct);
+
+  std::free(recv_meta.recv[0].data.ptr_);
+}
+
+TEST_CASE("ShmTransfer - Send/Recv Large Multi-Chunk", "[shm_transfer][sendrecv]") {
+  constexpr size_t COPY_SPACE_SIZE = 1024;
+  constexpr size_t DATA_SIZE = 32 * 1024;  // 32KB through 1KB ring
+
+  TestTransferContext<COPY_SPACE_SIZE> ctx_store;
+
+  LbmMeta<> send_meta;
+  std::vector<char> bulk_data = GenerateTestData(DATA_SIZE);
+  Bulk bulk;
+  bulk.data.ptr_ = bulk_data.data();
+  bulk.data.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
+  bulk.data.shm_.off_ = 0;
+  bulk.size = DATA_SIZE;
+  bulk.flags = hshm::bitfield32_t(BULK_XFER);
+  send_meta.send.push_back(bulk);
+  send_meta.send_bulks = 1;
+
+  int send_rc = -1;
+  LbmMeta<> recv_meta;
+  int recv_rc = -1;
+
+  std::thread sender([&]() {
+    auto ctx = ctx_store.MakeCtx();
+    send_rc = ShmTransport::Send(send_meta, ctx);
+  });
+
+  std::thread receiver([&]() {
+    auto ctx = ctx_store.MakeCtx();
+    auto info = ShmTransport::Recv(recv_meta, ctx);
+    recv_rc = info.rc;
+  });
+
+  sender.join();
+  receiver.join();
+
+  REQUIRE(send_rc == 0);
+  REQUIRE(recv_rc == 0);
+  REQUIRE(recv_meta.recv.size() == 1);
+  REQUIRE(recv_meta.recv[0].size == DATA_SIZE);
+
+  bool data_correct = true;
+  for (size_t i = 0; i < DATA_SIZE; ++i) {
+    if (recv_meta.recv[0].data.ptr_[i] != static_cast<char>(i % 256)) {
+      data_correct = false;
+      break;
+    }
+  }
+  REQUIRE(data_correct);
+
+  std::free(recv_meta.recv[0].data.ptr_);
+}
+
+TEST_CASE("ShmTransfer - Send/Recv Metadata Only", "[shm_transfer][sendrecv]") {
+  constexpr size_t COPY_SPACE_SIZE = 4096;
+
+  TestTransferContext<COPY_SPACE_SIZE> ctx_store;
+
+  // Send metadata with no bulk descriptors
+  LbmMeta<> send_meta;
+  send_meta.send_bulks = 0;
+
+  int send_rc = -1;
+  LbmMeta<> recv_meta;
+  int recv_rc = -1;
+
+  std::thread sender([&]() {
+    auto ctx = ctx_store.MakeCtx();
+    send_rc = ShmTransport::Send(send_meta, ctx);
+  });
+
+  std::thread receiver([&]() {
+    auto ctx = ctx_store.MakeCtx();
+    auto info = ShmTransport::Recv(recv_meta, ctx);
+    recv_rc = info.rc;
+  });
+
+  sender.join();
+  receiver.join();
+
+  REQUIRE(send_rc == 0);
+  REQUIRE(recv_rc == 0);
+  REQUIRE(recv_meta.send.empty());
+  REQUIRE(recv_meta.recv.empty());
+}

@@ -243,13 +243,15 @@ class LocalDeserialize {
     return *this;
   }
 
-  /** Save function (binary data) */
+  /** Load function (binary data) */
   HSHM_INLINE_CROSS_FUN
   LocalDeserialize &read_binary(char *data, size_t size) {
     if (cur_off_ + size > data_.size()) {
+#if HSHM_IS_HOST
       HLOG(kError,
            "LocalDeserialize::read_binary: Attempted to read beyond end of "
            "data");
+#endif
       return *this;
     }
     memcpy(data, data_.data() + cur_off_, size);

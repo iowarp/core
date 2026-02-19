@@ -58,7 +58,7 @@ void TestZeroMQ() {
   const std::string magic = "unit_test_magic";
 
   // Client creates metadata and sends
-  LbmMeta send_meta;
+  LbmMeta<> send_meta;
   Bulk send_bulk = client->Expose(
       hipc::FullPtr<char>(const_cast<char*>(magic.data())),
       magic.size(), BULK_XFER);
@@ -69,7 +69,7 @@ void TestZeroMQ() {
   std::cout << "Client sent data successfully\n";
 
   // Recv with retry loop (does everything - metadata + bulks)
-  LbmMeta recv_meta;
+  LbmMeta<> recv_meta;
   while (true) {
     auto info = server->Recv(recv_meta);
     rc = info.rc;

@@ -156,7 +156,7 @@ class SocketTransport : public Transport {
     }
   }
 
-  ~SocketTransport() override {
+  ~SocketTransport() {
     if (IsClient()) {
       sock::Close(fd_);
     } else {
@@ -171,7 +171,7 @@ class SocketTransport : public Transport {
   }
 
   Bulk Expose(const hipc::FullPtr<char>& ptr, size_t data_size,
-              u32 flags) override {
+              u32 flags) {
     Bulk bulk;
     bulk.data = ptr;
     bulk.size = data_size;
@@ -179,7 +179,7 @@ class SocketTransport : public Transport {
     return bulk;
   }
 
-  void ClearRecvHandles(LbmMeta& meta) override {
+  void ClearRecvHandles(LbmMeta<>& meta) {
     for (auto& bulk : meta.recv) {
       if (bulk.data.ptr_) {
         std::free(bulk.data.ptr_);
@@ -188,13 +188,9 @@ class SocketTransport : public Transport {
     }
   }
 
-  std::string GetAddress() const override { return addr_; }
+  std::string GetAddress() const { return addr_; }
 
-  int GetFd() const override {
-    return IsClient() ? fd_ : listen_fd_;
-  }
-
-  void RegisterEventManager(EventManager &em) override {
+  void RegisterEventManager(EventManager &em) {
     em_ = &em;
     if (IsClient()) {
       em.AddEvent(fd_, EPOLLIN, &fired_action_);

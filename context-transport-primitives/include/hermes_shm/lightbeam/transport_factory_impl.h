@@ -48,6 +48,97 @@
 
 namespace hshm::lbm {
 
+#if HSHM_IS_HOST
+// --- TransportDeleter implementation ---
+inline void TransportDeleter::operator()(Transport* t) const {
+  if (!t) return;
+  switch (t->type_) {
+#if HSHM_ENABLE_ZMQ
+    case TransportType::kZeroMq:
+      delete static_cast<ZeroMqTransport*>(t);
+      break;
+#endif
+    case TransportType::kSocket:
+      delete static_cast<SocketTransport*>(t);
+      break;
+    case TransportType::kShm:
+      delete static_cast<ShmTransport*>(t);
+      break;
+    default:
+      delete t;
+      break;
+  }
+}
+
+// --- Unified Transport Non-Template Dispatch ---
+inline Bulk Transport::Expose(const hipc::FullPtr<char>& ptr, size_t data_size, u32 flags) {
+  switch (type_) {
+#if HSHM_ENABLE_ZMQ
+    case TransportType::kZeroMq:
+      return static_cast<ZeroMqTransport*>(this)->Expose(ptr, data_size, flags);
+#endif
+    case TransportType::kSocket:
+      return static_cast<SocketTransport*>(this)->Expose(ptr, data_size, flags);
+    case TransportType::kShm:
+      return static_cast<ShmTransport*>(this)->Expose(ptr, data_size, flags);
+    default:
+      return Bulk{};
+  }
+}
+
+inline std::string Transport::GetAddress() const {
+  switch (type_) {
+#if HSHM_ENABLE_ZMQ
+    case TransportType::kZeroMq:
+      return static_cast<const ZeroMqTransport*>(this)->GetAddress();
+#endif
+    case TransportType::kSocket:
+      return static_cast<const SocketTransport*>(this)->GetAddress();
+    case TransportType::kShm:
+      return static_cast<const ShmTransport*>(this)->GetAddress();
+    default:
+      return "";
+  }
+}
+
+inline void Transport::ClearRecvHandles(LbmMeta<>& meta) {
+  switch (type_) {
+#if HSHM_ENABLE_ZMQ
+    case TransportType::kZeroMq:
+      static_cast<ZeroMqTransport*>(this)->ClearRecvHandles(meta);
+      break;
+#endif
+    case TransportType::kSocket:
+      static_cast<SocketTransport*>(this)->ClearRecvHandles(meta);
+      break;
+    case TransportType::kShm:
+      static_cast<ShmTransport*>(this)->ClearRecvHandles(meta);
+      break;
+    default:
+      break;
+  }
+}
+
+inline void Transport::RegisterEventManager(EventManager &em) {
+  switch (type_) {
+#if HSHM_ENABLE_ZMQ
+    case TransportType::kZeroMq:
+      static_cast<ZeroMqTransport*>(this)->RegisterEventManager(em);
+      break;
+#endif
+    case TransportType::kSocket:
+      static_cast<SocketTransport*>(this)->RegisterEventManager(em);
+      break;
+    case TransportType::kShm:
+      /* no-op for SHM */
+      break;
+    default:
+      break;
+  }
+}
+#endif  // HSHM_IS_HOST
+
+#if HSHM_IS_HOST
 // --- Unified Transport Template Dispatch ---
 template <typename MetaT>
 int Transport::Send(MetaT& meta, const LbmContext& ctx) {
@@ -82,48 +173,49 @@ ClientInfo Transport::Recv(MetaT& meta, const LbmContext& ctx) {
 }
 
 // --- TransportFactory Implementations ---
-inline std::unique_ptr<Transport> TransportFactory::Get(
+inline TransportPtr TransportFactory::Get(
     const std::string& addr, TransportType t, TransportMode mode,
     const std::string& protocol, int port) {
   switch (t) {
 #if HSHM_ENABLE_ZMQ
     case TransportType::kZeroMq:
-      return std::make_unique<ZeroMqTransport>(
+      return TransportPtr(new ZeroMqTransport(
           mode, addr, protocol.empty() ? "tcp" : protocol,
-          port == 0 ? 8192 : port);
+          port == 0 ? 8192 : port));
 #endif
     case TransportType::kSocket:
-      return std::make_unique<SocketTransport>(
+      return TransportPtr(new SocketTransport(
           mode, addr, protocol.empty() ? "tcp" : protocol,
-          port == 0 ? 8193 : port);
+          port == 0 ? 8193 : port));
     case TransportType::kShm:
-      return std::make_unique<ShmTransport>(mode);
+      return TransportPtr(new ShmTransport(mode));
     default:
       return nullptr;
   }
 }
 
-inline std::unique_ptr<Transport> TransportFactory::Get(
+inline TransportPtr TransportFactory::Get(
     const std::string& addr, TransportType t, TransportMode mode,
     const std::string& protocol, int port, const std::string& domain) {
   (void)domain;
   switch (t) {
 #if HSHM_ENABLE_ZMQ
     case TransportType::kZeroMq:
-      return std::make_unique<ZeroMqTransport>(
+      return TransportPtr(new ZeroMqTransport(
           mode, addr, protocol.empty() ? "tcp" : protocol,
-          port == 0 ? 8192 : port);
+          port == 0 ? 8192 : port));
 #endif
     case TransportType::kSocket:
-      return std::make_unique<SocketTransport>(
+      return TransportPtr(new SocketTransport(
           mode, addr, protocol.empty() ? "tcp" : protocol,
-          port == 0 ? 8193 : port);
+          port == 0 ? 8193 : port));
     case TransportType::kShm:
-      return std::make_unique<ShmTransport>(mode);
+      return TransportPtr(new ShmTransport(mode));
     default:
       return nullptr;
   }
 }
+#endif  // HSHM_IS_HOST
 
 }  // namespace hshm::lbm
 #endif  // HSHM_ENABLE_LIGHTBEAM

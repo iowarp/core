@@ -1480,27 +1480,27 @@ class IpcManager {
 #endif
 
   // Local ZeroMQ transport (server mode, using lightbeam)
-  std::unique_ptr<hshm::lbm::Transport> local_transport_;
+  hshm::lbm::TransportPtr local_transport_;
 
   // Main ZeroMQ transport (server mode) for distributed communication
-  std::unique_ptr<hshm::lbm::Transport> main_transport_;
+  hshm::lbm::TransportPtr main_transport_;
 
   // IPC transport mode (TCP default, configurable via CHI_IPC_MODE)
   IpcMode ipc_mode_ = IpcMode::kTcp;
 
   // SHM lightbeam transport (for SendShm / RecvShm)
-  std::unique_ptr<hshm::lbm::Transport> shm_send_transport_;
-  std::unique_ptr<hshm::lbm::Transport> shm_recv_transport_;
+  hshm::lbm::TransportPtr shm_send_transport_;
+  hshm::lbm::TransportPtr shm_recv_transport_;
 
   // Client-side: DEALER transport for sending tasks and receiving responses
-  std::unique_ptr<hshm::lbm::Transport> zmq_transport_;
+  hshm::lbm::TransportPtr zmq_transport_;
   std::mutex zmq_client_send_mutex_;
 
   // Server-side: ROUTER transport for receiving client tasks and sending
   // responses
-  std::unique_ptr<hshm::lbm::Transport> client_tcp_transport_;
+  hshm::lbm::TransportPtr client_tcp_transport_;
   // Server-side: Socket transport for IPC client communication
-  std::unique_ptr<hshm::lbm::Transport> client_ipc_transport_;
+  hshm::lbm::TransportPtr client_ipc_transport_;
 
   // Client recv thread (receives completed task outputs via lightbeam)
   std::thread zmq_recv_thread_;
@@ -1541,7 +1541,7 @@ class IpcManager {
 
   // Persistent ZeroMQ transport connection pool
   // Key format: "ip_address:port"
-  std::unordered_map<std::string, std::unique_ptr<hshm::lbm::Transport>>
+  std::unordered_map<std::string, hshm::lbm::TransportPtr>
       client_pool_;
   mutable std::mutex client_pool_mutex_;  // Mutex for thread-safe pool access
 

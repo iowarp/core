@@ -565,8 +565,8 @@ class Worker {
   hshm::lbm::EventManager event_manager_;
 
   // SHM lightbeam transport (worker-side)
-  std::unique_ptr<hshm::lbm::Transport> shm_send_transport_;  // For EndTaskShmTransfer
-  std::unique_ptr<hshm::lbm::Transport> shm_recv_transport_;  // For ProcessNewTask
+  hshm::lbm::TransportPtr shm_send_transport_;  // For EndTaskShmTransfer
+  hshm::lbm::TransportPtr shm_recv_transport_;  // For ProcessNewTask
 
   // Scheduler pointer (owned by IpcManager, not Worker)
   Scheduler *scheduler_;

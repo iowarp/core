@@ -76,7 +76,7 @@ void Clients(std::vector<std::unique_ptr<ZeroMqTransport>>& clients,
   for (size_t i = 0; i < clients.size(); ++i) {
     std::cout << "[Rank " << my_rank << "] [Clients] Sending to server " << i
               << std::endl;
-    LbmMeta meta;
+    LbmMeta<> meta;
     Bulk bulk = clients[i]->Expose(
         hipc::FullPtr<char>(const_cast<char*>(magic.data())),
         magic.size(), BULK_XFER);
@@ -97,7 +97,7 @@ void ServerThread(Transport& server, size_t num_clients,
     std::cout << "[Server] Waiting for message " << i << std::endl;
 
     // Recv with retry loop (does everything - metadata + bulks)
-    LbmMeta meta;
+    LbmMeta<> meta;
     int rc;
     while (true) {
       auto info = server.Recv(meta);
@@ -225,7 +225,7 @@ int main(int argc, char** argv) {
       auto recv_time = std::chrono::high_resolution_clock::now();
 
       // Recv with retry loop (does everything - metadata + bulks)
-      LbmMeta meta;
+      LbmMeta<> meta;
       int rc;
       while (true) {
         auto info = server_ptr->Recv(meta);
@@ -275,7 +275,7 @@ int main(int argc, char** argv) {
   for (int m = 0; m < num_msgs; ++m) {
     for (size_t i = 0; i < clients.size(); ++i) {
       auto send_time = std::chrono::high_resolution_clock::now();
-      LbmMeta meta;
+      LbmMeta<> meta;
       Bulk bulk = clients[i]->Expose(
           hipc::FullPtr<char>(const_cast<char*>(magic.data())),
           magic.size(), BULK_XFER);

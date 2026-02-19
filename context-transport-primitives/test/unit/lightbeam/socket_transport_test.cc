@@ -44,14 +44,14 @@
 using namespace hshm::lbm;
 
 // Custom metadata class that inherits from LbmMeta
-class TestMeta : public LbmMeta {
+class TestMeta : public LbmMeta<> {
  public:
   int request_id;
   std::string operation;
 
   template <typename Ar>
   void serialize(Ar& ar) {
-    LbmMeta::serialize(ar);
+    LbmMeta<>::serialize(ar);
     ar(request_id, operation);
   }
 };
@@ -139,7 +139,7 @@ void TestMultipleBulks() {
   std::vector<std::string> data_chunks = {"Chunk 1", "Chunk 2 is longer",
                                           "Chunk 3", "Final chunk 4"};
 
-  LbmMeta send_meta;
+  LbmMeta<> send_meta;
   for (const auto& chunk : data_chunks) {
     Bulk bulk = client->Expose(
         hipc::FullPtr<char>(const_cast<char*>(chunk.data())),
@@ -151,7 +151,7 @@ void TestMultipleBulks() {
   int rc = client->Send(send_meta);
   assert(rc == 0);
 
-  LbmMeta recv_meta;
+  LbmMeta<> recv_meta;
   int attempts = 0;
   while (true) {
     auto info = server->Recv(recv_meta);

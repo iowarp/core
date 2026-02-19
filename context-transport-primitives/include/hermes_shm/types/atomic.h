@@ -126,6 +126,9 @@ struct nonatomic {
   template <typename U>
   HSHM_INLINE_CROSS_FUN void store_system(U val) { x = (T)val; }
 
+  /** System-scope load (same as load for nonatomic) */
+  HSHM_INLINE_CROSS_FUN T load_system() const { return x; }
+
   /** Get reference to x */
   HSHM_INLINE_CROSS_FUN T &ref() { return x; }
 
@@ -391,6 +394,17 @@ struct rocm_atomic {
 #endif
   }
 
+  /** System-scope atomic load (visible across GPU/CPU boundary).
+   * Uses volatile read since HostNativeAtomicSupported=0 on many GPUs
+   * means atomicAdd_system(ptr,0) won't see CPU-side writes. */
+  HSHM_INLINE_CROSS_FUN T load_system() const {
+#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+    return *reinterpret_cast<const volatile T*>(&x);
+#else
+    return x;
+#endif
+  }
+
   /** Atomic compare exchange weak wrapper */
   template <typename U>
   HSHM_INLINE_CROSS_FUN bool compare_exchange_weak(
@@ -621,6 +635,11 @@ struct std_atomic {
   template <typename U>
   HSHM_INLINE void store_system(U count) {
     x.store(count, std::memory_order_seq_cst);
+  }
+
+  /** System-scope load (same as load for std_atomic) */
+  HSHM_INLINE T load_system() const {
+    return x.load(std::memory_order_seq_cst);
   }
 
   /** Atomic exchange wrapper */
