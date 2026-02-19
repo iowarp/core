@@ -60,19 +60,12 @@ if(ENABLE_RPATH)
 
     # Set the RPATH to be used when installing
     # Include conda lib path for ADIOS2 dependencies (libcurl, OpenSSL, etc.)
-    set(CONDA_PREFIX "$ENV{CONDA_PREFIX}")
-    if(NOT CONDA_PREFIX)
-        set(CONDA_PREFIX "/home/iowarp/miniconda3")
-    endif()
-
     set(CMAKE_INSTALL_RPATH
         "${CMAKE_INSTALL_PREFIX}/lib"
-        "${CONDA_PREFIX}/lib"
     )
 
     message(STATUS "RPATH enabled (old-style, checked before LD_LIBRARY_PATH):")
     message(STATUS "  Install RPATH: ${CMAKE_INSTALL_RPATH}")
-    message(STATUS "  Conda prefix: ${CONDA_PREFIX}")
 endif()
 
 # Compile options
