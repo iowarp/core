@@ -93,6 +93,7 @@ option(WRP_CORE_ENABLE_THALLIUM "Build tests which depend on thallium" OFF)
 option(WRP_CORE_ENABLE_CEREAL "Enable serialization using cereal" ON)
 option(WRP_CTE_ENABLE_COMPRESS "Enable compression support (builds compressor chimod and tests)" OFF)
 option(WRP_CORE_ENABLE_ENCRYPT "Enable encryption" OFF)
+option(WRP_CORE_ENABLE_IO_URING "Enable io_uring async I/O backend (Linux 5.1+, requires liburing)" OFF)
 
 # Set internal compression flags from WRP_CTE_ENABLE_COMPRESS
 if(WRP_CTE_ENABLE_COMPRESS)
@@ -154,7 +155,11 @@ option(WRP_CORE_ENABLE_GRAY_SCOTT "Enable Gray-Scott ADIOS2 example (requires AD
 # If WRP_CORE_ENABLE_BENCHMARKS is OFF, force all component benchmarks OFF
 # Otherwise, use individual component values
 
-# Apply master test switch (no-op, WRP_CORE_ENABLE_TESTS used directly)
+# Apply master test switch: propagate to CMake's standard BUILD_TESTING variable
+# so components that use if(BUILD_TESTING) are also controlled by this flag.
+if(NOT WRP_CORE_ENABLE_TESTS)
+  set(BUILD_TESTING OFF CACHE BOOL "Build tests (controlled by WRP_CORE_ENABLE_TESTS)" FORCE)
+endif()
 
 # Set HSHM_ENABLE_* aliases for backward compatibility
 # These allow component code to continue using HSHM_ENABLE_* while we transition
@@ -171,6 +176,7 @@ set(HSHM_ENABLE_ENCRYPT ${WRP_CORE_ENABLE_ENCRYPT} CACHE BOOL "Enable Encrypt (c
 set(HSHM_ENABLE_ELF ${WRP_CORE_ENABLE_ELF} CACHE BOOL "Enable ELF (controlled by WRP_CORE_ENABLE_ELF)" FORCE)
 set(HSHM_ENABLE_CUDA ${WRP_CORE_ENABLE_CUDA} CACHE BOOL "Enable CUDA (controlled by WRP_CORE_ENABLE_CUDA)" FORCE)
 set(HSHM_ENABLE_ROCM ${WRP_CORE_ENABLE_ROCM} CACHE BOOL "Enable ROCm (controlled by WRP_CORE_ENABLE_ROCM)" FORCE)
+set(HSHM_ENABLE_IO_URING ${WRP_CORE_ENABLE_IO_URING} CACHE BOOL "Enable io_uring (controlled by WRP_CORE_ENABLE_IO_URING)" FORCE)
 # Note: Coverage is handled globally via add_compile_options when WRP_CORE_ENABLE_COVERAGE=ON
 # No need for component-level HSHM_ENABLE_COVERAGE
 
@@ -646,6 +652,15 @@ if(WRP_CORE_ENABLE_COVERAGE)
     message(STATUS "Code coverage instrumentation enabled for iowarp-core")
     add_compile_options(--coverage -fprofile-arcs -ftest-coverage)
     add_link_options(--coverage)
+endif()
+
+# When building for Python wheels on x86_64, restrict to baseline x86_64 ISA
+# so the wheel runs on any x86_64 CPU. AlmaLinux 9 (manylinux_2_34) defaults
+# to x86_64_v2 (SSE4.2/POPCNT) which auditwheel rejects for x86_64 wheels.
+if(DEFINED SKBUILD AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=x86-64")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=x86-64")
+    message(STATUS "Wheel build: restricting to baseline x86_64 ISA (-march=x86-64)")
 endif()
 
 #------------------------------------------------------------------------------

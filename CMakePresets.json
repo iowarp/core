@@ -30,7 +30,8 @@
                 "WRP_CORE_ENABLE_COVERAGE": "ON",
                 "WRP_CORE_ENABLE_ZMQ": "ON",
                 "WRP_CORE_ENABLE_CEREAL": "ON",
-                "HSHM_LOG_LEVEL": "0"
+                "HSHM_LOG_LEVEL": "0",
+                "WRP_CORE_ENABLE_DOCKER_CI": "ON"
             }
         },
         {

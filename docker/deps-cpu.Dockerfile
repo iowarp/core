@@ -56,6 +56,7 @@ RUN apt-get update && apt-get install -y \
 RUN apt-get update && apt-get install -y \
     libelf-dev \
     libaio-dev \
+    liburing-dev \
     redis-server \
     redis-tools \
     && rm -rf /var/lib/apt/lists/*

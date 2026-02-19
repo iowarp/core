@@ -1,7 +1,7 @@
 #!/bin/bash
 # build_deps_manylinux.sh
-# Builds IOWarp's external dependencies from source inside a manylinux_2_28
-# container (AlmaLinux 8). All libraries are built with both shared and static
+# Builds IOWarp's external dependencies from source inside a manylinux_2_34
+# container (AlmaLinux 9). All libraries are built with both shared and static
 # archives, with -fPIC so the static archives can be linked into shared objects.
 #
 # Install prefix: /usr/local
@@ -12,7 +12,14 @@ set -euo pipefail
 PREFIX=/usr/local
 NPROC=$(nproc)
 
+# AlmaLinux 9 / manylinux_2_34: the default compiler may generate x86_64_v2
+# instructions (SSE4.2, POPCNT) because RHEL 9 requires x86_64_v2 hardware.
+# Force baseline x86_64 so the wheel runs on any x86_64 CPU.
+export CFLAGS="${CFLAGS:+$CFLAGS }-march=x86-64"
+export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-march=x86-64"
+
 echo "=== Building IOWarp dependencies (prefix=$PREFIX, nproc=$NPROC) ==="
+echo "=== CFLAGS=$CFLAGS CXXFLAGS=$CXXFLAGS ==="
 
 # yaml-cpp 0.8.0
 echo "--- yaml-cpp 0.8.0 ---"
@@ -96,19 +103,8 @@ cmake -S cppzmq-4.10.0 -B cppzmq-build \
 cmake --install cppzmq-build
 rm -rf /tmp/cppzmq-*
 
-# libaio 0.3.113 (shared with symver + static without symver)
-# Build twice: first with symver intact for working shared library,
-# then with symver stripped for static archive that can link into .so files.
-echo "--- libaio 0.3.113 ---"
-cd /tmp
-curl -sL https://pagure.io/libaio/archive/libaio-0.3.113/libaio-libaio-0.3.113.tar.gz | tar xz
-cd libaio-libaio-0.3.113
-make prefix=$PREFIX CFLAGS="-fPIC -O2"
-make prefix=$PREFIX install
-make clean
-sed -i 's/__asm__(".symver.*;//g' src/syscall.h
-make prefix=$PREFIX CFLAGS="-fPIC -O2"
-cp src/libaio.a $PREFIX/lib/libaio.a
+# libaio: headers and shared library provided by yum libaio-devel (installed in
+# CIBW_BEFORE_ALL). libchimaera_bdev_runtime.so links dynamically against libaio.
 cd /tmp && rm -rf libaio-*
 
 ldconfig

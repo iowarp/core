@@ -35,10 +35,6 @@
 #include <chimaera/comutex.h>
 #include <chimaera/work_orchestrator.h>
 #include <chimaera/worker.h>
-#include <errno.h>
-#include <sys/epoll.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
 
 #include <cmath>
 #include <cstdio>
@@ -59,42 +55,24 @@ bool WorkerIOContext::Init(const std::string &file_path, chi::u32 io_depth,
     return true;  // Already initialized
   }
 
-  // Open file descriptor for this worker (O_DIRECT for direct I/O)
-  file_fd_ = open(file_path.c_str(), O_RDWR | O_DIRECT, 0644);
-  if (file_fd_ < 0) {
-    HLOG(kError, "Worker {} failed to open file: {}, errno: {}, strerror: {}",
-         worker_id, file_path, errno, strerror(errno));
+  // Create async I/O backend via factory (io_depth passed at construction)
+  async_io_ = hshm::AsyncIoFactory::Get(io_depth);
+  if (!async_io_) {
+    HLOG(kError, "Worker {} failed to create async I/O backend", worker_id);
     return false;
   }
 
-  // Initialize Linux AIO context
-  aio_ctx_ = 0;
-  int ret = io_setup(io_depth, &aio_ctx_);
-  if (ret < 0) {
-    HLOG(kError,
-         "Worker {} failed to setup AIO context: errno: {}, strerror: {}",
-         worker_id, -ret, strerror(-ret));
-    close(file_fd_);
-    file_fd_ = -1;
-    return false;
-  }
-
-  // Create eventfd for I/O completion notification
-  event_fd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-  if (event_fd_ < 0) {
-    HLOG(kError, "Worker {} failed to create eventfd: errno: {}, strerror: {}",
-         worker_id, errno, strerror(errno));
-    io_destroy(aio_ctx_);
-    aio_ctx_ = 0;
-    close(file_fd_);
-    file_fd_ = -1;
+  // AsyncIO owns the file descriptors internally
+  if (!async_io_->Open(file_path, O_RDWR | O_CREAT, 0644)) {
+    HLOG(kError, "Worker {} failed to open file: {}", worker_id, file_path);
+    async_io_.reset();
     return false;
   }
 
   is_initialized_ = true;
   HLOG(kDebug,
-       "Worker {} I/O context initialized: fd={}, aio_ctx={}, event_fd={}",
-       worker_id, file_fd_, reinterpret_cast<void *>(aio_ctx_), event_fd_);
+       "Worker {} I/O context initialized: event_fd={}",
+       worker_id, async_io_->GetEventFd());
   return true;
 }
 
@@ -103,19 +81,9 @@ void WorkerIOContext::Cleanup() {
     return;
   }
 
-  if (event_fd_ >= 0) {
-    close(event_fd_);
-    event_fd_ = -1;
-  }
-
-  if (aio_ctx_ != 0) {
-    io_destroy(aio_ctx_);
-    aio_ctx_ = 0;
-  }
-
-  if (file_fd_ >= 0) {
-    close(file_fd_);
-    file_fd_ = -1;
+  if (async_io_) {
+    async_io_->Close();
+    async_io_.reset();
   }
 
   is_initialized_ = false;
@@ -310,12 +278,9 @@ Runtime::~Runtime() {
     CleanupWorkerIOContexts();
   }
 
-  // Clean up storage backend
-  if (bdev_type_ == BdevType::kFile && file_fd_ >= 0) {
-    close(file_fd_);
-    file_fd_ = -1;
-  } else if (bdev_type_ == BdevType::kRam && ram_buffer_ != nullptr) {
-    munmap(ram_buffer_, ram_size_);
+  // Clean up RAM backend
+  if (bdev_type_ == BdevType::kRam && ram_buffer_ != nullptr) {
+    delete[] ram_buffer_;
     ram_buffer_ = nullptr;
   }
 
@@ -356,18 +321,17 @@ WorkerIOContext *Runtime::GetWorkerIOContext(size_t worker_id) {
       return nullptr;
     }
 
-    // Register the eventfd with the worker's epoll for completion notification
+    // Register the eventfd with the worker's EventManager for completion notification
+    int event_fd = ctx->async_io_ ? ctx->async_io_->GetEventFd() : -1;
     chi::Worker *worker = CHI_CUR_WORKER;
-    if (worker != nullptr && ctx->event_fd_ >= 0) {
-      // Store context pointer as user data for epoll event handling
+    if (worker != nullptr && event_fd >= 0) {
       auto &em = worker->GetEventManager();
-      if (em.AddEvent(ctx->event_fd_, EPOLLIN) < 0) {
+      if (em.AddEvent(event_fd) < 0) {
         HLOG(kWarning, "Failed to register eventfd with worker {} EventManager",
              worker_id);
-        // Continue anyway - we can fall back to polling
       } else {
         HLOG(kDebug, "Registered eventfd {} with worker {} EventManager",
-             ctx->event_fd_, worker_id);
+             event_fd, worker_id);
       }
     }
   }
@@ -397,27 +361,30 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
     // Store file path for per-worker FD creation
     file_path_ = pool_name;
 
-    // File-based storage initialization - use pool_name as file path
-    // This FD is used for initial file setup (create/truncate) and as fallback
-    file_fd_ = open(pool_name.c_str(), O_RDWR | O_CREAT | O_DIRECT, 0644);
-    if (file_fd_ < 0) {
-      HLOG(kError, "Failed to open file: {}, fd: {}, errno: {}, strerror: {}",
-           pool_name, file_fd_, errno, strerror(errno));
+    // Use a temporary AsyncIO to set up the file (create/truncate)
+    auto setup_io = hshm::AsyncIoFactory::Get(io_depth_);
+    if (!setup_io) {
+      HLOG(kError, "Failed to create setup async I/O backend");
+      task->return_code_ = 1;
+      co_return;
+    }
+
+    if (!setup_io->Open(pool_name, O_RDWR | O_CREAT, 0644)) {
+      HLOG(kError, "Failed to open file: {}", pool_name);
       task->return_code_ = 1;
       co_return;
     }
 
     // Get file size
-    struct stat st;
-    if (fstat(file_fd_, &st) != 0) {
+    ssize_t current_size = setup_io->GetFileSize();
+    if (current_size < 0) {
       task->return_code_ = 2;
-      close(file_fd_);
-      file_fd_ = -1;
+      setup_io->Close();
       co_return;
     }
 
-    file_size_ = st.st_size;
-    HLOG(kDebug, "File stat: st.st_size={}, params.total_size={}", file_size_,
+    file_size_ = static_cast<chi::u64>(current_size);
+    HLOG(kDebug, "File stat: file_size={}, params.total_size={}", file_size_,
          params.total_size_);
 
     if (params.total_size_ > 0 && params.total_size_ < file_size_) {
@@ -429,20 +396,21 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
       file_size_ = (params.total_size_ > 0) ? params.total_size_
                                             : (1ULL << 30);  // 1GB default
       HLOG(kDebug,
-           "File is empty, setting file_size_ to {} and calling ftruncate",
+           "File is empty, setting file_size_ to {} and calling Truncate",
            file_size_);
-      if (ftruncate(file_fd_, file_size_) != 0) {
+      if (!setup_io->Truncate(static_cast<size_t>(file_size_))) {
         task->return_code_ = 3;
-        HLOG(kError, "Failed to truncate file: {}, errno: {}, strerror: {}",
-             pool_name, errno, strerror(errno));
-        close(file_fd_);
-        file_fd_ = -1;
+        HLOG(kError, "Failed to truncate file: {}", pool_name);
+        setup_io->Close();
         co_return;
       }
-      HLOG(kDebug, "ftruncate succeeded, file_size_={}", file_size_);
+      HLOG(kDebug, "Truncate succeeded, file_size_={}", file_size_);
     }
     HLOG(kDebug, "Create: Final file_size_={}, initializing allocator",
          file_size_);
+
+    // Close setup I/O — per-worker contexts will open their own
+    setup_io->Close();
 
     // Initialize async I/O for file backend (legacy POSIX AIO)
     InitializeAsyncIO();
@@ -463,16 +431,12 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
     }
 
     ram_size_ = params.total_size_;
-    ram_buffer_ = static_cast<char *>(
-        mmap(nullptr, ram_size_, PROT_READ | PROT_WRITE,
-             MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0));
-    if (ram_buffer_ == MAP_FAILED) {
-      ram_buffer_ = nullptr;
+    ram_buffer_ = new (std::nothrow) char[ram_size_];
+    if (ram_buffer_ == nullptr) {
       task->return_code_ = 5;
       co_return;
     }
-    // Request transparent huge pages for better TLB performance
-    madvise(ram_buffer_, ram_size_, MADV_HUGEPAGE);
+    memset(ram_buffer_, 0, ram_size_);
     file_size_ = ram_size_;  // Use file_size_ for common allocation logic
   }
 
@@ -686,12 +650,7 @@ chi::TaskResume Runtime::GetStats(hipc::FullPtr<GetStatsTask> task,
 
 chi::TaskResume Runtime::Destroy(hipc::FullPtr<DestroyTask> task,
                                  chi::RunContext &ctx) {
-  // Close file descriptor if open
-  if (file_fd_ >= 0) {
-    close(file_fd_);
-    file_fd_ = -1;
-  }
-
+  // Worker I/O contexts (and their AsyncIO instances) are cleaned up by destructor
   // Note: GlobalBlockMap and Heap cleanup is handled by their destructors
 
   task->return_code_ = 0;
@@ -752,112 +711,38 @@ chi::u32 Runtime::PerformAsyncIO(WorkerIOContext *io_ctx, bool is_write,
                                  chi::u64 offset, void *buffer, chi::u64 size,
                                  chi::u64 &bytes_transferred,
                                  hipc::FullPtr<chi::Task> task) {
-  // Use Linux AIO if we have a valid per-worker I/O context
-  if (io_ctx != nullptr && io_ctx->is_initialized_) {
-    // Prepare Linux AIO iocb
-    struct iocb iocb_storage;
-    struct iocb *iocb = &iocb_storage;
-    memset(iocb, 0, sizeof(struct iocb));
-
-    if (is_write) {
-      io_prep_pwrite(iocb, io_ctx->file_fd_, buffer, size, offset);
-    } else {
-      io_prep_pread(iocb, io_ctx->file_fd_, buffer, size, offset);
-    }
-
-    // Set eventfd for completion notification
-    io_set_eventfd(iocb, io_ctx->event_fd_);
-
-    // Submit the I/O operation
-    struct iocb *iocbs[1] = {iocb};
-    int submitted = io_submit(io_ctx->aio_ctx_, 1, iocbs);
-    if (submitted != 1) {
-      HLOG(kError, "Failed to submit Linux AIO: ret={}, errno={}, strerror={}",
-           submitted, errno, strerror(errno));
-      return 2;  // Failed to submit I/O
-    }
-
-    // Wait for completion by polling io_getevents
-    struct io_event events[1];
-    while (true) {
-      struct timespec timeout = {0, 0};  // Non-blocking check
-      int completed = io_getevents(io_ctx->aio_ctx_, 0, 1, events, &timeout);
-
-      if (completed < 0) {
-        HLOG(kError, "io_getevents failed: ret={}, errno={}, strerror={}",
-             completed, errno, strerror(errno));
-        return 3;
-      }
-
-      if (completed > 0) {
-        // I/O completed
-        long result = static_cast<long>(events[0].res);
-        if (result < 0) {
-          HLOG(kError, "Linux AIO failed: result={}, strerror={}", result,
-               strerror(-result));
-          return 4;
-        }
-        bytes_transferred = static_cast<chi::u64>(result);
-        return 0;  // Success
-      }
-
-      // Clear the eventfd if it was signaled
-      uint64_t eventfd_val;
-      ssize_t ret = read(io_ctx->event_fd_, &eventfd_val, sizeof(eventfd_val));
-      (void)ret;  // Ignore if read fails (non-blocking)
-
-      // Operation still in progress, yield the thread
-      HSHM_THREAD_MODEL->Yield();
-    }
+  if (io_ctx == nullptr || !io_ctx->is_initialized_ || !io_ctx->async_io_) {
+    HLOG(kError, "PerformAsyncIO called with invalid I/O context");
+    return 1;
   }
 
-  // Fallback to POSIX AIO with legacy single file descriptor
-  struct aiocb aiocb_storage;
-  struct aiocb *aiocb = &aiocb_storage;
-
-  // Initialize the AIO control block
-  memset(aiocb, 0, sizeof(struct aiocb));
-  aiocb->aio_fildes = file_fd_;
-  aiocb->aio_buf = buffer;
-  aiocb->aio_nbytes = size;
-  aiocb->aio_offset = static_cast<off_t>(offset);
-  aiocb->aio_lio_opcode = is_write ? LIO_WRITE : LIO_READ;
-
-  // Submit the I/O operation
-  int result;
+  // Submit the I/O operation — AsyncIO handles fd selection based on alignment
+  hshm::IoToken token;
   if (is_write) {
-    result = aio_write(aiocb);
+    token = io_ctx->async_io_->Write(buffer, static_cast<size_t>(size),
+                                     static_cast<off_t>(offset));
   } else {
-    result = aio_read(aiocb);
+    token = io_ctx->async_io_->Read(buffer, static_cast<size_t>(size),
+                                    static_cast<off_t>(offset));
   }
 
-  if (result != 0) {
-    return 2;  // Failed to submit I/O
+  if (token == hshm::kInvalidIoToken) {
+    HLOG(kError, "Failed to submit async I/O: is_write={}, offset={}, size={}",
+         is_write, offset, size);
+    return 2;
   }
 
-  // Poll for completion
-  while (true) {
-    int error_code = aio_error(aiocb);
-    if (error_code == 0) {
-      // Operation completed successfully
-      break;
-    } else if (error_code != EINPROGRESS) {
-      // Operation failed
-      HLOG(kError, "Failed to perform async I/O: {}, errno: {}, strerror: {}",
-           error_code, errno, strerror(errno));
-      return 3;
-    }
-    // Operation still in progress, yield the thread
+  // Non-blocking completion check with yield
+  hshm::IoResult result;
+  while (!io_ctx->async_io_->IsComplete(token, result)) {
     HSHM_THREAD_MODEL->Yield();
   }
 
-  // Get the result
-  ssize_t bytes_result = aio_return(aiocb);
-  if (bytes_result < 0) {
-    return 4;  // I/O operation failed
+  if (result.error_code != 0) {
+    HLOG(kError, "Async I/O failed: error_code={}", result.error_code);
+    return 4;
   }
-
-  bytes_transferred = static_cast<chi::u64>(bytes_result);
+  bytes_transferred = static_cast<chi::u64>(result.bytes_transferred);
   return 0;  // Success
 }
 
@@ -888,48 +773,11 @@ void Runtime::WriteToFile(hipc::FullPtr<WriteTask> task, chi::RunContext &ctx) {
     // Get data pointer offset for this block
     void *block_data = data_ptr.ptr_ + data_offset;
 
-    // Align buffer for direct I/O
-    chi::u64 aligned_size = AlignSize(block_write_size);
-
-    // Check if the buffer is already aligned
-    bool is_aligned =
-        (reinterpret_cast<uintptr_t>(block_data) % alignment_ == 0) &&
-        (block_write_size == aligned_size);
-
-    void *buffer_to_use;
-    void *aligned_buffer = nullptr;
-    bool needs_free = false;
-
-    if (is_aligned) {
-      // Buffer is already aligned, use it directly
-      buffer_to_use = block_data;
-    } else {
-      // Allocate aligned buffer
-      if (posix_memalign(&aligned_buffer, alignment_, aligned_size) != 0) {
-        task->return_code_ = 1;
-        task->bytes_written_ = total_bytes_written;
-        return;
-      }
-      needs_free = true;
-      buffer_to_use = aligned_buffer;
-
-      // Copy data to aligned buffer
-      memcpy(aligned_buffer, block_data, block_write_size);
-      if (aligned_size > block_write_size) {
-        memset(static_cast<char *>(aligned_buffer) + block_write_size, 0,
-               aligned_size - block_write_size);
-      }
-    }
-
-    // Perform async write using per-worker I/O context (Linux AIO) or fallback
+    // AsyncIO handles O_DIRECT vs regular fd selection based on alignment
     chi::u64 bytes_written;
     chi::u32 result =
-        PerformAsyncIO(io_ctx, true, block.offset_, buffer_to_use, aligned_size,
+        PerformAsyncIO(io_ctx, true, block.offset_, block_data, block_write_size,
                        bytes_written, task.Cast<chi::Task>());
-
-    if (needs_free) {
-      free(aligned_buffer);
-    }
 
     if (result != 0) {
       task->return_code_ = result;
@@ -1045,56 +893,20 @@ void Runtime::ReadFromFile(hipc::FullPtr<ReadTask> task, chi::RunContext &ctx) {
     // Get data pointer offset for this block
     void *block_data = data_ptr.ptr_ + data_offset;
 
-    // Align buffer for direct I/O
-    chi::u64 aligned_size = AlignSize(block_read_size);
-
-    // Check if the buffer is already aligned
-    bool is_aligned =
-        (reinterpret_cast<uintptr_t>(block_data) % alignment_ == 0) &&
-        (block_read_size >= aligned_size);
-
-    void *buffer_to_use;
-    void *aligned_buffer = nullptr;
-    bool needs_free = false;
-
-    if (is_aligned) {
-      // Buffer is already aligned, use it directly
-      buffer_to_use = block_data;
-    } else {
-      // Allocate aligned buffer
-      if (posix_memalign(&aligned_buffer, alignment_, aligned_size) != 0) {
-        task->return_code_ = 1;
-        task->bytes_read_ = total_bytes_read;
-        return;
-      }
-      needs_free = true;
-      buffer_to_use = aligned_buffer;
-    }
-
-    // Perform async read using per-worker I/O context (Linux AIO) or fallback
+    // AsyncIO handles O_DIRECT vs regular fd selection based on alignment
     chi::u64 bytes_read;
     chi::u32 result =
-        PerformAsyncIO(io_ctx, false, block.offset_, buffer_to_use,
-                       aligned_size, bytes_read, task.Cast<chi::Task>());
+        PerformAsyncIO(io_ctx, false, block.offset_, block_data,
+                       block_read_size, bytes_read, task.Cast<chi::Task>());
 
     if (result != 0) {
       task->return_code_ = result;
       task->bytes_read_ = total_bytes_read;
-      if (needs_free) {
-        free(aligned_buffer);
-      }
       return;
     }
 
-    // Copy data to task output if we used an aligned buffer
-    chi::u64 actual_bytes = std::min(bytes_read, block_read_size);
-
-    if (needs_free) {
-      memcpy(block_data, aligned_buffer, actual_bytes);
-      free(aligned_buffer);
-    }
-
     // Update counters
+    chi::u64 actual_bytes = std::min(bytes_read, block_read_size);
     total_bytes_read += actual_bytes;
     data_offset += actual_bytes;
   }

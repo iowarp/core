@@ -29,6 +29,8 @@ if(WRP_CORE_ENABLE_ENCRYPT)
     add_subdirectory(encrypt)
 endif()
 
+add_subdirectory(io)
+
 if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
     add_subdirectory(gpu)
 endif()

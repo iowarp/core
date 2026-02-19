@@ -292,6 +292,23 @@ target_compile_definitions(compress INTERFACE
 )
 add_library(hshm::compress ALIAS compress)
 
+# hshm::aio - Async I/O support
+add_library(aio INTERFACE)
+if(HSHM_ENABLE_IO_URING)
+    target_link_libraries(aio INTERFACE uring)
+endif()
+if(NOT WIN32)
+    find_library(LIBAIO_LIBRARY NAMES aio libaio)
+    if(LIBAIO_LIBRARY)
+        target_link_libraries(aio INTERFACE ${LIBAIO_LIBRARY})
+    endif()
+    target_link_libraries(aio INTERFACE rt)
+endif()
+target_compile_definitions(aio INTERFACE
+    HSHM_ENABLE_IO_URING=$<BOOL:${HSHM_ENABLE_IO_URING}>
+)
+add_library(hshm::aio ALIAS aio)
+
 # hshm::encrypt - Encryption support
 add_library(encrypt INTERFACE)
 if(WRP_CORE_ENABLE_ENCRYPT)
@@ -314,6 +331,7 @@ target_link_libraries(host_deps INTERFACE
     thread_all
     mpi
     compress
+    aio
     encrypt
     ${REAL_TIME_FLAGS}
 )
@@ -327,6 +345,7 @@ install(TARGETS
     thread_all
     mpi
     compress
+    aio
     encrypt
     host_deps
     EXPORT
