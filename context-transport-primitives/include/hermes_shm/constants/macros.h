@@ -104,12 +104,18 @@
 #include <cuda_runtime.h>
 #endif
 
-#if HSHM_ENABLE_ROCM && defined(__HIP_PLATFORM_AMD__)
+#if HSHM_ENABLE_ROCM && defined(__HIPCC__)
 #include <hip/hip_runtime.h>
 #endif
 
-/** Macros for CUDA functions */
-#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+/** Macros for CUDA functions.
+ * CUDA/ROCm keywords (__host__, __device__, etc.) are compiler built-ins
+ * that only exist when compiling with nvcc (__CUDACC__) or hipcc
+ * (__HIPCC__).  Defining them unconditionally when HSHM_ENABLE_CUDA=1 is set
+ * causes errors when the same header is included in files compiled with a
+ * plain C++ compiler (g++/clang++). */
+#if (HSHM_ENABLE_CUDA && defined(__CUDACC__)) || \
+    (HSHM_ENABLE_ROCM && defined(__HIPCC__))
 #define ROCM_HOST __host__
 #define ROCM_DEVICE __device__
 #define ROCM_HOST_DEVICE __device__ __host__
