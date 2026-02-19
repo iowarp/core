@@ -530,7 +530,7 @@ TEST_CASE("Client - AsyncReorganizeBlob Direct", "[core][client][blob]") {
   hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
 
   auto put_task = client->AsyncPutBlob(tag_task->tag_id_, "reorg_blob", 0,
-                                       data.size(), shm_ref, 2.0f);
+                                       data.size(), shm_ref, 0.2f);
   put_task.Wait();
   REQUIRE(put_task->GetReturnCode() == 0);
 
@@ -538,7 +538,7 @@ TEST_CASE("Client - AsyncReorganizeBlob Direct", "[core][client][blob]") {
 
   // Reorganize blob
   auto reorg_task =
-      client->AsyncReorganizeBlob(tag_task->tag_id_, "reorg_blob", 5.0f);
+      client->AsyncReorganizeBlob(tag_task->tag_id_, "reorg_blob", 0.8f);
   reorg_task.Wait();
 
   INFO("AsyncReorganizeBlob completed with code: "
@@ -562,7 +562,7 @@ TEST_CASE("Client - AsyncGetBlobScore Direct", "[core][client][blob]") {
   memcpy(shm_ptr.ptr_, data.data(), data.size());
   hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
 
-  float expected_score = 3.5f;
+  float expected_score = 0.35f;
   auto put_task = client->AsyncPutBlob(tag_task->tag_id_, "scored_blob", 0,
                                        data.size(), shm_ref, expected_score);
   put_task.Wait();
