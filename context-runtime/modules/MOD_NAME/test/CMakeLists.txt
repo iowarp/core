@@ -192,7 +192,7 @@ if(WRP_CORE_ENABLE_TESTS)
   # CoMutex Tests
   add_test(
     NAME cr_comutex_basic_tests
-    COMMAND ${COMUTEX_TEST_TARGET}
+    COMMAND ${COMUTEX_TEST_TARGET} "[comutex][basic]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_comutex_basic_tests PROPERTIES
@@ -201,7 +201,7 @@ if(WRP_CORE_ENABLE_TESTS)
 
   add_test(
     NAME cr_comutex_concurrent_tests
-    COMMAND ${COMUTEX_TEST_TARGET}
+    COMMAND ${COMUTEX_TEST_TARGET} "[comutex][concurrent]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_comutex_concurrent_tests PROPERTIES
@@ -210,7 +210,7 @@ if(WRP_CORE_ENABLE_TESTS)
 
   add_test(
     NAME cr_corwlock_basic_tests
-    COMMAND ${COMUTEX_TEST_TARGET}
+    COMMAND ${COMUTEX_TEST_TARGET} "[corwlock][basic]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_corwlock_basic_tests PROPERTIES
@@ -219,7 +219,7 @@ if(WRP_CORE_ENABLE_TESTS)
 
   add_test(
     NAME cr_corwlock_readers_tests
-    COMMAND ${COMUTEX_TEST_TARGET}
+    COMMAND ${COMUTEX_TEST_TARGET} "[corwlock][readers]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_corwlock_readers_tests PROPERTIES
@@ -228,7 +228,7 @@ if(WRP_CORE_ENABLE_TESTS)
 
   add_test(
     NAME cr_corwlock_writers_tests
-    COMMAND ${COMUTEX_TEST_TARGET}
+    COMMAND ${COMUTEX_TEST_TARGET} "[corwlock][writers]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_corwlock_writers_tests PROPERTIES
@@ -237,7 +237,7 @@ if(WRP_CORE_ENABLE_TESTS)
 
   add_test(
     NAME cr_corwlock_interaction_tests
-    COMMAND ${COMUTEX_TEST_TARGET}
+    COMMAND ${COMUTEX_TEST_TARGET} "[corwlock][interaction]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_corwlock_interaction_tests PROPERTIES
@@ -246,7 +246,7 @@ if(WRP_CORE_ENABLE_TESTS)
 
   add_test(
     NAME cr_tasknode_grouping_tests
-    COMMAND ${COMUTEX_TEST_TARGET}
+    COMMAND ${COMUTEX_TEST_TARGET} "[tasknode][grouping]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_tasknode_grouping_tests PROPERTIES
@@ -255,7 +255,7 @@ if(WRP_CORE_ENABLE_TESTS)
 
   add_test(
     NAME cr_comutex_error_tests
-    COMMAND ${COMUTEX_TEST_TARGET}
+    COMMAND ${COMUTEX_TEST_TARGET} "[error]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_comutex_error_tests PROPERTIES
@@ -264,7 +264,7 @@ if(WRP_CORE_ENABLE_TESTS)
 
   add_test(
     NAME cr_comutex_performance_tests
-    COMMAND ${COMUTEX_TEST_TARGET}
+    COMMAND ${COMUTEX_TEST_TARGET} "[performance]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_comutex_performance_tests PROPERTIES
@@ -273,7 +273,7 @@ if(WRP_CORE_ENABLE_TESTS)
 
   add_test(
     NAME cr_comutex_integration_tests
-    COMMAND ${COMUTEX_TEST_TARGET}
+    COMMAND ${COMUTEX_TEST_TARGET} "[integration]"
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_comutex_integration_tests PROPERTIES

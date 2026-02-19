@@ -161,6 +161,7 @@ RUN cd /tmp \
        -DCMAKE_INSTALL_PREFIX=/usr/local \
        -DCMAKE_BUILD_TYPE=Release \
        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
        -DBUILD_SHARED_LIBS=ON \
        -DYAML_CPP_BUILD_TESTS=OFF \
        -DYAML_CPP_BUILD_TOOLS=OFF \
@@ -170,6 +171,7 @@ RUN cd /tmp \
        -DCMAKE_INSTALL_PREFIX=/usr/local \
        -DCMAKE_BUILD_TYPE=Release \
        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
        -DBUILD_SHARED_LIBS=OFF \
        -DYAML_CPP_BUILD_TESTS=OFF \
        -DYAML_CPP_BUILD_TOOLS=OFF \
@@ -183,6 +185,7 @@ RUN cd /tmp \
     && curl -sL https://github.com/USCiLab/cereal/archive/refs/tags/v1.3.2.tar.gz | tar xz \
     && cmake -S cereal-1.3.2 -B cereal-build \
        -DCMAKE_INSTALL_PREFIX=/usr/local \
+       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
        -DSKIP_PERFORMANCE_COMPARISON=ON \
        -DBUILD_TESTS=OFF \
        -DBUILD_SANDBOX=OFF \
@@ -208,6 +211,7 @@ RUN cd /tmp \
        -DCMAKE_INSTALL_PREFIX=/usr/local \
        -DCMAKE_BUILD_TYPE=Release \
        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
        -DBUILD_SHARED=ON \
        -DBUILD_STATIC=ON \
        -DBUILD_TESTS=OFF \
@@ -225,6 +229,7 @@ RUN cd /tmp \
     && cmake -S cppzmq-4.10.0 -B cppzmq-build \
        -DCMAKE_INSTALL_PREFIX=/usr/local \
        -DCMAKE_PREFIX_PATH=/usr/local \
+       -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
        -DCPPZMQ_BUILD_TESTS=OFF \
     && cmake --install cppzmq-build \
     && rm -rf /tmp/cppzmq-*

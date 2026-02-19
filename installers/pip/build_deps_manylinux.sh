@@ -22,6 +22,7 @@ cmake -S yaml-cpp-0.8.0 -B yaml-cpp-shared \
     -DCMAKE_INSTALL_PREFIX=$PREFIX \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DBUILD_SHARED_LIBS=ON \
     -DYAML_CPP_BUILD_TESTS=OFF \
     -DYAML_CPP_BUILD_TOOLS=OFF
@@ -31,6 +32,7 @@ cmake -S yaml-cpp-0.8.0 -B yaml-cpp-static \
     -DCMAKE_INSTALL_PREFIX=$PREFIX \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DBUILD_SHARED_LIBS=OFF \
     -DYAML_CPP_BUILD_TESTS=OFF \
     -DYAML_CPP_BUILD_TOOLS=OFF
@@ -44,6 +46,7 @@ cd /tmp
 curl -sL https://github.com/USCiLab/cereal/archive/refs/tags/v1.3.2.tar.gz | tar xz
 cmake -S cereal-1.3.2 -B cereal-build \
     -DCMAKE_INSTALL_PREFIX=$PREFIX \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DSKIP_PERFORMANCE_COMPARISON=ON \
     -DBUILD_TESTS=OFF \
     -DBUILD_SANDBOX=OFF \
@@ -70,6 +73,7 @@ cmake -S zeromq-4.3.5 -B zmq-build \
     -DCMAKE_INSTALL_PREFIX=$PREFIX \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DBUILD_SHARED=ON \
     -DBUILD_STATIC=ON \
     -DBUILD_TESTS=OFF \
@@ -87,6 +91,7 @@ curl -sL https://github.com/zeromq/cppzmq/archive/refs/tags/v4.10.0.tar.gz | tar
 cmake -S cppzmq-4.10.0 -B cppzmq-build \
     -DCMAKE_INSTALL_PREFIX=$PREFIX \
     -DCMAKE_PREFIX_PATH=$PREFIX \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DCPPZMQ_BUILD_TESTS=OFF
 cmake --install cppzmq-build
 rm -rf /tmp/cppzmq-*
