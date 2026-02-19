@@ -28,7 +28,7 @@ option(WRP_CORE_ENABLE_CMAKE_DOTENV "Enable reading environment variables from .
 option(WRP_CORE_ENABLE_ASAN "Enable AddressSanitizer for debugging" OFF)
 option(WRP_CORE_ENABLE_COVERAGE "Enable code coverage instrumentation for all components" OFF)
 option(WRP_CORE_ENABLE_DOXYGEN "Check how well the code is documented" OFF)
-option(WRP_CORE_ENABLE_RPATH "Enable RPATH configuration with absolute paths" ON)
+option(WRP_CORE_ENABLE_RPATH "Enable RPATH configuration with relative ($ORIGIN) paths" ON)
 option(WRP_CORE_ENABLE_CPACK "Enable CPack for package generation" OFF)
 option(WRP_CORE_ENABLE_CONDA "Enable Conda environment configuration (adds Conda paths to include/link directories)" OFF)
 option(WRP_CORE_ENABLE_DOCKER_CI "Enable Docker-based integration tests (requires Docker)" OFF)
@@ -591,73 +591,29 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Position Independent Code - Applied to all subdirectories
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# RPATH configuration - Conditionally enabled based on WRP_CORE_ENABLE_RPATH
+# RPATH configuration - Uses $ORIGIN-relative paths for portability
+# This ensures binaries and libraries can find their dependencies regardless
+# of where the installation is located (works for system installs, pip wheels,
+# conda packages, and relocatable builds).
 if(WRP_CORE_ENABLE_RPATH)
-message(STATUS "RPATH ENABLED with ABSOLUTE paths including all dependency locations")
-set(CMAKE_SKIP_BUILD_RPATH FALSE)
-set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)  # CRITICAL: Include dependency library paths!
+    set(CMAKE_SKIP_BUILD_RPATH FALSE)
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
+    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 
-# Build list of ABSOLUTE RPATH entries
-set(ABSOLUTE_RPATH_LIST "")
+    if(APPLE)
+        set(CMAKE_MACOSX_RPATH TRUE)
+        set(CMAKE_INSTALL_RPATH "@loader_path;@loader_path/../lib")
+        set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR}/bin")
+    elseif(UNIX)
+        set(CMAKE_INSTALL_RPATH "$ORIGIN;$ORIGIN/../lib")
+        set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR}/bin")
+    endif()
 
-# 1. Installation lib directory (ABSOLUTE)
-list(APPEND ABSOLUTE_RPATH_LIST "${CMAKE_INSTALL_PREFIX}/lib")
-
-# 2. Conda environment lib directory (if Conda support is enabled)
-if(IN_CONDA_BUILD)
-    list(APPEND ABSOLUTE_RPATH_LIST "$ENV{CONDA_PREFIX}/lib")
-    message(STATUS "  Adding Conda lib to RPATH: $ENV{CONDA_PREFIX}/lib")
-endif()
-
-# 3. Add HDF5 library directories if enabled
-if(WRP_CORE_ENABLE_HDF5 AND HDF5_LIBRARY_DIRS)
-    foreach(HDF5_LIB_DIR ${HDF5_LIBRARY_DIRS})
-        list(APPEND ABSOLUTE_RPATH_LIST "${HDF5_LIB_DIR}")
-        message(STATUS "  Adding HDF5 lib to RPATH: ${HDF5_LIB_DIR}")
-    endforeach()
-endif()
-
-# 5. Add any CMAKE_PREFIX_PATH lib directories
-if(CMAKE_PREFIX_PATH)
-    foreach(PREFIX_PATH ${CMAKE_PREFIX_PATH})
-        if(EXISTS "${PREFIX_PATH}/lib")
-            list(APPEND ABSOLUTE_RPATH_LIST "${PREFIX_PATH}/lib")
-            message(STATUS "  Adding prefix lib to RPATH: ${PREFIX_PATH}/lib")
-        endif()
-        if(EXISTS "${PREFIX_PATH}/lib64")
-            list(APPEND ABSOLUTE_RPATH_LIST "${PREFIX_PATH}/lib64")
-            message(STATUS "  Adding prefix lib64 to RPATH: ${PREFIX_PATH}/lib64")
-        endif()
-    endforeach()
-endif()
-
-# Remove duplicates
-list(REMOVE_DUPLICATES ABSOLUTE_RPATH_LIST)
-
-# Platform-specific RPATH configuration
-if(APPLE)
-    set(CMAKE_MACOSX_RPATH TRUE)
-    set(CMAKE_INSTALL_RPATH "${ABSOLUTE_RPATH_LIST}")
-    set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR}/bin")
-elseif(UNIX)
-    set(CMAKE_INSTALL_RPATH "${ABSOLUTE_RPATH_LIST}")
-    set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR}/bin")
-endif()
-
-message(STATUS "==================================================================")
-message(STATUS "RPATH Configuration (ABSOLUTE paths):")
-message(STATUS "  CMAKE_INSTALL_PREFIX: ${CMAKE_INSTALL_PREFIX}")
-message(STATUS "  Final INSTALL_RPATH: ${CMAKE_INSTALL_RPATH}")
-message(STATUS "  Final BUILD_RPATH: ${CMAKE_BUILD_RPATH}")
-message(STATUS "")
-message(STATUS "IMPORTANT: RPATH is baked in at BUILD time!")
-message(STATUS "  If you install to a different --prefix, you MUST rebuild!")
-message(STATUS "  Example: cmake --preset=release -DCMAKE_INSTALL_PREFIX=/new/path")
-message(STATUS "==================================================================")
-message(STATUS "")
+    message(STATUS "RPATH: Using relative paths ($ORIGIN/../lib)")
+    message(STATUS "  INSTALL_RPATH: ${CMAKE_INSTALL_RPATH}")
+    message(STATUS "  BUILD_RPATH:   ${CMAKE_BUILD_RPATH}")
 else()
-message(STATUS "RPATH DISABLED - libraries may require LD_LIBRARY_PATH configuration")
+    message(STATUS "RPATH DISABLED - libraries may require LD_LIBRARY_PATH")
 endif()
 
 #------------------------------------------------------------------------------

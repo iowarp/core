@@ -205,12 +205,11 @@ cmake --preset=debug -DWRP_CORE_ENABLE_CTE=ON -DWRP_CORE_ENABLE_CAE=OFF
 - All compilation warnings have been resolved as of the current state
 
 ### RPATH Configuration
-The build system supports **absolute RPATHs** for source-only builds (enabled by default):
+The build system uses **relative RPATHs** (`$ORIGIN`) for portable, relocatable binaries (enabled by default):
 - **Enable/Disable**: Controlled by `WRP_CORE_ENABLE_RPATH` option (default: ON)
-- **Linux**: Uses `${CMAKE_INSTALL_PREFIX}/lib` for runtime library search paths
-- **macOS**: Uses `${CMAKE_INSTALL_PREFIX}/lib` for runtime library search paths
-- Libraries are linked with absolute paths to the installation directory and all dependency locations
-- This configuration is designed for building from source only, not for relocatable binary distributions
+- **Linux**: Uses `$ORIGIN` and `$ORIGIN/../lib` so libraries and binaries find siblings at runtime
+- **macOS**: Uses `@loader_path` and `@loader_path/../lib` (equivalent to `$ORIGIN`)
+- Works for all deployment targets: system installs, pip wheels, conda packages, and relocatable builds
 - **Disable RPATH**: Set `-DWRP_CORE_ENABLE_RPATH=OFF` if you prefer using `LD_LIBRARY_PATH`
 
 ### HSHM Usage

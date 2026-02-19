@@ -27,11 +27,17 @@ def _setup():
                 _LIB_DIR + ":" + ld_path if ld_path else _LIB_DIR
             )
 
-        # Pre-load the core library with RTLD_GLOBAL so symbols are
-        # available to all subsequently loaded IOWarp libraries
-        _core_lib = os.path.join(_LIB_DIR, "libchimaera_cxx.so")
-        if os.path.exists(_core_lib):
-            ctypes.CDLL(_core_lib, mode=ctypes.RTLD_GLOBAL)
+        # Pre-load shared libraries in dependency order with RTLD_GLOBAL
+        # so symbols are available to all subsequently loaded IOWarp libraries.
+        # LD_LIBRARY_PATH changes above only affect child processes, so we
+        # must explicitly load each library for the current process.
+        for _lib_name in [
+            "libhermes_shm_host.so",
+            "libchimaera_cxx.so",
+        ]:
+            _lib_path = os.path.join(_LIB_DIR, _lib_name)
+            if os.path.exists(_lib_path):
+                ctypes.CDLL(_lib_path, mode=ctypes.RTLD_GLOBAL)
 
     # Add ext/ to sys.path so 'import wrp_cte_core_ext' works
     if os.path.isdir(_EXT_DIR) and _EXT_DIR not in sys.path:

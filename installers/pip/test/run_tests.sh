@@ -23,15 +23,7 @@ BIN_DIR=$(python3 -c "import iowarp_core; print(iowarp_core.get_bin_dir())")
 chmod +x "$BIN_DIR"/* 2>/dev/null || true
 
 # ------------------------------------------------------------------
-# 2. Fix RPATHs (in case the build didn't fully handle them)
-# ------------------------------------------------------------------
-echo ""
-echo "=== Fixing RPATHs ==="
-SITE_PACKAGES=$(python3 -c "import site; print(site.getsitepackages()[0])")
-bash /test/fix_rpaths.sh "$SITE_PACKAGES"
-
-# ------------------------------------------------------------------
-# 3. Verify Python import and package APIs
+# 2. Verify Python import and package APIs
 # ------------------------------------------------------------------
 echo ""
 echo "=== Verifying Python package ==="
@@ -42,11 +34,12 @@ python3 -c "import iowarp_core; print('  Data dir:', iowarp_core.get_data_dir())
 python3 -c "import iowarp_core; print('  CTE available:', iowarp_core.cte_available())"
 
 # ------------------------------------------------------------------
-# 4. Check shared library symbol resolution
+# 3. Check shared library symbol resolution
 # ------------------------------------------------------------------
 echo ""
 echo "=== Checking shared library symbols ==="
 LIB_DIR=$(python3 -c "import iowarp_core; print(iowarp_core.get_lib_dir())")
+export LD_LIBRARY_PATH="$LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 MISSING=0
 for so in "$LIB_DIR"/*.so "$LIB_DIR"/*.so.*; do
     [ -f "$so" ] || continue
@@ -63,7 +56,7 @@ fi
 echo "  All shared libraries resolve correctly"
 
 # ------------------------------------------------------------------
-# 5. Set up runtime config
+# 4. Set up runtime config
 # ------------------------------------------------------------------
 echo ""
 echo "=== Setting up runtime config ==="
@@ -72,7 +65,7 @@ cp /test/chimaera_test.yaml ~/.chimaera/chimaera.yaml
 echo "  Config installed to ~/.chimaera/chimaera.yaml"
 
 # ------------------------------------------------------------------
-# 6. Start runtime
+# 5. Start runtime
 # ------------------------------------------------------------------
 echo ""
 echo "=== Starting Chimaera runtime ==="
@@ -93,7 +86,7 @@ fi
 echo "  Runtime is running"
 
 # ------------------------------------------------------------------
-# 7. Stop runtime
+# 6. Stop runtime
 # ------------------------------------------------------------------
 echo ""
 echo "=== Stopping Chimaera runtime ==="
@@ -129,7 +122,7 @@ wait "$RUNTIME_PID" && EXIT_CODE=0 || EXIT_CODE=$?
 echo "  Runtime exited with code: $EXIT_CODE"
 
 # ------------------------------------------------------------------
-# 8. Cleanup
+# 7. Cleanup
 # ------------------------------------------------------------------
 echo ""
 echo "=== Cleanup ==="

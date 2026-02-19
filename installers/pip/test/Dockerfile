@@ -23,13 +23,12 @@ RUN sudo chown -R $(whoami):$(whoami) /build
 RUN cd /build/installers/pip && \
     pip wheel -v -w /tmp/wheelhouse --no-build-isolation .
 
-# Fix RPATHs so the wheel is self-contained ($ORIGIN-relative),
-# then repack the wheel preserving Unix file permissions (execute bits).
+# Repack the wheel preserving Unix file permissions (execute bits),
+# since Python's zipfile module loses them during scikit-build-core packaging.
 RUN cd /tmp && mkdir -p unpack && \
     WHEEL=$(ls /tmp/wheelhouse/*.whl | head -1) && \
     python3 -m zipfile -e "$WHEEL" unpack/ && \
     chmod +x unpack/iowarp_core/bin/* && \
-    bash /build/installers/pip/fix_rpaths.sh unpack/ && \
     rm "$WHEEL" && \
     WHEEL_NAME=$(basename "$WHEEL") && \
     python3 /build/installers/pip/test/repack_wheel.py \
@@ -64,7 +63,7 @@ FROM python:3.12-slim AS test
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    patchelf procps \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /test
@@ -73,7 +72,6 @@ WORKDIR /test
 COPY --from=builder /tmp/wheelhouse/*.whl /test/wheelhouse/
 
 # Copy test files
-COPY installers/pip/fix_rpaths.sh /test/fix_rpaths.sh
 COPY installers/pip/test/run_tests.sh /test/run_tests.sh
 COPY installers/pip/test/chimaera_test.yaml /test/chimaera_test.yaml
 

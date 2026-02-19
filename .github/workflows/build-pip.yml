@@ -162,6 +162,7 @@ jobs:
 
             echo "=== Symbol resolution check ==="
             LIB_DIR=$(python -c "import iowarp_core; print(iowarp_core.get_lib_dir())")
+            export LD_LIBRARY_PATH="$LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             MISSING=0
             for so in "$LIB_DIR"/*.so "$LIB_DIR"/*.so.*; do
               [ -f "$so" ] || continue
