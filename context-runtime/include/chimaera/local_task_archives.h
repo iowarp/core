@@ -278,6 +278,17 @@ public:
   }
 
 private:
+#if !HSHM_IS_HOST
+  /** GPU helper: write raw bytes into the raw buffer.
+   * Not needed on host where serializer_ handles writes. */
+  HSHM_INLINE_CROSS_FUN void GpuWrite(const void *src, size_t len) {
+    if (offset_ + len <= capacity_) {
+      memcpy(buffer_ + offset_, src, len);
+      offset_ += len;
+    }
+  }
+#endif
+
   /** Helper to serialize individual arguments - handles Tasks specially */
   template <typename T>
   HSHM_CROSS_FUN void SerializeArg(T &arg) {
@@ -306,7 +317,8 @@ public:
    * @param flags Transfer flags
    */
   template <typename T>
-  void bulk(hipc::ShmPtr<T> ptr, size_t size, uint32_t flags) {
+  HSHM_CROSS_FUN void bulk(hipc::ShmPtr<T> ptr, size_t size, uint32_t flags) {
+#if HSHM_IS_HOST
     if (!ptr.alloc_id_.IsNull()) {
       // Shared memory pointer: mode=0, serialize the ShmPtr
       uint8_t mode = 0;
@@ -324,6 +336,25 @@ public:
       uint8_t mode = 2;
       serializer_ << mode;
     }
+#else
+    // GPU path: write directly into the raw buffer
+    if (!ptr.alloc_id_.IsNull()) {
+      uint8_t mode = 0;
+      GpuWrite(&mode, sizeof(mode));
+      size_t off = ptr.off_.load();
+      GpuWrite(&off, sizeof(off));
+      GpuWrite(&ptr.alloc_id_.major_, sizeof(ptr.alloc_id_.major_));
+      GpuWrite(&ptr.alloc_id_.minor_, sizeof(ptr.alloc_id_.minor_));
+    } else if (flags & BULK_XFER) {
+      uint8_t mode = 1;
+      GpuWrite(&mode, sizeof(mode));
+      char *raw_ptr = reinterpret_cast<char *>(ptr.off_.load());
+      GpuWrite(raw_ptr, size);
+    } else {
+      uint8_t mode = 2;
+      GpuWrite(&mode, sizeof(mode));
+    }
+#endif
   }
 
   /**
@@ -335,7 +366,8 @@ public:
    * @param flags Transfer flags
    */
   template <typename T>
-  void bulk(const hipc::FullPtr<T> &ptr, size_t size, uint32_t flags) {
+  HSHM_CROSS_FUN void bulk(const hipc::FullPtr<T> &ptr, size_t size, uint32_t flags) {
+#if HSHM_IS_HOST
     if (!ptr.shm_.alloc_id_.IsNull()) {
       // Shared memory pointer: mode=0, serialize the ShmPtr
       uint8_t mode = 0;
@@ -351,6 +383,24 @@ public:
       uint8_t mode = 2;
       serializer_ << mode;
     }
+#else
+    // GPU path: write directly into the raw buffer
+    if (!ptr.shm_.alloc_id_.IsNull()) {
+      uint8_t mode = 0;
+      GpuWrite(&mode, sizeof(mode));
+      size_t off = ptr.shm_.off_.load();
+      GpuWrite(&off, sizeof(off));
+      GpuWrite(&ptr.shm_.alloc_id_.major_, sizeof(ptr.shm_.alloc_id_.major_));
+      GpuWrite(&ptr.shm_.alloc_id_.minor_, sizeof(ptr.shm_.alloc_id_.minor_));
+    } else if (flags & BULK_XFER) {
+      uint8_t mode = 1;
+      GpuWrite(&mode, sizeof(mode));
+      GpuWrite(reinterpret_cast<const char *>(ptr.ptr_), size);
+    } else {
+      uint8_t mode = 2;
+      GpuWrite(&mode, sizeof(mode));
+    }
+#endif
   }
 
   /**
@@ -362,10 +412,13 @@ public:
    * @param flags Transfer flags
    */
   template <typename T>
-  void bulk(T *ptr, size_t size, uint32_t flags) {
+  HSHM_CROSS_FUN void bulk(T *ptr, size_t size, uint32_t flags) {
     (void)flags;  // Unused for local serialization
-    // Full memory copy for raw pointers
+#if HSHM_IS_HOST
     serializer_.write_binary(reinterpret_cast<const char *>(ptr), size);
+#else
+    GpuWrite(ptr, size);
+#endif
   }
 
 #if HSHM_IS_HOST

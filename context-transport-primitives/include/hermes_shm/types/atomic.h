@@ -42,7 +42,7 @@
 #if HSHM_ENABLE_CUDA && defined(__CUDACC__)
 #include <cuda/atomic>
 #endif
-#if HSHM_ENABLE_ROCM && defined(__HIP_PLATFORM_AMD__)
+#if HSHM_ENABLE_ROCM && defined(__HIPCC__)
 #include <hip/hip_runtime.h>
 #endif
 

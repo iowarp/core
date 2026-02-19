@@ -761,6 +761,10 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
     if (blob_score < 0.0f) {
       blob_score = blob_found ? blob_info_ptr->score_ : 1.0f;
     }
+    if (blob_score > 1.0f) {
+      task->return_code_ = 5;
+      co_return;
+    }
 
     // Step 1: ClearBlob — free blocks if full replacement
     chi::u64 old_blob_size = 0;
@@ -963,7 +967,7 @@ chi::TaskResume Runtime::ReorganizeBlob(hipc::FullPtr<ReorganizeBlobTask> task,
     }
 
     if (new_score < 0.0f || new_score > 1.0f) {
-      task->return_code_ = 1;  // Invalid score range
+      task->return_code_ = 1;
       co_return;
     }
 
