@@ -463,6 +463,29 @@ TEST_CASE("Tag - GetBlob SHM Null Pointer", "[cte][tag][errors]") {
   REQUIRE(caught_exception);
 }
 
+TEST_CASE("Tag - PutBlob Invalid Score", "[cte][tag][errors]") {
+  TagTestFixture fixture;
+  fixture.SetupCTEWithTarget();
+
+  wrp_cte::core::Tag tag("error_invalid_score");
+  auto data = fixture.CreateTestData(fixture.kSmallDataSize, 'I');
+
+  // Scores above 1.0 must be rejected
+  bool caught_above = false;
+  try {
+    tag.PutBlob("score_above", data.data(), data.size(), 0, 1.5f);
+  } catch (const std::runtime_error &e) {
+    caught_above = true;
+  }
+  REQUIRE(caught_above);
+
+  // Score of exactly 1.0 must be accepted
+  REQUIRE_NOTHROW(tag.PutBlob("score_one", data.data(), data.size(), 0, 1.0f));
+
+  // Score of exactly 0.0 must be accepted
+  REQUIRE_NOTHROW(tag.PutBlob("score_zero", data.data(), data.size(), 0, 0.0f));
+}
+
 // ============================================================================
 // Metadata Tests
 // ============================================================================
