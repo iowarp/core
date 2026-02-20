@@ -180,7 +180,7 @@ memory:
 
 # Network configuration
 networking:
-  port: 5555                              # ZeroMQ port
+  port: 9413                              # ZeroMQ port
   neighborhood_size: 32                   # Max nodes for range queries
 
 # Runtime configuration

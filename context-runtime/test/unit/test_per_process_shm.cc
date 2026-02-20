@@ -76,7 +76,7 @@ pid_t StartServerProcess() {
     // Redirect child output to prevent log flooding
     freopen("/dev/null", "w", stdout);  // NOLINT
     freopen("/dev/null", "w", stderr);  // NOLINT
-    setenv("CHIMAERA_WITH_RUNTIME", "1", 1);
+    setenv("CHI_WITH_RUNTIME", "1", 1);
     bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kServer, true);
     if (!success) {
       _exit(1);
@@ -149,7 +149,7 @@ TEST_CASE("Per-process shared memory GetClientShmInfo",
   if (client_pid == 0) {
     freopen("/dev/null", "w", stdout);  // NOLINT
     freopen("/dev/null", "w", stderr);  // NOLINT
-    setenv("CHIMAERA_WITH_RUNTIME", "0", 1);
+    setenv("CHI_WITH_RUNTIME", "0", 1);
     setenv("CHI_IPC_MODE", "SHM", 1);
     if (!chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, false)) {
       _exit(1);
