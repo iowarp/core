@@ -1,0 +1,62 @@
+name: Build and Publish Conda Package
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  build-and-publish:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: '3.11'
+          channels: conda-forge,defaults
+          channel-priority: flexible
+
+      - name: Install rattler-build
+        shell: bash -l {0}
+        run: |
+          conda install -y rattler-build anaconda-client
+
+      - name: Build conda package
+        shell: bash -l {0}
+        run: |
+          rattler-build build \
+            --recipe installers/conda/ \
+            --variant-config installers/conda/variants/release.yaml
+
+      - name: Upload to Anaconda.org
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        shell: bash -l {0}
+        env:
+          ANACONDA_TOKEN: ${{ secrets.ANACONDA_TOKEN }}
+        run: |
+          # Find the built package
+          PACKAGE=$(find output/ -name "*.conda" -o -name "*.tar.bz2" | head -1)
+          if [ -z "$PACKAGE" ]; then
+            echo "ERROR: No built package found"
+            exit 1
+          fi
+          echo "Uploading: $PACKAGE"
+          anaconda -t $ANACONDA_TOKEN upload --user iowarp --force "$PACKAGE"
