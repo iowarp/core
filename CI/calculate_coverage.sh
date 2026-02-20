@@ -146,17 +146,9 @@ fi
 if [ "$DO_BUILD" = true ]; then
     print_header "Step 1: Building with Coverage Instrumentation"
 
-    # Ensure conda environment paths are visible to cmake/pkg-config
-    if [ -n "$CONDA_PREFIX" ]; then
-        export CMAKE_PREFIX_PATH="${CONDA_PREFIX}${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
-        export PKG_CONFIG_PATH="${CONDA_PREFIX}/lib/pkgconfig:${CONDA_PREFIX}/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-        print_info "Using conda prefix: $CONDA_PREFIX"
-    fi
-
     print_info "Configuring build with coverage enabled..."
     cmake --preset=debug \
         -DWRP_CORE_ENABLE_COVERAGE=ON \
-        -DWRP_CORE_ENABLE_DOCKER_CI=OFF \
         -DWRP_CTE_ENABLE_ADIOS2_ADAPTER=OFF \
         -DWRP_CTE_ENABLE_COMPRESS=OFF \
         -DWRP_CORE_ENABLE_GRAY_SCOTT=OFF
@@ -198,7 +190,7 @@ set(CTEST_DROP_LOCATION "/submit.php?project=HERMES")
 set(CTEST_DROP_SITE_CDASH TRUE)
 set(CTEST_COVERAGE_COMMAND "gcov")
 ctest_start("Experimental")
-ctest_test(RETURN_VALUE test_result EXCLUDE "cr_bdev_|cte_functional_|cte_query_")
+ctest_test(RETURN_VALUE test_result)
 ctest_coverage()
 ctest_submit()
 if(NOT test_result EQUAL 0)
@@ -208,9 +200,9 @@ EOFCMAKE
         ctest -S "${BUILD_DIR}/cdash_coverage.cmake" -VV || true
         print_success "CDash submission complete"
     else
-        print_info "Running tests (excluding daemon-dependent tests)..."
+        print_info "Running all CTest tests..."
         CTEST_EXIT_CODE=0
-        ctest --output-on-failure -E "cr_bdev_|cte_functional_|cte_query_" || CTEST_EXIT_CODE=$?
+        ctest --output-on-failure || CTEST_EXIT_CODE=$?
         if [ $CTEST_EXIT_CODE -eq 0 ]; then
             print_success "All CTest tests passed"
         else
