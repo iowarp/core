@@ -201,7 +201,11 @@ include(IowarpCoreCommon)
 # 3. CMake find_package() in standard locations
 
 # Pkg-Config
-find_package(PkgConfig REQUIRED)
+if(NOT WIN32)
+    find_package(PkgConfig REQUIRED)
+else()
+    find_package(PkgConfig QUIET)
+endif()
 if(PkgConfig_FOUND)
     message(STATUS "found pkg-config")
     if(IN_CONDA_BUILD)
@@ -441,13 +445,30 @@ endif()
 
 # ZeroMQ (conditional) - try system first, fall back to submodule
 if(WRP_CORE_ENABLE_ZMQ)
-    pkg_check_modules(ZeroMQ QUIET libzmq)
-    if(ZeroMQ_FOUND)
-        message(STATUS "found zmq.h at ${ZeroMQ_INCLUDE_DIRS}")
-        set(ZMQ_LIBS ${ZeroMQ_LIBRARIES})
-        set(ZMQ_INCLUDES ${ZeroMQ_INCLUDE_DIRS})
-        set(ZMQ_LIB_DIRS ${ZeroMQ_LIBRARY_DIRS})
-    else()
+    set(_ZMQ_FOUND FALSE)
+    # Try pkg-config first (Linux/macOS)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(ZeroMQ QUIET libzmq)
+        if(ZeroMQ_FOUND)
+            message(STATUS "found zmq.h at ${ZeroMQ_INCLUDE_DIRS}")
+            set(ZMQ_LIBS ${ZeroMQ_LIBRARIES})
+            set(ZMQ_INCLUDES ${ZeroMQ_INCLUDE_DIRS})
+            set(ZMQ_LIB_DIRS ${ZeroMQ_LIBRARY_DIRS})
+            set(_ZMQ_FOUND TRUE)
+        endif()
+    endif()
+    # Fall back to CMake config mode (vcpkg on Windows)
+    if(NOT _ZMQ_FOUND)
+        find_package(ZeroMQ CONFIG QUIET)
+        if(ZeroMQ_FOUND)
+            message(STATUS "found ZeroMQ via CMake config")
+            set(ZMQ_LIBS libzmq)
+            set(ZMQ_INCLUDES "")
+            set(ZMQ_LIB_DIRS "")
+            set(_ZMQ_FOUND TRUE)
+        endif()
+    endif()
+    if(NOT _ZMQ_FOUND)
         message(FATAL_ERROR "ZeroMQ not found. Please install ZeroMQ or run install.sh to build from submodules.")
     endif()
 endif()
@@ -636,33 +657,39 @@ endif()
 #------------------------------------------------------------------------------
 # Compiler Flags
 #------------------------------------------------------------------------------
-# Add compiler flags following Google C++ style guide
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
-# Disable warnings that are false positives or from external dependencies
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-parameter -Wno-unused-variable -Wno-reorder")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-pedantic -Wno-sign-compare -Wno-missing-field-initializers")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-but-set-variable -Wno-unused-function -Wno-cast-function-type")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-self-move -Wno-format")
+if(NOT MSVC)
+    # Add compiler flags following Google C++ style guide
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
+    # Disable warnings that are false positives or from external dependencies
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-parameter -Wno-unused-variable -Wno-reorder")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-pedantic -Wno-sign-compare -Wno-missing-field-initializers")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-but-set-variable -Wno-unused-function -Wno-cast-function-type")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-self-move -Wno-format")
 
-# Debug configuration
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -DDEBUG")
+    # Debug configuration
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -DDEBUG")
 
-# Release configuration
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG")
+    # Release configuration
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG")
 
-# AddressSanitizer configuration
-if(WRP_CORE_ENABLE_ASAN)
-    message(STATUS "AddressSanitizer (ASAN) enabled for iowarp-core")
-    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
-    add_link_options(-fsanitize=address)
-endif()
+    # AddressSanitizer configuration
+    if(WRP_CORE_ENABLE_ASAN)
+        message(STATUS "AddressSanitizer (ASAN) enabled for iowarp-core")
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address)
+    endif()
 
-# Code Coverage configuration
-if(WRP_CORE_ENABLE_COVERAGE)
-    message(STATUS "Code coverage instrumentation enabled for iowarp-core")
-    add_compile_options(--coverage -fprofile-arcs -ftest-coverage)
-    add_link_options(--coverage)
+    # Code Coverage configuration
+    if(WRP_CORE_ENABLE_COVERAGE)
+        message(STATUS "Code coverage instrumentation enabled for iowarp-core")
+        add_compile_options(--coverage -fprofile-arcs -ftest-coverage)
+        add_link_options(--coverage)
+    endif()
+else()
+    # MSVC compiler flags
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /Zi /Od /DDEBUG")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /DNDEBUG")
 endif()
 
 #------------------------------------------------------------------------------

@@ -46,9 +46,11 @@
 #include <vector>
 #include <chrono>
 #include <thread>
+#ifndef _WIN32
 #include <sys/wait.h>
 #include <signal.h>
 #include <fcntl.h>
+#endif
 
 #include "../simple_test.h"
 

@@ -37,6 +37,7 @@
 
 #include "chimaera/ipc_manager.h"
 
+#ifndef _WIN32
 #include <arpa/inet.h>
 #include <dirent.h>
 #include <endian.h>
@@ -48,6 +49,7 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 #include <zmq.h>
 #include <hermes_shm/lightbeam/transport_factory_impl.h>
 

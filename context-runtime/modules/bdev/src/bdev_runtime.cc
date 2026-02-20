@@ -36,9 +36,11 @@
 #include <chimaera/work_orchestrator.h>
 #include <chimaera/worker.h>
 #include <errno.h>
+#ifndef _WIN32
 #include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#endif
 
 #include <cmath>
 #include <cstdio>

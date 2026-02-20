@@ -36,12 +36,11 @@
 
 #include "hermes_shm/introspect/system_info.h"
 
-#include <dlfcn.h>
-
 #include <cstdlib>
 
 #include "hermes_shm/constants/macros.h"
 #if HSHM_ENABLE_PROCFS_SYSINFO
+#include <dlfcn.h>
 // LINUX
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -548,7 +547,12 @@ std::string SystemInfo::Getenv(const char *name, size_t max_size) {
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
   std::string var;
   var.resize(max_size);
-  GetEnvironmentVariable(name, var.data(), var.size());
+  DWORD len = GetEnvironmentVariable(name, var.data(),
+                                     static_cast<DWORD>(var.size()));
+  if (len == 0) {
+    return "";
+  }
+  var.resize(len);
   return var;
 #endif
   std::cout << "undefined" << std::endl;

@@ -47,8 +47,10 @@
 
 #include <mpi.h>
 
+#ifndef _WIN32
 #include <fcntl.h>
 #include <unistd.h>
+#endif
 
 #include <chrono>
 #include <cstdlib>

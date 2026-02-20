@@ -40,8 +40,10 @@
 
 #include "../simple_test.h"
 
+#ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 #include "chimaera/chimaera.h"
 #include "chimaera/ipc_manager.h"

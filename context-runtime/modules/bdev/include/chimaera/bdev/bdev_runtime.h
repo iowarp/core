@@ -38,12 +38,14 @@
 #include <chimaera/comutex.h>
 #include "bdev_client.h"
 #include "bdev_tasks.h"
+#ifndef _WIN32
 #include <sys/types.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <aio.h>
 #include <libaio.h>
+#endif
 #include <vector>
 #include <list>
 #include <atomic>
