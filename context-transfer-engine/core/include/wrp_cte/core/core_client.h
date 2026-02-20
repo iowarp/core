@@ -37,6 +37,7 @@
 #include <chimaera/chimaera.h>
 #include <hermes_shm/util/singleton.h>
 #include <wrp_cte/core/core_tasks.h>
+#include <wrp_cte/core/content_transfer_engine.h>
 
 namespace wrp_cte::core {
 
@@ -501,7 +502,7 @@ class Client : public chi::ContainerClient {
 };
 
 // Global pointer-based singleton for CTE client with lazy initialization
-HSHM_DEFINE_GLOBAL_PTR_VAR_H(wrp_cte::core::Client, g_cte_client);
+HSHM_DEFINE_GLOBAL_PTR_VAR_H_DLL(CTE_DLL, wrp_cte::core::Client, g_cte_client);
 
 /**
  * Initialize CTE client and configuration subsystem

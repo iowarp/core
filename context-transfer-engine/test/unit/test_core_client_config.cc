@@ -56,6 +56,8 @@
 #include <fstream>
 #include <memory>
 
+#include <hermes_shm/introspect/system_info.h>
+
 #include "simple_test.h"
 
 namespace fs = std::filesystem;
@@ -257,7 +259,7 @@ TEST_CASE("Config - Load from Invalid YAML", "[core][config]") {
 
 TEST_CASE("Config - Load from Environment", "[core][config]") {
   // Test with unset environment variable (should succeed with defaults)
-  unsetenv("WRP_CTE_CONFIG");
+  hshm::SystemInfo::Unsetenv("WRP_CTE_CONFIG");
 
   wrp_cte::core::Config config;
   bool success = config.LoadFromEnvironment();

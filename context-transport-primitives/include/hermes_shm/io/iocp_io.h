@@ -37,15 +37,32 @@
 #ifdef _WIN32
 
 #include "async_io.h"
+#include <atomic>
+#include <mutex>
+#include <unordered_map>
+#include <memory>
 
-// TODO: #include <windows.h>
-// TODO: Windows IOCP implementation
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 namespace hshm {
 
+struct IocpOperation {
+  OVERLAPPED overlapped;
+  IoToken token;
+  bool completed;
+  ::DWORD bytes_transferred;
+  ::DWORD error_code;
+};
+
 class IocpAsyncIO : public AsyncIO {
  public:
-  IocpAsyncIO(uint32_t io_depth) {
+  IocpAsyncIO(uint32_t io_depth)
+      : file_handle_(INVALID_HANDLE_VALUE),
+        iocp_handle_(nullptr),
+        next_token_(1) {
     (void)io_depth;
   }
 
@@ -54,47 +71,202 @@ class IocpAsyncIO : public AsyncIO {
   }
 
   bool Open(const std::string &path, int flags, mode_t mode) override {
-    // TODO: CreateFileA with FILE_FLAG_OVERLAPPED
-    (void)path; (void)flags; (void)mode;
-    return false;
+    (void)mode;
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    ::DWORD access = 0;
+    if (flags & O_RDWR) {
+      access = GENERIC_READ | GENERIC_WRITE;
+    } else if (flags & O_WRONLY) {
+      access = GENERIC_WRITE;
+    } else {
+      access = GENERIC_READ;
+    }
+
+    ::DWORD creation = OPEN_EXISTING;
+    if (flags & O_CREAT) {
+      creation = OPEN_ALWAYS;
+    }
+
+    file_handle_ = CreateFileA(
+        path.c_str(),
+        access,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        creation,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
+        nullptr);
+
+    if (file_handle_ == INVALID_HANDLE_VALUE) {
+      return false;
+    }
+
+    iocp_handle_ = CreateIoCompletionPort(
+        file_handle_, nullptr, 0, 0);
+    if (iocp_handle_ == nullptr) {
+      CloseHandle(file_handle_);
+      file_handle_ = INVALID_HANDLE_VALUE;
+      return false;
+    }
+
+    return true;
   }
 
   ssize_t GetAsyncFileSize() const override {
-    // TODO: GetFileSizeEx
-    return -1;
+    if (file_handle_ == INVALID_HANDLE_VALUE) return -1;
+    LARGE_INTEGER size;
+    if (!GetFileSizeEx(file_handle_, &size)) return -1;
+    return static_cast<ssize_t>(size.QuadPart);
   }
 
   bool Truncate(size_t size) override {
-    // TODO: SetFilePointerEx + SetEndOfFile
-    (void)size;
-    return false;
+    if (file_handle_ == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER li;
+    li.QuadPart = static_cast<LONGLONG>(size);
+    if (!SetFilePointerEx(file_handle_, li, nullptr, FILE_BEGIN)) return false;
+    if (!SetEndOfFile(file_handle_)) return false;
+    return true;
   }
 
   IoToken Write(void *buffer, size_t size, off_t offset) override {
-    // TODO: WriteFile with OVERLAPPED + IOCP
-    (void)buffer; (void)size; (void)offset;
-    return kInvalidIoToken;
+    return SubmitIO(buffer, size, offset, true);
   }
 
   IoToken Read(void *buffer, size_t size, off_t offset) override {
-    // TODO: ReadFile with OVERLAPPED + IOCP
-    (void)buffer; (void)size; (void)offset;
-    return kInvalidIoToken;
+    return SubmitIO(buffer, size, offset, false);
   }
 
   bool IsComplete(IoToken token, IoResult &result) override {
-    // TODO: GetQueuedCompletionStatus (non-blocking)
-    (void)token; (void)result;
-    return false;
+    // First drain any completions from the IOCP queue
+    DrainCompletions();
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = pending_.find(token);
+    if (it == pending_.end()) return false;
+
+    if (!it->second->completed) return false;
+
+    if (it->second->error_code == 0) {
+      result.bytes_transferred =
+          static_cast<ssize_t>(it->second->bytes_transferred);
+      result.error_code = 0;
+    } else {
+      result.bytes_transferred = -1;
+      result.error_code = static_cast<int>(it->second->error_code);
+    }
+
+    pending_.erase(it);
+    return true;
   }
 
   void Close() override {
-    // TODO: CloseHandle for file handles and IOCP
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Cancel pending operations
+    if (file_handle_ != INVALID_HANDLE_VALUE) {
+      CancelIo(file_handle_);
+    }
+    pending_.clear();
+
+    if (iocp_handle_ != nullptr) {
+      CloseHandle(iocp_handle_);
+      iocp_handle_ = nullptr;
+    }
+    if (file_handle_ != INVALID_HANDLE_VALUE) {
+      CloseHandle(file_handle_);
+      file_handle_ = INVALID_HANDLE_VALUE;
+    }
   }
 
   int GetEventFd() const override {
     return -1;  // Not applicable on Windows
   }
+
+ private:
+  IoToken SubmitIO(void *buffer, size_t size, off_t offset, bool is_write) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (file_handle_ == INVALID_HANDLE_VALUE) return kInvalidIoToken;
+
+    IoToken token = next_token_.fetch_add(1);
+    auto op = std::make_unique<IocpOperation>();
+    memset(&op->overlapped, 0, sizeof(OVERLAPPED));
+    op->overlapped.Offset = static_cast<DWORD>(offset & 0xFFFFFFFF);
+    op->overlapped.OffsetHigh = static_cast<DWORD>(
+        (static_cast<uint64_t>(offset) >> 32) & 0xFFFFFFFF);
+    op->token = token;
+    op->completed = false;
+    op->bytes_transferred = 0;
+    op->error_code = 0;
+
+    BOOL ok;
+    if (is_write) {
+      ok = WriteFile(file_handle_, buffer, static_cast<::DWORD>(size),
+                     nullptr, &op->overlapped);
+    } else {
+      ok = ReadFile(file_handle_, buffer, static_cast<::DWORD>(size),
+                    nullptr, &op->overlapped);
+    }
+
+    if (!ok) {
+      ::DWORD err = ::GetLastError();
+      if (err != ERROR_IO_PENDING) {
+        return kInvalidIoToken;
+      }
+    } else {
+      // Completed synchronously - mark it
+      op->completed = true;
+      ::DWORD transferred = 0;
+      ::GetOverlappedResult(file_handle_, &op->overlapped, &transferred, FALSE);
+      op->bytes_transferred = transferred;
+      op->error_code = 0;
+    }
+
+    pending_[token] = std::move(op);
+    return token;
+  }
+
+  void DrainCompletions() {
+    if (iocp_handle_ == nullptr) return;
+
+    ::DWORD bytes = 0;
+    ULONG_PTR key = 0;
+    LPOVERLAPPED ov = nullptr;
+
+    // Non-blocking: drain all ready completions
+    while (::GetQueuedCompletionStatus(iocp_handle_, &bytes, &key, &ov, 0)) {
+      if (ov == nullptr) break;
+      std::lock_guard<std::mutex> lock(mutex_);
+      // Find the operation containing this OVERLAPPED
+      for (auto &kv : pending_) {
+        if (&kv.second->overlapped == ov) {
+          kv.second->completed = true;
+          kv.second->bytes_transferred = bytes;
+          kv.second->error_code = 0;
+          break;
+        }
+      }
+    }
+
+    // Check if there was an error completion
+    if (ov != nullptr) {
+      ::DWORD err = ::GetLastError();
+      std::lock_guard<std::mutex> lock(mutex_);
+      for (auto &kv : pending_) {
+        if (&kv.second->overlapped == ov) {
+          kv.second->completed = true;
+          kv.second->bytes_transferred = bytes;
+          kv.second->error_code = err;
+          break;
+        }
+      }
+    }
+  }
+
+  HANDLE file_handle_;
+  HANDLE iocp_handle_;
+  std::atomic<IoToken> next_token_;
+  std::mutex mutex_;
+  std::unordered_map<IoToken, std::unique_ptr<IocpOperation>> pending_;
 };
 
 }  // namespace hshm

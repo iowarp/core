@@ -451,14 +451,22 @@ void *SystemInfo::MapSharedMemory(const File &fd, size_t size, i64 off) {
   }
   return ptr;
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
-  // Convert i64 to low and high dwords
-  DWORD highDword = (DWORD)((off >> 32) & 0xFFFFFFFF);
-  DWORD lowDword = (DWORD)(off & 0xFFFFFFFF);
+  // Windows MapViewOfFile requires the offset to be aligned to the system
+  // allocation granularity (typically 64KB). Align down and adjust the pointer.
+  SYSTEM_INFO si;
+  GetSystemInfo(&si);
+  DWORD granularity = si.dwAllocationGranularity;
+  i64 aligned_off = off & ~(static_cast<i64>(granularity) - 1);
+  size_t delta = static_cast<size_t>(off - aligned_off);
+  size_t aligned_size = size + delta;
+
+  DWORD highDword = (DWORD)((aligned_off >> 32) & 0xFFFFFFFF);
+  DWORD lowDword = (DWORD)(aligned_off & 0xFFFFFFFF);
   void *ret = MapViewOfFile(fd.windows_fd_,       // handle to map object
                             FILE_MAP_ALL_ACCESS,  // read/write permission
                             highDword,            // file offset high
                             lowDword,             // file offset low
-                            size);                // number of bytes to map
+                            aligned_size);        // number of bytes to map
   if (ret == nullptr) {
     DWORD error = GetLastError();
     LPVOID msg_buf;
@@ -468,8 +476,9 @@ void *SystemInfo::MapSharedMemory(const File &fd, size_t size, i64 off) {
                   (LPTSTR)&msg_buf, 0, NULL);
     printf("MapViewOfFile failed with error: %s\n", (char *)msg_buf);
     LocalFree(msg_buf);
+    return nullptr;
   }
-  return ret;
+  return static_cast<char *>(ret) + delta;
 #endif
 }
 
@@ -527,7 +536,17 @@ void SystemInfo::UnmapMemory(void *ptr, size_t size) {
 #if HSHM_ENABLE_PROCFS_SYSINFO
   munmap(ptr, size);
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
-  VirtualFree(ptr, size, MEM_RELEASE);
+  // Use VirtualQuery to determine how the memory was allocated.
+  // MapViewOfFile regions have Type MEM_MAPPED, VirtualAlloc regions have
+  // MEM_PRIVATE.
+  MEMORY_BASIC_INFORMATION mbi;
+  if (VirtualQuery(ptr, &mbi, sizeof(mbi)) != 0 && mbi.Type == MEM_MAPPED) {
+    // For MapViewOfFile, must unmap with the allocation base (handles
+    // offset-adjusted pointers from MapSharedMemory).
+    UnmapViewOfFile(mbi.AllocationBase);
+  } else {
+    VirtualFree(ptr, 0, MEM_RELEASE);
+  }
 #endif
 }
 

@@ -35,7 +35,19 @@
 #define WRP_CAE_CORE_CLIENT_H_
 
 #include <chimaera/chimaera.h>
+#include <hermes_shm/util/singleton.h>
 #include <wrp_cae/core/core_tasks.h>
+
+/** DLL import/export for wrp_cae_core_client shared library */
+#ifdef _MSC_VER
+  #ifdef wrp_cae_core_client_EXPORTS
+    #define CAE_DLL __declspec(dllexport)
+  #else
+    #define CAE_DLL __declspec(dllimport)
+  #endif
+#else
+  #define CAE_DLL
+#endif
 
 namespace wrp_cae::core {
 
@@ -132,7 +144,7 @@ class Client : public chi::ContainerClient {
 }  // namespace wrp_cae::core
 
 // Global pointer-based singleton for CAE client with lazy initialization
-HSHM_DEFINE_GLOBAL_PTR_VAR_H(wrp_cae::core::Client, g_cae_client);
+HSHM_DEFINE_GLOBAL_PTR_VAR_H_DLL(CAE_DLL, wrp_cae::core::Client, g_cae_client);
 
 /**
  * Initialize CAE client singleton

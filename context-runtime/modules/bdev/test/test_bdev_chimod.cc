@@ -48,13 +48,14 @@
 #include <stdlib.h>
 #define access(path, mode) _access(path, mode)
 #define unlink(path) _unlink(path)
-#define setenv(name, value, overwrite) _putenv_s(name, value)
 #ifndef F_OK
 #define F_OK 0
 #endif
 #endif
+#include <hermes_shm/introspect/system_info.h>
 
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <random>
@@ -90,7 +91,8 @@ constexpr chi::u32 kRetryDelayMs = 50;
 // Note: Tests use default pool ID (0) instead of hardcoding specific values
 
 // Test file configurations
-const std::string kTestFilePrefix = "/tmp/test_bdev_";
+const std::string kTestFilePrefix =
+    (std::filesystem::temp_directory_path() / "test_bdev_").string();
 const chi::u64 kDefaultFileSize = 10 * 1024 * 1024;  // 10MB
 const chi::u64 kLargeFileSize = 100 * 1024 * 1024;   // 100MB
 
@@ -1355,17 +1357,17 @@ void run_bdev_file_explicit_backend_test(const char *mode_name) {
 }
 
 TEST_CASE("bdev_file_explicit_backend_shm", "[bdev][file][explicit][shm]") {
-  setenv("CHI_IPC_MODE", "SHM", 1);
+  hshm::SystemInfo::Setenv("CHI_IPC_MODE", "SHM", 1);
   run_bdev_file_explicit_backend_test("shm");
 }
 
 TEST_CASE("bdev_file_explicit_backend_tcp", "[bdev][file][explicit][tcp]") {
-  setenv("CHI_IPC_MODE", "TCP", 1);
+  hshm::SystemInfo::Setenv("CHI_IPC_MODE", "TCP", 1);
   run_bdev_file_explicit_backend_test("tcp");
 }
 
 TEST_CASE("bdev_file_explicit_backend_ipc", "[bdev][file][explicit][ipc]") {
-  setenv("CHI_IPC_MODE", "IPC", 1);
+  hshm::SystemInfo::Setenv("CHI_IPC_MODE", "IPC", 1);
   run_bdev_file_explicit_backend_test("ipc");
 }
 

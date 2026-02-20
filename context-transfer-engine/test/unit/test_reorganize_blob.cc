@@ -56,6 +56,8 @@
 #include <fstream>
 #include <vector>
 
+#include <hermes_shm/introspect/system_info.h>
+
 #include "simple_test.h"
 
 namespace fs = std::filesystem;
@@ -94,7 +96,7 @@ class ReorganizeBlobTestFixture {
     CreateConfigFile();
 
     // Set environment variable for runtime config
-    setenv("WRP_RUNTIME_CONF", config_path_.c_str(), 1);
+    hshm::SystemInfo::Setenv("WRP_RUNTIME_CONF", config_path_, 1);
 
     // Initialize Chimaera runtime
     bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
