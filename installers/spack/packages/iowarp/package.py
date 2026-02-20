@@ -11,8 +11,8 @@ class Iowarp(CMakePackage):
     context-transport-primitives, context-transfer-engine,
     context-assimilation-engine, and context-exploration-engine."""
 
-    homepage = "https://github.com/iowarp/core"
-    git = "https://github.com/iowarp/core.git"
+    homepage = "https://github.com/iowarp/clio-core"
+    git = "https://github.com/iowarp/clio-core.git"
 
     # Branch versions
     version('main', branch='main', submodules=True, preferred=True)

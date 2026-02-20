@@ -3,7 +3,7 @@ vcpkg_check_linkage(ONLY_DYNAMIC_LIBRARY)
 
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
-    REPO iowarp/core
+    REPO iowarp/clio-core
     REF "${VERSION}"
     SHA512 0
     HEAD_REF main

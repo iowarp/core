@@ -49,8 +49,8 @@ To install IOWarp Core as a library in your own project, use the overlay port in
 
 ```bash
 # Clone the IOWarp Core repository
-git clone https://github.com/iowarp/core.git
-cd core
+git clone https://github.com/iowarp/clio-core.git
+cd clio-core
 
 # Install using vcpkg with overlay
 vcpkg install iowarp-core --overlay-ports=installers/vcpkg

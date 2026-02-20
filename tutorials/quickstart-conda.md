@@ -13,8 +13,8 @@ Chimaera runtime, and running a Context Exploration Engine (CEE) example.
 ## 1. Clone and Install
 
 ```bash
-git clone --recurse-submodules https://github.com/iowarp/iowarp-core.git
-cd iowarp-core
+git clone --recurse-submodules https://github.com/iowarp/clio-core.git
+cd clio-core
 ./install.sh
 ```
 

@@ -438,9 +438,10 @@ wrp_cte_bench PutGet 8 16 16m 50
 
 ## Documentation
 
-Comprehensive documentation is available for each component:
+Full documentation is available at **https://docs.iowarp.ai/docs/intro**.
 
-- **[CLAUDE.md](CLAUDE.md)**: Unified development guide and coding standards
+Component-specific READMEs:
+
 - **[Context Transport Primitives](context-transport-primitives/README.md)**: Shared memory data structures
 - **[Chimaera Runtime](context-runtime/README.md)**: Modular runtime system and ChiMod development
   - [MODULE_DEVELOPMENT_GUIDE.md](context-transport-primitives/docs/MODULE_DEVELOPMENT_GUIDE.md): Complete ChiMod development guide
@@ -448,6 +449,7 @@ Comprehensive documentation is available for each component:
   - [CTE API Documentation](context-transfer-engine/docs/cte/cte.md): Complete API reference
 - **[Context Assimilation Engine](context-assimilation-engine/README.md)**: Data ingestion and processing
 - **[Context Exploration Engine](context-exploration-engine/README.md)**: Interactive data exploration
+- **[CLAUDE.md](CLAUDE.md)**: Development guide and coding standards
 
 ## Use Cases
 
@@ -516,7 +518,7 @@ IOWarp Core is developed at the [GRC lab](https://grc.iit.edu/) at Illinois Inst
 **For more information:**
 - IOWarp Project: https://grc.iit.edu/research/projects/iowarp
 - IOWarp Organization: https://github.com/iowarp
-- Documentation Hub: https://grc.iit.edu/docs/category/iowarp
+- Documentation: https://docs.iowarp.ai/docs/intro
 
 ---
 

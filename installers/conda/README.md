@@ -8,8 +8,8 @@ The easiest way to install IOWarp Core is using the main install script at the r
 
 ```bash
 # Clone the repository
-git clone --recursive https://github.com/iowarp/iowarp-core.git
-cd iowarp-core
+git clone --recursive https://github.com/iowarp/clio-core.git
+cd clio-core
 
 # Install with default (release) variant
 ./install.sh
