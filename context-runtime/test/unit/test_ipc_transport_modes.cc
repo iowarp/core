@@ -213,6 +213,20 @@ void CleanupServer(pid_t server_pid) {
   }
 }
 
+/**
+ * RAII guard that always kills the forked server process, even if a
+ * REQUIRE assertion throws and unwinds the stack before the explicit
+ * CleanupServer() call.
+ */
+struct ServerGuard {
+  pid_t pid;
+  explicit ServerGuard(pid_t p) : pid(p) {}
+  ~ServerGuard() { CleanupServer(pid); }
+  // Non-copyable
+  ServerGuard(const ServerGuard &) = delete;
+  ServerGuard &operator=(const ServerGuard &) = delete;
+};
+
 // ============================================================================
 // IPC Transport Mode Tests
 // ============================================================================
@@ -222,6 +236,7 @@ TEST_CASE("IpcTransportMode - SHM Client Connection",
   // Start server in background
   pid_t server_pid = StartServerProcess();
   REQUIRE(server_pid > 0);
+  ServerGuard guard(server_pid);
 
   // Wait for server to be ready
   bool server_ready = WaitForServer();
@@ -243,9 +258,6 @@ TEST_CASE("IpcTransportMode - SHM Client Connection",
 
   // Submit real tasks through the transport layer
   SubmitTasksForMode("shm");
-
-  // Cleanup
-  CleanupServer(server_pid);
 }
 
 TEST_CASE("IpcTransportMode - TCP Client Connection",
@@ -253,6 +265,7 @@ TEST_CASE("IpcTransportMode - TCP Client Connection",
   // Start server in background
   pid_t server_pid = StartServerProcess();
   REQUIRE(server_pid > 0);
+  ServerGuard guard(server_pid);
 
   // Wait for server to be ready
   bool server_ready = WaitForServer();
@@ -274,9 +287,6 @@ TEST_CASE("IpcTransportMode - TCP Client Connection",
 
   // Submit real tasks through the transport layer
   SubmitTasksForMode("tcp");
-
-  // Cleanup
-  CleanupServer(server_pid);
 }
 
 TEST_CASE("IpcTransportMode - IPC Client Connection",
@@ -284,6 +294,7 @@ TEST_CASE("IpcTransportMode - IPC Client Connection",
   // Start server in background
   pid_t server_pid = StartServerProcess();
   REQUIRE(server_pid > 0);
+  ServerGuard guard(server_pid);
 
   // Wait for server to be ready
   bool server_ready = WaitForServer();
@@ -305,9 +316,6 @@ TEST_CASE("IpcTransportMode - IPC Client Connection",
 
   // Submit real tasks through the transport layer
   SubmitTasksForMode("ipc");
-
-  // Cleanup
-  CleanupServer(server_pid);
 }
 
 TEST_CASE("IpcTransportMode - Default Mode Is TCP",
@@ -315,6 +323,7 @@ TEST_CASE("IpcTransportMode - Default Mode Is TCP",
   // Start server in background
   pid_t server_pid = StartServerProcess();
   REQUIRE(server_pid > 0);
+  ServerGuard guard(server_pid);
 
   // Wait for server to be ready
   bool server_ready = WaitForServer();
@@ -330,9 +339,6 @@ TEST_CASE("IpcTransportMode - Default Mode Is TCP",
   REQUIRE(ipc != nullptr);
   REQUIRE(ipc->IsInitialized());
   REQUIRE(ipc->GetIpcMode() == IpcMode::kTcp);
-
-  // Cleanup
-  CleanupServer(server_pid);
 }
 
 SIMPLE_TEST_MAIN()
