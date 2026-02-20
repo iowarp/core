@@ -129,6 +129,19 @@ print_header "IOWarp Core - Code Coverage Calculation"
 # Navigate to repository root
 cd "${REPO_ROOT}"
 
+# Set up conda environment paths if available (needed for pkg-config, cmake find)
+if [ -n "$CONDA_PREFIX" ]; then
+    export CMAKE_PREFIX_PATH="${CONDA_PREFIX}${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+    export PKG_CONFIG_PATH="${CONDA_PREFIX}/lib/pkgconfig:${CONDA_PREFIX}/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+    print_info "Using conda prefix: $CONDA_PREFIX"
+fi
+
+# Tests excluded from coverage: daemon-spawning and stress tests are too slow
+# with coverage instrumentation. Label-based filtering catches CTE functional/query
+# and integration tests. Name-based filtering catches bdev (which has no labels).
+COVERAGE_EXCLUDE_LABELS="integration|restart|functional|query|stress|docker"
+COVERAGE_EXCLUDE_NAMES="cr_bdev_|cr_mpi_|cr_per_process_shm_stress"
+
 ################################################################################
 # Step 1: Clean build directory (if requested)
 ################################################################################
@@ -198,7 +211,7 @@ set(CTEST_DROP_LOCATION "/submit.php?project=HERMES")
 set(CTEST_DROP_SITE_CDASH TRUE)
 set(CTEST_COVERAGE_COMMAND "gcov")
 ctest_start("Experimental")
-ctest_test(RETURN_VALUE test_result EXCLUDE_LABEL "integration|restart")
+ctest_test(RETURN_VALUE test_result EXCLUDE_LABEL "${COVERAGE_EXCLUDE_LABELS}" EXCLUDE "${COVERAGE_EXCLUDE_NAMES}")
 ctest_coverage()
 ctest_submit()
 if(NOT test_result EQUAL 0)
@@ -208,9 +221,11 @@ EOFCMAKE
         ctest -S "${BUILD_DIR}/cdash_coverage.cmake" -VV || true
         print_success "CDash submission complete"
     else
-        print_info "Running unit tests (excluding integration/restart)..."
+        print_info "Running unit tests (excluding slow/daemon tests)..."
         CTEST_EXIT_CODE=0
-        ctest --output-on-failure -LE "integration|restart" || CTEST_EXIT_CODE=$?
+        ctest --output-on-failure --timeout 120 \
+            -LE "${COVERAGE_EXCLUDE_LABELS}" \
+            -E "${COVERAGE_EXCLUDE_NAMES}" || CTEST_EXIT_CODE=$?
         if [ $CTEST_EXIT_CODE -eq 0 ]; then
             print_success "All CTest tests passed"
         else

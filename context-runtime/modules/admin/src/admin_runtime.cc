@@ -1937,7 +1937,7 @@ chi::TaskResume Runtime::ProbeRequest(hipc::FullPtr<ProbeRequestTask> task,
     float elapsed = std::chrono::duration<float>(
         std::chrono::steady_clock::now() - start).count();
     if (elapsed >= kIndirectProbeTimeoutSec) break;
-    co_await chi::yield();
+    co_await chi::yield(1000.0);
   }
 
   if (future.IsComplete()) {

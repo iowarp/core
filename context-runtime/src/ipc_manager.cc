@@ -402,12 +402,7 @@ void IpcManager::AwakenWorker(TaskLane *lane) {
 
     // Send SIGUSR1 to the worker thread in the runtime process
     int result = hshm::lbm::EventManager::Signal(runtime_pid, tid);
-    if (result == 0) {
-      HLOG(kDebug,
-           "AwakenWorker: Sent SIGUSR1 to runtime_pid={}, tid={} (active={}) - "
-           "SUCCESS",
-           runtime_pid, tid, lane->IsActive());
-    } else {
+    if (result != 0) {
       HLOG(kError,
            "AwakenWorker: Failed to send SIGUSR1 to runtime_pid={}, tid={} "
            "(active={}) - errno={}",

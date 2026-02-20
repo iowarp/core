@@ -1383,17 +1383,10 @@ float Runtime::GetManualScoreForTarget(const std::string &target_name) {
         (target_name.rfind(device.path_, 0) == 0 &&
          (target_name.size() == device.path_.size() ||
           target_name[device.path_.size()] == '_'))) {
-      HLOG(kDebug,
-           "GetManualScoreForTarget: target '{}' matched device path '{}', "
-           "score={}",
-           target_name, device.path_, device.score_);
       return device.score_;  // Return configured score (-1.0f if not set)
     }
   }
 
-  HLOG(kDebug,
-       "GetManualScoreForTarget: target '{}' has no manual score configured",
-       target_name);
   return -1.0f;  // No manual score configured for this target
 }
 

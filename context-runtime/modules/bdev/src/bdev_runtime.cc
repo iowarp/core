@@ -673,7 +673,7 @@ chi::TaskResume Runtime::WriteToFile(hipc::FullPtr<WriteTask> task,
 
     hshm::IoResult result;
     while (!io_ctx->async_io_->IsComplete(token, result)) {
-      co_await chi::yield();
+      co_await chi::yield(10.0);
     }
 
     if (result.error_code != 0) {
@@ -736,7 +736,7 @@ chi::TaskResume Runtime::ReadFromFile(hipc::FullPtr<ReadTask> task,
 
     hshm::IoResult result;
     while (!io_ctx->async_io_->IsComplete(token, result)) {
-      co_await chi::yield();
+      co_await chi::yield(10.0);
     }
 
     if (result.error_code != 0) {
@@ -766,7 +766,6 @@ chi::TaskResume Runtime::GetStats(hipc::FullPtr<GetStatsTask> task,
   // Get remaining size from heap allocator
   chi::u64 remaining = heap_.GetRemainingSize();
   task->remaining_size_ = remaining;
-  HLOG(kDebug, "GetStats: file_size_={}, remaining={}", file_size_, remaining);
   task->return_code_ = 0;
   (void)ctx;
   co_return;
