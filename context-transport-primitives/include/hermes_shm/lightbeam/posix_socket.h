@@ -42,7 +42,6 @@
 #include <unistd.h>
 #include <poll.h>
 #include <fcntl.h>
-#include <sys/epoll.h>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -71,18 +70,5 @@ int PollRead(socket_t fd, int timeout_ms);
 
 /** Poll multiple fds for readability. Returns index of first ready fd, -1 if none/error. */
 int PollReadMulti(const socket_t* fds, int count, int timeout_ms);
-
-/** Create an epoll file descriptor. Returns epoll fd or -1 on error. */
-int EpollCreate();
-
-/** Add a socket fd to an epoll instance for EPOLLIN events. Returns 0 on success. */
-int EpollAdd(int epoll_fd, socket_t fd);
-
-/** Wait on an epoll instance. Returns number of ready events. */
-int EpollWait(int epoll_fd, struct epoll_event* events, int max_events,
-              int timeout_ms);
-
-/** Close an epoll file descriptor. */
-void EpollClose(int epoll_fd);
 
 }  // namespace hshm::lbm::sock

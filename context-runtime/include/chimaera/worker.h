@@ -43,11 +43,8 @@
 #include <vector>
 
 #include "chimaera/container.h"
-#include "chimaera/integer_timer.h"
-#include "chimaera/local_transfer.h"
 #include "chimaera/pool_query.h"
 #include "chimaera/task.h"
-#include "chimaera/task_queue.h"
 #include "chimaera/types.h"
 #include "chimaera/scheduler/scheduler.h"
 #include "hermes_shm/lightbeam/event_manager.h"
@@ -358,18 +355,6 @@ class Worker {
    */
   void ProcessRetryQueue();
 
-  /**
-   * Copy task output data to copy space for streaming to clients
-   * Processes client_copy_ queue with time budget of up to 10ms per call
-   * For each task:
-   * - Acquires reader lock on IpcManager::allocator_map_lock_
-   * - Checks if FUTURE_NEW_DATA flag is set
-   * - If not set: copies data to copy space, sets FUTURE_NEW_DATA flag
-   * - Waits up to 1ms for client to consume data (unset FUTURE_NEW_DATA)
-   * - If still set after 1ms: pushes task to back of queue, continues to next
-   * - If data fully copied: sets FUTURE_COMPLETE, removes from queue
-   */
-  void CopyTaskOutputToClient();
 
  public:
   /**
@@ -579,12 +564,9 @@ class Worker {
   // EventManager for efficient worker suspension and event monitoring
   hshm::lbm::EventManager event_manager_;
 
-  // Client copy queue - LocalTransfer objects streaming output data to clients
-  std::queue<LocalTransfer> client_copy_;
-
   // SHM lightbeam transport (worker-side)
-  std::unique_ptr<hshm::lbm::Transport> shm_send_transport_;  // For EndTaskShmTransfer
-  std::unique_ptr<hshm::lbm::Transport> shm_recv_transport_;  // For ProcessNewTask
+  hshm::lbm::TransportPtr shm_send_transport_;  // For EndTaskShmTransfer
+  hshm::lbm::TransportPtr shm_recv_transport_;  // For ProcessNewTask
 
   // Scheduler pointer (owned by IpcManager, not Worker)
   Scheduler *scheduler_;

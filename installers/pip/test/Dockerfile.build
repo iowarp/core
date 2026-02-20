@@ -1,0 +1,68 @@
+# =============================================================================
+# Dockerfile.build - Build pip wheel in manylinux_2_34
+# =============================================================================
+# Replicates what cibuildwheel does in CI:
+#   1. Start from manylinux_2_34 (AlmaLinux 9)
+#   2. Install build dependencies from source (CIBW_BEFORE_ALL)
+#   3. Build the wheel with scikit-build-core
+#   4. Repair wheel with repair_wheel.sh (CIBW_REPAIR_WHEEL_COMMAND_LINUX)
+#   5. Verify static linking
+#
+# Usage (from repo root):
+#   docker build -t iowarp/pip-build:latest \
+#       -f installers/pip/test/Dockerfile.build .
+# =============================================================================
+
+FROM quay.io/pypa/manylinux_2_34_x86_64:latest AS builder
+
+# Match CI: yum install curl patchelf
+RUN yum install -y curl patchelf
+
+# Copy source tree
+COPY . /project
+
+# Build external dependencies from source (same as CIBW_BEFORE_ALL)
+RUN bash /project/installers/pip/build_deps_manylinux.sh
+
+# Select Python 3.12 (matches CI's primary test target)
+ENV PATH="/opt/python/cp312-cp312/bin:$PATH"
+
+# Match CI: CIBW_ENVIRONMENT
+ENV CMAKE_PREFIX_PATH=/usr/local
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig
+
+# Install build tools
+RUN pip install scikit-build-core nanobind
+
+# Build the wheel from the repo root pyproject.toml
+RUN cd /project && \
+    pip wheel -v -w /tmp/raw_wheelhouse --no-build-isolation .
+
+# Repair wheel (same as CIBW_REPAIR_WHEEL_COMMAND_LINUX)
+RUN mkdir -p /tmp/wheelhouse && \
+    WHEEL=$(ls /tmp/raw_wheelhouse/iowarp_core*.whl | head -1) && \
+    bash /project/installers/pip/repair_wheel.sh /tmp/wheelhouse "$WHEEL"
+
+# Verify static linking: no dynamic deps on yaml-cpp/zmq/sodium/uring
+RUN cd /tmp && mkdir -p verify && \
+    python3 -m zipfile -e /tmp/wheelhouse/iowarp_core*.whl verify/ && \
+    echo "=== Checking for dynamic deps that should be static ===" && \
+    FAIL=0 && \
+    for so in verify/iowarp_core/lib/*.so; do \
+        [ -f "$so" ] || continue; \
+        LEAKED=$(ldd "$so" 2>/dev/null | grep -E "yaml-cpp|libzmq|libsodium|liburing" || true); \
+        if [ -n "$LEAKED" ]; then \
+            echo "FAIL: $(basename $so) has leaked dynamic deps:"; \
+            echo "$LEAKED"; \
+            FAIL=1; \
+        fi; \
+    done && \
+    if [ "$FAIL" = "1" ]; then \
+        echo "ERROR: Wheel has dynamic dependencies that should be statically linked"; \
+        exit 1; \
+    fi && \
+    echo "All external deps are statically linked" && \
+    rm -rf verify
+
+# Wheel is at /tmp/wheelhouse/*.whl — extract with:
+#   docker cp $(docker create iowarp/pip-build):/tmp/wheelhouse/. ./wheelhouse/

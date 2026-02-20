@@ -1,0 +1,23 @@
+# IOWarp Quickstart - Docker Compose
+#
+# Single-node Chimaera runtime for getting started quickly.
+#
+# Usage:
+#   docker compose up -d        # Start in background
+#   docker compose logs -f      # Follow logs
+#   docker compose down         # Stop runtime
+
+services:
+  iowarp:
+    image: iowarp/deploy-cpu:latest
+    container_name: iowarp-quickstart
+    hostname: iowarp
+    volumes:
+      - ./chimaera.yaml:/etc/iowarp/chimaera.yaml:ro
+    environment:
+      - CHI_SERVER_CONF=/etc/iowarp/chimaera.yaml
+    ports:
+      - "5555:5555"
+    mem_limit: 8g
+    command: ["chimaera", "runtime", "start"]
+    restart: unless-stopped

@@ -261,7 +261,11 @@ endfunction()
 
 # FIND PYTHON
 macro(find_first_path_python)
-    if(DEFINED ENV{PATH})
+    # If scikit-build-core or the caller has already set Python3_EXECUTABLE
+    # (e.g. pointing at the target interpreter with dev headers), respect it
+    # and skip the PATH scan so we don't accidentally pick up a build-env
+    # interpreter that lacks development headers.
+    if(NOT Python3_EXECUTABLE AND DEFINED ENV{PATH})
         string(REPLACE ":" ";" PATH_LIST $ENV{PATH})
 
         foreach(PATH_ENTRY ${PATH_LIST})
@@ -281,7 +285,7 @@ macro(find_first_path_python)
     endif()
 
     set(Python_FIND_STRATEGY LOCATION)
-    find_package(Python3 COMPONENTS Interpreter Development)
+    find_package(Python3 COMPONENTS Interpreter Development.Module)
 
     if(Python3_FOUND)
         message(STATUS "Found Python3: ${Python3_EXECUTABLE}")

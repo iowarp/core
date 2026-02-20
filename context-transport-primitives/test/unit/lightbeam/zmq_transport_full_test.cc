@@ -43,14 +43,14 @@
 
 using namespace hshm::lbm;
 
-class TestMeta : public LbmMeta {
+class TestMeta : public LbmMeta<> {
  public:
   int request_id = 0;
   std::string operation;
 
   template <typename Ar>
   void serialize(Ar& ar) {
-    LbmMeta::serialize(ar);
+    LbmMeta<>::serialize(ar);
     ar(request_id, operation);
   }
 };
@@ -132,7 +132,7 @@ void TestMultipleBulks() {
   std::vector<std::string> data_chunks = {"Chunk 1", "Chunk 2 is longer",
                                           "Chunk 3", "Final chunk 4"};
 
-  LbmMeta send_meta;
+  LbmMeta<> send_meta;
   for (const auto& chunk : data_chunks) {
     send_meta.send.push_back(client->Expose(
         hipc::FullPtr<char>(const_cast<char*>(chunk.data())),
@@ -142,7 +142,7 @@ void TestMultipleBulks() {
   int rc = client->Send(send_meta);
   assert(rc == 0);
 
-  LbmMeta recv_meta;
+  LbmMeta<> recv_meta;
   auto info = RecvWithRetry(server.get(), recv_meta);
   assert(info.rc == 0);
   assert(recv_meta.send.size() == data_chunks.size());
@@ -202,7 +202,7 @@ void TestBulkExpose() {
   const char* data = "expose_only_data";
   size_t size = strlen(data);
 
-  LbmMeta send_meta;
+  LbmMeta<> send_meta;
   // BULK_EXPOSE: only metadata, no data transfer
   send_meta.send.push_back(client->Expose(
       hipc::FullPtr<char>(const_cast<char*>(data)), size, BULK_EXPOSE));
@@ -211,7 +211,7 @@ void TestBulkExpose() {
   int rc = client->Send(send_meta);
   assert(rc == 0);
 
-  LbmMeta recv_meta;
+  LbmMeta<> recv_meta;
   auto info = RecvWithRetry(server.get(), recv_meta);
   assert(info.rc == 0);
   assert(recv_meta.recv.size() == 1);
@@ -241,14 +241,14 @@ void TestLargeTransfer() {
     large_data[i] = static_cast<char>('A' + (i % 26));
   }
 
-  LbmMeta send_meta;
+  LbmMeta<> send_meta;
   send_meta.send.push_back(client->Expose(
       hipc::FullPtr<char>(large_data.data()), large_size, BULK_XFER));
 
   int rc = client->Send(send_meta);
   assert(rc == 0);
 
-  LbmMeta recv_meta;
+  LbmMeta<> recv_meta;
   auto info = RecvWithRetry(server.get(), recv_meta);
   assert(info.rc == 0);
   assert(recv_meta.recv.size() == 1);
@@ -281,25 +281,6 @@ void TestGetAddress() {
   std::cout << "[ZMQ GetAddress] Test passed!\n";
 }
 
-void TestGetFd() {
-  std::cout << "\n==== Testing ZMQ GetFd ====\n";
-
-  std::string addr = "127.0.0.1";
-  int port = 8306;
-
-  auto server = std::make_unique<ZeroMqTransport>(
-      TransportMode::kServer, addr, "tcp", port);
-  auto client = std::make_unique<ZeroMqTransport>(
-      TransportMode::kClient, addr, "tcp", port);
-
-  // Both server and client should have valid ZMQ_FD
-  assert(server->GetFd() >= 0);
-  assert(client->GetFd() >= 0);
-
-  std::cout << "[ZMQ GetFd] Test passed! (server=" << server->GetFd()
-            << ", client=" << client->GetFd() << ")\n";
-}
-
 void TestClearRecvHandles() {
   std::cout << "\n==== Testing ZMQ ClearRecvHandles ====\n";
 
@@ -315,14 +296,14 @@ void TestClearRecvHandles() {
   const char* data = "clear_handles_test";
   size_t size = strlen(data);
 
-  LbmMeta send_meta;
+  LbmMeta<> send_meta;
   send_meta.send.push_back(client->Expose(
       hipc::FullPtr<char>(const_cast<char*>(data)), size, BULK_XFER));
 
   int rc = client->Send(send_meta);
   assert(rc == 0);
 
-  LbmMeta recv_meta;
+  LbmMeta<> recv_meta;
   auto info = RecvWithRetry(server.get(), recv_meta);
   assert(info.rc == 0);
 
@@ -466,7 +447,6 @@ int main() {
   TestBulkExpose();
   TestLargeTransfer();
   TestGetAddress();
-  TestGetFd();
   TestClearRecvHandles();
   TestBidirectional();
   TestFactoryTcp();

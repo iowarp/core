@@ -54,7 +54,7 @@ static inline void zmq_noop_free(void *data, void *hint) {
 }
 
 /** Free zmq_msg_t handles stored in Bulk::desc from zero-copy recv */
-static inline void ClearZmqRecvHandles(LbmMeta &meta) {
+static inline void ClearZmqRecvHandles(LbmMeta<> &meta) {
   for (auto &bulk : meta.recv) {
     if (bulk.desc) {
       zmq_msg_t *msg = static_cast<zmq_msg_t*>(bulk.desc);
@@ -195,7 +195,7 @@ class ZeroMqTransport : public Transport {
     }
   }
 
-  ~ZeroMqTransport() override {
+  ~ZeroMqTransport() {
     HLOG(kDebug, "ZeroMqTransport destructor - closing socket to {}:{}", addr_,
          port_);
 
@@ -210,7 +210,7 @@ class ZeroMqTransport : public Transport {
   }
 
   Bulk Expose(const hipc::FullPtr<char>& ptr, size_t data_size,
-              u32 flags) override {
+              u32 flags) {
     Bulk bulk;
     bulk.data = ptr;
     bulk.size = data_size;
@@ -435,25 +435,20 @@ class ZeroMqTransport : public Transport {
   }
 
  public:
-  void ClearRecvHandles(LbmMeta& meta) override {
+  void ClearRecvHandles(LbmMeta<>& meta) {
     ClearZmqRecvHandles(meta);
   }
 
-  void RegisterEventManager(EventManager &em) override {
-    int fd = GetFd();
+  void RegisterEventManager(EventManager &em) {
+    int fd;
+    size_t fd_size = sizeof(fd);
+    zmq_getsockopt(socket_, ZMQ_FD, &fd, reinterpret_cast<::size_t *>(&fd_size));
     if (fd >= 0) {
       em.AddEvent(fd, EPOLLIN);
     }
   }
 
-  std::string GetAddress() const override { return addr_; }
-
-  int GetFd() const override {
-    int fd;
-    size_t fd_size = sizeof(fd);
-    zmq_getsockopt(socket_, ZMQ_FD, &fd, reinterpret_cast<::size_t *>(&fd_size));
-    return fd;
-  }
+  std::string GetAddress() const { return addr_; }
 
  private:
   std::string addr_;

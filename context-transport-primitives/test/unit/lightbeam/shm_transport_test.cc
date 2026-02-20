@@ -63,14 +63,14 @@ static LbmContext MakeCtx(ShmTestContext& shared) {
 }
 
 // Custom metadata class that inherits from LbmMeta
-class TestMeta : public LbmMeta {
+class TestMeta : public LbmMeta<> {
  public:
   int request_id = 0;
   std::string operation;
 
   template <typename Ar>
   void serialize(Ar& ar) {
-    LbmMeta::serialize(ar);
+    LbmMeta<>::serialize(ar);
     ar(request_id, operation);
   }
 };
@@ -142,7 +142,7 @@ void TestMultipleBulks() {
   std::vector<std::string> data_chunks = {"Chunk 1", "Chunk 2 is longer",
                                           "Chunk 3", "Final chunk 4"};
 
-  LbmMeta send_meta;
+  LbmMeta<> send_meta;
   for (const auto& chunk : data_chunks) {
     Bulk bulk = client.Expose(
         hipc::FullPtr<char>(const_cast<char*>(chunk.data())),
@@ -156,7 +156,7 @@ void TestMultipleBulks() {
     send_rc = client.Send(send_meta, ctx);
   });
 
-  LbmMeta recv_meta;
+  LbmMeta<> recv_meta;
   auto info = server.Recv(recv_meta, ctx);
   int rc = info.rc;
   assert(rc == 0);
@@ -222,7 +222,7 @@ void TestLargeTransfer() {
     large_data[i] = static_cast<char>('A' + (i % 26));
   }
 
-  LbmMeta send_meta;
+  LbmMeta<> send_meta;
   Bulk bulk = client.Expose(
       hipc::FullPtr<char>(const_cast<char*>(large_data.data())),
       large_data.size(), BULK_XFER);
@@ -234,7 +234,7 @@ void TestLargeTransfer() {
     send_rc = client.Send(send_meta, ctx);
   });
 
-  LbmMeta recv_meta;
+  LbmMeta<> recv_meta;
   auto info = server.Recv(recv_meta, ctx);
   int rc = info.rc;
   assert(rc == 0);
@@ -269,7 +269,7 @@ void TestShmPtrPassthrough() {
   shm_ptr.shm_.alloc_id_ = hipc::AllocatorId(1, 2);
   shm_ptr.shm_.off_ = 0x1234;
 
-  LbmMeta send_meta;
+  LbmMeta<> send_meta;
   Bulk bulk;
   bulk.data = shm_ptr;
   bulk.size = 4096;
@@ -282,7 +282,7 @@ void TestShmPtrPassthrough() {
     send_rc = client.Send(send_meta, ctx);
   });
 
-  LbmMeta recv_meta;
+  LbmMeta<> recv_meta;
   auto info = server.Recv(recv_meta, ctx);
   int rc = info.rc;
   assert(rc == 0);
@@ -321,7 +321,7 @@ void TestMixedBulks() {
   shm_ptr.shm_.alloc_id_ = hipc::AllocatorId(3, 4);
   shm_ptr.shm_.off_ = 0x5678;
 
-  LbmMeta send_meta;
+  LbmMeta<> send_meta;
   // Private bulk
   Bulk bulk0 = client.Expose(
       hipc::FullPtr<char>(const_cast<char*>(private_data)),
@@ -340,7 +340,7 @@ void TestMixedBulks() {
     send_rc = client.Send(send_meta, ctx);
   });
 
-  LbmMeta recv_meta;
+  LbmMeta<> recv_meta;
   auto info = server.Recv(recv_meta, ctx);
   int rc = info.rc;
   assert(rc == 0);
@@ -426,19 +426,6 @@ void TestShmGetAddress() {
   std::cout << "[SHM GetAddress] Test passed!\n";
 }
 
-void TestShmGetFd() {
-  std::cout << "\n==== Testing SHM GetFd ====\n";
-
-  ShmTransport server(TransportMode::kServer);
-  ShmTransport client(TransportMode::kClient);
-
-  // SHM transport has no file descriptor
-  assert(server.GetFd() == -1);
-  assert(client.GetFd() == -1);
-
-  std::cout << "[SHM GetFd] Test passed!\n";
-}
-
 void TestShmClearRecvHandles() {
   std::cout << "\n==== Testing SHM ClearRecvHandles ====\n";
 
@@ -450,7 +437,7 @@ void TestShmClearRecvHandles() {
   // Create data larger than copy_space to force malloc on recv
   std::string data(kCopySpaceSize * 2 + 10, 'Z');
 
-  LbmMeta send_meta;
+  LbmMeta<> send_meta;
   Bulk bulk = client.Expose(
       hipc::FullPtr<char>(const_cast<char*>(data.data())),
       data.size(), BULK_XFER);
@@ -462,7 +449,7 @@ void TestShmClearRecvHandles() {
     send_rc = client.Send(send_meta, ctx);
   });
 
-  LbmMeta recv_meta;
+  LbmMeta<> recv_meta;
   auto info = server.Recv(recv_meta, ctx);
   assert(info.rc == 0);
 
@@ -492,7 +479,7 @@ void TestShmBulkExposeFlag() {
   shm_ptr.shm_.alloc_id_ = hipc::AllocatorId(5, 6);
   shm_ptr.shm_.off_ = 0xABCD;
 
-  LbmMeta send_meta;
+  LbmMeta<> send_meta;
   Bulk bulk;
   bulk.data = shm_ptr;
   bulk.size = 2048;
@@ -505,7 +492,7 @@ void TestShmBulkExposeFlag() {
     send_rc = client.Send(send_meta, ctx);
   });
 
-  LbmMeta recv_meta;
+  LbmMeta<> recv_meta;
   auto info = server.Recv(recv_meta, ctx);
   assert(info.rc == 0);
 
@@ -592,7 +579,6 @@ int main() {
   TestMixedBulks();
   TestFactory();
   TestShmGetAddress();
-  TestShmGetFd();
   TestShmClearRecvHandles();
   TestShmBulkExposeFlag();
   TestShmIsServerIsClient();

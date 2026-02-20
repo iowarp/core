@@ -334,7 +334,7 @@ TEST_CASE("Runtime - GetBlobScore Success", "[runtime][blob]") {
   memcpy(shm_ptr.ptr_, data.data(), data.size());
   hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
 
-  float expected_score = 4.75f;
+  float expected_score = 0.475f;
   auto put_task = client->AsyncPutBlob(
       tag_task->tag_id_, "scored_blob_test", 0, data.size(), shm_ref, expected_score);
   put_task.Wait();

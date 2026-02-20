@@ -986,6 +986,7 @@ chi::TaskResume Runtime::Recv(hipc::FullPtr<RecvTask> task,
 chi::TaskResume Runtime::ClientConnect(hipc::FullPtr<ClientConnectTask> task,
                                        chi::RunContext &rctx) {
   task->response_ = 0;
+  task->server_generation_ = CHI_IPC->GetServerGeneration();
   task->SetReturnCode(0);
   rctx.did_work_ = true;
   co_return;
@@ -1936,7 +1937,7 @@ chi::TaskResume Runtime::ProbeRequest(hipc::FullPtr<ProbeRequestTask> task,
     float elapsed = std::chrono::duration<float>(
         std::chrono::steady_clock::now() - start).count();
     if (elapsed >= kIndirectProbeTimeoutSec) break;
-    co_await chi::yield();
+    co_await chi::yield(1000.0);
   }
 
   if (future.IsComplete()) {
@@ -1987,9 +1988,16 @@ std::vector<chi::RecoveryAssignment> Runtime::ComputeRecoveryPlan(
         ra.chimod_params_ = info->chimod_params_;
         ra.container_id_ = container_id;
         ra.dead_node_id_ = static_cast<chi::u32>(dead_node_id);
-        ra.dest_node_id_ = static_cast<chi::u32>(
-            alive_nodes[rr_idx % alive_nodes.size()]);
-        rr_idx++;
+        chi::u32 dest = static_cast<chi::u32>(-1);
+        if (info->local_container_) {
+          dest = info->local_container_->ScheduleRecover();
+        }
+        if (dest == static_cast<chi::u32>(-1)) {
+          dest = static_cast<chi::u32>(
+              alive_nodes[rr_idx % alive_nodes.size()]);
+          rr_idx++;
+        }
+        ra.dest_node_id_ = dest;
         assignments.push_back(std::move(ra));
       }
     }
@@ -2057,7 +2065,7 @@ chi::TaskResume Runtime::RecoverContainers(
            ra.chimod_name_);
       continue;
     }
-    container->Restart(ra.pool_id_, ra.pool_name_, ra.container_id_);
+    container->Recover(ra.pool_id_, ra.pool_name_, ra.container_id_);
     pool_manager->RegisterContainer(
         ra.pool_id_, ra.container_id_, container, false);
     task->num_recovered_++;

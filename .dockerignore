@@ -1,0 +1,5 @@
+build/
+venv/
+.claude/
+installers/pip/build/
+installers/pip/test/wheelhouse/

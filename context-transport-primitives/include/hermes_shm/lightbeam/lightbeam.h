@@ -48,8 +48,10 @@
 #include <cereal/types/vector.hpp>
 #endif
 
+#include "hermes_shm/data_structures/priv/vector.h"
 #include "hermes_shm/lightbeam/event_manager.h"
 #include "hermes_shm/memory/allocator/allocator.h"
+#include "hermes_shm/memory/allocator/malloc_allocator.h"
 #include "hermes_shm/types/bitfield.h"
 
 namespace hshm::lbm {
@@ -70,38 +72,81 @@ struct Bulk {
   void* desc = nullptr;      // For RDMA memory registration
   void* mr = nullptr;        // For RDMA memory region handle (fid_mr*)
 
-#if HSHM_ENABLE_CEREAL
+  /** Serialize bulk descriptor metadata (size and flags only) */
   template <typename Ar>
-  void serialize(Ar& ar) {
+  HSHM_CROSS_FUN void serialize(Ar& ar) {
     ar(size, flags);
   }
-#endif
 };
 
 // --- Client Info (returned by Recv, used by Send for routing) ---
 struct ClientInfo {
   int rc = 0;               // Return code (0 = success, EAGAIN = no data, etc.)
   int fd_ = -1;             // Socket fd (SocketTransport server mode)
+#if !HSHM_IS_GPU
   std::string identity_;    // ZMQ identity (ZeroMqTransport server mode)
+#endif
 };
 
 // --- Metadata Base Class ---
+/**
+ * GPU-compatible metadata for lightbeam transports.
+ * Uses hshm::priv::vector with a configurable allocator so that
+ * bulk descriptor vectors can be managed in GPU-accessible memory.
+ *
+ * @tparam AllocT Allocator type for bulk descriptor vectors.
+ *                Defaults to MallocAllocator for host-side usage.
+ */
+template <typename AllocT = hshm::ipc::MallocAllocator>
 class LbmMeta {
  public:
-  std::vector<Bulk>
+  using allocator_type = AllocT;
+  using BulkVector = hshm::priv::vector<Bulk, AllocT>;
+
+  BulkVector
       send;  // Sender's bulk descriptors (can have BULK_EXPOSE or BULK_XFER)
-  std::vector<Bulk>
+  BulkVector
       recv;  // Receiver's bulk descriptors (copy of send with local pointers)
   size_t send_bulks = 0;  // Count of BULK_XFER entries in send vector
   size_t recv_bulks = 0;  // Count of BULK_XFER entries in recv vector
-  ClientInfo client_info_;  // Client routing info (not serialized)
+  AllocT* alloc_;          // Allocator used for internal vectors
+#if !HSHM_IS_GPU
+  ClientInfo client_info_;  // Client routing info (not serialized, host-only)
+#endif
 
-#if HSHM_ENABLE_CEREAL
+  /** Default constructor (uses HSHM_MALLOC allocator) */
+  HSHM_CROSS_FUN LbmMeta()
+      : send(HSHM_MALLOC), recv(HSHM_MALLOC), alloc_(HSHM_MALLOC) {}
+
+  /** Constructor with custom allocator */
+  HSHM_CROSS_FUN explicit LbmMeta(AllocT* alloc)
+      : send(alloc), recv(alloc), alloc_(alloc) {}
+
+  /** Move constructor */
+  HSHM_CROSS_FUN LbmMeta(LbmMeta&& other) noexcept
+      : send(std::move(other.send)),
+        recv(std::move(other.recv)),
+        send_bulks(other.send_bulks),
+        recv_bulks(other.recv_bulks),
+        alloc_(other.alloc_) {}
+
+  /** Move assignment operator */
+  HSHM_CROSS_FUN LbmMeta& operator=(LbmMeta&& other) noexcept {
+    if (this != &other) {
+      send = std::move(other.send);
+      recv = std::move(other.recv);
+      send_bulks = other.send_bulks;
+      recv_bulks = other.recv_bulks;
+      alloc_ = other.alloc_;
+    }
+    return *this;
+  }
+
+  /** Serialize metadata for LocalSerialize/LocalDeserialize */
   template <typename Ar>
-  void serialize(Ar& ar) {
+  HSHM_CROSS_FUN void serialize(Ar& ar) {
     ar(send, recv, send_bulks, recv_bulks);
   }
-#endif
 };
 
 // --- LbmContext ---
@@ -114,14 +159,14 @@ struct LbmContext {
   char* copy_space = nullptr;                      /**< Shared buffer for chunked transfer */
   ShmTransferInfo* shm_info_ = nullptr;            /**< Transfer info in shared memory */
 
-  LbmContext() : flags(0), timeout_ms(0) {}
+  HSHM_CROSS_FUN LbmContext() : flags(0), timeout_ms(0) {}
 
-  explicit LbmContext(uint32_t f) : flags(f), timeout_ms(0) {}
+  HSHM_CROSS_FUN explicit LbmContext(uint32_t f) : flags(f), timeout_ms(0) {}
 
-  LbmContext(uint32_t f, int timeout) : flags(f), timeout_ms(timeout) {}
+  HSHM_CROSS_FUN LbmContext(uint32_t f, int timeout) : flags(f), timeout_ms(timeout) {}
 
-  bool IsSync() const { return (flags & LBM_SYNC) != 0; }
-  bool HasTimeout() const { return timeout_ms > 0; }
+  HSHM_CROSS_FUN bool IsSync() const { return (flags & LBM_SYNC) != 0; }
+  HSHM_CROSS_FUN bool HasTimeout() const { return timeout_ms > 0; }
 };
 
 // --- Transport Type Enum ---
@@ -137,14 +182,13 @@ class Transport {
   TransportMode mode_;
 
   Transport(TransportMode mode) : mode_(mode) {}
-  virtual ~Transport() = default;
+  ~Transport() = default;
 
   bool IsServer() const { return mode_ == TransportMode::kServer; }
   bool IsClient() const { return mode_ == TransportMode::kClient; }
 
   // Shared APIs (both client and server)
-  virtual Bulk Expose(const hipc::FullPtr<char>& ptr, size_t data_size,
-                      u32 flags) = 0;
+  Bulk Expose(const hipc::FullPtr<char>& ptr, size_t data_size, u32 flags);
 
   template <typename MetaT>
   int Send(MetaT& meta, const LbmContext& ctx = LbmContext());
@@ -152,34 +196,32 @@ class Transport {
   template <typename MetaT>
   ClientInfo Recv(MetaT& meta, const LbmContext& ctx = LbmContext());
 
-  // Server-only APIs (no-op defaults for client mode)
-  virtual std::string GetAddress() const { return ""; }
-  virtual int GetFd() const { return -1; }
+  // Server-only APIs
+  std::string GetAddress() const;
 
-  virtual void ClearRecvHandles(LbmMeta& meta) {
-    for (auto& bulk : meta.recv) {
-      if (bulk.data.ptr_ && !bulk.desc) {
-        std::free(bulk.data.ptr_);
-        bulk.data.ptr_ = nullptr;
-      }
-    }
-  }
+  void ClearRecvHandles(LbmMeta<>& meta);
 
   // Event registration API
-  virtual void RegisterEventManager(EventManager &em) { (void)em; }
+  void RegisterEventManager(EventManager &em);
 };
+
+// --- Transport custom deleter (dispatches via type_ instead of vtable) ---
+struct TransportDeleter {
+  inline void operator()(Transport* t) const;
+};
+using TransportPtr = std::unique_ptr<Transport, TransportDeleter>;
 
 // --- Factory ---
 class TransportFactory {
  public:
-  static std::unique_ptr<Transport> Get(const std::string& addr,
-                                        TransportType t, TransportMode mode,
-                                        const std::string& protocol = "",
-                                        int port = 0);
-  static std::unique_ptr<Transport> Get(const std::string& addr,
-                                        TransportType t, TransportMode mode,
-                                        const std::string& protocol, int port,
-                                        const std::string& domain);
+  static TransportPtr Get(const std::string& addr,
+                          TransportType t, TransportMode mode,
+                          const std::string& protocol = "",
+                          int port = 0);
+  static TransportPtr Get(const std::string& addr,
+                          TransportType t, TransportMode mode,
+                          const std::string& protocol, int port,
+                          const std::string& domain);
 };
 
 }  // namespace hshm::lbm

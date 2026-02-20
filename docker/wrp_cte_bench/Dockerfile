@@ -7,7 +7,19 @@
 #
 # Note: This container uses environment variables only and automatically stops the Chimaera runtime after benchmark completion
 
-FROM iowarp/build-cpu:latest
+FROM iowarp/deps-cpu:latest
+
+WORKDIR /workspace
+COPY . /workspace/
+
+# Build and install IOWarp
+RUN sudo chown -R $(whoami):$(whoami) /workspace && \
+    git submodule update --init --recursive && \
+    mkdir -p build && \
+    cd build && \
+    cmake --preset build-cpu-release ../ && \
+    sudo make -j$(nproc) install && \
+    sudo rm -rf /workspace
 
 # Create benchmark directory
 RUN sudo mkdir -p /benchmarks && \
@@ -25,7 +37,7 @@ WORKDIR /benchmarks
 
 # Set default environment variables for CTE runtime
 ENV CHIMAERA_WITH_RUNTIME=0
-ENV WRP_RUNTIME_CONF=/benchmarks/cte_config.yaml
+ENV CHI_SERVER_CONF=/benchmarks/cte_config.yaml
 
 # Default benchmark parameters (can be overridden with environment variables)
 ENV TEST_CASE=Put
@@ -41,7 +53,7 @@ RUN echo '#!/bin/bash' > /benchmarks/run_bench.sh && \
     echo '/benchmarks/wrp_cte_bench.sh "$TEST_CASE" "$NUM_PROCS" "$DEPTH" "$IO_SIZE" "$IO_COUNT"' >> /benchmarks/run_bench.sh && \
     echo 'BENCH_EXIT=$?' >> /benchmarks/run_bench.sh && \
     echo '# Stop Chimaera runtime after benchmark completes' >> /benchmarks/run_bench.sh && \
-    echo 'chimaera_stop_runtime' >> /benchmarks/run_bench.sh && \
+    echo 'chimaera runtime stop' >> /benchmarks/run_bench.sh && \
     echo 'exit $BENCH_EXIT' >> /benchmarks/run_bench.sh && \
     sudo chmod +x /benchmarks/run_bench.sh
 

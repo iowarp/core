@@ -38,12 +38,7 @@
 #include <chimaera/comutex.h>
 #include "bdev_client.h"
 #include "bdev_tasks.h"
-#include <sys/types.h>
-#include <sys/eventfd.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <aio.h>
-#include <libaio.h>
+#include <hermes_shm/io/async_io_factory.h>
 #include <vector>
 #include <list>
 #include <atomic>
@@ -63,13 +58,29 @@ namespace chimaera::bdev {
  * for efficient parallel I/O without contention
  */
 struct WorkerIOContext {
-  int file_fd_;          /**< File descriptor for this worker */
-  io_context_t aio_ctx_; /**< Linux AIO context for this worker */
-  int event_fd_;         /**< eventfd for I/O completion notification */
-  bool is_initialized_;  /**< Whether this context is initialized */
+  std::unique_ptr<hshm::AsyncIO> async_io_;  /**< Async I/O backend for this worker */
+  bool is_initialized_ = false;              /**< Whether this context is initialized */
 
-  WorkerIOContext()
-      : file_fd_(-1), aio_ctx_(0), event_fd_(-1), is_initialized_(false) {}
+  WorkerIOContext() = default;
+
+  WorkerIOContext(WorkerIOContext &&other) noexcept
+      : async_io_(std::move(other.async_io_)),
+        is_initialized_(other.is_initialized_) {
+    other.is_initialized_ = false;
+  }
+
+  WorkerIOContext &operator=(WorkerIOContext &&other) noexcept {
+    if (this != &other) {
+      Cleanup();
+      async_io_ = std::move(other.async_io_);
+      is_initialized_ = other.is_initialized_;
+      other.is_initialized_ = false;
+    }
+    return *this;
+  }
+
+  WorkerIOContext(const WorkerIOContext &) = delete;
+  WorkerIOContext &operator=(const WorkerIOContext &) = delete;
 
   /**
    * Initialize the worker I/O context
@@ -216,7 +227,7 @@ class Runtime : public chi::Container {
   // Required typedef for CHI_TASK_CC macro
   using CreateParams = chimaera::bdev::CreateParams;
   
-  Runtime() : bdev_type_(BdevType::kFile), file_fd_(-1), file_size_(0), alignment_(4096),
+  Runtime() : bdev_type_(BdevType::kFile), file_size_(0), alignment_(4096),
               io_depth_(32), max_blocks_per_operation_(64), ram_buffer_(nullptr), ram_size_(0),
               total_reads_(0), total_writes_(0),
               total_bytes_read_(0), total_bytes_written_(0) {
@@ -347,7 +358,6 @@ class Runtime : public chi::Container {
 
   // File-based storage (kFile)
   std::string file_path_;                         // Path to the file (for per-worker FD creation)
-  int file_fd_;                                   // Legacy single file descriptor (for fallback)
   std::vector<WorkerIOContext> worker_io_contexts_;  // Per-worker I/O contexts
   chi::u64 file_size_;                            // Total file size
   chi::u32 alignment_;                            // I/O alignment requirement
@@ -422,42 +432,26 @@ class Runtime : public chi::Container {
   void CleanupWorkerIOContexts();
 
   /**
-   * Perform async I/O operation using per-worker context
-   * @param io_ctx Worker's I/O context
-   * @param is_write true for write, false for read
-   * @param offset File offset
-   * @param buffer Data buffer
-   * @param size Size of I/O operation
-   * @param bytes_transferred Output: bytes actually transferred
-   * @param task Task pointer for context
-   * @return 0 on success, non-zero error code on failure
-   */
-  chi::u32 PerformAsyncIO(WorkerIOContext *io_ctx, bool is_write,
-                          chi::u64 offset, void *buffer, chi::u64 size,
-                          chi::u64 &bytes_transferred,
-                          hipc::FullPtr<chi::Task> task);
-
-  /**
    * Align size to required boundary
    */
   chi::u64 AlignSize(chi::u64 size);
-  
-  /**
-   * Backend-specific write operations
-   */
-  void WriteToFile(hipc::FullPtr<WriteTask> task, chi::RunContext &ctx);
-  void WriteToRam(hipc::FullPtr<WriteTask> task);
 
   /**
-   * Backend-specific read operations
+   * Backend-specific file operations (coroutines that yield on I/O)
    */
-  void ReadFromFile(hipc::FullPtr<ReadTask> task, chi::RunContext &ctx);
+  chi::TaskResume WriteToFile(hipc::FullPtr<WriteTask> task, chi::RunContext &ctx);
+  chi::TaskResume ReadFromFile(hipc::FullPtr<ReadTask> task, chi::RunContext &ctx);
+
+  /**
+   * Backend-specific RAM operations (synchronous, no coroutine needed)
+   */
+  void WriteToRam(hipc::FullPtr<WriteTask> task);
   void ReadFromRam(hipc::FullPtr<ReadTask> task);
-  
+
   /**
    * Update performance metrics
    */
-  void UpdatePerformanceMetrics(bool is_write, chi::u64 bytes, 
+  void UpdatePerformanceMetrics(bool is_write, chi::u64 bytes,
                                 double duration_us);
 };
 

@@ -292,6 +292,42 @@ target_compile_definitions(compress INTERFACE
 )
 add_library(hshm::compress ALIAS compress)
 
+# hshm::aio - Async I/O support
+add_library(aio INTERFACE)
+set(HSHM_ENABLE_LIBAIO OFF)
+if(HSHM_ENABLE_IO_URING)
+    # Verify liburing is actually available before enabling
+    find_path(URING_INCLUDE_DIR NAMES liburing.h)
+    find_library(URING_LIBRARY NAMES uring)
+    if(URING_INCLUDE_DIR AND URING_LIBRARY)
+        if(WRP_CORE_STATIC_DEPS)
+            find_library(URING_STATIC_LIB NAMES liburing.a REQUIRED)
+            message(STATUS "Static liburing: ${URING_STATIC_LIB}")
+            target_link_libraries(aio INTERFACE ${URING_STATIC_LIB})
+        else()
+            target_link_libraries(aio INTERFACE ${URING_LIBRARY})
+        endif()
+    else()
+        message(WARNING "io_uring requested but liburing not found, disabling io_uring")
+        set(HSHM_ENABLE_IO_URING OFF)
+    endif()
+endif()
+if(NOT WIN32)
+    if(NOT HSHM_ENABLE_IO_URING)
+        find_library(LIBAIO_LIBRARY NAMES aio libaio)
+        if(LIBAIO_LIBRARY)
+            target_link_libraries(aio INTERFACE ${LIBAIO_LIBRARY})
+            set(HSHM_ENABLE_LIBAIO ON)
+        endif()
+    endif()
+    target_link_libraries(aio INTERFACE rt)
+endif()
+target_compile_definitions(aio INTERFACE
+    HSHM_ENABLE_IO_URING=$<BOOL:${HSHM_ENABLE_IO_URING}>
+    HSHM_ENABLE_LIBAIO=$<BOOL:${HSHM_ENABLE_LIBAIO}>
+)
+add_library(hshm::aio ALIAS aio)
+
 # hshm::encrypt - Encryption support
 add_library(encrypt INTERFACE)
 if(WRP_CORE_ENABLE_ENCRYPT)
@@ -314,6 +350,7 @@ target_link_libraries(host_deps INTERFACE
     thread_all
     mpi
     compress
+    aio
     encrypt
     ${REAL_TIME_FLAGS}
 )
@@ -327,6 +364,7 @@ install(TARGETS
     thread_all
     mpi
     compress
+    aio
     encrypt
     host_deps
     EXPORT

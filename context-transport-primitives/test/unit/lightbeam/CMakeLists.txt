@@ -34,6 +34,14 @@ install(TARGETS shm_transport_test
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
+add_executable(shm_transfer_test shm_transfer_test.cc)
+target_link_libraries(shm_transfer_test hermes_shm_host hshm::lightbeam Catch2::Catch2WithMain)
+add_test(NAME ctp_shm_transfer COMMAND shm_transfer_test)
+install(TARGETS shm_transfer_test
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+
 # EventManager test (always enabled - uses pipe/epoll + socket transport)
 add_executable(event_manager_test event_manager_test.cc)
 target_link_libraries(event_manager_test hermes_shm_host hshm::lightbeam hshm::serialize)

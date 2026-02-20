@@ -22,7 +22,7 @@
                 "WRP_CTE_ENABLE_COMPRESS": "ON",
                 "WRP_CTE_ENABLE_ADIOS2_ADAPTER": "ON",
                 "WRP_CORE_ENABLE_GRAY_SCOTT": "ON",
-                "WRP_CORE_ENABLE_CONDA": "ON",
+                "WRP_CORE_ENABLE_CONDA": "OFF",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "WRP_CORE_ENABLE_ASAN": "OFF",
                 "WRP_CORE_ENABLE_RPATH": "ON",
@@ -30,7 +30,9 @@
                 "WRP_CORE_ENABLE_COVERAGE": "ON",
                 "WRP_CORE_ENABLE_ZMQ": "ON",
                 "WRP_CORE_ENABLE_CEREAL": "ON",
-                "HSHM_LOG_LEVEL": "0"
+                "HSHM_LOG_LEVEL": "0",
+                "WRP_CORE_ENABLE_DOCKER_CI": "ON",
+                "WRP_CORE_ENABLE_IO_URING": "ON"
             }
         },
         {
@@ -50,7 +52,8 @@
                 "WRP_CORE_ENABLE_CUDA": "ON",
                 "CMAKE_CUDA_ARCHITECTURES": "86",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "WRP_CORE_ENABLE_ASAN": "OFF"
+                "WRP_CORE_ENABLE_ASAN": "OFF",
+                "WRP_CORE_ENABLE_IO_URING": "ON"
             }
         },
         {
@@ -69,7 +72,8 @@
                 "WRP_CORE_ENABLE_ELF": "ON",
                 "WRP_CORE_ENABLE_ROCM": "ON",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "WRP_CORE_ENABLE_ASAN": "ON"
+                "WRP_CORE_ENABLE_ASAN": "ON",
+                "WRP_CORE_ENABLE_IO_URING": "ON"
             }
         },
         {
@@ -87,12 +91,13 @@
                 "WRP_CORE_ENABLE_ELF": "OFF",
                 "WRP_CTE_ENABLE_COMPRESS": "OFF",
                 "WRP_CORE_ENABLE_GRAY_SCOTT": "OFF",
-                "WRP_CORE_ENABLE_CONDA": "ON",
+                "WRP_CORE_ENABLE_CONDA": "OFF",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "WRP_CORE_ENABLE_ASAN": "OFF",
                 "WRP_CORE_ENABLE_PYTHON": "ON",
                 "WRP_CORE_ENABLE_COVERAGE": "OFF",
-                "HSHM_LOG_LEVEL": "1"
+                "HSHM_LOG_LEVEL": "1",
+                "WRP_CORE_ENABLE_IO_URING": "ON"
             }
         },
         {
@@ -111,14 +116,47 @@
                 "WRP_CTE_ENABLE_COMPRESS": "ON",
                 "WRP_CTE_ENABLE_ADIOS2_ADAPTER": "ON",
                 "WRP_CORE_ENABLE_GRAY_SCOTT": "ON",
-                "WRP_CORE_ENABLE_CONDA": "ON",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "WRP_CORE_ENABLE_ASAN": "OFF",
                 "WRP_CORE_ENABLE_RPATH": "ON",
                 "WRP_CORE_ENABLE_PYTHON": "ON",
                 "WRP_CORE_ENABLE_ZMQ": "ON",
                 "WRP_CORE_ENABLE_CEREAL": "ON",
-                "HSHM_LOG_LEVEL": "1"
+                "WRP_CORE_ENABLE_HDF5": "ON",
+                "WRP_CORE_ENABLE_MPI": "ON",
+                "HSHM_LOG_LEVEL": "1",
+                "WRP_CORE_ENABLE_IO_URING": "ON"
+            }
+        },
+        {
+            "name": "pip-release",
+            "displayName": "Pip Release (Minimal, Static Deps)",
+            "description": "Minimal release build for pip wheels with statically-linked external deps",
+            "generator": "Unix Makefiles",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_SHARED_LIBS": "ON",
+                "WRP_CORE_STATIC_DEPS": "ON",
+                "WRP_CORE_ENABLE_RUNTIME": "ON",
+                "WRP_CORE_ENABLE_CTE": "ON",
+                "WRP_CORE_ENABLE_CAE": "ON",
+                "WRP_CORE_ENABLE_CEE": "ON",
+                "WRP_CORE_ENABLE_PYTHON": "ON",
+                "WRP_CORE_ENABLE_TESTS": "OFF",
+                "WRP_CORE_ENABLE_BENCHMARKS": "OFF",
+                "WRP_CORE_ENABLE_RPATH": "OFF",
+                "WRP_CORE_ENABLE_ZMQ": "ON",
+                "WRP_CORE_ENABLE_CEREAL": "ON",
+                "WRP_CORE_ENABLE_MPI": "OFF",
+                "WRP_CORE_ENABLE_HDF5": "OFF",
+                "WRP_CORE_ENABLE_ELF": "OFF",
+                "WRP_CTE_ENABLE_COMPRESS": "OFF",
+                "WRP_CORE_ENABLE_ENCRYPT": "OFF",
+                "WRP_CORE_ENABLE_CUDA": "OFF",
+                "WRP_CORE_ENABLE_ROCM": "OFF",
+                "WRP_CORE_ENABLE_OPENMP": "OFF",
+                "HSHM_LOG_LEVEL": "1",
+                "WRP_CORE_ENABLE_IO_URING": "ON"
             }
         }
     ]

@@ -76,13 +76,30 @@ using namespace std::chrono;
 // Configuration
 // ============================================================================
 
-constexpr size_t CHUNK_SIZE_KB = 4096;  // 4 MB chunks
-constexpr size_t CHUNK_SIZE = CHUNK_SIZE_KB * 1024;
-constexpr int NUM_SIM_THREADS = 4;
-constexpr int NUM_COMPRESS_THREADS = 2;
-constexpr int QUEUE_DEPTH = 32;
-constexpr int BUSY_TIME_SECONDS = 4;
-constexpr int NUM_OUTPUTS = 16;
+struct BenchConfig {
+  size_t chunk_size_kb = 4096;     // 4 MB chunks
+  int num_sim_threads = 4;
+  int num_compress_threads = 2;
+  int queue_depth = 32;
+  int busy_time_seconds = 4;
+  int num_outputs = 16;
+
+  size_t ChunkSize() const { return chunk_size_kb * 1024; }
+
+  void ParseArgs(int argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i) {
+      std::string arg = argv[i];
+      if (i + 1 >= argc) break;
+      std::string val = argv[++i];
+      if (arg == "--chunk-size-kb") chunk_size_kb = std::stoull(val);
+      else if (arg == "--sim-threads") num_sim_threads = std::stoi(val);
+      else if (arg == "--compress-threads") num_compress_threads = std::stoi(val);
+      else if (arg == "--queue-depth") queue_depth = std::stoi(val);
+      else if (arg == "--busy-time") busy_time_seconds = std::stoi(val);
+      else if (arg == "--num-outputs") num_outputs = std::stoi(val);
+    }
+  }
+};
 
 // ============================================================================
 // Thread-safe Queue
@@ -210,14 +227,16 @@ class CompressionThread {
   CompressionThread(hshm::Compressor* compressor,
                    ThreadSafeQueue<std::shared_ptr<DataChunk>>* queue,
                    std::atomic<bool>* done,
-                   std::atomic<size_t>* total_output_size)
+                   std::atomic<size_t>* total_output_size,
+                   size_t chunk_size)
       : compressor_(compressor),
         queue_(queue),
         done_(done),
-        total_output_size_(total_output_size) {}
+        total_output_size_(total_output_size),
+        chunk_size_(chunk_size) {}
 
   void Run() {
-    std::vector<char> output_buf(CHUNK_SIZE * 2);  // Pre-allocate output buffer
+    std::vector<char> output_buf(chunk_size_ * 2);  // Pre-allocate output buffer
     while (!done_->load() || queue_->Size() > 0) {
       std::shared_ptr<DataChunk> chunk;
       if (queue_->Pop(chunk, 100)) {
@@ -235,6 +254,7 @@ class CompressionThread {
   ThreadSafeQueue<std::shared_ptr<DataChunk>>* queue_;
   std::atomic<bool>* done_;
   std::atomic<size_t>* total_output_size_;
+  size_t chunk_size_;
 };
 
 // ============================================================================
@@ -288,18 +308,19 @@ struct BenchmarkResult {
 // ============================================================================
 
 BenchmarkResult RunBenchmark(const std::string& lib_name,
-                             const std::string& preset) {
+                             const std::string& preset,
+                             const BenchConfig& cfg) {
   BenchmarkResult result;
   result.library_name = lib_name;
   result.preset = preset;
-  result.sim_threads = NUM_SIM_THREADS;
-  result.compress_threads = NUM_COMPRESS_THREADS;
-  result.queue_depth = QUEUE_DEPTH;
-  result.output_size_kb = CHUNK_SIZE_KB;
-  result.busy_time_sec = BUSY_TIME_SECONDS;
-  result.target_cpu_time_sec = BUSY_TIME_SECONDS * NUM_SIM_THREADS;
-  result.total_outputs = NUM_OUTPUTS;
-  result.input_mb = (CHUNK_SIZE * NUM_OUTPUTS) / (1024.0 * 1024.0);
+  result.sim_threads = cfg.num_sim_threads;
+  result.compress_threads = cfg.num_compress_threads;
+  result.queue_depth = cfg.queue_depth;
+  result.output_size_kb = cfg.chunk_size_kb;
+  result.busy_time_sec = cfg.busy_time_seconds;
+  result.target_cpu_time_sec = cfg.busy_time_seconds * cfg.num_sim_threads;
+  result.total_outputs = cfg.num_outputs;
+  result.input_mb = (cfg.ChunkSize() * cfg.num_outputs) / (1024.0 * 1024.0);
 
   // Create compressor using factory
   std::unique_ptr<hshm::Compressor> compressor;
@@ -308,17 +329,17 @@ BenchmarkResult RunBenchmark(const std::string& lib_name,
   }
 
   // Create queue and control flags
-  ThreadSafeQueue<std::shared_ptr<DataChunk>> queue(QUEUE_DEPTH);
+  ThreadSafeQueue<std::shared_ptr<DataChunk>> queue(cfg.queue_depth);
   std::atomic<bool> done{false};
   std::atomic<size_t> total_output_size{0};
 
   // Generate test data
   std::vector<std::shared_ptr<DataChunk>> chunks;
   std::mt19937 rng(42);
-  for (int i = 0; i < NUM_OUTPUTS; ++i) {
-    auto chunk = std::make_shared<DataChunk>(CHUNK_SIZE, i);
+  for (int i = 0; i < cfg.num_outputs; ++i) {
+    auto chunk = std::make_shared<DataChunk>(cfg.ChunkSize(), i);
     // Fill with compressible random data
-    for (size_t j = 0; j < CHUNK_SIZE; ++j) {
+    for (size_t j = 0; j < cfg.ChunkSize(); ++j) {
       chunk->data[j] = static_cast<char>(rng() % 64 + 32);  // Printable ASCII
     }
     chunks.push_back(chunk);
@@ -328,9 +349,9 @@ BenchmarkResult RunBenchmark(const std::string& lib_name,
   auto sim_baseline_start = high_resolution_clock::now();
   {
     std::vector<std::thread> sim_threads;
-    for (int i = 0; i < NUM_SIM_THREADS; ++i) {
-      sim_threads.emplace_back([i]() {
-        SimulationThread sim(i, BUSY_TIME_SECONDS);
+    for (int i = 0; i < cfg.num_sim_threads; ++i) {
+      sim_threads.emplace_back([i, &cfg]() {
+        SimulationThread sim(i, cfg.busy_time_seconds);
         sim.Run();
       });
     }
@@ -341,7 +362,7 @@ BenchmarkResult RunBenchmark(const std::string& lib_name,
 
   // Baseline: Measure compression time without contention
   if (compressor) {
-    std::vector<char> output_buf(CHUNK_SIZE * 2);
+    std::vector<char> output_buf(cfg.ChunkSize() * 2);
     auto compress_baseline_start = high_resolution_clock::now();
     for (auto& chunk : chunks) {
       size_t output_size = output_buf.size();
@@ -364,9 +385,10 @@ BenchmarkResult RunBenchmark(const std::string& lib_name,
   // Start compression threads
   std::vector<std::thread> compress_threads;
   if (compressor) {
-    for (int i = 0; i < NUM_COMPRESS_THREADS; ++i) {
+    for (int i = 0; i < cfg.num_compress_threads; ++i) {
       compress_threads.emplace_back([&]() {
-        CompressionThread ct(compressor.get(), &queue, &done, &total_output_size);
+        CompressionThread ct(compressor.get(), &queue, &done,
+                             &total_output_size, cfg.ChunkSize());
         ct.Run();
       });
     }
@@ -374,9 +396,9 @@ BenchmarkResult RunBenchmark(const std::string& lib_name,
 
   // Start simulation threads and push data to queue
   std::vector<std::thread> sim_threads;
-  for (int i = 0; i < NUM_SIM_THREADS; ++i) {
-    sim_threads.emplace_back([i]() {
-      SimulationThread sim(i, BUSY_TIME_SECONDS);
+  for (int i = 0; i < cfg.num_sim_threads; ++i) {
+    sim_threads.emplace_back([i, &cfg]() {
+      SimulationThread sim(i, cfg.busy_time_seconds);
       sim.Run();
     });
   }
@@ -401,7 +423,7 @@ BenchmarkResult RunBenchmark(const std::string& lib_name,
   // Calculate metrics
   result.wall_clock_sec = duration<double>(wall_end - wall_start).count();
   result.sim_cpu_sec = cpu_end.Total() - cpu_start.Total();
-  result.sim_wall_sec = result.wall_clock_sec * NUM_SIM_THREADS;
+  result.sim_wall_sec = result.wall_clock_sec * cfg.num_sim_threads;
 
   result.sim_slowdown_sec = result.wall_clock_sec - result.sim_baseline_sec;
   result.sim_slowdown_pct = (result.sim_slowdown_sec / result.sim_baseline_sec) * 100.0;
@@ -440,16 +462,19 @@ BenchmarkResult RunBenchmark(const std::string& lib_name,
 // ============================================================================
 
 int main(int argc, char* argv[]) {
+  BenchConfig cfg;
+  cfg.ParseArgs(argc, argv);
+
   HIPRINT("============================================================\n");
   HIPRINT("COMPRESSION CONTENTION BENCHMARK\n");
   HIPRINT("============================================================\n");
   HIPRINT("Configuration:\n");
-  HIPRINT("  Simulation threads: {}\n", NUM_SIM_THREADS);
-  HIPRINT("  Compression threads: {}\n", NUM_COMPRESS_THREADS);
-  HIPRINT("  Chunk size: {} KB\n", CHUNK_SIZE_KB);
-  HIPRINT("  Queue depth: {}\n", QUEUE_DEPTH);
-  HIPRINT("  Busy time: {} seconds\n", BUSY_TIME_SECONDS);
-  HIPRINT("  Outputs: {}\n", NUM_OUTPUTS);
+  HIPRINT("  Simulation threads: {}\n", cfg.num_sim_threads);
+  HIPRINT("  Compression threads: {}\n", cfg.num_compress_threads);
+  HIPRINT("  Chunk size: {} KB\n", cfg.chunk_size_kb);
+  HIPRINT("  Queue depth: {}\n", cfg.queue_depth);
+  HIPRINT("  Busy time: {} seconds\n", cfg.busy_time_seconds);
+  HIPRINT("  Outputs: {}\n", cfg.num_outputs);
   HIPRINT("============================================================\n\n");
 
   // Define libraries to test
@@ -475,7 +500,7 @@ int main(int argc, char* argv[]) {
 
   for (const auto& name : libraries) {
     HIPRINT("Testing {}... ", name);
-    auto result = RunBenchmark(name, "best");
+    auto result = RunBenchmark(name, "best", cfg);
     results.push_back(result);
     HIPRINT("done (wall={}s, slowdown={}%)\n", result.wall_clock_sec,
             result.sim_slowdown_pct);

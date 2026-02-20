@@ -57,7 +57,6 @@
 #include "chimaera/singletons.h"
 #include "chimaera/task.h"
 #include "chimaera/task_archives.h"
-#include "chimaera/task_queue.h"
 #include "chimaera/work_orchestrator.h"
 
 namespace chi {
@@ -244,13 +243,6 @@ void Worker::Run() {
     // Check blocked queue for completed tasks at end of each iteration
     ContinueBlockedTasks(false);
 
-    // Copy task output data to copy space for streaming (low-priority
-    // operation) Only do this when worker would otherwise idle, with minimal
-    // time budget
-    if (!did_work_) {
-      CopyTaskOutputToClient();
-    }
-
     // Increment iteration counter
     iteration_count_++;
 
@@ -356,8 +348,6 @@ bool Worker::ProcessNewTask(TaskLane *lane) {
     return false;
   }
 
-  HLOG(kDebug, "Worker {}: Popped future from lane, processing task",
-       worker_id_);
   SetCurrentRunContext(nullptr);
 
   // Get FutureShm (allocator is pre-registered by Admin::RegisterMemory)
@@ -399,15 +389,8 @@ bool Worker::ProcessNewTask(TaskLane *lane) {
     return true;
   }
 
-  HLOG(kDebug,
-       "Worker {}: Task deserialized successfully, task_ptr={}, checking "
-       "if routed",
-       worker_id_, (void *)task_full_ptr.ptr_);
-
   // Allocate RunContext before routing (skip if already created)
   if (!task_full_ptr->task_flags_.Any(TASK_RUN_CTX_EXISTS)) {
-    HLOG(kDebug, "Worker {}: RunContext not yet created, calling BeginTask",
-         worker_id_);
     BeginTask(future, container, lane);
   }
 
@@ -1118,13 +1101,7 @@ void Worker::ResumeCoroutine(const FullPtr<Task> &task_ptr,
 
   // Resume the coroutine - it will run until next co_await or co_return
   try {
-    HLOG(kDebug,
-         "ResumeCoroutine: About to resume coro_handle_={} for task method={}",
-         (void *)run_ctx->coro_handle_.address(), task_ptr->method_);
     run_ctx->coro_handle_.resume();
-    HLOG(kDebug, "ResumeCoroutine: Returned from resume, coro_handle_={}",
-         (void *)(run_ctx->coro_handle_ ? run_ctx->coro_handle_.address()
-                                        : nullptr));
 
     // Check if coroutine completed after resumption
     if (run_ctx->coro_handle_.done()) {
@@ -1197,8 +1174,14 @@ void Worker::ExecTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
 
   // If coroutine yielded (not done and is_yielded_ set), don't clean up
   if (run_ctx->is_yielded_ && !coro_done) {
-    // Task is blocked - don't clean up, will be resumed later
-    return;  // Task is not completed, blocked for later resume
+    // yield_time_us_ > 0 means cooperative yield (polling) — add to periodic
+    // queue so the worker re-checks after the requested delay.
+    // yield_time_us_ == 0 means waiting for a Future event — the event queue
+    // will resume it, so we must NOT add it to any queue here.
+    if (run_ctx->yield_time_us_ > 0) {
+      AddToBlockedQueue(run_ctx);
+    }
+    return;
   }
 
   // Check if this is a dynamic scheduling task
@@ -1443,6 +1426,9 @@ void Worker::ProcessPeriodicQueue(std::queue<RunContext *> &queue,
       if (RouteTask(run_ctx->future_, run_ctx->lane_, container)) {
         // Routing successful, execute the task
         ExecTask(run_ctx->task_, run_ctx, is_started);
+
+        // If task re-yielded with a polling interval, ExecTask already
+        // re-added it to the periodic queue via AddToBlockedQueue.
       }
     } else {
       // Time threshold not reached yet - re-add to same queue
@@ -1475,9 +1461,6 @@ void Worker::ProcessEventQueue() {
     if (!run_ctx->coro_handle_ || run_ctx->coro_handle_.done()) {
       continue;
     }
-
-    HLOG(kDebug, "ProcessEventQueue: Resuming task method={}, coro_handle_={}",
-         run_ctx->task_->method_, (void *)run_ctx->coro_handle_.address());
 
     // Reset the is_yielded_ flag before executing the task
     run_ctx->is_yielded_ = false;
@@ -1709,30 +1692,5 @@ RunContext *GetCurrentRunContextFromWorker() {
   return nullptr;
 }
 
-void Worker::CopyTaskOutputToClient() {
-  // Process transfers in client_copy_ queue
-  // Mark did_work_ if there are any transfers to prevent worker suspension
-  if (!client_copy_.empty()) {
-    did_work_ = true;
-  }
-
-  while (!client_copy_.empty()) {
-    LocalTransfer &transfer = client_copy_.front();
-
-    // Try to send data using LocalTransfer (5ms = 5000us time budget)
-    bool send_complete = transfer.Send(5000);
-
-    if (send_complete) {
-      // Transfer complete - remove from queue
-      client_copy_.pop();
-    } else {
-      // Transfer not complete - move to back of queue for fairness
-      LocalTransfer t = std::move(client_copy_.front());
-      client_copy_.pop();
-      client_copy_.push(std::move(t));
-      break;  // Process other work before continuing this transfer
-    }
-  }
-}
 
 }  // namespace chi

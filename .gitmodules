@@ -19,3 +19,14 @@
 [submodule "context-transfer-engine/benchmark/memorybench"]
 	path = context-transfer-engine/benchmark/memorybench
 	url = git@github.com:iowarp/memorybench.git
+[submodule "external/runtime-deployment"]
+	path = external/runtime-deployment
+	url = https://github.com/iowarp/runtime-deployment.git
+[submodule "docs"]
+	path = docs
+	url = git@github.com:iowarp/docs.git
+	branch = iowarp-dev
+[submodule "installers/iowarp"]
+	path = installers/iowarp
+	url = https://github.com/iowarp/iowarp
+	branch = core

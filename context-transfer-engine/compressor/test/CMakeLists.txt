@@ -155,7 +155,13 @@ target_link_libraries(test_compression_contention_exec
     ${CMAKE_THREAD_LIBS_INIT}
 )
 target_compile_features(test_compression_contention_exec PRIVATE cxx_std_17)
-add_test(NAME test_compression_contention COMMAND test_compression_contention_exec)
+add_test(NAME test_compression_contention COMMAND test_compression_contention_exec
+    --chunk-size-kb 4
+    --sim-threads 1
+    --compress-threads 1
+    --queue-depth 4
+    --busy-time 0
+    --num-outputs 2)
 install(TARGETS test_compression_contention_exec
     RUNTIME DESTINATION bin
 )

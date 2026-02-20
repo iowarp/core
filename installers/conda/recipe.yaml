@@ -36,7 +36,7 @@ build:
       CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: ONLY
       CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: ONLY
     content:
-      - cmake --preset=${{ preset }} -DCMAKE_INSTALL_PREFIX=${{ PREFIX }} -DCMAKE_PREFIX_PATH=${{ PREFIX }} -DCMAKE_FIND_ROOT_PATH=${{ PREFIX }}
+      - cmake --preset=${{ preset }} -DCMAKE_INSTALL_PREFIX=${{ PREFIX }} -DCMAKE_PREFIX_PATH=${{ PREFIX }} -DCMAKE_FIND_ROOT_PATH=${{ PREFIX }} -DWRP_CORE_ENABLE_CONDA=ON
       - cmake --build build --parallel
       - cmake --install build
 
@@ -54,6 +54,7 @@ requirements:
     - hdf5
     - catch2
     - libaio
+    - liburing
   run:
     - python
     - zeromq
@@ -62,10 +63,11 @@ requirements:
     - hdf5
     - catch2
     - libaio
+    - liburing
 
 tests:
   - script:
-      # Just verify the library files exist (chimaera_start_runtime is a daemon)
+      # Just verify the library files exist (chimaera runtime start is a daemon)
       - test -f $PREFIX/lib/libchimaera_cxx.so || test -f $PREFIX/lib/libchimaera_cxx.dylib
 
 about:

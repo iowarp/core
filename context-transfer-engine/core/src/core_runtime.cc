@@ -111,16 +111,17 @@ chi::u64 Runtime::ParseCapacityToBytes(const std::string &capacity_str) {
 
 chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
                                 chi::RunContext &ctx) {
-  // Initialize unordered_map_ll instances with 64 buckets to match lock count
-  // This ensures each bucket can have its own lock for maximum concurrency
+  // Initialize unordered_map_ll instances with appropriately sized bucket counts
+  // Tag/blob maps are large to avoid excessive collisions at scale
+  // Target maps use tag size since target counts are similar
   registered_targets_ =
-      chi::unordered_map_ll<chi::PoolId, TargetInfo>(kMaxLocks);
+      hshm::priv::unordered_map_ll<chi::PoolId, TargetInfo>(kTagMapSize);
   target_name_to_id_ =
-      chi::unordered_map_ll<std::string, chi::PoolId>(kMaxLocks);
-  tag_name_to_id_ = chi::unordered_map_ll<std::string, TagId>(kMaxLocks);
-  tag_id_to_info_ = chi::unordered_map_ll<TagId, TagInfo>(kMaxLocks);
+      hshm::priv::unordered_map_ll<std::string, chi::PoolId>(kTagMapSize);
+  tag_name_to_id_ = hshm::priv::unordered_map_ll<std::string, TagId>(kTagMapSize);
+  tag_id_to_info_ = hshm::priv::unordered_map_ll<TagId, TagInfo>(kTagMapSize);
   tag_blob_name_to_info_ =
-      chi::unordered_map_ll<std::string, BlobInfo>(kMaxLocks);
+      hshm::priv::unordered_map_ll<std::string, BlobInfo>(kBlobMapSize);
 
   // Initialize lock vectors for concurrent access
   target_locks_.reserve(kMaxLocks);
@@ -1382,17 +1383,10 @@ float Runtime::GetManualScoreForTarget(const std::string &target_name) {
         (target_name.rfind(device.path_, 0) == 0 &&
          (target_name.size() == device.path_.size() ||
           target_name[device.path_.size()] == '_'))) {
-      HLOG(kDebug,
-           "GetManualScoreForTarget: target '{}' matched device path '{}', "
-           "score={}",
-           target_name, device.path_, device.score_);
       return device.score_;  // Return configured score (-1.0f if not set)
     }
   }
 
-  HLOG(kDebug,
-       "GetManualScoreForTarget: target '{}' has no manual score configured",
-       target_name);
   return -1.0f;  // No manual score configured for this target
 }
 
@@ -2066,14 +2060,14 @@ size_t Runtime::GetTargetLockIndex(const chi::PoolId &target_id) const {
 }
 
 size_t Runtime::GetTagLockIndex(const std::string &tag_name) const {
-  // Use same hash function as chi::unordered_map_ll to ensure lock maps to same
+  // Use same hash function as hshm::priv::unordered_map_ll to ensure lock maps to same
   // bucket
   std::hash<std::string> hasher;
   return hasher(tag_name) % tag_locks_.size();
 }
 
 size_t Runtime::GetTagLockIndex(const TagId &tag_id) const {
-  // Use same hash function as chi::unordered_map_ll for TagId keys
+  // Use same hash function as hshm::priv::unordered_map_ll for TagId keys
   // std::hash<chi::UniqueId> is defined in types.h
   std::hash<TagId> hasher;
   return hasher(tag_id) % tag_locks_.size();

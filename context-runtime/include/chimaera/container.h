@@ -46,7 +46,6 @@
 #include "chimaera/task.h"
 #include "chimaera/task_archives.h"
 #include "chimaera/local_task_archives.h"
-#include "chimaera/task_queue.h"
 #include "chimaera/types.h"
 
 // Forward declarations to avoid circular dependencies
@@ -164,10 +163,37 @@ class Container {
   }
 
   /**
-   * Restart container after crash recovery
-   * Default: re-initialize. Override for state restoration.
+   * Restart container on the SAME node after a brief shutdown.
+   * Called during warm-start via RestartContainers / Compose pathway.
+   * Aims to rebuild metadata only (data assumed intact on local storage).
+   * Default: calls Init. Override to reload metadata from WAL/config.
    */
   virtual void Restart(const PoolId& pool_id, const std::string& pool_name,
+                       u32 container_id = 0) {
+    Init(pool_id, pool_name, container_id);
+  }
+
+  /**
+   * Schedule which node should host recovery of this container.
+   * Called on the LEADER node's local_container_ during ComputeRecoveryPlan.
+   * Default: return static_cast<u32>(-1) to let the admin choose at random.
+   * Override to direct recovery to a specific node (e.g., nearest replica).
+   * @return Destination node ID, or static_cast<u32>(-1) for random placement
+   */
+  virtual u32 ScheduleRecover() {
+    return static_cast<u32>(-1);
+  }
+
+  /**
+   * Recover container after node failure onto a DIFFERENT node.
+   * Called on the DESTINATION node during RecoverContainers.
+   * Aims to reconstruct both data and metadata from replicas/checkpoints.
+   * Default: calls Init (clean slate). Override for state restoration.
+   * @param pool_id The pool this container belongs to
+   * @param pool_name The pool name
+   * @param container_id The container ID being recovered
+   */
+  virtual void Recover(const PoolId& pool_id, const std::string& pool_name,
                        u32 container_id = 0) {
     Init(pool_id, pool_name, container_id);
   }

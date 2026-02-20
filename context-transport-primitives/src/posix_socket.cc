@@ -171,26 +171,4 @@ int PollReadMulti(const socket_t* fds, int count, int timeout_ms) {
   return -1;
 }
 
-int EpollCreate() {
-  return ::epoll_create1(0);
-}
-
-int EpollAdd(int epoll_fd, socket_t fd) {
-  struct epoll_event ev;
-  ev.events = EPOLLIN;
-  ev.data.fd = fd;
-  return ::epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev);
-}
-
-int EpollWait(int epoll_fd, struct epoll_event* events, int max_events,
-              int timeout_ms) {
-  return ::epoll_wait(epoll_fd, events, max_events, timeout_ms);
-}
-
-void EpollClose(int epoll_fd) {
-  if (epoll_fd >= 0) {
-    ::close(epoll_fd);
-  }
-}
-
 }  // namespace hshm::lbm::sock

@@ -103,7 +103,7 @@ struct TaskInfo {
  * - task_infos_: vector of TaskInfo for task metadata
  * - msg_type_: MsgType for message type (SerializeIn, SerializeOut, Heartbeat)
  */
-class NetTaskArchive : public hshm::lbm::LbmMeta {
+class NetTaskArchive : public hshm::lbm::LbmMeta<> {
 public:
   std::vector<TaskInfo> task_infos_; /**< Task metadata for each serialized task */
   MsgType msg_type_;                 /**< Message type: kSerializeIn, kSerializeOut, or kHeartbeat */
@@ -128,7 +128,7 @@ public:
    * Move constructor
    */
   NetTaskArchive(NetTaskArchive &&other) noexcept
-      : hshm::lbm::LbmMeta(std::move(other)),
+      : hshm::lbm::LbmMeta<>(std::move(other)),
         task_infos_(std::move(other.task_infos_)),
         msg_type_(other.msg_type_) {}
 
@@ -137,7 +137,7 @@ public:
    */
   NetTaskArchive &operator=(NetTaskArchive &&other) noexcept {
     if (this != &other) {
-      hshm::lbm::LbmMeta::operator=(std::move(other));
+      hshm::lbm::LbmMeta<>::operator=(std::move(other));
       task_infos_ = std::move(other.task_infos_);
       msg_type_ = other.msg_type_;
     }

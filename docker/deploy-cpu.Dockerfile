@@ -1,15 +1,15 @@
 # IOWarp CPU Deploy Container
 # Minimal deployment container with only runtime binaries
 #
-# This container copies the installed binaries from build-cpu, reducing
-# overall container size without sacrificing functionality.
+# Builds IOWarp from source using deps-cpu, then copies only the
+# installed binaries into a minimal Ubuntu image.
 #
 # Usage:
 #   docker build -t iowarp/deploy-cpu:latest -f docker/deploy-cpu.Dockerfile .
 #
 FROM ubuntu:24.04 AS runtime-base
 LABEL maintainer="llogan@hawk.iit.edu"
-LABEL version="1.0"
+LABEL version="2.0"
 LABEL description="IOWarp CPU deployment container"
 
 # Disable prompt during packages installation
@@ -25,21 +25,40 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Create iowarp user
-RUN useradd -m -s /bin/bash iowarp && \
-    mkdir -p /etc/iowarp && \
-    chown -R iowarp:iowarp /etc/iowarp
+RUN useradd -m -s /bin/bash iowarp
 
 # MPI environment
 ENV OMPI_ALLOW_RUN_AS_ROOT=1
 ENV OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
 
 #------------------------------------------------------------
-# Copy from Build Container
+# Build from deps-cpu
 #------------------------------------------------------------
 
-FROM iowarp/build-cpu:latest AS builder
+FROM iowarp/deps-cpu:latest AS builder
 
-# The build container already has everything installed in /usr/local
+WORKDIR /workspace
+COPY . /workspace/
+
+ENV PATH="/home/iowarp/.local/bin:${PATH}"
+
+RUN sudo chown -R $(whoami):$(whoami) /workspace && \
+    git submodule update --init --recursive && \
+    cd /workspace/external/runtime-deployment && \
+    pip3 install --break-system-packages -e . -r requirements.txt && \
+    jarvis init && \
+    jarvis rg build && \
+    jarvis repo add /workspace/jarvis_iowarp && \
+    cd /workspace && \
+    mkdir -p build && \
+    cd build && \
+    cmake --preset build-cpu-release ../ && \
+    sudo make -j$(nproc) install
+
+# Seed default config at ~/.chimaera/chimaera.yaml (picked up automatically by runtime)
+RUN mkdir -p /home/iowarp/.chimaera && \
+    cp /workspace/context-runtime/config/chimaera_default.yaml \
+       /home/iowarp/.chimaera/chimaera.yaml
 
 #------------------------------------------------------------
 # Final Deploy Image
@@ -47,39 +66,26 @@ FROM iowarp/build-cpu:latest AS builder
 
 FROM runtime-base
 
-# Copy conda environment (needed for runtime dependencies like hdf5, zeromq, etc.)
-COPY --from=builder /home/iowarp/miniconda3 /home/iowarp/miniconda3
-
 # Copy IOWarp installation from build container
 COPY --from=builder /usr/local/lib /usr/local/lib
 COPY --from=builder /usr/local/bin /usr/local/bin
-COPY --from=builder /usr/local/include /usr/local/include
 COPY --from=builder /usr/local/share /usr/local/share
 
-# Copy IOWarp runtime configuration
-COPY --from=builder /etc/iowarp /etc/iowarp
+# Copy default config for runtime auto-discovery
+COPY --from=builder --chown=iowarp:iowarp /home/iowarp/.chimaera /home/iowarp/.chimaera
 
 # Set up library paths
-ENV LD_LIBRARY_PATH=/usr/local/lib:/home/iowarp/miniconda3/lib:/usr/lib/x86_64-linux-gnu
-ENV PATH=/usr/local/bin:/home/iowarp/miniconda3/bin:${PATH}
-ENV CONDA_PREFIX=/home/iowarp/miniconda3
-ENV CMAKE_PREFIX_PATH=/home/iowarp/miniconda3:${CMAKE_PREFIX_PATH}
-
-# Set runtime configuration environment variable
-ENV WRP_RUNTIME_CONF=/etc/iowarp/wrp_conf.yaml
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu
+ENV PATH=/usr/local/bin:${PATH}
 
 # Update library cache
 RUN ldconfig
-
-# Set ownership for iowarp user
-RUN chown -R iowarp:iowarp /home/iowarp
 
 # Switch to iowarp user
 USER iowarp
 WORKDIR /home/iowarp
 
-# Initialize conda in bashrc
-RUN echo 'eval "$(/home/iowarp/miniconda3/bin/conda shell.bash hook)"' >> /home/iowarp/.bashrc && \
-    echo 'export LD_LIBRARY_PATH=/usr/local/lib:/home/iowarp/miniconda3/lib:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH' >> /home/iowarp/.bashrc
+# Set up environment in bashrc
+RUN echo 'export LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH' >> /home/iowarp/.bashrc
 
 CMD ["/bin/bash"]

@@ -135,8 +135,9 @@ class _ArenaAllocator : public Allocator {
    * @throws OUT_OF_MEMORY if allocation fails
    */
   HSHM_CROSS_FUN
-  OffsetPtr<> AllocateOffset(size_t size, size_t alignment = 1) {
-    (void)alignment;  // Alignment is not supported in arena allocator
+  OffsetPtr<> AllocateOffset(size_t size, size_t alignment = sizeof(size_t)) {
+    // Round up size to alignment boundary so next allocation is aligned
+    size = (size + alignment - 1) & ~(alignment - 1);
 
     if (heap_.GetRemainingSize() < size) {
       HSHM_THROW_ERROR(OUT_OF_MEMORY);
