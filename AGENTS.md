@@ -708,7 +708,7 @@ REQUIRE(CHI_IPC->IsInitialized());
 **Initialization Parameters:**
 - **Mode**: Always use `chi::ChimaeraMode::kClient` for unit tests
 - **default_with_runtime**: Always use `true` for unit tests (starts runtime automatically)
-- **Environment Variable**: `CHIMAERA_WITH_RUNTIME` is handled automatically by `CHIMAERA_INIT()`
+- **Environment Variable**: `CHI_WITH_RUNTIME` is handled automatically by `CHIMAERA_INIT()`
   - If set to `1`: Runtime will be started
   - If set to `0`: Only client initialization (useful for external runtime scenarios)
   - If not set: Uses the `default_with_runtime` parameter value

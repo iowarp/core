@@ -151,7 +151,7 @@ pid_t StartServerProcess() {
     freopen("/tmp/chimaera_server_timing.log", "w", stderr);
 
     // Child process: Start runtime server
-    setenv("CHIMAERA_WITH_RUNTIME", "1", 1);
+    setenv("CHI_WITH_RUNTIME", "1", 1);
     bool success = CHIMAERA_INIT(ChimaeraMode::kServer, true);
     if (!success) {
       _exit(1);
@@ -242,7 +242,7 @@ TEST_CASE("IpcTransportMode - SHM Client Connection",
 
   // Set SHM mode and connect as external client
   setenv("CHI_IPC_MODE", "SHM", 1);
-  setenv("CHIMAERA_WITH_RUNTIME", "0", 1);
+  setenv("CHI_WITH_RUNTIME", "0", 1);
   bool success = CHIMAERA_INIT(ChimaeraMode::kClient, false);
   REQUIRE(success);
 
@@ -271,7 +271,7 @@ TEST_CASE("IpcTransportMode - TCP Client Connection",
 
   // Set TCP mode and connect as external client
   setenv("CHI_IPC_MODE", "TCP", 1);
-  setenv("CHIMAERA_WITH_RUNTIME", "0", 1);
+  setenv("CHI_WITH_RUNTIME", "0", 1);
   bool success = CHIMAERA_INIT(ChimaeraMode::kClient, false);
   REQUIRE(success);
 
@@ -300,7 +300,7 @@ TEST_CASE("IpcTransportMode - IPC Client Connection",
 
   // Set IPC (Unix Domain Socket) mode and connect as external client
   setenv("CHI_IPC_MODE", "IPC", 1);
-  setenv("CHIMAERA_WITH_RUNTIME", "0", 1);
+  setenv("CHI_WITH_RUNTIME", "0", 1);
   bool success = CHIMAERA_INIT(ChimaeraMode::kClient, false);
   REQUIRE(success);
 
@@ -329,7 +329,7 @@ TEST_CASE("IpcTransportMode - Default Mode Is TCP",
 
   // Unset CHI_IPC_MODE to test default behavior
   unsetenv("CHI_IPC_MODE");
-  setenv("CHIMAERA_WITH_RUNTIME", "0", 1);
+  setenv("CHI_WITH_RUNTIME", "0", 1);
   bool success = CHIMAERA_INIT(ChimaeraMode::kClient, false);
   REQUIRE(success);
 

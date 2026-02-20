@@ -78,7 +78,7 @@ All benchmark parameters can be configured via environment variables:
 | `DEPTH` | Queue depth (concurrent operations) | `4` | 4, 8, 16, 32 |
 | `IO_SIZE` | Size of each I/O operation | `1m` | 4k, 1m, 16m |
 | `IO_COUNT` | Number of operations to perform | `100` | 100, 1000, 100000 |
-| `CHIMAERA_WITH_RUNTIME` | Initialize CTE runtime in benchmark | `0` | 0 (runtime service), 1 (self-init) |
+| `CHI_WITH_RUNTIME` | Initialize CTE runtime in benchmark | `0` | 0 (runtime service), 1 (self-init) |
 | `CHI_SERVER_CONF` | Path to CTE configuration file | `/etc/iowarp/cte_config.yaml` | Custom path |
 
 ### I/O Size Format
