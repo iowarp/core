@@ -171,7 +171,7 @@ public:
   HSHM_GPU_FUN explicit LocalSaveTaskArchive(LocalMsgType msg_type);  // Not implemented for GPU
 #endif
 
-#if defined(__CUDACC__) || defined(__HIP__)
+#if HSHM_IS_GPU_COMPILER
   /**
    * Constructor with message type and buffer (GPU - uses raw buffer)
    *
@@ -519,7 +519,7 @@ public:
   HSHM_GPU_FUN explicit LocalLoadTaskArchive(const std::vector<char> &data);  // Not implemented for GPU
 #endif
 
-#if defined(__CUDACC__) || defined(__HIP__)
+#if HSHM_IS_GPU_COMPILER
   /**
    * Constructor from raw buffer (GPU - uses raw buffer)
    *
