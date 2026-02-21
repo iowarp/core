@@ -25,7 +25,9 @@ option(WRP_CORE_ENABLE_TESTS "Master switch: Enable testing for all components" 
 option(WRP_CORE_ENABLE_BENCHMARKS "Master switch: Enable benchmarks for all components" ON)
 option(WRP_CORE_ENABLE_PYTHON "Enable Python bindings for all components" OFF)
 option(WRP_CORE_ENABLE_CMAKE_DOTENV "Enable reading environment variables from .env.cmake" OFF)
-option(WRP_CORE_ENABLE_ASAN "Enable AddressSanitizer for debugging" OFF)
+option(WRP_CORE_ENABLE_ASAN "Enable AddressSanitizer + LeakSanitizer for debugging" OFF)
+option(WRP_CORE_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer for debugging" OFF)
+option(WRP_CORE_ENABLE_MSAN "Enable MemorySanitizer for debugging (requires instrumented dependencies)" OFF)
 option(WRP_CORE_ENABLE_COVERAGE "Enable code coverage instrumentation for all components" OFF)
 option(WRP_CORE_ENABLE_DOXYGEN "Check how well the code is documented" OFF)
 option(WRP_CORE_ENABLE_RPATH "Enable RPATH configuration with relative ($ORIGIN) paths" ON)
@@ -539,6 +541,12 @@ if(WRP_CORE_ENABLE_HDF5)
             endif()
         endif()
 
+        # libhdf5.so (system package) depends on libcurl internally;
+        # the linker needs it listed explicitly due to --as-needed.
+        find_package(CURL QUIET)
+        if(CURL_FOUND)
+            list(APPEND HDF5_LIBRARIES CURL::libcurl)
+        endif()
     else()
         message(FATAL_ERROR "HDF5 not found. Please install HDF5 or run install.sh to build from submodules.")
     endif()
@@ -666,11 +674,30 @@ if(NOT MSVC)
     # Release configuration
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG")
 
-    # AddressSanitizer configuration
+    # AddressSanitizer + LeakSanitizer configuration
     if(WRP_CORE_ENABLE_ASAN)
-        message(STATUS "AddressSanitizer (ASAN) enabled for iowarp-core")
+        message(STATUS "AddressSanitizer + LeakSanitizer (ASan/LSan) enabled for iowarp-core")
         add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
         add_link_options(-fsanitize=address)
+    endif()
+
+    # UndefinedBehaviorSanitizer configuration
+    if(WRP_CORE_ENABLE_UBSAN)
+        message(STATUS "UndefinedBehaviorSanitizer (UBSan) enabled for iowarp-core")
+        add_compile_options(-fsanitize=undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
+        add_link_options(-fsanitize=undefined)
+    endif()
+
+    # MemorySanitizer configuration (incompatible with ASan; requires instrumented dependencies)
+    if(WRP_CORE_ENABLE_MSAN)
+        if(WRP_CORE_ENABLE_ASAN)
+            message(FATAL_ERROR "WRP_CORE_ENABLE_MSAN and WRP_CORE_ENABLE_ASAN are mutually exclusive")
+        endif()
+        message(STATUS "MemorySanitizer (MSan) enabled for iowarp-core")
+        message(WARNING "MSan requires all dependencies to be built with -fsanitize=memory; false-positives are expected from uninstrumented libs")
+        add_compile_options(-fsanitize=memory -fno-omit-frame-pointer -fno-sanitize-recover=memory
+                            -fsanitize-memory-track-origins=2)
+        add_link_options(-fsanitize=memory)
     endif()
 
     # Code Coverage configuration
@@ -882,7 +909,9 @@ message(STATUS "  ")
 message(STATUS "  Global Options:")
 message(STATUS "    Enable Tests:               ${WRP_CORE_ENABLE_TESTS}")
 message(STATUS "    Python Bindings:            ${WRP_CORE_ENABLE_PYTHON}")
-message(STATUS "    AddressSanitizer:           ${WRP_CORE_ENABLE_ASAN}")
+message(STATUS "    AddressSanitizer (ASan):    ${WRP_CORE_ENABLE_ASAN}")
+message(STATUS "    UndefinedBehaviorSan (UBSan): ${WRP_CORE_ENABLE_UBSAN}")
+message(STATUS "    MemorySanitizer (MSan):     ${WRP_CORE_ENABLE_MSAN}")
 message(STATUS "    Code Coverage:              ${WRP_CORE_ENABLE_COVERAGE}")
 message(STATUS "")
 
