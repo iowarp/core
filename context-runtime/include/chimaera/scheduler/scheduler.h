@@ -108,6 +108,12 @@ class Scheduler {
    * @return Pointer to GPU worker, or nullptr if none assigned
    */
   virtual Worker *GetGpuWorker() const { return nullptr; }
+
+  /**
+   * Get the designated network worker (handles Send/Recv/ClientRecv/ClientSend).
+   * @return Pointer to net worker, or nullptr if none assigned
+   */
+  virtual Worker *GetNetWorker() const { return nullptr; }
 };
 
 }  // namespace chi

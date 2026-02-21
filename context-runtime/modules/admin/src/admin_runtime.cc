@@ -98,21 +98,27 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
   // Spawn periodic ClientSend task for client response sending via lightbeam
   client_.AsyncClientSend(chi::PoolQuery::Local(), 100);
 
-  // Register client server FDs with worker's EventManager
+  // Register ALL transport FDs with the net worker's EventManager
+  // This ensures epoll wakes the net worker when data arrives on any transport
   {
-    auto *worker = CHI_CUR_WORKER;
     auto *ipc_manager = CHI_IPC;
-    if (worker && ipc_manager) {
-      auto &em = worker->GetEventManager();
+    chi::Worker *net_worker = ipc_manager->GetScheduler()->GetNetWorker();
+    if (net_worker && ipc_manager) {
+      auto &em = net_worker->GetEventManager();
       auto *tcp_transport = ipc_manager->GetClientTransport(chi::IpcMode::kTcp);
       if (tcp_transport) {
         tcp_transport->RegisterEventManager(em);
-        HLOG(kDebug, "Admin: TCP transport registered with worker EventManager");
+        HLOG(kDebug, "Admin: TCP transport registered with net worker EventManager");
       }
       auto *ipc_transport = ipc_manager->GetClientTransport(chi::IpcMode::kIpc);
       if (ipc_transport) {
         ipc_transport->RegisterEventManager(em);
-        HLOG(kDebug, "Admin: IPC transport registered with worker EventManager");
+        HLOG(kDebug, "Admin: IPC transport registered with net worker EventManager");
+      }
+      auto *main_transport = ipc_manager->GetMainTransport();
+      if (main_transport) {
+        main_transport->RegisterEventManager(em);
+        HLOG(kDebug, "Admin: Main transport registered with net worker EventManager");
       }
     }
   }
@@ -956,8 +962,9 @@ chi::TaskResume Runtime::Recv(hipc::FullPtr<RecvTask> task,
   // Mark that we received data (did work)
   rctx.did_work_ = true;
 
-  // Dispatch based on message type
   chi::MsgType msg_type = archive.GetMsgType();
+
+  // Dispatch based on message type
   switch (msg_type) {
     case chi::MsgType::kSerializeIn:
       RecvIn(task, archive, lbm_transport);
@@ -1091,6 +1098,8 @@ chi::TaskResume Runtime::ClientRecv(hipc::FullPtr<ClientRecvTask> task,
 
       did_work = true;
       task->tasks_received_++;
+      HLOG(kDebug, "[ClientRecv] Received task pool_id={}, method={}, mode={}",
+           pool_id, method_id, mode_idx == 0 ? "tcp" : "ipc");
     }
   }
 

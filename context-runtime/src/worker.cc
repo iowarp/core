@@ -411,11 +411,9 @@ bool Worker::ProcessNewTask(TaskLane *lane) {
 }
 
 double Worker::GetSuspendPeriod() const {
-  // Scan all periodic queues to find the maximum yield_time (polling period)
-  // We use the maximum yield_time directly, not the remaining time, to avoid
-  // desynchronization issues when multiple tasks have the same period but
-  // slightly different block_start timestamps
-  double max_yield_time_us = 0;
+  // Scan all periodic queues to find the minimum yield_time (polling period)
+  // We must wake up for the fastest periodic task to avoid starving it
+  double min_yield_time_us = 0;
   bool found_task = false;
 
   // Check all periodic queues (0-3)
@@ -435,16 +433,15 @@ double Worker::GetSuspendPeriod() const {
     }
 
     // Use the yield_time directly - this is the adaptive polling period
-    // No elapsed time calculation to avoid desynchronization
-    if (!found_task || run_ctx->yield_time_us_ > max_yield_time_us) {
-      max_yield_time_us = run_ctx->yield_time_us_;
+    if (!found_task || run_ctx->yield_time_us_ < min_yield_time_us) {
+      min_yield_time_us = run_ctx->yield_time_us_;
       found_task = true;
     }
   }
 
   // Return -1 if no periodic tasks (means wait indefinitely in epoll_wait)
-  // Otherwise return the maximum yield_time across all periodic queues
-  return found_task ? max_yield_time_us : -1;
+  // Otherwise return the minimum yield_time across all periodic queues
+  return found_task ? min_yield_time_us : -1;
 }
 
 void Worker::SuspendMe() {
@@ -498,11 +495,6 @@ void Worker::SuspendMe() {
 
     // Wait for signal using EventManager
     int nfds = event_manager_.Wait(timeout_us);
-
-    // Mark worker as active again
-    if (assigned_lane_) {
-      assigned_lane_->SetActive(true);
-    }
 
     if (nfds == 0) {
       sleep_count_++;

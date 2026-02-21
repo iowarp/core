@@ -79,6 +79,9 @@ void LocalScheduler::DivideWorkers(WorkOrchestrator *work_orch) {
   IpcManager *ipc = CHI_IPC;
   if (ipc) {
     ipc->SetNumSchedQueues(num_sched_workers);
+    if (net_worker_) {
+      ipc->SetNetLane(net_worker_->GetLane());
+    }
   }
 
   HLOG(kInfo,
@@ -98,7 +101,7 @@ u32 LocalScheduler::ClientMapTask(IpcManager *ipc_manager,
   Task *task_ptr = task.get();
   if (task_ptr != nullptr && task_ptr->pool_id_ == chi::kAdminPoolId) {
     u32 method_id = task_ptr->method_;
-    if (method_id == 14 || method_id == 15) {
+    if (method_id == 14 || method_id == 15 || method_id == 20 || method_id == 21) {
       return num_lanes - 1;
     }
   }
@@ -112,7 +115,7 @@ u32 LocalScheduler::RuntimeMapTask(Worker *worker, const Future<Task> &task) {
   if (task_ptr != nullptr && task_ptr->IsPeriodic()) {
     if (task_ptr->pool_id_ == chi::kAdminPoolId) {
       u32 method_id = task_ptr->method_;
-      if (method_id == 14 || method_id == 15) {
+      if (method_id == 14 || method_id == 15 || method_id == 20 || method_id == 21) {
         if (net_worker_ != nullptr) {
           return net_worker_->GetId();
         }

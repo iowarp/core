@@ -1207,10 +1207,16 @@ void IpcManager::EnqueueNetTask(Future<Task> future,
   // Get lane 0 (single lane) with the specified priority
   u32 priority_idx = static_cast<u32>(priority);
   auto &lane = net_queue_->GetLane(0, priority_idx);
+  bool was_empty = lane.Empty();
   lane.Push(future);
 
-  HLOG(kDebug, "EnqueueNetTask: Enqueued task to priority {} queue",
-       priority_idx);
+  // Signal the net worker if the lane was empty (same pattern as admin_runtime.cc:1086-1089)
+  if (was_empty && net_lane_) {
+    AwakenWorker(net_lane_);
+  }
+
+  HLOG(kDebug, "EnqueueNetTask: priority={}, was_empty={}, net_lane={}",
+       priority_idx, was_empty, net_lane_ != nullptr);
 }
 
 bool IpcManager::TryPopNetTask(NetQueuePriority priority,
@@ -1825,7 +1831,7 @@ void IpcManager::RecvZmqClientThread() {
     // Only block on epoll when the drain loop found nothing;
     // if we just processed messages, loop back immediately.
     if (!drained_any) {
-      em.Wait(10000);  // 10ms in microseconds
+      em.Wait(100);  // 100μs (precise with epoll_pwait2)
     }
   }
 }
