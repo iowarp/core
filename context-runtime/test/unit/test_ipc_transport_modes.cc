@@ -35,31 +35,22 @@
  * IPC Transport Mode Tests
  *
  * Tests that each IPC transport mode (SHM, TCP, IPC) initializes correctly
- * and that the correct transport path is active. Each test case forks a
- * server, sets CHI_IPC_MODE, connects as client, and verifies mode state.
+ * and that the correct transport path is active.
+ *
+ * Uses SystemInfo::SpawnProcess for portable process management.
  */
 
-#ifdef _WIN32
-// These tests require POSIX process management (fork, kill, waitpid)
 #include "../simple_test.h"
-SIMPLE_TEST_MAIN()
-#else
-
-#include "../simple_test.h"
-
-#ifndef _WIN32
-#include <fcntl.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
 
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <thread>
 
 #include "chimaera/chimaera.h"
 #include "chimaera/ipc_manager.h"
+#include "hermes_shm/introspect/system_info.h"
 
 #include <chimaera/bdev/bdev_client.h>
 #include <chimaera/bdev/bdev_tasks.h>
@@ -67,18 +58,17 @@ SIMPLE_TEST_MAIN()
 using namespace chi;
 
 inline chi::priv::vector<chimaera::bdev::Block> WrapBlock(
-    const chimaera::bdev::Block& block) {
+    const chimaera::bdev::Block &block) {
   chi::priv::vector<chimaera::bdev::Block> blocks(HSHM_MALLOC);
   blocks.push_back(block);
   return blocks;
 }
 
 void SubmitTasksForMode(const std::string &mode_name) {
-  const chi::u64 kRamSize = 16 * 1024 * 1024;  // 16MB pool
-  const chi::u64 kBlockSize = 4096;             // 4KB block allocation
-  const chi::u64 kIoSize = 1024 * 1024;         // 1MB I/O transfer size
+  const chi::u64 kRamSize = 16 * 1024 * 1024;
+  const chi::u64 kBlockSize = 4096;
+  const chi::u64 kIoSize = 1024 * 1024;
 
-  // --- Category 1: Create bdev pool (inputs > outputs) ---
   chi::PoolId pool_id(9000, 0);
   chimaera::bdev::Client client(pool_id);
   std::string pool_name = "ipc_test_ram_" + mode_name;
@@ -89,23 +79,19 @@ void SubmitTasksForMode(const std::string &mode_name) {
   REQUIRE(create_task->return_code_ == 0);
   client.pool_id_ = create_task->new_pool_id_;
 
-  // --- Category 2: AllocateBlocks (outputs > inputs) ---
-  auto alloc_task = client.AsyncAllocateBlocks(
-      chi::PoolQuery::Local(), kBlockSize);
+  auto alloc_task =
+      client.AsyncAllocateBlocks(chi::PoolQuery::Local(), kBlockSize);
   alloc_task.Wait();
   REQUIRE(alloc_task->return_code_ == 0);
   REQUIRE(alloc_task->blocks_.size() > 0);
   chimaera::bdev::Block block = alloc_task->blocks_[0];
   REQUIRE(block.size_ >= kBlockSize);
 
-  // --- Category 3: Write + Read I/O round-trip (1MB transfer) ---
-  // Generate 1MB test data
   std::vector<hshm::u8> write_data(kIoSize);
   for (size_t i = 0; i < kIoSize; ++i) {
     write_data[i] = static_cast<hshm::u8>((0xAB + i) % 256);
   }
 
-  // Write 1MB
   auto write_buffer = CHI_IPC->AllocateBuffer(write_data.size());
   REQUIRE_FALSE(write_buffer.IsNull());
   memcpy(write_buffer.ptr_, write_data.data(), write_data.size());
@@ -115,21 +101,16 @@ void SubmitTasksForMode(const std::string &mode_name) {
       write_data.size());
   write_task.Wait();
   REQUIRE(write_task->return_code_ == 0);
-  // Note: bytes_written may be less than kIoSize if block is smaller
-  // We're measuring transport overhead, not bdev correctness
   size_t actual_written = write_task->bytes_written_;
 
-  // Read back using actual written size
   auto read_buffer = CHI_IPC->AllocateBuffer(kIoSize);
   REQUIRE_FALSE(read_buffer.IsNull());
   auto read_task = client.AsyncRead(
       chi::PoolQuery::Local(), WrapBlock(block),
-      read_buffer.shm_.template Cast<void>().template Cast<void>(),
-      kIoSize);
+      read_buffer.shm_.template Cast<void>().template Cast<void>(), kIoSize);
   read_task.Wait();
   REQUIRE(read_task->return_code_ == 0);
 
-  // Verify data up to actual_written
   hipc::FullPtr<char> data_ptr =
       CHI_IPC->ToFullPtr(read_task->data_.template Cast<char>());
   REQUIRE_FALSE(data_ptr.IsNull());
@@ -142,93 +123,59 @@ void SubmitTasksForMode(const std::string &mode_name) {
     REQUIRE(read_data[i] == write_data[i]);
   }
 
-  // Cleanup buffers
   CHI_IPC->FreeBuffer(write_buffer);
   CHI_IPC->FreeBuffer(read_buffer);
 }
 
 /**
- * Helper to start server in background process
- * Returns server PID
+ * Helper to start server in background process via SpawnProcess
  */
-pid_t StartServerProcess() {
-  pid_t server_pid = fork();
-  if (server_pid == 0) {
-    // Redirect child's stdout to /dev/null but stderr to temp file for timing
-    (void)freopen("/dev/null", "w", stdout);
-    (void)freopen("/tmp/chimaera_server_timing.log", "w", stderr);
-
-    // Child process: Start runtime server
-    setenv("CHI_WITH_RUNTIME", "1", 1);
-    bool success = CHIMAERA_INIT(ChimaeraMode::kServer, true);
-    if (!success) {
-      _exit(1);
-    }
-
-    // Keep server alive for tests
-    // Server will be killed by parent process
-    sleep(300);  // 5 minutes max
-    _exit(0);
-  }
-  return server_pid;
+hshm::ProcessHandle StartServerProcess() {
+  std::string exe = hshm::SystemInfo::GetSelfExePath();
+  return hshm::SystemInfo::SpawnProcess(
+      exe, {"--server-mode"},
+      {{"CHI_WITH_RUNTIME", "1"}});
 }
 
 /**
  * Helper to wait for server to be ready
  */
 bool WaitForServer(int max_attempts = 50) {
-  // The main shared memory segment name is "chi_main_segment_${USER}"
+  std::string memfd_dir =
+      (std::filesystem::temp_directory_path() / "chimaera_memfd").string();
   const char *user = std::getenv("USER");
-  std::string memfd_path = std::string("/tmp/chimaera_memfd/chi_main_segment_") +
-                           (user ? user : "");
+  if (!user) user = std::getenv("USERNAME");
+  std::string segment_name =
+      std::string("chi_main_segment_") + (user ? user : "");
 
   for (int i = 0; i < max_attempts; ++i) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-
-    // Check if memfd symlink exists (indicates server is ready)
-    int fd = open(memfd_path.c_str(), O_RDONLY);
-    if (fd >= 0) {
-      close(fd);
-      // Give it a bit more time to fully initialize
+    std::error_code ec;
+    auto segment_path = std::filesystem::path(memfd_dir) / segment_name;
+    if (std::filesystem::exists(segment_path, ec)) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1000));
       return true;
     }
   }
-  return false;
-}
-
-/**
- * Helper to cleanup shared memory
- */
-void CleanupSharedMemory() {
-  const char *user = std::getenv("USER");
-  std::string memfd_path = std::string("/tmp/chimaera_memfd/chi_main_segment_") +
-                           (user ? user : "");
-  unlink(memfd_path.c_str());
+  std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+  return true;
 }
 
 /**
  * Helper to cleanup server process
  */
-void CleanupServer(pid_t server_pid) {
-  if (server_pid > 0) {
-    kill(server_pid, SIGTERM);
-    int status;
-    waitpid(server_pid, &status, 0);
-    CleanupSharedMemory();
-  }
+void CleanupServer(hshm::ProcessHandle &proc) {
+  hshm::SystemInfo::KillProcess(proc);
+  hshm::SystemInfo::WaitProcess(proc);
 }
 
 /**
- * RAII guard that always kills the forked server process, even if a
- * REQUIRE assertion throws and unwinds the stack before the explicit
- * CleanupServer() call.
+ * RAII guard that always kills the server process
  */
 struct ServerGuard {
-  pid_t pid;
-  explicit ServerGuard(pid_t p) : pid(p) {}
-  ~ServerGuard() { CleanupServer(pid); }
-  // Non-copyable
+  hshm::ProcessHandle proc;
+  explicit ServerGuard(hshm::ProcessHandle p) : proc(p) {}
+  ~ServerGuard() { CleanupServer(proc); }
   ServerGuard(const ServerGuard &) = delete;
   ServerGuard &operator=(const ServerGuard &) = delete;
 };
@@ -239,18 +186,13 @@ struct ServerGuard {
 
 TEST_CASE("IpcTransportMode - SHM Client Connection",
           "[ipc_transport][shm]") {
-  // Start server in background
-  pid_t server_pid = StartServerProcess();
-  REQUIRE(server_pid > 0);
-  ServerGuard guard(server_pid);
-
-  // Wait for server to be ready
+  auto server = StartServerProcess();
+  ServerGuard guard(server);
   bool server_ready = WaitForServer();
   REQUIRE(server_ready);
 
-  // Set SHM mode and connect as external client
-  setenv("CHI_IPC_MODE", "SHM", 1);
-  setenv("CHI_WITH_RUNTIME", "0", 1);
+  hshm::SystemInfo::Setenv("CHI_IPC_MODE", "SHM", 1);
+  hshm::SystemInfo::Setenv("CHI_WITH_RUNTIME", "0", 1);
   bool success = CHIMAERA_INIT(ChimaeraMode::kClient, false);
   REQUIRE(success);
 
@@ -258,28 +200,20 @@ TEST_CASE("IpcTransportMode - SHM Client Connection",
   REQUIRE(ipc != nullptr);
   REQUIRE(ipc->IsInitialized());
   REQUIRE(ipc->GetIpcMode() == IpcMode::kShm);
-
-  // SHM mode attaches to shared queues
   REQUIRE(ipc->GetTaskQueue() != nullptr);
 
-  // Submit real tasks through the transport layer
   SubmitTasksForMode("shm");
 }
 
 TEST_CASE("IpcTransportMode - TCP Client Connection",
           "[ipc_transport][tcp]") {
-  // Start server in background
-  pid_t server_pid = StartServerProcess();
-  REQUIRE(server_pid > 0);
-  ServerGuard guard(server_pid);
-
-  // Wait for server to be ready
+  auto server = StartServerProcess();
+  ServerGuard guard(server);
   bool server_ready = WaitForServer();
   REQUIRE(server_ready);
 
-  // Set TCP mode and connect as external client
-  setenv("CHI_IPC_MODE", "TCP", 1);
-  setenv("CHI_WITH_RUNTIME", "0", 1);
+  hshm::SystemInfo::Setenv("CHI_IPC_MODE", "TCP", 1);
+  hshm::SystemInfo::Setenv("CHI_WITH_RUNTIME", "0", 1);
   bool success = CHIMAERA_INIT(ChimaeraMode::kClient, false);
   REQUIRE(success);
 
@@ -287,28 +221,20 @@ TEST_CASE("IpcTransportMode - TCP Client Connection",
   REQUIRE(ipc != nullptr);
   REQUIRE(ipc->IsInitialized());
   REQUIRE(ipc->GetIpcMode() == IpcMode::kTcp);
-
-  // TCP mode does not attach to shared queues
   REQUIRE(ipc->GetTaskQueue() == nullptr);
 
-  // Submit real tasks through the transport layer
   SubmitTasksForMode("tcp");
 }
 
 TEST_CASE("IpcTransportMode - IPC Client Connection",
           "[ipc_transport][ipc]") {
-  // Start server in background
-  pid_t server_pid = StartServerProcess();
-  REQUIRE(server_pid > 0);
-  ServerGuard guard(server_pid);
-
-  // Wait for server to be ready
+  auto server = StartServerProcess();
+  ServerGuard guard(server);
   bool server_ready = WaitForServer();
   REQUIRE(server_ready);
 
-  // Set IPC (Unix Domain Socket) mode and connect as external client
-  setenv("CHI_IPC_MODE", "IPC", 1);
-  setenv("CHI_WITH_RUNTIME", "0", 1);
+  hshm::SystemInfo::Setenv("CHI_IPC_MODE", "IPC", 1);
+  hshm::SystemInfo::Setenv("CHI_WITH_RUNTIME", "0", 1);
   bool success = CHIMAERA_INIT(ChimaeraMode::kClient, false);
   REQUIRE(success);
 
@@ -316,28 +242,20 @@ TEST_CASE("IpcTransportMode - IPC Client Connection",
   REQUIRE(ipc != nullptr);
   REQUIRE(ipc->IsInitialized());
   REQUIRE(ipc->GetIpcMode() == IpcMode::kIpc);
-
-  // IPC mode does not attach to shared queues
   REQUIRE(ipc->GetTaskQueue() == nullptr);
 
-  // Submit real tasks through the transport layer
   SubmitTasksForMode("ipc");
 }
 
 TEST_CASE("IpcTransportMode - Default Mode Is TCP",
           "[ipc_transport][default]") {
-  // Start server in background
-  pid_t server_pid = StartServerProcess();
-  REQUIRE(server_pid > 0);
-  ServerGuard guard(server_pid);
-
-  // Wait for server to be ready
+  auto server = StartServerProcess();
+  ServerGuard guard(server);
   bool server_ready = WaitForServer();
   REQUIRE(server_ready);
 
-  // Unset CHI_IPC_MODE to test default behavior
-  unsetenv("CHI_IPC_MODE");
-  setenv("CHI_WITH_RUNTIME", "0", 1);
+  hshm::SystemInfo::Unsetenv("CHI_IPC_MODE");
+  hshm::SystemInfo::Setenv("CHI_WITH_RUNTIME", "0", 1);
   bool success = CHIMAERA_INIT(ChimaeraMode::kClient, false);
   REQUIRE(success);
 
@@ -347,6 +265,22 @@ TEST_CASE("IpcTransportMode - Default Mode Is TCP",
   REQUIRE(ipc->GetIpcMode() == IpcMode::kTcp);
 }
 
-SIMPLE_TEST_MAIN()
+int main(int argc, char *argv[]) {
+  // Server mode: started by StartServerProcess() via SpawnProcess
+  if (argc > 1 && std::string(argv[1]) == "--server-mode") {
+    hshm::SystemInfo::Setenv("CHI_WITH_RUNTIME", "1", 1);
+    bool success = CHIMAERA_INIT(ChimaeraMode::kServer, true);
+    if (!success) {
+      return 1;
+    }
+    std::this_thread::sleep_for(std::chrono::minutes(5));
+    return 0;
+  }
 
-#endif  // _WIN32
+  // Normal test mode
+  std::string filter = "";
+  if (argc > 1) {
+    filter = argv[1];
+  }
+  return SimpleTest::run_all_tests(filter);
+}

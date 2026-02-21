@@ -75,7 +75,7 @@ struct ChiModInfo {
  * Module Manager singleton for dynamic loading of ChiMods
  * 
  * Handles discovery and loading of ChiMod shared libraries from:
- * - LD_LIBRARY_PATH directories
+ * - Library search path directories (LD_LIBRARY_PATH on Linux, PATH on Windows)
  * - CHI_REPO_PATH directories
  * 
  * Each ChiMod provides functions to query name and allocate ChiContainers.

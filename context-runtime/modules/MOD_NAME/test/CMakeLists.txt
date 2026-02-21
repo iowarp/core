@@ -151,6 +151,12 @@ set_target_properties(${STREAMING_TEST_TARGET} PROPERTIES
 
 # Enable CTest integration if testing is enabled
 if(WRP_CORE_ENABLE_TESTS)
+  # Platform-portable library search path for test environment
+  if(WIN32)
+    set(CHI_TEST_LIB_ENV "PATH=${CMAKE_BINARY_DIR}/bin\;$ENV{PATH}")
+  else()
+    set(CHI_TEST_LIB_ENV "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}")
+  endif()
   # Flush Correctness Tests
   add_test(
     NAME cr_flush_basic_tests
@@ -158,7 +164,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_flush_basic_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -167,7 +173,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_flush_work_orchestrator_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -176,7 +182,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_flush_stress_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   # Comprehensive flush test (runs all tests, no filter)
@@ -186,7 +192,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_all_flush_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   # CoMutex Tests
@@ -196,7 +202,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_comutex_basic_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -205,7 +211,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_comutex_concurrent_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -214,7 +220,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_corwlock_basic_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -223,7 +229,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_corwlock_readers_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -232,7 +238,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_corwlock_writers_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -241,7 +247,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_corwlock_interaction_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -250,7 +256,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_tasknode_grouping_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -259,7 +265,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_comutex_error_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -268,7 +274,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_comutex_performance_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -277,7 +283,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_comutex_integration_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   # Comprehensive CoMutex test (runs all tests, no filter)
@@ -287,7 +293,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_all_comutex_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   # Wait Functionality Tests
@@ -297,7 +303,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_wait_test_basic_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -306,7 +312,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_wait_test_recursive_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -315,7 +321,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_wait_test_async_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -324,7 +330,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_wait_test_edge_cases_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   # Comprehensive Wait functionality test (runs all tests, no filter)
@@ -334,7 +340,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_all_wait_functionality_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   # Streaming Tests
@@ -344,7 +350,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_streaming_small_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -353,7 +359,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_streaming_large_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   add_test(
@@ -362,7 +368,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_streaming_concurrent_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   # Comprehensive Streaming test (runs all tests, no filter)
@@ -372,7 +378,7 @@ if(WRP_CORE_ENABLE_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_all_streaming_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV}"
   )
 
   # Set test properties
@@ -403,7 +409,7 @@ if(WRP_CORE_ENABLE_TESTS)
     cr_all_streaming_tests
     PROPERTIES
       TIMEOUT 180
-      ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1"
+      ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;${CHI_TEST_LIB_ENV};CHIMAERA_TEST_MODE=1"
   )
 endif()
 

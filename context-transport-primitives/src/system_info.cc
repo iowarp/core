@@ -54,9 +54,13 @@
 #include <sys/sysctl.h>
 #endif
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #if __linux__
 #include <linux/memfd.h>
+#endif
+#if __APPLE__
+#include <mach-o/dyld.h>
 #endif
 // WINDOWS
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
@@ -708,6 +712,153 @@ SharedLibrary &SharedLibrary::operator=(SharedLibrary &&other) noexcept {
     other.handle_ = nullptr;
   }
   return *this;
+}
+
+ProcessHandle SystemInfo::SpawnProcess(
+    const std::string &exe_path,
+    const std::vector<std::string> &args,
+    const std::vector<std::pair<std::string, std::string>> &env) {
+  ProcessHandle handle{};
+
+  // Set environment variables before spawning
+  for (const auto &kv : env) {
+    Setenv(kv.first.c_str(), kv.second, 1);
+  }
+
+#if HSHM_ENABLE_PROCFS_SYSINFO
+  pid_t pid = fork();
+  if (pid == 0) {
+    // Child process — redirect stdout/stderr to /dev/null
+    (void)freopen("/dev/null", "w", stdout);
+    (void)freopen("/dev/null", "w", stderr);
+
+    // Build argv for execv
+    std::vector<const char *> argv;
+    argv.push_back(exe_path.c_str());
+    for (const auto &a : args) {
+      argv.push_back(a.c_str());
+    }
+    argv.push_back(nullptr);
+
+    execv(exe_path.c_str(), const_cast<char *const *>(argv.data()));
+    // If exec fails, exit child
+    _exit(127);
+  }
+  handle.pid = pid;
+
+#elif HSHM_ENABLE_WINDOWS_SYSINFO
+  // Build command line: "exe_path" arg1 arg2 ...
+  std::string cmd_line = "\"" + exe_path + "\"";
+  for (const auto &a : args) {
+    cmd_line += " \"" + a + "\"";
+  }
+
+  STARTUPINFOA si{};
+  si.cb = sizeof(si);
+  // Redirect stdout/stderr to NUL
+  HANDLE hNull = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_WRITE,
+                             nullptr, OPEN_EXISTING, 0, nullptr);
+  if (hNull != INVALID_HANDLE_VALUE) {
+    si.dwFlags |= STARTF_USESTDHANDLES;
+    si.hStdOutput = hNull;
+    si.hStdError = hNull;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+  }
+
+  PROCESS_INFORMATION pi{};
+  BOOL ok = CreateProcessA(
+      nullptr,
+      const_cast<char *>(cmd_line.c_str()),
+      nullptr, nullptr,
+      (hNull != INVALID_HANDLE_VALUE) ? TRUE : FALSE,  // inherit handles for NUL redirect
+      0, nullptr, nullptr,
+      &si, &pi);
+
+  if (hNull != INVALID_HANDLE_VALUE) {
+    CloseHandle(hNull);
+  }
+
+  if (ok) {
+    handle.hProcess = pi.hProcess;
+    handle.hThread = pi.hThread;
+    handle.pid = pi.dwProcessId;
+  } else {
+    handle.hProcess = nullptr;
+    handle.hThread = nullptr;
+    handle.pid = 0;
+  }
+#endif
+
+  return handle;
+}
+
+void SystemInfo::KillProcess(ProcessHandle &proc) {
+#if HSHM_ENABLE_PROCFS_SYSINFO
+  if (proc.pid > 0) {
+    kill(proc.pid, SIGTERM);
+  }
+#elif HSHM_ENABLE_WINDOWS_SYSINFO
+  if (proc.hProcess != nullptr) {
+    TerminateProcess(proc.hProcess, 1);
+  }
+#endif
+}
+
+int SystemInfo::WaitProcess(ProcessHandle &proc) {
+#if HSHM_ENABLE_PROCFS_SYSINFO
+  if (proc.pid <= 0) return -1;
+  int status = 0;
+  waitpid(proc.pid, &status, 0);
+  proc.pid = -1;
+  if (WIFEXITED(status)) {
+    return WEXITSTATUS(status);
+  }
+  return -1;
+#elif HSHM_ENABLE_WINDOWS_SYSINFO
+  if (proc.hProcess == nullptr) return -1;
+  WaitForSingleObject(proc.hProcess, INFINITE);
+  ::DWORD exit_code = 0;
+  ::GetExitCodeProcess(proc.hProcess, &exit_code);
+  CloseHandle(proc.hProcess);
+  CloseHandle(proc.hThread);
+  proc.hProcess = nullptr;
+  proc.hThread = nullptr;
+  return static_cast<int>(exit_code);
+#endif
+}
+
+std::string SystemInfo::GetSelfExePath() {
+#if HSHM_ENABLE_PROCFS_SYSINFO
+#ifdef __linux__
+  char buf[PATH_MAX];
+  ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+  if (len > 0) {
+    buf[len] = '\0';
+    return std::string(buf);
+  }
+  return "";
+#elif __APPLE__
+  char buf[PATH_MAX];
+  uint32_t size = sizeof(buf);
+  if (_NSGetExecutablePath(buf, &size) == 0) {
+    char resolved[PATH_MAX];
+    if (realpath(buf, resolved)) {
+      return std::string(resolved);
+    }
+    return std::string(buf);
+  }
+  return "";
+#else
+  return "";
+#endif
+#elif HSHM_ENABLE_WINDOWS_SYSINFO
+  char buf[MAX_PATH];
+  ::DWORD len = ::GetModuleFileNameA(nullptr, buf, MAX_PATH);
+  if (len > 0 && len < MAX_PATH) {
+    return std::string(buf, len);
+  }
+  return "";
+#endif
 }
 
 }  // namespace hshm

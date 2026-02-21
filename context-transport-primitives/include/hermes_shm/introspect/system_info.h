@@ -56,6 +56,8 @@ using mode_t = unsigned int;
 
 #include <fstream>
 #include <iostream>
+#include <string>
+#include <vector>
 
 #include "hermes_shm/thread/thread_model/thread_model.h"
 #include "hermes_shm/util/formatter.h"
@@ -94,6 +96,17 @@ struct SharedLibrary {
 union File {
   int posix_fd_;
   HANDLE windows_fd_;
+};
+
+/** Handle to a spawned child process */
+struct ProcessHandle {
+#ifdef _WIN32
+  HANDLE hProcess;
+  HANDLE hThread;
+  DWORD pid;
+#else
+  pid_t pid;
+#endif
 };
 
 /** A unification of certain OS system calls */
@@ -229,6 +242,17 @@ class SystemInfo {
   static char GetPathListSeparator();
 
   static std::string GetSharedLibExtension();
+
+  static ProcessHandle SpawnProcess(
+      const std::string &exe_path,
+      const std::vector<std::string> &args,
+      const std::vector<std::pair<std::string, std::string>> &env = {});
+
+  static void KillProcess(ProcessHandle &proc);
+
+  static int WaitProcess(ProcessHandle &proc);
+
+  static std::string GetSelfExePath();
 };
 
 }  // namespace hshm

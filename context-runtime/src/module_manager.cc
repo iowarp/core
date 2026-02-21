@@ -37,11 +37,7 @@
 
 #include "chimaera/module_manager.h"
 
-#ifndef _WIN32
-#include <dlfcn.h>
-#include <libgen.h>
-#endif
-#include <limits.h>
+#include <climits>
 
 #include <cstring>
 #include <filesystem>
@@ -219,11 +215,8 @@ std::vector<std::string> ModuleManager::GetScanDirectories() const {
   const char *chi_repo_path = std::getenv("CHI_REPO_PATH");
   if (chi_repo_path) {
     std::string path_str(chi_repo_path);
-    // Split by colon (Unix) or semicolon (Windows)
-    char delimiter = ':';
-#ifdef _WIN32
-    delimiter = ';';
-#endif
+    // Split by platform path separator
+    char delimiter = hshm::SystemInfo::GetPathListSeparator();
 
     size_t start = 0;
     size_t end = path_str.find(delimiter);
@@ -235,16 +228,18 @@ std::vector<std::string> ModuleManager::GetScanDirectories() const {
     directories.push_back(path_str.substr(start));
   }
 
-  // Get LD_LIBRARY_PATH
-  const char *ld_path = std::getenv("LD_LIBRARY_PATH");
+  // Get library search path (LD_LIBRARY_PATH on Linux, PATH on Windows)
+  std::string lib_path_var = hshm::SystemInfo::GetLibrarySearchPathVar();
+  char path_sep = hshm::SystemInfo::GetPathListSeparator();
+  const char *ld_path = std::getenv(lib_path_var.c_str());
   if (ld_path) {
     std::string path_str(ld_path);
     size_t start = 0;
-    size_t end = path_str.find(':');
+    size_t end = path_str.find(path_sep);
     while (end != std::string::npos) {
       directories.push_back(path_str.substr(start, end - start));
       start = end + 1;
-      end = path_str.find(':', start);
+      end = path_str.find(path_sep, start);
     }
     directories.push_back(path_str.substr(start));
   }
@@ -252,7 +247,9 @@ std::vector<std::string> ModuleManager::GetScanDirectories() const {
   // Add default directories
   directories.push_back("./lib");
   directories.push_back("../lib");
+#ifndef _WIN32
   directories.push_back("/usr/local/lib");
+#endif
 
   // Print all scan directories
   HLOG(kDebug, "ChiMod scan directories:");
@@ -268,14 +265,7 @@ std::string ModuleManager::GetModuleDirectory() const {
 }
 
 bool ModuleManager::IsSharedLibrary(const std::string &file_path) const {
-  // Check file extension
-#ifdef _WIN32
-  const std::string ext = ".dll";
-#elif __APPLE__
-  const std::string ext = ".dylib";
-#else
-  const std::string ext = ".so";
-#endif
+  const std::string ext = hshm::SystemInfo::GetSharedLibExtension();
   return file_path.length() >= ext.length() &&
          file_path.compare(file_path.length() - ext.length(), ext.length(),
                            ext) == 0;

@@ -66,18 +66,44 @@
 #endif
 
 /**
- * Unified DLL visibility macro for all IOWarp libraries.
- * On Windows, WINDOWS_EXPORT_ALL_SYMBOLS handles dllexport/dllimport
- * automatically, so these are left empty. On non-Windows, visibility
- * is default for shared libraries.
+ * DLL visibility macros for IOWarp libraries.
+ *
+ * HSHM_DLL is used on functions/methods where WINDOWS_EXPORT_ALL_SYMBOLS
+ * handles export automatically. It remains empty.
+ *
+ * CHI_DLL, CTE_DLL, etc. are used on global data variables which require
+ * explicit __declspec(dllimport) on the consumer side. CMake defines
+ * <target>_EXPORTS when building each DLL.
  */
 #define HSHM_DLL
 
-/** Component-specific aliases (all resolve to HSHM_DLL) */
-#define CHI_DLL HSHM_DLL
-#define CTE_DLL HSHM_DLL
-#define CAE_DLL HSHM_DLL
-#define CEE_DLL HSHM_DLL
+#if HSHM_COMPILER_MSVC
+  #ifdef chimaera_cxx_EXPORTS
+    #define CHI_DLL HSHM_DLL_EXPORT
+  #else
+    #define CHI_DLL HSHM_DLL_IMPORT
+  #endif
+  #ifdef wrp_cte_core_client_EXPORTS
+    #define CTE_DLL HSHM_DLL_EXPORT
+  #else
+    #define CTE_DLL HSHM_DLL_IMPORT
+  #endif
+  #ifdef wrp_cae_core_client_EXPORTS
+    #define CAE_DLL HSHM_DLL_EXPORT
+  #else
+    #define CAE_DLL HSHM_DLL_IMPORT
+  #endif
+  #ifdef wrp_cee_core_client_EXPORTS
+    #define CEE_DLL HSHM_DLL_EXPORT
+  #else
+    #define CEE_DLL HSHM_DLL_IMPORT
+  #endif
+#else
+  #define CHI_DLL
+  #define CTE_DLL
+  #define CAE_DLL
+  #define CEE_DLL
+#endif
 
 /**
  * Remove parenthesis surrounding "X" if it has parenthesis

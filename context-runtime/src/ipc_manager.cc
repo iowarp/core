@@ -37,18 +37,6 @@
 
 #include "chimaera/ipc_manager.h"
 
-#ifndef _WIN32
-#include <arpa/inet.h>
-#include <dirent.h>
-#include <endian.h>
-#include <netdb.h>
-#include <signal.h>
-#include <sys/mman.h>
-#include <sys/socket.h>
-#include <sys/syscall.h>
-#include <sys/types.h>
-#include <unistd.h>
-#endif
 #include <zmq.h>
 #include <hermes_shm/lightbeam/transport_factory_impl.h>
 
@@ -56,6 +44,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -115,7 +104,7 @@ bool IpcManager::ClientInit() {
     if (ipc_mode_ == IpcMode::kIpc) {
       // IPC mode: Unix domain socket transport
       std::string ipc_path =
-          "/tmp/chimaera_" + std::to_string(port) + ".ipc";
+          (std::filesystem::temp_directory_path() / ("chimaera_" + std::to_string(port) + ".ipc")).string();
       try {
         zmq_transport_ = hshm::lbm::TransportFactory::Get(
             ipc_path, hshm::lbm::TransportType::kSocket,
@@ -291,7 +280,7 @@ bool IpcManager::ServerInit() {
     try {
       // IPC server on Unix domain socket
       std::string ipc_path =
-          "/tmp/chimaera_" + std::to_string(port) + ".ipc";
+          (std::filesystem::temp_directory_path() / ("chimaera_" + std::to_string(port) + ".ipc")).string();
       client_ipc_transport_ = hshm::lbm::TransportFactory::Get(
           ipc_path, hshm::lbm::TransportType::kSocket,
           hshm::lbm::TransportMode::kServer, "ipc", 0);
@@ -397,15 +386,16 @@ void IpcManager::AwakenWorker(TaskLane *lane) {
   if (tid > 0) {
     // Get runtime PID from shared header (client's getpid() won't work for
     // runtime threads)
-    pid_t runtime_pid = shared_header_ ? shared_header_->runtime_pid : getpid();
+    pid_t runtime_pid = shared_header_ ? shared_header_->runtime_pid
+                                       : hshm::SystemInfo::GetPid();
 
     // Send SIGUSR1 to the worker thread in the runtime process
     int result = hshm::lbm::EventManager::Signal(runtime_pid, tid);
     if (result != 0) {
       HLOG(kError,
-           "AwakenWorker: Failed to send SIGUSR1 to runtime_pid={}, tid={} "
-           "(active={}) - errno={}",
-           runtime_pid, tid, lane->IsActive(), errno);
+           "AwakenWorker: Failed to send signal to runtime_pid={}, tid={} "
+           "(active={})",
+           runtime_pid, tid, lane->IsActive());
     }
   } else {
     HLOG(kWarning, "AwakenWorker: tid={} (invalid), cannot send signal", tid);
@@ -492,7 +482,7 @@ bool IpcManager::ServerInitQueues() {
     // Initialize shared header
     shared_header_->node_id = 0;  // Will be set after host identification
     shared_header_->runtime_pid =
-        getpid();  // Store runtime's PID for client tgkill
+        hshm::SystemInfo::GetPid();  // Store runtime's PID for client signal
     shared_header_->server_generation.store(
         static_cast<u64>(
             std::chrono::steady_clock::now().time_since_epoch().count()),
@@ -1240,7 +1230,7 @@ bool IpcManager::IncreaseClientShm(size_t size) {
   // This ensures exclusive access to the allocator_map_ structures
   allocator_map_lock_.WriteLock(0);
 
-  pid_t pid = getpid();
+  pid_t pid = hshm::SystemInfo::GetPid();
   u32 index = shm_count_.fetch_add(1, std::memory_order_relaxed);
 
   // Create shared memory name: chimaera_{pid}_{index}
@@ -1400,7 +1390,7 @@ ClientShmInfo IpcManager::GetClientShmInfo(u32 index) const {
     return ClientShmInfo();  // Return empty info
   }
 
-  pid_t pid = getpid();
+  pid_t pid = hshm::SystemInfo::GetPid();
   std::string shm_name =
       "chimaera_" + std::to_string(pid) + "_" + std::to_string(index);
 
@@ -1422,7 +1412,7 @@ size_t IpcManager::WreapDeadIpcs() {
   // Acquire writer lock on allocator_map_lock_ during reaping
   allocator_map_lock_.WriteLock(0);
 
-  pid_t current_pid = getpid();
+  pid_t current_pid = hshm::SystemInfo::GetPid();
   size_t reaped_count = 0;
 
   // Build list of allocator keys to remove (can't modify map while iterating)
@@ -1606,47 +1596,29 @@ size_t IpcManager::WreapAllIpcs() {
 }
 
 size_t IpcManager::ClearUserIpcs() {
-#ifndef _WIN32
   size_t removed_count = 0;
-  const char *memfd_dir = "/tmp/chimaera_memfd";
-  const char *prefix = "chimaera_";
-  size_t prefix_len = strlen(prefix);
+  std::string memfd_dir =
+      (std::filesystem::temp_directory_path() / "chimaera_memfd").string();
+  const std::string prefix = "chimaera_";
 
-  // Open memfd symlink directory
-  DIR *dir = opendir(memfd_dir);
-  if (dir == nullptr) {
-    // Directory may not exist yet, that's fine
+  std::error_code ec;
+  if (!std::filesystem::exists(memfd_dir, ec)) {
     return 0;
   }
 
-  // Iterate through directory entries
-  struct dirent *entry;
-  while ((entry = readdir(dir)) != nullptr) {
-    // Skip "." and ".."
-    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+  for (const auto &entry :
+       std::filesystem::directory_iterator(memfd_dir, ec)) {
+    std::string filename = entry.path().filename().string();
+    if (filename.rfind(prefix, 0) != 0) {
       continue;
     }
 
-    // Check if filename starts with "chimaera_"
-    if (strncmp(entry->d_name, prefix, prefix_len) != 0) {
-      continue;
-    }
-
-    // Construct full path and remove the symlink
-    std::string full_path = std::string(memfd_dir) + "/" + entry->d_name;
-    if (unlink(full_path.c_str()) == 0) {
-      HLOG(kDebug, "ClearUserIpcs: Removed memfd symlink: {}",
-           entry->d_name);
+    std::error_code remove_ec;
+    if (std::filesystem::remove(entry.path(), remove_ec)) {
+      HLOG(kDebug, "ClearUserIpcs: Removed memfd symlink: {}", filename);
       removed_count++;
-    } else {
-      if (errno != EACCES && errno != EPERM && errno != ENOENT) {
-        HLOG(kDebug, "ClearUserIpcs: Could not remove {} ({}): {}",
-             entry->d_name, errno, strerror(errno));
-      }
     }
   }
-
-  closedir(dir);
 
   if (removed_count > 0) {
     HLOG(kInfo,
@@ -1655,10 +1627,6 @@ size_t IpcManager::ClearUserIpcs() {
   }
 
   return removed_count;
-#else
-  // memfd symlinks are Linux-only
-  return 0;
-#endif
 }
 
 void IpcManager::SetIsClientThread(bool is_client_thread) {
