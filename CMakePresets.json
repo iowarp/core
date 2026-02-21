@@ -162,7 +162,7 @@
         {
             "name": "windows-debug",
             "displayName": "Windows Debug (vcpkg)",
-            "generator": "Visual Studio 17 2022",
+            "generator": "Visual Studio 18 2026",
             "architecture": {
                 "value": "x64",
                 "strategy": "set"
@@ -197,7 +197,7 @@
         {
             "name": "windows-release",
             "displayName": "Windows Release (vcpkg)",
-            "generator": "Visual Studio 17 2022",
+            "generator": "Visual Studio 18 2026",
             "architecture": {
                 "value": "x64",
                 "strategy": "set"
@@ -232,7 +232,7 @@
         {
             "name": "windows-pip",
             "hidden": false,
-            "generator": "Visual Studio 17 2022",
+            "generator": "Visual Studio 18 2026",
             "architecture": {
                 "value": "x64",
                 "strategy": "set"

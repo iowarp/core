@@ -35,6 +35,7 @@ set_target_properties(wrp_cee_api PROPERTIES
   SOVERSION 1
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON
+  WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
 #------------------------------------------------------------------------------

@@ -677,6 +677,8 @@ if(NOT MSVC)
     endif()
 else()
     # MSVC compiler flags
+    # /FS enables synchronized PDB writes to avoid C1041 errors with parallel builds
+    add_compile_options(/FS)
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /Zi /Od /DDEBUG")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /DNDEBUG")
 endif()
@@ -889,7 +891,10 @@ message(STATUS "")
 set(PIP_PKG_DIR "iowarp_core")
 
 # Shared libraries -> iowarp_core/lib/
-set(PIP_LIB_TARGETS hermes_shm_host chimaera_cxx)
+set(PIP_LIB_TARGETS hermes_shm_host)
+if(TARGET chimaera_cxx)
+  list(APPEND PIP_LIB_TARGETS chimaera_cxx)
+endif()
 if(TARGET chimaera_admin_client)
   list(APPEND PIP_LIB_TARGETS chimaera_admin_client chimaera_admin_runtime)
 endif()

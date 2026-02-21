@@ -72,20 +72,20 @@ struct SharedLibrary {
   void *handle_;
 
   SharedLibrary() = default;
-  HSHM_DLL SharedLibrary(const std::string &name);
-  HSHM_DLL ~SharedLibrary();
+  SharedLibrary(const std::string &name);
+  ~SharedLibrary();
 
   // Delete copy operations
   SharedLibrary(const SharedLibrary &) = delete;
   SharedLibrary &operator=(const SharedLibrary &) = delete;
 
   // Move operations
-  HSHM_DLL SharedLibrary(SharedLibrary &&other) noexcept;
-  HSHM_DLL SharedLibrary &operator=(SharedLibrary &&other) noexcept;
+  SharedLibrary(SharedLibrary &&other) noexcept;
+  SharedLibrary &operator=(SharedLibrary &&other) noexcept;
 
-  HSHM_DLL void Load(const std::string &name);
-  HSHM_DLL void *GetSymbol(const std::string &name);
-  HSHM_DLL std::string GetError() const;
+  void Load(const std::string &name);
+  void *GetSymbol(const std::string &name);
+  std::string GetError() const;
 
   bool IsNull() { return handle_ == nullptr; }
 };
@@ -127,60 +127,60 @@ class SystemInfo {
 #endif
   }
 
-  HSHM_DLL void RefreshCpuFreqKhz();
+  void RefreshCpuFreqKhz();
 
-  HSHM_DLL size_t GetCpuFreqKhz(int cpu);
+  size_t GetCpuFreqKhz(int cpu);
 
-  HSHM_DLL size_t GetCpuMaxFreqKhz(int cpu);
+  size_t GetCpuMaxFreqKhz(int cpu);
 
-  HSHM_DLL size_t GetCpuMinFreqKhz(int cpu);
+  size_t GetCpuMinFreqKhz(int cpu);
 
-  HSHM_DLL size_t GetCpuMinFreqMhz(int cpu);
+  size_t GetCpuMinFreqMhz(int cpu);
 
-  HSHM_DLL size_t GetCpuMaxFreqMhz(int cpu);
+  size_t GetCpuMaxFreqMhz(int cpu);
 
-  HSHM_DLL void SetCpuFreqMhz(int cpu, size_t cpu_freq_mhz);
+  void SetCpuFreqMhz(int cpu, size_t cpu_freq_mhz);
 
-  HSHM_DLL void SetCpuFreqKhz(int cpu, size_t cpu_freq_khz);
+  void SetCpuFreqKhz(int cpu, size_t cpu_freq_khz);
 
-  HSHM_DLL void SetCpuMinFreqKhz(int cpu, size_t cpu_freq_khz);
+  void SetCpuMinFreqKhz(int cpu, size_t cpu_freq_khz);
 
-  HSHM_DLL void SetCpuMaxFreqKhz(int cpu, size_t cpu_freq_khz);
+  void SetCpuMaxFreqKhz(int cpu, size_t cpu_freq_khz);
 
-  HSHM_DLL static int GetCpuCount();
+  static int GetCpuCount();
 
-  HSHM_DLL static int GetPageSize();
+  static int GetPageSize();
 
-  HSHM_DLL static int GetTid();
+  static int GetTid();
 
-  HSHM_DLL static int GetPid();
+  static int GetPid();
 
-  HSHM_DLL static int GetUid();
+  static int GetUid();
 
-  HSHM_DLL static int GetGid();
+  static int GetGid();
 
-  HSHM_DLL static size_t GetRamCapacity();
+  static size_t GetRamCapacity();
 
-  HSHM_DLL static void YieldThread();
+  static void YieldThread();
 
-  HSHM_DLL static bool CreateTls(ThreadLocalKey &key, void *data);
+  static bool CreateTls(ThreadLocalKey &key, void *data);
 
-  HSHM_DLL static bool SetTls(const ThreadLocalKey &key, void *data);
+  static bool SetTls(const ThreadLocalKey &key, void *data);
 
-  HSHM_DLL static void *GetTls(const ThreadLocalKey &key);
+  static void *GetTls(const ThreadLocalKey &key);
 
-  HSHM_DLL static bool CreateNewSharedMemory(File &fd, const std::string &name,
+  static bool CreateNewSharedMemory(File &fd, const std::string &name,
                                              size_t size);
 
-  HSHM_DLL static bool OpenSharedMemory(File &fd, const std::string &name);
+  static bool OpenSharedMemory(File &fd, const std::string &name);
 
-  HSHM_DLL static void CloseSharedMemory(File &file);
+  static void CloseSharedMemory(File &file);
 
-  HSHM_DLL static void DestroySharedMemory(const std::string &name);
+  static void DestroySharedMemory(const std::string &name);
 
-  HSHM_DLL static void *MapPrivateMemory(size_t size);
+  static void *MapPrivateMemory(size_t size);
 
-  HSHM_DLL static void *MapSharedMemory(const File &fd, size_t size, i64 off);
+  static void *MapSharedMemory(const File &fd, size_t size, i64 off);
 
   /**
    * Map a contiguous memory region with mixed private/shared mapping
@@ -199,14 +199,14 @@ class SystemInfo {
    * Note: The entire region must be unmapped with a single UnmapMemory call
    *       using total_size = private_size + shared_size
    */
-  HSHM_DLL static void *MapMixedMemory(const File &fd, size_t private_size,
+  static void *MapMixedMemory(const File &fd, size_t private_size,
                                         size_t shared_size, i64 shared_offset = 0);
 
-  HSHM_DLL static void UnmapMemory(void *ptr, size_t size);
+  static void UnmapMemory(void *ptr, size_t size);
 
-  HSHM_DLL static void *AlignedAlloc(size_t alignment, size_t size);
+  static void *AlignedAlloc(size_t alignment, size_t size);
 
-  HSHM_DLL static std::string Getenv(
+  static std::string Getenv(
       const char *name, size_t max_size = hshm::Unit<size_t>::Megabytes(1));
 
   static std::string Getenv(
@@ -215,20 +215,20 @@ class SystemInfo {
     return Getenv(name.c_str(), max_size);
   }
 
-  HSHM_DLL static void Setenv(const char *name, const std::string &value,
+  static void Setenv(const char *name, const std::string &value,
                               int overwrite);
 
-  HSHM_DLL static void Unsetenv(const char *name);
+  static void Unsetenv(const char *name);
 
-  HSHM_DLL static bool IsProcessAlive(int pid);
+  static bool IsProcessAlive(int pid);
 
-  HSHM_DLL static std::string GetModuleDirectory();
+  static std::string GetModuleDirectory();
 
-  HSHM_DLL static std::string GetLibrarySearchPathVar();
+  static std::string GetLibrarySearchPathVar();
 
-  HSHM_DLL static char GetPathListSeparator();
+  static char GetPathListSeparator();
 
-  HSHM_DLL static std::string GetSharedLibExtension();
+  static std::string GetSharedLibExtension();
 };
 
 }  // namespace hshm

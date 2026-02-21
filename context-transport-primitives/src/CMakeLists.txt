@@ -22,6 +22,9 @@ endif()
 
 # Create library with system_info.cc
 add_library(hermes_shm_host ${SRC_FILES})
+set_target_properties(hermes_shm_host PROPERTIES
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
 
 #------------------------------------------------------------------------------
 # Note: Compression Predictor Libraries (XGBoost, Dense NN, Q-Table, LinReg)

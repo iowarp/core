@@ -38,16 +38,6 @@
 #include <hermes_shm/util/singleton.h>
 #include <wrp_cae/core/core_tasks.h>
 
-/** DLL import/export for wrp_cae_core_client shared library */
-#ifdef _MSC_VER
-  #ifdef wrp_cae_core_client_EXPORTS
-    #define CAE_DLL __declspec(dllexport)
-  #else
-    #define CAE_DLL __declspec(dllimport)
-  #endif
-#else
-  #define CAE_DLL
-#endif
 
 namespace wrp_cae::core {
 

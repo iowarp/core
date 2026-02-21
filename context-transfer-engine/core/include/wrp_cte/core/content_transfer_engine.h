@@ -37,16 +37,6 @@
 #include "hermes_shm/util/singleton.h"
 #include <chimaera/chimaera.h>
 
-/** DLL import/export for wrp_cte_core_client shared library */
-#ifdef _MSC_VER
-  #ifdef wrp_cte_core_client_EXPORTS
-    #define CTE_DLL __declspec(dllexport)
-  #else
-    #define CTE_DLL __declspec(dllimport)
-  #endif
-#else
-  #define CTE_DLL
-#endif
 
 namespace wrp_cte::core {
 

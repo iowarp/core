@@ -87,35 +87,35 @@ struct IoBuffer {
   size_t len;
 };
 
-HSHM_DLL void Close(socket_t fd);
-HSHM_DLL int GetError();
-HSHM_DLL std::string GetErrorString();
-HSHM_DLL void SetNonBlocking(socket_t fd, bool enable);
-HSHM_DLL void SetTcpNoDelay(socket_t fd);
-HSHM_DLL void SetReuseAddr(socket_t fd);
-HSHM_DLL void SetSendBuf(socket_t fd, int size);
-HSHM_DLL void SetRecvBuf(socket_t fd, int size);
+void Close(socket_t fd);
+int GetError();
+std::string GetErrorString();
+void SetNonBlocking(socket_t fd, bool enable);
+void SetTcpNoDelay(socket_t fd);
+void SetReuseAddr(socket_t fd);
+void SetSendBuf(socket_t fd, int size);
+void SetRecvBuf(socket_t fd, int size);
 
 /** Initialize platform socket library (WSAStartup on Windows, no-op on POSIX) */
-HSHM_DLL void InitSocketLib();
+void InitSocketLib();
 
 /** Cleanup platform socket library (WSACleanup on Windows, no-op on POSIX) */
-HSHM_DLL void CleanupSocketLib();
+void CleanupSocketLib();
 
 /** Scatter-gather send. Returns total bytes sent or -1 on error. */
-HSHM_DLL ssize_t SendV(socket_t fd, const IoBuffer* iov, int count);
+ssize_t SendV(socket_t fd, const IoBuffer* iov, int count);
 
 /** Receive exactly len bytes. Returns 0 on success, -1 on error/short read. */
-HSHM_DLL int RecvExact(socket_t fd, char* buf, size_t len);
+int RecvExact(socket_t fd, char* buf, size_t len);
 
 /** Poll a single fd for readability. Returns >0 if ready, 0 on timeout, -1 on error. */
-HSHM_DLL int PollRead(socket_t fd, int timeout_ms);
+int PollRead(socket_t fd, int timeout_ms);
 
 /** Poll multiple fds for readability. Returns index of first ready fd, -1 if none/error. */
-HSHM_DLL int PollReadMulti(const socket_t* fds, int count, int timeout_ms);
+int PollReadMulti(const socket_t* fds, int count, int timeout_ms);
 
 /** Remove a file path (unlink on POSIX, DeleteFileA on Windows) */
-HSHM_DLL void UnlinkPath(const char* path);
+void UnlinkPath(const char* path);
 
 #ifndef _WIN32
 /** Create an epoll file descriptor. Returns epoll fd or -1 on error. */

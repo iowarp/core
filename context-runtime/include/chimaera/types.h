@@ -45,20 +45,6 @@
 #include <hermes_shm/hermes_shm.h>
 #include <hermes_shm/memory/allocator/malloc_allocator.h>
 
-/**
- * DLL import/export for chimaera_cxx shared library.
- * CMake auto-defines chimaera_cxx_EXPORTS when building the DLL.
- * Consumers see __declspec(dllimport) so data symbols resolve correctly.
- */
-#ifdef _MSC_VER
-  #ifdef chimaera_cxx_EXPORTS
-    #define CHI_DLL __declspec(dllexport)
-  #else
-    #define CHI_DLL __declspec(dllimport)
-  #endif
-#else
-  #define CHI_DLL
-#endif
 
 /**
  * Core type definitions for Chimaera distributed task execution framework

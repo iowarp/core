@@ -65,19 +65,19 @@
 #define HSHM_DLL_IMPORT __attribute__((visibility("default")))
 #endif
 
-/** DLL import / export for HSHM code */
-#if HSHM_ENABLE_DLL_EXPORT
-#define HSHM_DLL HSHM_DLL_EXPORT
-#else
-#define HSHM_DLL HSHM_DLL_IMPORT
-#endif
+/**
+ * Unified DLL visibility macro for all IOWarp libraries.
+ * On Windows, WINDOWS_EXPORT_ALL_SYMBOLS handles dllexport/dllimport
+ * automatically, so these are left empty. On non-Windows, visibility
+ * is default for shared libraries.
+ */
+#define HSHM_DLL
 
-/** DLL import / export for singletons */
-#ifdef HSHM_COMPILING_DLL
-#define HSHM_DLL_SINGLETON HSHM_DLL_EXPORT
-#else
-#define HSHM_DLL_SINGLETON HSHM_DLL_IMPORT
-#endif
+/** Component-specific aliases (all resolve to HSHM_DLL) */
+#define CHI_DLL HSHM_DLL
+#define CTE_DLL HSHM_DLL
+#define CAE_DLL HSHM_DLL
+#define CEE_DLL HSHM_DLL
 
 /**
  * Remove parenthesis surrounding "X" if it has parenthesis
