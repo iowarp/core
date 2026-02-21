@@ -211,9 +211,10 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
         chi::PoolQuery target_query =
             chi::PoolQuery::DirectHash(container_hash);
 
-        // Generate unique bdev_id: base major 512 and (1 + device index), minor
-        // is container hash
-        chi::PoolId bdev_id(512, 1 + static_cast<chi::u32>(device_idx));
+        // Generate unique bdev_id per (device, container_hash) combination:
+        // major encodes device index, minor encodes container hash
+        chi::PoolId bdev_id(512 + static_cast<chi::u32>(device_idx),
+                            1 + container_hash);
 
         // Call RegisterTarget using client member variable with target_query
         // and bdev_id
