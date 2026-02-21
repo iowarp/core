@@ -539,6 +539,12 @@ if(WRP_CORE_ENABLE_HDF5)
             endif()
         endif()
 
+        # libhdf5.so (system package) depends on libcurl internally;
+        # the linker needs it listed explicitly due to --as-needed.
+        find_package(CURL QUIET)
+        if(CURL_FOUND)
+            list(APPEND HDF5_LIBRARIES CURL::libcurl)
+        endif()
     else()
         message(FATAL_ERROR "HDF5 not found. Please install HDF5 or run install.sh to build from submodules.")
     endif()
