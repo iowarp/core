@@ -65,6 +65,7 @@
 // WINDOWS
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
 #include <windows.h>
+#include <crtdbg.h>
 #else
 #error \
     "Must define either HSHM_ENABLE_PROCFS_SYSINFO or HSHM_ENABLE_WINDOWS_SYSINFO"
@@ -858,6 +859,19 @@ std::string SystemInfo::GetSelfExePath() {
     return std::string(buf, len);
   }
   return "";
+#endif
+}
+
+void SystemInfo::SuppressErrorDialogs() {
+#ifdef _WIN32
+  // Redirect CRT assert/error reports to stderr instead of popup dialogs
+  _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+  _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+  _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+  _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+  _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+  // Suppress Windows Error Reporting crash dialogs
+  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
 #endif
 }
 

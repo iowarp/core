@@ -38,6 +38,7 @@
 
 #pragma once
 
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <functional>
@@ -253,11 +254,21 @@ inline int run_all_tests(const std::string& filter = "") {
     void CHI_UNIQUE_NAME(test_func_)()
 
 // Main function for test executable
+// Calls CHIMAERA_FINALIZE() to properly release ports and shared memory,
+// then uses _exit() to force immediate termination without waiting for
+// any remaining threads.
+#include "hermes_shm/introspect/system_info.h"
+#include "chimaera/chimaera.h"
+
 #define SIMPLE_TEST_MAIN() \
 int main(int argc, char* argv[]) { \
+    hshm::SystemInfo::SuppressErrorDialogs(); \
     std::string filter = ""; \
     if (argc > 1) { \
         filter = argv[1]; \
     } \
-    return SimpleTest::run_all_tests(filter); \
+    int rc = SimpleTest::run_all_tests(filter); \
+    chi::CHIMAERA_FINALIZE(); \
+    _exit(rc); \
+    return rc; \
 }

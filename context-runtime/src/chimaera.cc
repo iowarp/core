@@ -50,6 +50,9 @@ bool CHIMAERA_INIT(ChimaeraMode mode, bool default_with_runtime) {
     return true;  // Already initialized, return success
   }
 
+  // Suppress OS error dialogs so tests don't block on popups
+  hshm::SystemInfo::SuppressErrorDialogs();
+
   auto* chimaera_manager = CHI_CHIMAERA_MANAGER;
 
   // Check environment variable CHI_WITH_RUNTIME
@@ -92,6 +95,14 @@ bool CHIMAERA_INIT(ChimaeraMode mode, bool default_with_runtime) {
   // Mark as initialized on success
   s_initialized = true;
   return true;
+}
+
+void CHIMAERA_FINALIZE() {
+  auto* chimaera_manager = CHI_CHIMAERA_MANAGER;
+  if (chimaera_manager && chimaera_manager->IsInitialized()) {
+    chimaera_manager->ServerFinalize();
+    chimaera_manager->ClientFinalize();
+  }
 }
 
 }  // namespace chi

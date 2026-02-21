@@ -79,6 +79,12 @@ enum class ChimaeraMode {
  */
 bool CHIMAERA_INIT(ChimaeraMode mode, bool default_with_runtime = false);
 
+/**
+ * Finalize Chimaera - stops workers and releases all resources.
+ * Call before process exit to ensure ports and shared memory are released.
+ */
+void CHIMAERA_FINALIZE();
+
 }  // namespace chi
 
 #endif  // CHIMAERA_INCLUDE_CHIMAERA_CHIMAERA_H_

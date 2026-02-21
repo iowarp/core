@@ -253,6 +253,14 @@ class SystemInfo {
   static int WaitProcess(ProcessHandle &proc);
 
   static std::string GetSelfExePath();
+
+  /**
+   * Suppress OS error/crash dialog popups.
+   * On Windows: redirects CRT asserts/errors to stderr and disables
+   * Windows Error Reporting dialogs so tests don't block on popups.
+   * No-op on other platforms.
+   */
+  static void SuppressErrorDialogs();
 };
 
 }  // namespace hshm
