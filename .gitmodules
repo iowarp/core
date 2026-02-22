@@ -19,3 +19,12 @@
 [submodule "context-transfer-engine/benchmark/memorybench"]
 	path = context-transfer-engine/benchmark/memorybench
 	url = git@github.com:iowarp/memorybench.git
+[submodule "external/llama.cpp"]
+	path = external/llama.cpp
+	url = https://github.com/ggerganov/llama.cpp.git
+[submodule "external/vllm"]
+	path = external/vllm
+	url = https://github.com/vllm-project/vllm.git
+[submodule "external/sglang"]
+	path = external/sglang
+	url = https://github.com/iowarp/sglang.git

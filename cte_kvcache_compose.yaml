@@ -1,0 +1,14 @@
+runtime:
+  num_threads: 4
+  queue_depth: 256
+  conf_dir: /tmp/cte_kvcache_test
+
+compose:
+  - mod_name: wrp_cte_core
+    pool_name: wrp_cte_core
+    pool_query: local
+    pool_id: "512.0"
+    storage:
+      - path: /tmp/cte_kvcache_test/ram_storage
+        bdev_type: ram
+        capacity_limit: 512MB
