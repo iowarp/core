@@ -56,12 +56,12 @@ bool CHIMAERA_INIT(ChimaeraMode mode, bool default_with_runtime) {
   auto* chimaera_manager = CHI_CHIMAERA_MANAGER;
 
   // Check environment variable CHI_WITH_RUNTIME
+  // Use hshm::SystemInfo::Getenv for Windows compatibility (std::getenv
+  // doesn't reflect changes made via SetEnvironmentVariable/Setenv)
   bool with_runtime = default_with_runtime;
-  const char* env_val = std::getenv("CHI_WITH_RUNTIME");
-  if (env_val != nullptr) {
-    with_runtime = (std::strcmp(env_val, "1") == 0 ||
-                   std::strcmp(env_val, "true") == 0 ||
-                   std::strcmp(env_val, "TRUE") == 0);
+  std::string env_val = hshm::SystemInfo::Getenv("CHI_WITH_RUNTIME");
+  if (!env_val.empty()) {
+    with_runtime = (env_val == "1" || env_val == "true" || env_val == "TRUE");
   }
 
   // Determine what to initialize based on mode and with_runtime flag

@@ -44,6 +44,7 @@
  * 3. GetBlobInfo() verifies score and block placement changes
  */
 
+#include <algorithm>
 #include <chimaera/chimaera.h>
 #include <wrp_cte/core/core_client.h>
 #include <wrp_cte/core/core_tasks.h>
@@ -138,6 +139,10 @@ class ReorganizeBlobTestFixture {
     std::ofstream config_file(config_path_);
     REQUIRE(config_file.is_open());
 
+    // Use forward slashes in YAML to avoid backslash escape issues on Windows
+    std::string yaml_storage_path = file_storage_path_;
+    std::replace(yaml_storage_path.begin(), yaml_storage_path.end(), '\\', '/');
+
     config_file << R"(
 # ReorganizeBlob Test Configuration
 # - 16MB DRAM (fast tier, score 1.0)
@@ -168,7 +173,7 @@ compose:
         score: 1.0
 
       # Slow tier: 64MB File (score 0.2)
-      - path: ")" << file_storage_path_ << R"("
+      - path: ")" << yaml_storage_path << R"("
         bdev_type: "file"
         capacity_limit: "64MB"
         score: 0.2

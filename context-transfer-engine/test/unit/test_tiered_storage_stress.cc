@@ -41,6 +41,7 @@
  * - ReorganizeBlob all data to score 0.0 (tests capacity handling)
  */
 
+#include <algorithm>
 #include <chimaera/chimaera.h>
 #include <wrp_cte/core/core_client.h>
 #include <wrp_cte/core/core_tasks.h>
@@ -134,6 +135,10 @@ class TieredStorageStressFixture {
     std::ofstream config_file(config_path_);
     REQUIRE(config_file.is_open());
 
+    // Use forward slashes in YAML to avoid backslash escape issues on Windows
+    std::string yaml_storage_path = file_storage_path_;
+    std::replace(yaml_storage_path.begin(), yaml_storage_path.end(), '\\', '/');
+
     config_file << R"(
 # Tiered Storage Stress Test Configuration
 # - 64MB DRAM (fast tier, score 0.0)
@@ -164,7 +169,7 @@ compose:
         score: 0.0
 
       # Slow tier: 256MB File
-      - path: ")" << file_storage_path_ << R"("
+      - path: ")" << yaml_storage_path << R"("
         bdev_type: "file"
         capacity_limit: "256MB"
         score: 1.0

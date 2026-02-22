@@ -99,15 +99,18 @@ bool ConfigManager::LoadYaml(const std::string &config_path) {
 
 std::string ConfigManager::GetServerConfigPath() const {
   // Check CHI_SERVER_CONF first (primary)
-  const char *chi_env_path = std::getenv("CHI_SERVER_CONF");
-  if (chi_env_path) {
-    return std::string(chi_env_path);
+  // Use hshm::SystemInfo::Getenv for cross-platform compatibility:
+  // on Windows, std::getenv reads the CRT env block which is not updated
+  // by SetEnvironmentVariable / hshm::SystemInfo::Setenv.
+  std::string chi_env_path = hshm::SystemInfo::Getenv("CHI_SERVER_CONF");
+  if (!chi_env_path.empty()) {
+    return chi_env_path;
   }
 
   // Fall back to WRP_RUNTIME_CONF (secondary)
-  const char *wrp_env_path = std::getenv("WRP_RUNTIME_CONF");
-  if (wrp_env_path) {
-    return std::string(wrp_env_path);
+  std::string wrp_env_path = hshm::SystemInfo::Getenv("WRP_RUNTIME_CONF");
+  if (!wrp_env_path.empty()) {
+    return wrp_env_path;
   }
 
   // Fall back to ~/.chimaera/chimaera.yaml (tertiary)
