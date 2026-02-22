@@ -23,8 +23,11 @@ services:
   # Node 1 - Primary node that initialises Jarvis and runs the pipeline
   cte-jarvis-node1:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: cte-jarvis-node1
     hostname: iowarp-jarvis-node1
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       jarvis-cluster:
         ipv4_address: 172.27.0.10
@@ -46,8 +49,11 @@ services:
   # Node 2 - Secondary node: SSH server only; IOWarp runtime started here via pssh from node1
   cte-jarvis-node2:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: cte-jarvis-node2
     hostname: iowarp-jarvis-node2
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       jarvis-cluster:
         ipv4_address: 172.27.0.11
