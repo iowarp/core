@@ -540,33 +540,53 @@ class IpcManager {
       return SendShm(task_ptr);
     }
 
-    // Runtime SHM path: delegate to SendRuntime.
-    // Cast to base Task so SendRuntime can be a non-template method in the .cc.
-    // The returned Future<Task> is re-cast to the concrete type before
-    // returning.
-    Future<Task> base_future = SendRuntime(task_ptr.template Cast<Task>());
+    // Runtime SHM path: worker threads use SendRuntimeClient (simple
+    // ClientMapTask path), non-worker threads use SendRuntime.
+    Future<Task> base_future;
+    if (worker != nullptr) {
+      base_future = SendRuntimeClient(task_ptr.template Cast<Task>());
+    } else {
+      base_future = SendRuntime(task_ptr.template Cast<Task>());
+    }
     return base_future.Cast<TaskT>();
 #endif
   }
 
-  /**
-   * Send a task from the runtime, routing it to the correct worker lane.
-   *
-   * Non-template entry point (implemented in ipc_manager.cc) that:
-   *  1. Derives the execution container from the task's pool_id / pool_query.
-   *  2. Sets the task's completer and run-context container fields.
-   *  3. Wraps the task in a pointer Future (no serialization).
-   *  4. Calls RuntimeMapTask (passing the resolved container) to pick a lane.
-   *  5. Enqueues the Future and awakens the target worker.
-   *
-   * Callers:
-   *  - IpcManager::Send  — casts the typed future back after return
-   *  - Worker::RouteLocal — task_ptr is already FullPtr<Task>
-   *
-   * @param task_ptr Base-typed task to route and enqueue
-   * @return Future<Task> wrapping the enqueued task
-   */
+  /** Send from a worker thread: creates pointer future, uses ClientMapTask */
+  Future<Task> SendRuntimeClient(const hipc::FullPtr<Task> &task_ptr);
+
+  /** Send from non-worker thread: full routing (pool query, local/global) */
   Future<Task> SendRuntime(const hipc::FullPtr<Task> &task_ptr);
+
+  /**
+   * Initialize RunContext for a task before routing.
+   * @param future Future containing the task
+   * @param container Container for the task (can be nullptr)
+   * @param lane Lane for the task (can be nullptr)
+   */
+  void BeginTask(Future<Task> &future, Container *container, TaskLane *lane);
+
+  /** Route a task: resolve pool query, determine local vs global.
+   * If force_enqueue is true, always enqueue to the destination worker's lane
+   * (used by SendRuntime which cannot execute tasks directly). */
+  bool RouteTask(Future<Task> &future, bool force_enqueue = false);
+
+  /** Resolve a pool query into concrete physical addresses */
+  std::vector<PoolQuery> ResolvePoolQuery(const PoolQuery &query,
+                                          PoolId pool_id,
+                                          const FullPtr<Task> &task_ptr);
+
+  /** Check if task should be processed locally */
+  bool IsTaskLocal(const FullPtr<Task> &task_ptr,
+                   const std::vector<PoolQuery> &pool_queries);
+
+  /** Route task locally.
+   * If force_enqueue is true, always enqueue even if dest == current worker. */
+  bool RouteLocal(Future<Task> &future, bool force_enqueue = false);
+
+  /** Route task globally via network */
+  bool RouteGlobal(Future<Task> &future,
+                   const std::vector<PoolQuery> &pool_queries);
 
   /**
    * Send a task via SHM lightbeam transport
@@ -1390,6 +1410,25 @@ class IpcManager {
   bool RegisterAcceleratorMemory(const hipc::MemoryBackend &backend);
 
  private:
+  // Pool query resolution helpers
+  std::vector<PoolQuery> ResolveLocalQuery(const PoolQuery &query,
+                                           const FullPtr<Task> &task_ptr);
+  std::vector<PoolQuery> ResolveDirectIdQuery(const PoolQuery &query,
+                                              PoolId pool_id,
+                                              const FullPtr<Task> &task_ptr);
+  std::vector<PoolQuery> ResolveDirectHashQuery(const PoolQuery &query,
+                                                PoolId pool_id,
+                                                const FullPtr<Task> &task_ptr);
+  std::vector<PoolQuery> ResolveRangeQuery(const PoolQuery &query,
+                                           PoolId pool_id,
+                                           const FullPtr<Task> &task_ptr);
+  std::vector<PoolQuery> ResolveBroadcastQuery(const PoolQuery &query,
+                                               PoolId pool_id,
+                                               const FullPtr<Task> &task_ptr);
+  std::vector<PoolQuery> ResolvePhysicalQuery(const PoolQuery &query,
+                                              PoolId pool_id,
+                                              const FullPtr<Task> &task_ptr);
+
   /**
    * Initialize memory segments for server
    * @return true if successful, false otherwise

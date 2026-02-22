@@ -134,6 +134,20 @@ class Container {
   bool IsPlugged() const { return flags_.Any(CONTAINER_PLUG) != 0; }
 
   /**
+   * Schedule a task by resolving its PoolQuery before routing.
+   * Called from RouteTask on the static container (no container state).
+   * Override in chimods to implement dynamic scheduling logic (e.g.,
+   * checking local caches, hashing blob names to containers).
+   * Default: returns the task's existing pool_query_ unchanged.
+   *
+   * @param task Full pointer to the task being scheduled
+   * @return The PoolQuery to use for routing this task
+   */
+  virtual PoolQuery ScheduleTask(const hipc::FullPtr<Task> &task) {
+    return task->pool_query_;
+  }
+
+  /**
    * Execute a method on a task - must be implemented by derived classes
    *
    * This method returns TaskResume to support C++20 coroutine-based execution.

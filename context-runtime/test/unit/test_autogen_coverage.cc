@@ -13932,18 +13932,6 @@ TEST_CASE("Autogen - RunContext struct", "[autogen][types][runcontext]") {
   }
 }
 
-// ==========================================================================
-// ExecMode enum tests
-// ==========================================================================
-TEST_CASE("Autogen - ExecMode enum", "[autogen][types][execmode]") {
-  SECTION("Enum values") {
-    chi::RunContext rctx;
-    rctx.exec_mode_ = chi::ExecMode::kExec;
-    REQUIRE(rctx.exec_mode_ == chi::ExecMode::kExec);
-    rctx.exec_mode_ = chi::ExecMode::kDynamicSchedule;
-    REQUIRE(rctx.exec_mode_ == chi::ExecMode::kDynamicSchedule);
-  }
-}
 
 // ==========================================================================
 // IpcManager accessor tests (safe, non-network methods)

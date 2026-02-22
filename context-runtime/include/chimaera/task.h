@@ -422,14 +422,6 @@ class Task {
   }
 };
 
-/**
- * Execution mode for task processing
- */
-enum class ExecMode : u32 {
-  kExec = 0,           /**< Normal task execution */
-  kDynamicSchedule = 1 /**< Dynamic scheduling - route after execution */
-};
-
 // ============================================================================
 // FutureShm and Future classes (must be before RunContext which uses Future)
 // ============================================================================
@@ -518,7 +510,7 @@ struct FutureShm {
     response_transport_ = nullptr;
     response_fd_ = -1;
     response_identity_len_ = 0;
-    flags_.SetBits(0);
+    flags_.Clear();
   }
 };
 
@@ -968,7 +960,6 @@ struct RunContext {
   hshm::Timepoint block_start_; /**< Time when task was blocked (real time) */
   Container* container_;        /**< Current container being executed */
   TaskLane* lane_;              /**< Current lane being processed */
-  ExecMode exec_mode_;          /**< Execution mode (kExec or kDynamicSchedule) */
   void* event_queue_;           /**< Pointer to worker's event queue */
   std::vector<PoolQuery>
       pool_queries_;            /**< Pool queries for task distribution */
@@ -990,7 +981,6 @@ struct RunContext {
         block_start_(),
         container_(nullptr),
         lane_(nullptr),
-        exec_mode_(ExecMode::kExec),
         event_queue_(nullptr),
         completed_replicas_(0),
         yield_count_(0),
@@ -1010,7 +1000,6 @@ struct RunContext {
         block_start_(other.block_start_),
         container_(other.container_),
         lane_(other.lane_),
-        exec_mode_(other.exec_mode_),
         event_queue_(other.event_queue_),
         pool_queries_(std::move(other.pool_queries_)),
         subtasks_(std::move(other.subtasks_)),
@@ -1037,7 +1026,6 @@ struct RunContext {
       block_start_ = other.block_start_;
       container_ = other.container_;
       lane_ = other.lane_;
-      exec_mode_ = other.exec_mode_;
       event_queue_ = other.event_queue_;
       pool_queries_ = std::move(other.pool_queries_);
       subtasks_ = std::move(other.subtasks_);

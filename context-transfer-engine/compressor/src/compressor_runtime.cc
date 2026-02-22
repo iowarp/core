@@ -199,14 +199,13 @@ chi::TaskResume Runtime::Destroy(hipc::FullPtr<DestroyTask> task,
   co_return;
 }
 
+chi::PoolQuery Runtime::ScheduleTask(const hipc::FullPtr<chi::Task> &task) {
+  // All compressor Dynamic methods resolve to Local
+  return chi::PoolQuery::Local();
+}
+
 chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
                                  chi::RunContext& ctx) {
-  // Dynamic schedule: just set pool query
-  if (ctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
-    task->pool_query_ = chi::PoolQuery::Local();
-    co_return;
-  }
-
   try {
     // Initialize core client if needed
     if (!core_client_) {
@@ -526,12 +525,6 @@ static void WriteTraceLog(const std::string& trace_folder,
 
 chi::TaskResume Runtime::DynamicSchedule(
     hipc::FullPtr<DynamicScheduleTask> task, chi::RunContext& ctx) {
-  // Dynamic scheduling phase - determine routing
-  if (ctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
-    task->pool_query_ = chi::PoolQuery::Local();
-    co_return;
-  }
-
   try {
     // Extract task parameters (same as PutBlobTask)
     chi::u64 chunk_size = task->size_;
@@ -625,12 +618,6 @@ chi::TaskResume Runtime::DynamicSchedule(
 
 chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
                                   chi::RunContext& ctx) {
-  // Dynamic scheduling phase - determine routing
-  if (ctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
-    task->pool_query_ = chi::PoolQuery::Local();
-    co_return;
-  }
-
   try {
     // Extract task parameters (same as PutBlobTask)
     chi::u64 input_size = task->size_;
@@ -806,12 +793,6 @@ chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
 
 chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
                                     chi::RunContext& ctx) {
-  // Dynamic scheduling phase - determine routing
-  if (ctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
-    task->pool_query_ = chi::PoolQuery::Local();
-    co_return;
-  }
-
   try {
     // Extract task parameters (same as GetBlobTask)
     chi::u64 expected_size = task->size_;

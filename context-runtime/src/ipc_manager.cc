@@ -50,8 +50,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 #endif
-#include <zmq.h>
 #include <hermes_shm/lightbeam/transport_factory_impl.h>
+#include <zmq.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -98,8 +98,9 @@ bool IpcManager::ClientInit() {
     }
   }
   HLOG(kInfo, "IpcManager::ClientInit: IPC mode = {}",
-       ipc_mode_ == IpcMode::kShm ? "SHM" :
-       ipc_mode_ == IpcMode::kIpc ? "IPC" : "TCP");
+       ipc_mode_ == IpcMode::kShm   ? "SHM"
+       : ipc_mode_ == IpcMode::kIpc ? "IPC"
+                                    : "TCP");
 
   // Parse retry timeout environment variable
   const char *retry_env = std::getenv("CHI_CLIENT_RETRY_TIMEOUT");
@@ -116,8 +117,7 @@ bool IpcManager::ClientInit() {
 
     if (ipc_mode_ == IpcMode::kIpc) {
       // IPC mode: Unix domain socket transport
-      std::string ipc_path =
-          "/tmp/chimaera_" + std::to_string(port) + ".ipc";
+      std::string ipc_path = "/tmp/chimaera_" + std::to_string(port) + ".ipc";
       try {
         zmq_transport_ = hshm::lbm::TransportFactory::Get(
             ipc_path, hshm::lbm::TransportType::kSocket,
@@ -175,18 +175,17 @@ bool IpcManager::ClientInit() {
             ? config->GetMemorySegmentSize(kClientDataSegment)
             : hshm::Unit<size_t>::Megabytes(256);  // Default 256MB
     if (!IncreaseClientShm(initial_size)) {
-      HLOG(kError,
-           "IpcManager::ClientInit: Failed to create per-process shared memory");
+      HLOG(
+          kError,
+          "IpcManager::ClientInit: Failed to create per-process shared memory");
       return false;
     }
 
     // Create SHM lightbeam transports for client-side transport
     shm_send_transport_ = hshm::lbm::TransportFactory::Get(
-        "", hshm::lbm::TransportType::kShm,
-        hshm::lbm::TransportMode::kClient);
+        "", hshm::lbm::TransportType::kShm, hshm::lbm::TransportMode::kClient);
     shm_recv_transport_ = hshm::lbm::TransportFactory::Get(
-        "", hshm::lbm::TransportType::kShm,
-        hshm::lbm::TransportMode::kServer);
+        "", hshm::lbm::TransportType::kShm, hshm::lbm::TransportMode::kServer);
   }
 
   // Retrieve node ID from shared header and store in this_host_
@@ -284,7 +283,8 @@ bool IpcManager::ServerInit() {
       client_tcp_transport_ = hshm::lbm::TransportFactory::Get(
           "0.0.0.0", hshm::lbm::TransportType::kZeroMq,
           hshm::lbm::TransportMode::kServer, "tcp", port + 3);
-      HLOG(kInfo, "IpcManager: TCP ROUTER transport bound on port {}", port + 3);
+      HLOG(kInfo, "IpcManager: TCP ROUTER transport bound on port {}",
+           port + 3);
     } catch (const std::exception &e) {
       HLOG(kError, "IpcManager::ServerInit: Failed to bind TCP server: {}",
            e.what());
@@ -292,8 +292,7 @@ bool IpcManager::ServerInit() {
 
     try {
       // IPC server on Unix domain socket
-      std::string ipc_path =
-          "/tmp/chimaera_" + std::to_string(port) + ".ipc";
+      std::string ipc_path = "/tmp/chimaera_" + std::to_string(port) + ".ipc";
       client_ipc_transport_ = hshm::lbm::TransportFactory::Get(
           ipc_path, hshm::lbm::TransportType::kSocket,
           hshm::lbm::TransportMode::kServer, "ipc", 0);
@@ -535,11 +534,13 @@ bool IpcManager::ServerInitQueues() {
                                               &shared_header_->worker_queues);
 
     // Initialize network queue for send operations
-    // One lane with four priorities (SendIn, SendOut, ClientSendTcp, ClientSendIpc)
+    // One lane with four priorities (SendIn, SendOut, ClientSendTcp,
+    // ClientSendIpc)
     net_queue_ = main_allocator_->NewObj<NetQueue>(
         main_allocator_,
         1,             // num_lanes: single lane for network operations
-        4,             // num_priorities: 0=SendIn, 1=SendOut, 2=ClientSendTcp, 3=ClientSendIpc
+        4,             // num_priorities: 0=SendIn, 1=SendOut, 2=ClientSendTcp,
+                       // 3=ClientSendIpc
         queue_depth);  // Use configured depth instead of hardcoded 1024
 
     return !worker_queues_.IsNull() && !net_queue_.IsNull();
@@ -566,8 +567,8 @@ bool IpcManager::ServerInitGpuQueues() {
 
     // Get configured GPU segment size (default to 64MB per GPU)
     size_t gpu_segment_size = config && config->IsValid()
-        ? config->GetMemorySegmentSize("gpu_segment")
-        : hshm::Unit<size_t>::Megabytes(64);
+                                  ? config->GetMemorySegmentSize("gpu_segment")
+                                  : hshm::Unit<size_t>::Megabytes(64);
 
     // Reserve space for GPU backends and queues
     gpu_backends_.reserve(num_gpus);
@@ -579,11 +580,13 @@ bool IpcManager::ServerInitGpuQueues() {
       std::string gpu_url = "/chi_gpu_queue_" + std::to_string(gpu_id);
 
       // Create GPU backend ID
-      hipc::MemoryBackendId backend_id(1000 + gpu_id, 0);  // Use high IDs for GPU backends
+      hipc::MemoryBackendId backend_id(1000 + gpu_id,
+                                       0);  // Use high IDs for GPU backends
 
       // Create GpuShmMmap backend (pinned host memory, GPU-accessible)
       auto gpu_backend = std::make_unique<hipc::GpuShmMmap>();
-      if (!gpu_backend->shm_init(backend_id, gpu_segment_size, gpu_url, gpu_id)) {
+      if (!gpu_backend->shm_init(backend_id, gpu_segment_size, gpu_url,
+                                 gpu_id)) {
         HLOG(kError, "Failed to initialize GPU backend for GPU {}", gpu_id);
         return false;
       }
@@ -598,11 +601,12 @@ bool IpcManager::ServerInitGpuQueues() {
 
       // Create TaskQueue in GPU segment (one ring buffer)
       // Single lane for now, 2 priorities (normal and resumed)
-      hipc::FullPtr<TaskQueue> gpu_queue = gpu_allocator->template NewObj<TaskQueue>(
-          gpu_allocator,
-          1,             // num_lanes: single lane per GPU
-          2,             // num_priorities: normal and resumed
-          queue_depth);  // configured depth
+      hipc::FullPtr<TaskQueue> gpu_queue =
+          gpu_allocator->template NewObj<TaskQueue>(
+              gpu_allocator,
+              1,             // num_lanes: single lane per GPU
+              2,             // num_priorities: normal and resumed
+              queue_depth);  // configured depth
 
       if (gpu_queue.IsNull()) {
         HLOG(kError, "Failed to create TaskQueue for GPU {}", gpu_id);
@@ -755,8 +759,8 @@ bool IpcManager::LoadHostfile() {
       u64 node_id = static_cast<u64>(offset);
       Host host(host_ips[offset], node_id);
       hostfile_map_[node_id] = host;
-      HLOG(kDebug, "  Hostfile[{}]: {} -> Node ID: {}", offset, host_ips[offset],
-           node_id);
+      HLOG(kDebug, "  Hostfile[{}]: {} -> Node ID: {}", offset,
+           host_ips[offset], node_id);
     }
     HLOG(kDebug, "=== Total hosts loaded: {} ===", hostfile_map_.size());
     if (hostfile_map_.empty()) {
@@ -842,8 +846,8 @@ void IpcManager::SetDead(u64 node_id) {
     client_pool_.erase(key);
   }
 
-  HLOG(kWarning, "IpcManager: Node {} ({}) marked as DEAD",
-       node_id, it->second.ip_address);
+  HLOG(kWarning, "IpcManager: Node {} ({}) marked as DEAD", node_id,
+       it->second.ip_address);
 }
 
 void IpcManager::SetAlive(u64 node_id) {
@@ -854,15 +858,14 @@ void IpcManager::SetAlive(u64 node_id) {
   SetNodeState(node_id, NodeState::kAlive);
 
   // Remove from dead_nodes_ list
-  dead_nodes_.erase(
-      std::remove_if(dead_nodes_.begin(), dead_nodes_.end(),
-                     [node_id](const DeadNodeEntry &e) {
-                       return e.node_id == node_id;
-                     }),
-      dead_nodes_.end());
+  dead_nodes_.erase(std::remove_if(dead_nodes_.begin(), dead_nodes_.end(),
+                                   [node_id](const DeadNodeEntry &e) {
+                                     return e.node_id == node_id;
+                                   }),
+                    dead_nodes_.end());
 
-  HLOG(kInfo, "IpcManager: Node {} ({}) marked as ALIVE",
-       node_id, it->second.ip_address);
+  HLOG(kInfo, "IpcManager: Node {} ({}) marked as ALIVE", node_id,
+       it->second.ip_address);
 }
 
 NodeState IpcManager::GetNodeState(u64 node_id) const {
@@ -879,13 +882,11 @@ void IpcManager::SetNodeState(u64 node_id, NodeState new_state) {
   hosts_cache_valid_ = false;
 }
 
-void IpcManager::SetSelfFenced(bool fenced) {
-  self_fenced_ = fenced;
-}
+void IpcManager::SetSelfFenced(bool fenced) { self_fenced_ = fenced; }
 
 u64 IpcManager::GetLeaderNodeId() const {
   u64 leader = std::numeric_limits<u64>::max();
-  for (const auto& [id, host] : hostfile_map_) {
+  for (const auto &[id, host] : hostfile_map_) {
     if (host.state == NodeState::kAlive && host.node_id < leader) {
       leader = host.node_id;
     }
@@ -893,15 +894,13 @@ u64 IpcManager::GetLeaderNodeId() const {
   return (leader == std::numeric_limits<u64>::max()) ? 0 : leader;
 }
 
-bool IpcManager::IsLeader() const {
-  return GetNodeId() == GetLeaderNodeId();
-}
+bool IpcManager::IsLeader() const { return GetNodeId() == GetLeaderNodeId(); }
 
-u64 IpcManager::AddNode(const std::string& ip_address, u32 port) {
+u64 IpcManager::AddNode(const std::string &ip_address, u32 port) {
   (void)port;  // Port stored elsewhere (ConfigManager) for now
 
   // Check if node already exists
-  for (const auto& pair : hostfile_map_) {
+  for (const auto &pair : hostfile_map_) {
     if (pair.second.ip_address == ip_address) {
       HLOG(kInfo, "AddNode: Node {} already registered as node_id={}",
            ip_address, pair.first);
@@ -1043,7 +1042,6 @@ hshm::lbm::Transport *IpcManager::GetClientTransport(IpcMode mode) const {
   return nullptr;
 }
 
-
 const Host &IpcManager::GetThisHost() const { return this_host_; }
 
 FullPtr<char> IpcManager::AllocateBuffer(size_t size) {
@@ -1065,7 +1063,9 @@ FullPtr<char> IpcManager::AllocateBuffer(size_t size) {
   if (ipc_mode_ != IpcMode::kShm) {
     FullPtr<char> buffer = HSHM_MALLOC->AllocateObjs<char>(size);
     if (buffer.IsNull()) {
-      HLOG(kError, "AllocateBuffer: HSHM_MALLOC failed for {} bytes (client ZMQ mode)", size);
+      HLOG(kError,
+           "AllocateBuffer: HSHM_MALLOC failed for {} bytes (client ZMQ mode)",
+           size);
     }
     return buffer;
   }
@@ -1161,7 +1161,7 @@ void IpcManager::FreeBuffer(FullPtr<char> buffer_ptr) {
 }
 
 hshm::lbm::Transport *IpcManager::GetOrCreateClient(const std::string &addr,
-                                                     int port) {
+                                                    int port) {
   // Create key for the pool map
   std::string key = addr + ":" + std::to_string(port);
 
@@ -1214,7 +1214,8 @@ void IpcManager::EnqueueNetTask(Future<Task> future,
   bool was_empty = lane.Empty();
   lane.Push(future);
 
-  // Signal the net worker if the lane was empty (same pattern as admin_runtime.cc:1086-1089)
+  // Signal the net worker if the lane was empty (same pattern as
+  // admin_runtime.cc:1086-1089)
   if (was_empty && net_lane_) {
     AwakenWorker(net_lane_);
   }
@@ -1261,10 +1262,10 @@ bool IpcManager::IncreaseClientShm(size_t size) {
   // Add 32MB metadata overhead
   size_t total_size = size + kShmMetadataOverhead;
 
-  HLOG(
-      kInfo,
-      "IpcManager::IncreaseClientShm: Creating {} with size {} ({} + {} overhead)",
-      shm_name, total_size, size, kShmMetadataOverhead);
+  HLOG(kInfo,
+       "IpcManager::IncreaseClientShm: Creating {} with size {} ({} + {} "
+       "overhead)",
+       shm_name, total_size, size, kShmMetadataOverhead);
 
   try {
     // Create the shared memory backend
@@ -1317,8 +1318,8 @@ bool IpcManager::IncreaseClientShm(size_t size) {
     // Use kAdminPoolId directly (not admin_client->pool_id_) because
     // the admin client may not be initialized yet during ClientInit.
     auto reg_task = NewTask<chimaera::admin::RegisterMemoryTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId,
-        chi::PoolQuery::Local(), alloc_id);
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(),
+        alloc_id);
     SendZmq(reg_task, IpcMode::kTcp).Wait();
 
     return true;
@@ -1641,8 +1642,7 @@ size_t IpcManager::ClearUserIpcs() {
     // Construct full path and remove the symlink
     std::string full_path = memfd_dir + "/" + entry->d_name;
     if (unlink(full_path.c_str()) == 0) {
-      HLOG(kDebug, "ClearUserIpcs: Removed memfd symlink: {}",
-           entry->d_name);
+      HLOG(kDebug, "ClearUserIpcs: Removed memfd symlink: {}", entry->d_name);
       removed_count++;
     } else {
       if (errno != EACCES && errno != EPERM && errno != ENOENT) {
@@ -1655,8 +1655,7 @@ size_t IpcManager::ClearUserIpcs() {
   closedir(dir);
 
   if (removed_count > 0) {
-    HLOG(kInfo,
-         "ClearUserIpcs: Removed {} memfd symlinks from previous runs",
+    HLOG(kInfo, "ClearUserIpcs: Removed {} memfd symlinks from previous runs",
          removed_count);
   }
 
@@ -1718,18 +1717,16 @@ bool IpcManager::ClientReconnect() {
 
     // Re-create SHM lightbeam transports
     shm_send_transport_ = hshm::lbm::TransportFactory::Get(
-        "", hshm::lbm::TransportType::kShm,
-        hshm::lbm::TransportMode::kClient);
+        "", hshm::lbm::TransportType::kShm, hshm::lbm::TransportMode::kClient);
     shm_recv_transport_ = hshm::lbm::TransportFactory::Get(
-        "", hshm::lbm::TransportType::kShm,
-        hshm::lbm::TransportMode::kServer);
+        "", hshm::lbm::TransportType::kShm, hshm::lbm::TransportMode::kServer);
 
     // Re-register per-process shared memory segments with new server
     for (auto *alloc : alloc_vector_) {
       auto alloc_id = alloc->GetId();
       auto reg_task = NewTask<chimaera::admin::RegisterMemoryTask>(
-          chi::CreateTaskId(), chi::kAdminPoolId,
-          chi::PoolQuery::Local(), alloc_id);
+          chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(),
+          alloc_id);
       SendZmq(reg_task, IpcMode::kTcp).Wait();
     }
   }
@@ -1745,9 +1742,9 @@ bool IpcManager::ClientReconnect() {
 bool IpcManager::WaitForServerAndReconnect(
     std::chrono::steady_clock::time_point start) {
   while (true) {
-    float elapsed = std::chrono::duration<float>(
-                        std::chrono::steady_clock::now() - start)
-                        .count();
+    float elapsed =
+        std::chrono::duration<float>(std::chrono::steady_clock::now() - start)
+            .count();
     if (client_retry_timeout_ > 0 && elapsed >= client_retry_timeout_) {
       HLOG(kError, "WaitForServerAndReconnect: Timed out after {}s", elapsed);
       return false;
@@ -1821,7 +1818,7 @@ void IpcManager::RecvZmqClientThread() {
 
       // Signal completion
       future_shm->flags_.SetBits(FutureShm::FUTURE_NEW_DATA |
-                                  FutureShm::FUTURE_COMPLETE);
+                                 FutureShm::FUTURE_COMPLETE);
 
       // Remove from pending futures map
       pending_zmq_futures_.erase(it);
@@ -1859,51 +1856,472 @@ bool IpcManager::RegisterAcceleratorMemory(const hipc::MemoryBackend &backend) {
 
   // Note: In GPU kernels, each thread maintains its own ArenaAllocator
   // The macro CHIMAERA_GPU_INIT handles per-thread allocator setup
-  // No need to initialize allocators here as they're created per-thread in __shared__ memory
+  // No need to initialize allocators here as they're created per-thread in
+  // __shared__ memory
 
   return true;
 #endif
 }
 
-Future<Task> IpcManager::SendRuntime(const hipc::FullPtr<Task> &task_ptr) {
+void IpcManager::BeginTask(Future<Task> &future, Container *container,
+                           TaskLane *lane) {
+  FullPtr<Task> task_ptr = future.GetTaskPtr();
+  if (task_ptr.IsNull()) {
+    return;
+  }
+
+#if HSHM_IS_HOST
   Worker *worker = CHI_CUR_WORKER;
 
-  // Only mark as routed when called from a worker thread (RouteLocal path).
-  // Tasks from the main/client thread still need the full RouteTask pipeline
-  // on the worker (pool query resolution, Monitor, container derivation).
-  Container *container = nullptr;
-  if (worker != nullptr) {
-    task_ptr->SetFlags(TASK_ROUTED);
+  // Initialize or reset the task's owned RunContext
+  task_ptr->run_ctx_ = std::make_unique<RunContext>();
+  RunContext *run_ctx = task_ptr->run_ctx_.get();
 
-    // Derive the execution container from the task's pool_id / pool_query.
-    // Try the exact container first; fall back to the static container so that
-    // the result is never nullptr (static containers always exist for a pool).
-    auto *pool_manager = CHI_POOL_MANAGER;
-    if (pool_manager != nullptr) {
-      bool is_plugged = false;
-      ContainerId container_id = task_ptr->pool_query_.GetContainerId();
-      container = pool_manager->GetContainer(task_ptr->pool_id_, container_id,
-                                             is_plugged);
-      if (container == nullptr || is_plugged) {
-        container = pool_manager->GetStaticContainer(task_ptr->pool_id_);
-      }
+  // Clear and initialize RunContext for new task execution
+  run_ctx->worker_id_ = worker ? worker->GetId() : 0;
+  run_ctx->task_ = task_ptr;        // Store task in RunContext
+  run_ctx->is_yielded_ = false;     // Initially not blocked
+  run_ctx->container_ = container;  // Store container for CHI_CUR_CONTAINER
+  run_ctx->lane_ = lane;            // Store lane for CHI_CUR_LANE
+  run_ctx->event_queue_ =
+      worker ? worker->GetEventQueue() : nullptr;  // Set event queue
+  run_ctx->future_ = future;        // Store future in RunContext
+  run_ctx->coro_handle_ = nullptr;  // Coroutine not started yet
+
+  // Initialize adaptive polling fields for periodic tasks
+  if (task_ptr->IsPeriodic()) {
+    run_ctx->true_period_ns_ = task_ptr->period_ns_;
+    run_ctx->yield_time_us_ =
+        task_ptr->period_ns_ / 1000.0;  // Initialize with true period
+    run_ctx->did_work_ = false;         // Initially no work done
+  } else {
+    run_ctx->true_period_ns_ = 0.0;
+    run_ctx->yield_time_us_ = 0.0;
+    run_ctx->did_work_ = false;
+  }
+
+  // Mark that RunContext now exists for this task
+  task_ptr->SetFlags(TASK_RUN_CTX_EXISTS);
+
+  // NOTE: Do NOT call SetCurrentRunContext here. BeginTask may be called
+  // from SendRuntimeClient inside a running coroutine. Overwriting the
+  // current RunContext would cause await_suspend_impl to store the parent
+  // coroutine handle on the subtask's RunContext instead of the parent's,
+  // leading to premature task completion. StartCoroutine and ResumeCoroutine
+  // already set the current RunContext before executing the task.
+#endif
+}
+
+bool IpcManager::RouteTask(Future<Task> &future, bool force_enqueue) {
+  // Get task pointer from future
+  FullPtr<Task> task_ptr = future.GetTaskPtr();
+
+  if (task_ptr.IsNull()) {
+    Worker *worker = CHI_CUR_WORKER;
+    HLOG(kWarning, "Worker {}: RouteTask - task_ptr is null",
+         worker ? worker->GetId() : 0);
+    return false;
+  }
+
+  // Check if task has already been routed - if so, return true immediately
+  if (task_ptr->IsRouted()) {
+    return true;
+  }
+
+  // Call ScheduleTask on the static container to resolve Dynamic pool queries.
+  // The static container's ScheduleTask can inspect the task and return an
+  // updated PoolQuery (e.g., Local, Broadcast, DirectHash).
+  auto *pool_manager = CHI_POOL_MANAGER;
+  Container *static_container =
+      pool_manager->GetStaticContainer(task_ptr->pool_id_);
+  PoolQuery resolved_query = task_ptr->pool_query_;
+  if (static_container) {
+    resolved_query = static_container->ScheduleTask(task_ptr);
+    task_ptr->pool_query_ = resolved_query;
+  }
+
+  // Resolve pool query into concrete physical addresses
+  std::vector<PoolQuery> pool_queries =
+      ResolvePoolQuery(resolved_query, task_ptr->pool_id_, task_ptr);
+
+  // Check if pool_queries is empty - this indicates an error in resolution
+  if (pool_queries.empty()) {
+    Worker *worker = CHI_CUR_WORKER;
+    HLOG(kError,
+         "Worker {}: Task routing failed - no pool queries resolved. "
+         "Pool ID: {}, Method: {}",
+         worker ? worker->GetId() : 0, task_ptr->pool_id_, task_ptr->method_);
+    return false;
+  }
+
+  // Check if task should be processed locally
+  bool is_local = IsTaskLocal(task_ptr, pool_queries);
+  if (is_local) {
+    return RouteLocal(future, force_enqueue);
+  } else {
+    RouteGlobal(future, pool_queries);
+    return false;
+  }
+}
+
+bool IpcManager::IsTaskLocal(const FullPtr<Task> &task_ptr,
+                             const std::vector<PoolQuery> &pool_queries) {
+  // If task has TASK_FORCE_NET flag, force it through network code
+  if (task_ptr->task_flags_.Any(TASK_FORCE_NET)) {
+    return false;
+  }
+
+  // If there's only one node, all tasks are local
+  if (GetNumHosts() == 1) {
+    return true;
+  }
+
+  // Task is local only if there is exactly one pool query
+  if (pool_queries.size() != 1) {
+    return false;
+  }
+
+  const PoolQuery &query = pool_queries[0];
+
+  // Check routing mode first, then specific conditions
+  RoutingMode routing_mode = query.GetRoutingMode();
+
+  switch (routing_mode) {
+    case RoutingMode::Local:
+      return true;  // Always local
+
+    case RoutingMode::Dynamic:
+      // Dynamic queries should have been resolved by ScheduleTask before
+      // reaching here. Treat as local as a safe fallback.
+      return true;
+
+    case RoutingMode::Physical: {
+      // Physical mode is local only if targeting local node
+      u64 local_node_id = GetNodeId();
+      return query.GetNodeId() == local_node_id;
     }
 
-    // Set task completer and attach container to run-context.
-    if (container != nullptr) {
-      task_ptr->SetCompleter(container->container_id_);
-      if (task_ptr->run_ctx_) {
-        task_ptr->run_ctx_->container_ = container;
+    case RoutingMode::DirectId:
+    case RoutingMode::DirectHash:
+    case RoutingMode::Range:
+    case RoutingMode::Broadcast:
+      // These modes should have been resolved to Physical queries by now
+      // If we still see them here, they are not local
+      return false;
+  }
+
+  return false;
+}
+
+bool IpcManager::RouteLocal(Future<Task> &future, bool force_enqueue) {
+  // Get task pointer from future
+  FullPtr<Task> task_ptr = future.GetTaskPtr();
+
+  // Mark as routed so the task is not re-routed on subsequent passes.
+  task_ptr->SetFlags(TASK_ROUTED);
+
+  // Resolve the actual execution container
+  auto *pool_manager = CHI_POOL_MANAGER;
+  bool is_plugged = false;
+  ContainerId container_id = task_ptr->pool_query_.GetContainerId();
+  Container *exec_container =
+      pool_manager->GetContainer(task_ptr->pool_id_, container_id, is_plugged);
+
+  if (!exec_container || is_plugged) {
+    // Container is migrating or gone — add to retry queue
+    if (task_ptr->run_ctx_) {
+      Worker *worker = CHI_CUR_WORKER;
+      HLOG(kDebug,
+           "Worker {}: RouteLocal - container {} for pool_id={}, "
+           "adding to retry queue",
+           worker ? worker->GetId() : 0,
+           is_plugged ? "is plugged" : "not found", task_ptr->pool_id_);
+      if (worker) {
+        worker->AddToRetryQueue(task_ptr->run_ctx_.get());
       }
+    }
+    return false;
+  }
+
+  // Set the completer_ field to track which container will execute this task
+  task_ptr->SetCompleter(exec_container->container_id_);
+
+  // Update RunContext to use the resolved execution container
+  if (task_ptr->run_ctx_) {
+    task_ptr->run_ctx_->container_ = exec_container;
+  }
+
+  // Use scheduler to pick the destination worker
+  Worker *worker = CHI_CUR_WORKER;
+  u32 dest_worker_id =
+      scheduler_->RuntimeMapTask(worker, future, exec_container);
+
+  // If destination matches this worker and not forced to enqueue, execute directly
+  if (!force_enqueue && worker && dest_worker_id == worker->GetId()) {
+    return true;
+  }
+
+  // Enqueue to the destination worker's lane
+  auto &dest_lane = worker_queues_->GetLane(dest_worker_id, 0);
+  bool was_empty = dest_lane.Empty();
+  dest_lane.Push(future);
+  if (was_empty) {
+    AwakenWorker(&dest_lane);
+  }
+  return false;
+}
+
+bool IpcManager::RouteGlobal(Future<Task> &future,
+                             const std::vector<PoolQuery> &pool_queries) {
+  // Get task pointer from future
+  FullPtr<Task> task_ptr = future.GetTaskPtr();
+
+  // Log the global routing for debugging
+  if (!pool_queries.empty()) {
+    Worker *worker = CHI_CUR_WORKER;
+    const auto &query = pool_queries[0];
+    HLOG(kDebug,
+         "Worker {}: RouteGlobal - routing task method={}, pool_id={} to node "
+         "{} (routing_mode={})",
+         worker ? worker->GetId() : 0, task_ptr->method_, task_ptr->pool_id_,
+         query.GetNodeId(), static_cast<int>(query.GetRoutingMode()));
+  }
+
+  // Store pool_queries in task's RunContext for SendIn to access
+  if (task_ptr->run_ctx_) {
+    RunContext *run_ctx = task_ptr->run_ctx_.get();
+    run_ctx->pool_queries_ = pool_queries;
+  }
+
+  // Enqueue the original task directly to net_queue_ priority 0 (SendIn)
+  EnqueueNetTask(future, NetQueuePriority::kSendIn);
+
+  // Set TASK_ROUTED flag on original task
+  task_ptr->SetFlags(TASK_ROUTED);
+
+  Worker *worker = CHI_CUR_WORKER;
+  HLOG(kDebug, "Worker {}: RouteGlobal - task enqueued to net_queue",
+       worker ? worker->GetId() : 0);
+
+  // Always return true (never fail)
+  return true;
+}
+
+std::vector<PoolQuery> IpcManager::ResolvePoolQuery(
+    const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
+  // Basic validation
+  if (pool_id.IsNull()) {
+    return {};  // Invalid pool ID
+  }
+
+  RoutingMode routing_mode = query.GetRoutingMode();
+  std::vector<PoolQuery> result;
+
+  switch (routing_mode) {
+    case RoutingMode::Local:
+      result = ResolveLocalQuery(query, task_ptr);
+      break;
+    case RoutingMode::Dynamic:
+      // Dynamic queries should have been resolved by Container::ScheduleTask
+      // before reaching ResolvePoolQuery. Fall through to Local as safe default.
+      result = ResolveLocalQuery(query, task_ptr);
+      break;
+    case RoutingMode::DirectId:
+      result = ResolveDirectIdQuery(query, pool_id, task_ptr);
+      break;
+    case RoutingMode::DirectHash:
+      result = ResolveDirectHashQuery(query, pool_id, task_ptr);
+      break;
+    case RoutingMode::Range:
+      result = ResolveRangeQuery(query, pool_id, task_ptr);
+      break;
+    case RoutingMode::Broadcast:
+      result = ResolveBroadcastQuery(query, pool_id, task_ptr);
+      break;
+    case RoutingMode::Physical:
+      result = ResolvePhysicalQuery(query, pool_id, task_ptr);
+      break;
+  }
+
+  // Set ret_node_ on all resolved queries to this node's ID
+  u32 this_node_id = GetNodeId();
+  for (auto &pq : result) {
+    pq.SetReturnNode(this_node_id);
+  }
+
+  return result;
+}
+
+std::vector<PoolQuery> IpcManager::ResolveLocalQuery(
+    const PoolQuery &query, const FullPtr<Task> &task_ptr) {
+  // Local routing - process on current node
+  return {query};
+}
+
+std::vector<PoolQuery> IpcManager::ResolveDirectIdQuery(
+    const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
+  auto *pool_manager = CHI_POOL_MANAGER;
+  if (pool_manager == nullptr) {
+    return {query};  // Fallback to original query
+  }
+
+  // Get the container ID from the query
+  ContainerId container_id = query.GetContainerId();
+
+  // Boundary case optimization: Check if container exists on this node
+  if (pool_manager->HasContainer(pool_id, container_id)) {
+    // Container is local, resolve to Local query
+    return {PoolQuery::Local()};
+  }
+
+  // Get the physical node ID for this container
+  u32 node_id = pool_manager->GetContainerNodeId(pool_id, container_id);
+
+  // Create a Physical PoolQuery to that node
+  return {PoolQuery::Physical(node_id)};
+}
+
+std::vector<PoolQuery> IpcManager::ResolveDirectHashQuery(
+    const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
+  auto *pool_manager = CHI_POOL_MANAGER;
+  if (pool_manager == nullptr) {
+    return {query};  // Fallback to original query
+  }
+
+  // Get pool info to find the number of containers
+  const PoolInfo *pool_info = pool_manager->GetPoolInfo(pool_id);
+  if (pool_info == nullptr || pool_info->num_containers_ == 0) {
+    return {query};  // Fallback to original query
+  }
+
+  // Hash to get container ID
+  u32 hash_value = query.GetHash();
+  ContainerId container_id = hash_value % pool_info->num_containers_;
+
+  // Boundary case optimization: Check if container exists on this node
+  if (pool_manager->HasContainer(pool_id, container_id)) {
+    // Container is local, resolve to Local query
+    return {PoolQuery::Local()};
+  }
+
+  // Check if the address_map_ points this container to the local node.
+  // After migration, the container may be mapped here but not yet in
+  // containers_ (e.g., forwarded tasks arriving at the destination).
+  // Returning Local() prevents an infinite forwarding loop.
+  u32 mapped_node = pool_manager->GetContainerNodeId(pool_id, container_id);
+  if (mapped_node == GetNodeId()) {
+    return {PoolQuery::Local()};
+  }
+
+  // Resolve to DirectId so SendIn can dynamically look up the current
+  // node via GetContainerNodeId.  This preserves the container_id through
+  // the routing chain, which is required for retry-after-recovery: if the
+  // original node dies and the container is recovered elsewhere, the retry
+  // queue re-resolves DirectId to the new node.
+  return {PoolQuery::DirectId(container_id)};
+}
+
+std::vector<PoolQuery> IpcManager::ResolveRangeQuery(
+    const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
+  auto *pool_manager = CHI_POOL_MANAGER;
+  if (pool_manager == nullptr) {
+    return {query};  // Fallback to original query
+  }
+
+  auto *config_manager = CHI_CONFIG_MANAGER;
+  if (config_manager == nullptr) {
+    return {query};  // Fallback to original query
+  }
+
+  u32 range_offset = query.GetRangeOffset();
+  u32 range_count = query.GetRangeCount();
+
+  // Validate range
+  if (range_count == 0) {
+    return {};  // Empty range
+  }
+
+  // Boundary case optimization: Check if single-container range is local
+  if (range_count == 1) {
+    ContainerId container_id = range_offset;
+    if (pool_manager->HasContainer(pool_id, container_id)) {
+      // Container is local, resolve to Local query
+      return {PoolQuery::Local()};
+    }
+    // Check if address_map_ maps this container to the local node
+    u32 mapped_node = pool_manager->GetContainerNodeId(pool_id, container_id);
+    if (mapped_node == GetNodeId()) {
+      return {PoolQuery::Local()};
+    }
+    // Resolve to DirectId to preserve container info for retry-after-recovery
+    return {PoolQuery::DirectId(container_id)};
+  }
+
+  std::vector<PoolQuery> result_queries;
+
+  // Get neighborhood size from configuration (maximum number of queries)
+  u32 neighborhood_size = config_manager->GetNeighborhoodSize();
+
+  // Calculate queries needed, capped at neighborhood_size
+  u32 ideal_queries = (range_count + neighborhood_size - 1) / neighborhood_size;
+  u32 queries_to_create = std::min(ideal_queries, neighborhood_size);
+
+  // Create one query per container
+  if (queries_to_create <= 1) {
+    queries_to_create = range_count;
+  }
+
+  u32 containers_per_query = range_count / queries_to_create;
+  u32 remaining_containers = range_count % queries_to_create;
+
+  u32 current_offset = range_offset;
+  for (u32 i = 0; i < queries_to_create; ++i) {
+    u32 current_count = containers_per_query;
+    if (i < remaining_containers) {
+      current_count++;  // Distribute remainder across first queries
+    }
+
+    if (current_count > 0) {
+      result_queries.push_back(PoolQuery::Range(current_offset, current_count));
+      current_offset += current_count;
     }
   }
 
-  // Wrap the task in a pointer Future (no serialization — runtime path).
+  return result_queries;
+}
+
+std::vector<PoolQuery> IpcManager::ResolveBroadcastQuery(
+    const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
+  auto *pool_manager = CHI_POOL_MANAGER;
+  if (pool_manager == nullptr) {
+    return {query};  // Fallback to original query
+  }
+
+  // Get pool info to find the total number of containers
+  const PoolInfo *pool_info = pool_manager->GetPoolInfo(pool_id);
+  if (pool_info == nullptr || pool_info->num_containers_ == 0) {
+    return {query};  // Fallback to original query
+  }
+
+  // Create a Range query that covers all containers, then resolve it
+  PoolQuery range_query = PoolQuery::Range(0, pool_info->num_containers_);
+  return ResolveRangeQuery(range_query, pool_id, task_ptr);
+}
+
+std::vector<PoolQuery> IpcManager::ResolvePhysicalQuery(
+    const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
+  // Physical routing - query is already resolved to a specific node
+  return {query};
+}
+
+Future<Task> IpcManager::SendRuntimeClient(
+    const hipc::FullPtr<Task> &task_ptr) {
+  // Worker thread path: sets parent RunContext and allocates RunContext
+  // via BeginTask, then uses ClientMapTask to enqueue.
+  Worker *worker = CHI_CUR_WORKER;
   Future<Task> future = MakePointerFuture(task_ptr);
 
-  // Set parent task RunContext from current worker so that EndTask can
-  // enqueue a completion event back to the parent's event queue.  Without
-  // this, coroutines that co_await child tasks will never be resumed.
+  // Set parent task RunContext so EndTask can resume the parent coroutine.
   if (worker != nullptr) {
     RunContext *run_ctx = worker->GetCurrentRunContext();
     if (run_ctx != nullptr) {
@@ -1911,25 +2329,39 @@ Future<Task> IpcManager::SendRuntime(const hipc::FullPtr<Task> &task_ptr) {
     }
   }
 
-  // Pick the target worker lane via RuntimeMapTask (or ClientMapTask when
-  // there is no current worker context, e.g. from the main thread).
-  u32 lane_id = 0;
-  if (worker != nullptr && scheduler_ != nullptr) {
-    lane_id = scheduler_->RuntimeMapTask(worker, future, container);
-  } else if (scheduler_ != nullptr) {
-    lane_id = scheduler_->ClientMapTask(this, future);
+  // Allocate RunContext before enqueueing (skip if already created)
+  if (!task_ptr->task_flags_.Any(TASK_RUN_CTX_EXISTS)) {
+    BeginTask(future, nullptr, nullptr);
   }
 
-  // Enqueue the future and awaken the target worker if it was idle.
-  if (!worker_queues_.IsNull()) {
-    auto &lane = worker_queues_->GetLane(lane_id, 0);
-    bool was_empty = lane.Empty();
-    lane.Push(future);
-    if (was_empty) {
-      AwakenWorker(&lane);
+  // Use ClientMapTask to pick a lane and enqueue
+  if (scheduler_ != nullptr) {
+    u32 lane_id = scheduler_->ClientMapTask(this, future);
+    if (!worker_queues_.IsNull()) {
+      auto &dest_lane = worker_queues_->GetLane(lane_id, 0);
+      bool was_empty = dest_lane.Empty();
+      dest_lane.Push(future);
+      if (was_empty) {
+        AwakenWorker(&dest_lane);
+      }
     }
   }
 
+  return future;
+}
+
+Future<Task> IpcManager::SendRuntime(const hipc::FullPtr<Task> &task_ptr) {
+  // Non-worker thread path: creates pointer future, then uses RouteTask
+  // with force_enqueue=true so RouteLocal always enqueues to the destination
+  // worker's lane (SendRuntime cannot execute tasks directly).
+  Future<Task> future = MakePointerFuture(task_ptr);
+
+  // Allocate RunContext before routing
+  if (!task_ptr->task_flags_.Any(TASK_RUN_CTX_EXISTS)) {
+    BeginTask(future, nullptr, nullptr);
+  }
+
+  RouteTask(future, /*force_enqueue=*/true);
   return future;
 }
 

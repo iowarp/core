@@ -103,12 +103,14 @@ bool Worker::Init() {
   // initialization
 
   // Allocate and initialize event queue from malloc allocator (temporary
-  // runtime data). Stores Future<Task> objects to avoid stale RunContext* pointers.
-  event_queue_ = HSHM_MALLOC
-                     ->template NewObj<hshm::ipc::mpsc_ring_buffer<
-                         Future<Task, CHI_MAIN_ALLOC_T>, hshm::ipc::MallocAllocator>>(
-                         HSHM_MALLOC, EVENT_QUEUE_DEPTH)
-                     .ptr_;
+  // runtime data). Stores Future<Task> objects to avoid stale RunContext*
+  // pointers.
+  event_queue_ =
+      HSHM_MALLOC
+          ->template NewObj<hshm::ipc::mpsc_ring_buffer<
+              Future<Task, CHI_MAIN_ALLOC_T>, hshm::ipc::MallocAllocator>>(
+              HSHM_MALLOC, EVENT_QUEUE_DEPTH)
+          .ptr_;
 
   // Get scheduler from IpcManager (IpcManager is the single owner)
   scheduler_ = CHI_IPC->GetScheduler();
@@ -116,11 +118,9 @@ bool Worker::Init() {
 
   // Create SHM lightbeam transports for worker-side transport
   shm_send_transport_ = hshm::lbm::TransportFactory::Get(
-      "", hshm::lbm::TransportType::kShm,
-      hshm::lbm::TransportMode::kClient);
+      "", hshm::lbm::TransportType::kShm, hshm::lbm::TransportMode::kClient);
   shm_recv_transport_ = hshm::lbm::TransportFactory::Get(
-      "", hshm::lbm::TransportType::kShm,
-      hshm::lbm::TransportMode::kServer);
+      "", hshm::lbm::TransportType::kShm, hshm::lbm::TransportMode::kServer);
 
   is_initialized_ = true;
   return true;
@@ -173,7 +173,7 @@ WorkerStats Worker::GetWorkerStats() const {
   return stats;
 }
 
-hshm::lbm::EventManager& Worker::GetEventManager() { return event_manager_; }
+hshm::lbm::EventManager &Worker::GetEventManager() { return event_manager_; }
 
 void Worker::Finalize() {
   if (!is_initialized_) {
@@ -287,7 +287,6 @@ const std::vector<TaskLane *> &Worker::GetGpuLanes() const {
 }
 #endif
 
-
 hipc::FullPtr<Task> Worker::GetOrCopyTaskFromFuture(Future<Task> &future,
                                                     Container *container,
                                                     u32 method_id) {
@@ -393,15 +392,26 @@ bool Worker::ProcessNewTask(TaskLane *lane) {
 
   // Allocate RunContext before routing (skip if already created)
   if (!task_full_ptr->task_flags_.Any(TASK_RUN_CTX_EXISTS)) {
-    BeginTask(future, container, lane);
+    CHI_IPC->BeginTask(future, container, lane);
+  } else {
+    // Task was re-enqueued from another worker (e.g., by RouteLocal).
+    // Update worker-specific RunContext fields to match this worker,
+    // so subtask completion events go to the correct event queue.
+    RunContext *run_ctx = task_full_ptr->run_ctx_.get();
+    if (run_ctx) {
+      run_ctx->worker_id_ = worker_id_;
+      run_ctx->lane_ = lane;
+      run_ctx->event_queue_ = event_queue_;
+    }
   }
 
   // Route task using consolidated routing function
-  if (RouteTask(future, lane, container)) {
+  if (CHI_IPC->RouteTask(future)) {
     // Routing successful, execute the task
 #if HSHM_IS_HOST
     RunContext *run_ctx = task_full_ptr->run_ctx_.get();
-    ExecTask(task_full_ptr, run_ctx, false);
+    bool is_started = task_full_ptr->task_flags_.Any(TASK_STARTED);
+    ExecTask(task_full_ptr, run_ctx, is_started);
 #endif
   }
   // Note: RouteTask returning false doesn't always indicate an error
@@ -490,8 +500,8 @@ void Worker::SuspendMe() {
 
     // Calculate timeout from periodic tasks
     double suspend_period_us = GetSuspendPeriod();
-    int timeout_us = (suspend_period_us < 0) ? -1
-        : static_cast<int>(suspend_period_us);
+    int timeout_us =
+        (suspend_period_us < 0) ? -1 : static_cast<int>(suspend_period_us);
 
     // Wait for signal using EventManager
     int nfds = event_manager_.Wait(timeout_us);
@@ -550,467 +560,6 @@ void Worker::SetAsCurrentWorker() {
 void Worker::ClearCurrentWorker() {
   HSHM_THREAD_MODEL->SetTls(chi_cur_worker_key_,
                             static_cast<class Worker *>(nullptr));
-}
-
-bool Worker::RouteTask(Future<Task> &future, TaskLane *lane,
-                       Container *container) {
-  // Get task pointer from future
-  FullPtr<Task> task_ptr = future.GetTaskPtr();
-
-  if (task_ptr.IsNull()) {
-    HLOG(kWarning, "Worker {}: RouteTask - task_ptr is null", worker_id_);
-    return false;
-  }
-
-  // Check if task has already been routed - if so, return true immediately
-  if (task_ptr->IsRouted()) {
-    return (container != nullptr);
-  }
-
-  // Initialize exec_mode to kExec by default
-  if (task_ptr->run_ctx_) {
-    RunContext *run_ctx = task_ptr->run_ctx_.get();
-    run_ctx->exec_mode_ = ExecMode::kExec;
-  }
-
-  // Resolve pool query and route task to container
-  // Note: ResolveDynamicQuery may override exec_mode to kDynamicSchedule
-  std::vector<PoolQuery> pool_queries =
-      ResolvePoolQuery(task_ptr->pool_query_, task_ptr->pool_id_, task_ptr);
-
-  // Check if pool_queries is empty - this indicates an error in resolution
-  if (pool_queries.empty()) {
-    HLOG(kError,
-         "Worker {}: Task routing failed - no pool queries resolved. "
-         "Pool ID: {}, Method: {}",
-         worker_id_, task_ptr->pool_id_, task_ptr->method_);
-
-    // RunContext is already allocated, just return false to indicate local
-    // execution
-    return false;
-  }
-
-  // Check if task should be processed locally
-  bool is_local = IsTaskLocal(task_ptr, pool_queries);
-  if (is_local) {
-    // Route task locally using container query and Monitor with kLocalSchedule
-    return RouteLocal(future, lane, container);
-  } else {
-    // Route task globally using admin client's ClientSendTaskIn method
-    // RouteGlobal never fails, so no need for fallback logic
-    RouteGlobal(future, pool_queries);
-    return false;  // No local execution needed
-  }
-}
-
-bool Worker::IsTaskLocal(const FullPtr<Task> &task_ptr,
-                         const std::vector<PoolQuery> &pool_queries) {
-  // If task has TASK_FORCE_NET flag, force it through network code
-  if (task_ptr->task_flags_.Any(TASK_FORCE_NET)) {
-    return false;
-  }
-
-  // If there's only one node, all tasks are local
-  auto *ipc_manager = CHI_IPC;
-  if (ipc_manager && ipc_manager->GetNumHosts() == 1) {
-    return true;
-  }
-
-  // Task is local only if there is exactly one pool query
-  if (pool_queries.size() != 1) {
-    return false;
-  }
-
-  const PoolQuery &query = pool_queries[0];
-
-  // Check routing mode first, then specific conditions
-  RoutingMode routing_mode = query.GetRoutingMode();
-
-  switch (routing_mode) {
-    case RoutingMode::Local:
-      return true;  // Always local
-
-    case RoutingMode::Dynamic:
-      // Dynamic mode routes to Monitor first, then may be resolved locally
-      // Treat as local for initial routing to allow Monitor to process
-      return true;
-
-    case RoutingMode::Physical: {
-      // Physical mode is local only if targeting local node
-      auto *ipc_manager = CHI_IPC;
-      u64 local_node_id = ipc_manager ? ipc_manager->GetNodeId() : 0;
-      return query.GetNodeId() == local_node_id;
-    }
-
-    case RoutingMode::DirectId:
-    case RoutingMode::DirectHash:
-    case RoutingMode::Range:
-    case RoutingMode::Broadcast:
-      // These modes should have been resolved to Physical queries by now
-      // If we still see them here, they are not local
-      return false;
-  }
-
-  return false;
-}
-
-bool Worker::RouteLocal(Future<Task> &future, TaskLane *lane,
-                        Container *container) {
-  // Get task pointer from future
-  FullPtr<Task> task_ptr = future.GetTaskPtr();
-
-  // Mark as routed so the task is not re-routed on subsequent passes.
-  task_ptr->SetFlags(TASK_ROUTED);
-
-  // Resolve the actual execution container
-  auto *pool_manager = CHI_POOL_MANAGER;
-  bool is_plugged = false;
-  ContainerId container_id = task_ptr->pool_query_.GetContainerId();
-  Container *exec_container = pool_manager->GetContainer(
-      task_ptr->pool_id_, container_id, is_plugged);
-
-  if (!exec_container || is_plugged) {
-    // Container is migrating or gone — add to retry queue
-    if (task_ptr->run_ctx_) {
-      HLOG(kDebug,
-           "Worker {}: RouteLocal - container {} for pool_id={}, "
-           "adding to retry queue",
-           worker_id_, is_plugged ? "is plugged" : "not found",
-           task_ptr->pool_id_);
-      AddToRetryQueue(task_ptr->run_ctx_.get());
-    }
-    return false;
-  }
-
-  // Set the completer_ field to track which container will execute this task
-  task_ptr->SetCompleter(exec_container->container_id_);
-
-  // Update RunContext to use the resolved execution container
-  if (task_ptr->run_ctx_) {
-    task_ptr->run_ctx_->container_ = exec_container;
-  }
-
-  // Routing successful - caller should execute the task locally
-  return true;
-}
-
-bool Worker::RouteGlobal(Future<Task> &future,
-                         const std::vector<PoolQuery> &pool_queries) {
-  // Get task pointer from future
-  FullPtr<Task> task_ptr = future.GetTaskPtr();
-
-  auto *ipc_manager = CHI_IPC;
-
-  // Log the global routing for debugging
-  if (!pool_queries.empty()) {
-    const auto &query = pool_queries[0];
-    HLOG(kDebug,
-         "Worker {}: RouteGlobal - routing task method={}, pool_id={} to node "
-         "{} (routing_mode={})",
-         worker_id_, task_ptr->method_, task_ptr->pool_id_, query.GetNodeId(),
-         static_cast<int>(query.GetRoutingMode()));
-  }
-
-  // Store pool_queries in task's RunContext for SendIn to access
-  if (task_ptr->run_ctx_) {
-    RunContext *run_ctx = task_ptr->run_ctx_.get();
-    run_ctx->pool_queries_ = pool_queries;
-  }
-
-  // Enqueue the original task directly to net_queue_ priority 0 (SendIn)
-  ipc_manager->EnqueueNetTask(future, NetQueuePriority::kSendIn);
-
-  // Set TASK_ROUTED flag on original task
-  task_ptr->SetFlags(TASK_ROUTED);
-
-  HLOG(kDebug, "Worker {}: RouteGlobal - task enqueued to net_queue",
-       worker_id_);
-
-  // Always return true (never fail)
-  return true;
-}
-
-std::vector<PoolQuery> Worker::ResolvePoolQuery(const PoolQuery &query,
-                                                PoolId pool_id,
-                                                const FullPtr<Task> &task_ptr) {
-  // Basic validation
-  if (pool_id.IsNull()) {
-    return {};  // Invalid pool ID
-  }
-
-  RoutingMode routing_mode = query.GetRoutingMode();
-  std::vector<PoolQuery> result;
-
-  switch (routing_mode) {
-    case RoutingMode::Local:
-      result = ResolveLocalQuery(query, task_ptr);
-      break;
-    case RoutingMode::Dynamic:
-      result = ResolveDynamicQuery(query, pool_id, task_ptr);
-      break;
-    case RoutingMode::DirectId:
-      result = ResolveDirectIdQuery(query, pool_id, task_ptr);
-      break;
-    case RoutingMode::DirectHash:
-      result = ResolveDirectHashQuery(query, pool_id, task_ptr);
-      break;
-    case RoutingMode::Range:
-      result = ResolveRangeQuery(query, pool_id, task_ptr);
-      break;
-    case RoutingMode::Broadcast:
-      result = ResolveBroadcastQuery(query, pool_id, task_ptr);
-      break;
-    case RoutingMode::Physical:
-      result = ResolvePhysicalQuery(query, pool_id, task_ptr);
-      break;
-  }
-
-  // Set ret_node_ on all resolved queries to this node's ID
-  auto *ipc_manager = CHI_IPC;
-  u32 this_node_id = ipc_manager->GetNodeId();
-  for (auto &pq : result) {
-    pq.SetReturnNode(this_node_id);
-  }
-
-  return result;
-}
-
-std::vector<PoolQuery> Worker::ResolveLocalQuery(
-    const PoolQuery &query, const FullPtr<Task> &task_ptr) {
-  // Local routing - process on current node
-  return {query};
-}
-
-std::vector<PoolQuery> Worker::ResolveDynamicQuery(
-    const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
-  // Ensure RunContext is initialized
-  if (!task_ptr->run_ctx_) {
-    task_ptr->run_ctx_ = std::make_unique<RunContext>();
-  }
-
-  // Use the current RunContext that is owned by the task
-  RunContext *run_ctx = task_ptr->run_ctx_.get();
-
-  // Set execution mode to kDynamicSchedule
-  // This tells ExecTask to call RerouteDynamicTask instead of EndTask
-  run_ctx->exec_mode_ = ExecMode::kDynamicSchedule;
-
-  // Return Local query for execution
-  // After task completes, RerouteDynamicTask will re-route with updated
-  // pool_query
-  std::vector<PoolQuery> result;
-  result.push_back(PoolQuery::Local());
-  return result;
-}
-
-std::vector<PoolQuery> Worker::ResolveDirectIdQuery(
-    const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
-  auto *pool_manager = CHI_POOL_MANAGER;
-  if (pool_manager == nullptr) {
-    return {query};  // Fallback to original query
-  }
-
-  // Get the container ID from the query
-  ContainerId container_id = query.GetContainerId();
-
-  // Boundary case optimization: Check if container exists on this node
-  if (pool_manager->HasContainer(pool_id, container_id)) {
-    // Container is local, resolve to Local query
-    return {PoolQuery::Local()};
-  }
-
-  // Get the physical node ID for this container
-  u32 node_id = pool_manager->GetContainerNodeId(pool_id, container_id);
-
-  // Create a Physical PoolQuery to that node
-  return {PoolQuery::Physical(node_id)};
-}
-
-std::vector<PoolQuery> Worker::ResolveDirectHashQuery(
-    const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
-  auto *pool_manager = CHI_POOL_MANAGER;
-  if (pool_manager == nullptr) {
-    return {query};  // Fallback to original query
-  }
-
-  // Get pool info to find the number of containers
-  const PoolInfo *pool_info = pool_manager->GetPoolInfo(pool_id);
-  if (pool_info == nullptr || pool_info->num_containers_ == 0) {
-    return {query};  // Fallback to original query
-  }
-
-  // Hash to get container ID
-  u32 hash_value = query.GetHash();
-  ContainerId container_id = hash_value % pool_info->num_containers_;
-
-  // Boundary case optimization: Check if container exists on this node
-  if (pool_manager->HasContainer(pool_id, container_id)) {
-    // Container is local, resolve to Local query
-    return {PoolQuery::Local()};
-  }
-
-  // Check if the address_map_ points this container to the local node.
-  // After migration, the container may be mapped here but not yet in
-  // containers_ (e.g., forwarded tasks arriving at the destination).
-  // Returning Local() prevents an infinite forwarding loop.
-  u32 mapped_node = pool_manager->GetContainerNodeId(pool_id, container_id);
-  auto *ipc_manager = CHI_IPC;
-  if (mapped_node == ipc_manager->GetNodeId()) {
-    return {PoolQuery::Local()};
-  }
-
-  // Resolve to DirectId so SendIn can dynamically look up the current
-  // node via GetContainerNodeId.  This preserves the container_id through
-  // the routing chain, which is required for retry-after-recovery: if the
-  // original node dies and the container is recovered elsewhere, the retry
-  // queue re-resolves DirectId to the new node.
-  return {PoolQuery::DirectId(container_id)};
-}
-
-std::vector<PoolQuery> Worker::ResolveRangeQuery(
-    const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
-  // Set execution mode to normal execution
-  if (task_ptr->run_ctx_) {
-    RunContext *run_ctx = task_ptr->run_ctx_.get();
-    run_ctx->exec_mode_ = ExecMode::kExec;
-  }
-
-  auto *pool_manager = CHI_POOL_MANAGER;
-  if (pool_manager == nullptr) {
-    return {query};  // Fallback to original query
-  }
-
-  auto *config_manager = CHI_CONFIG_MANAGER;
-  if (config_manager == nullptr) {
-    return {query};  // Fallback to original query
-  }
-
-  u32 range_offset = query.GetRangeOffset();
-  u32 range_count = query.GetRangeCount();
-
-  // Validate range
-  if (range_count == 0) {
-    return {};  // Empty range
-  }
-
-  // Boundary case optimization: Check if single-container range is local
-  if (range_count == 1) {
-    ContainerId container_id = range_offset;
-    if (pool_manager->HasContainer(pool_id, container_id)) {
-      // Container is local, resolve to Local query
-      return {PoolQuery::Local()};
-    }
-    // Check if address_map_ maps this container to the local node
-    u32 mapped_node = pool_manager->GetContainerNodeId(pool_id, container_id);
-    auto *ipc_manager = CHI_IPC;
-    if (mapped_node == ipc_manager->GetNodeId()) {
-      return {PoolQuery::Local()};
-    }
-    // Resolve to DirectId to preserve container info for retry-after-recovery
-    return {PoolQuery::DirectId(container_id)};
-  }
-
-  std::vector<PoolQuery> result_queries;
-
-  // Get neighborhood size from configuration (maximum number of queries)
-  u32 neighborhood_size = config_manager->GetNeighborhoodSize();
-
-  // Calculate queries needed, capped at neighborhood_size
-  u32 ideal_queries = (range_count + neighborhood_size - 1) / neighborhood_size;
-  u32 queries_to_create = std::min(ideal_queries, neighborhood_size);
-
-  // Create one query per container
-  if (queries_to_create <= 1) {
-    queries_to_create = range_count;
-  }
-
-  u32 containers_per_query = range_count / queries_to_create;
-  u32 remaining_containers = range_count % queries_to_create;
-
-  u32 current_offset = range_offset;
-  for (u32 i = 0; i < queries_to_create; ++i) {
-    u32 current_count = containers_per_query;
-    if (i < remaining_containers) {
-      current_count++;  // Distribute remainder across first queries
-    }
-
-    if (current_count > 0) {
-      result_queries.push_back(PoolQuery::Range(current_offset, current_count));
-      current_offset += current_count;
-    }
-  }
-
-  return result_queries;
-}
-
-std::vector<PoolQuery> Worker::ResolveBroadcastQuery(
-    const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
-  auto *pool_manager = CHI_POOL_MANAGER;
-  if (pool_manager == nullptr) {
-    return {query};  // Fallback to original query
-  }
-
-  // Get pool info to find the total number of containers
-  const PoolInfo *pool_info = pool_manager->GetPoolInfo(pool_id);
-  if (pool_info == nullptr || pool_info->num_containers_ == 0) {
-    return {query};  // Fallback to original query
-  }
-
-  // Create a Range query that covers all containers, then resolve it
-  PoolQuery range_query = PoolQuery::Range(0, pool_info->num_containers_);
-  return ResolveRangeQuery(range_query, pool_id, task_ptr);
-}
-
-std::vector<PoolQuery> Worker::ResolvePhysicalQuery(
-    const PoolQuery &query, PoolId pool_id, const FullPtr<Task> &task_ptr) {
-  // Physical routing - query is already resolved to a specific node
-  return {query};
-}
-
-// Note: AllocateContext and DeallocateContext functions have been removed
-// RunContext is now embedded directly in the Task object, eliminating the need
-// for separate allocation/deallocation and context caching
-
-void Worker::BeginTask(Future<Task> &future, Container *container,
-                       TaskLane *lane) {
-  FullPtr<Task> task_ptr = future.GetTaskPtr();
-  if (task_ptr.IsNull()) {
-    return;
-  }
-
-#if HSHM_IS_HOST
-  // Initialize or reset the task's owned RunContext
-  task_ptr->run_ctx_ = std::make_unique<RunContext>();
-  RunContext *run_ctx = task_ptr->run_ctx_.get();
-
-  // Clear and initialize RunContext for new task execution
-  run_ctx->worker_id_ = worker_id_;
-  run_ctx->task_ = task_ptr;        // Store task in RunContext
-  run_ctx->is_yielded_ = false;     // Initially not blocked
-  run_ctx->container_ = container;  // Store container for CHI_CUR_CONTAINER
-  run_ctx->lane_ = lane;            // Store lane for CHI_CUR_LANE
-  run_ctx->event_queue_ = event_queue_;  // Set pointer to worker's event queue
-  run_ctx->future_ = future;             // Store future in RunContext
-  run_ctx->coro_handle_ = nullptr;       // Coroutine not started yet
-
-  // Initialize adaptive polling fields for periodic tasks
-  if (task_ptr->IsPeriodic()) {
-    run_ctx->true_period_ns_ = task_ptr->period_ns_;
-    run_ctx->yield_time_us_ =
-        task_ptr->period_ns_ / 1000.0;  // Initialize with true period
-    run_ctx->did_work_ = false;         // Initially no work done
-  } else {
-    run_ctx->true_period_ns_ = 0.0;
-    run_ctx->yield_time_us_ = 0.0;
-    run_ctx->did_work_ = false;
-  }
-
-  // Mark that RunContext now exists for this task
-  task_ptr->SetFlags(TASK_RUN_CTX_EXISTS);
-
-  // Set current run context
-  SetCurrentRunContext(run_ctx);
-#endif
 }
 
 void Worker::StartCoroutine(const FullPtr<Task> &task_ptr,
@@ -1137,8 +686,8 @@ void Worker::ExecTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   auto *pool_manager = CHI_POOL_MANAGER;
   bool is_plugged = false;
   ContainerId container_id = task_ptr->pool_query_.GetContainerId();
-  Container *exec_container = pool_manager->GetContainer(
-      task_ptr->pool_id_, container_id, is_plugged);
+  Container *exec_container =
+      pool_manager->GetContainer(task_ptr->pool_id_, container_id, is_plugged);
   if (exec_container && !is_plugged) {
     run_ctx->container_ = exec_container;
   }
@@ -1159,7 +708,7 @@ void Worker::ExecTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   }
 
   // Only set did_work_ if the task actually did work
-  if (GetTaskDidWork() && run_ctx->exec_mode_ != ExecMode::kDynamicSchedule) {
+  if (GetTaskDidWork()) {
     did_work_ = true;
   }
 
@@ -1178,20 +727,12 @@ void Worker::ExecTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     return;
   }
 
-  // Check if this is a dynamic scheduling task
-  if (run_ctx->exec_mode_ == ExecMode::kDynamicSchedule) {
-    // Dynamic scheduling - re-route task with updated pool_query
-    RerouteDynamicTask(task_ptr, run_ctx);
-    return;
-  }
-
   // End task execution and cleanup (handles periodic rescheduling internally)
   EndTask(task_ptr, run_ctx, true);
 }
 
 void Worker::EndTaskShmTransfer(const FullPtr<Task> &task_ptr,
-                                RunContext *run_ctx,
-                                Container *container) {
+                                RunContext *run_ctx, Container *container) {
   auto future_shm = run_ctx->future_.GetFutureShm();
 
   // Build SHM context for transfer (output reuses same copy_space)
@@ -1260,25 +801,27 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
         EndTaskShmTransfer(task_ptr, run_ctx, container);
         break;
       case FutureShm::FUTURE_CLIENT_TCP:
-        CHI_IPC->EnqueueNetTask(run_ctx->future_, NetQueuePriority::kClientSendTcp);
+        CHI_IPC->EnqueueNetTask(run_ctx->future_,
+                                NetQueuePriority::kClientSendTcp);
         break;
       case FutureShm::FUTURE_CLIENT_IPC:
-        CHI_IPC->EnqueueNetTask(run_ctx->future_, NetQueuePriority::kClientSendIpc);
+        CHI_IPC->EnqueueNetTask(run_ctx->future_,
+                                NetQueuePriority::kClientSendIpc);
         break;
       default:
         EndTaskShmTransfer(task_ptr, run_ctx, container);
         break;
     }
   } else if (parent_task && parent_task->event_queue_) {
-    // Runtime subtask with parent: enqueue Future to parent worker's event queue.
-    // FUTURE_COMPLETE is NOT set here — it will be set by ProcessEventQueue on the
-    // parent's worker thread. This prevents the race where the parent sees
-    // FUTURE_COMPLETE early, completes, frees memory, and a stale event resumes
-    // a different task that reused the same address.
-    auto *parent_event_queue = reinterpret_cast<
-        hipc::mpsc_ring_buffer<Future<Task, CHI_MAIN_ALLOC_T>,
-                               hshm::ipc::MallocAllocator> *>(
-        parent_task->event_queue_);
+    // Runtime subtask with parent: enqueue Future to parent worker's event
+    // queue. FUTURE_COMPLETE is NOT set here — it will be set by
+    // ProcessEventQueue on the parent's worker thread. This prevents the race
+    // where the parent sees FUTURE_COMPLETE early, completes, frees memory, and
+    // a stale event resumes a different task that reused the same address.
+    auto *parent_event_queue =
+        reinterpret_cast<hipc::mpsc_ring_buffer<Future<Task, CHI_MAIN_ALLOC_T>,
+                                                hshm::ipc::MallocAllocator> *>(
+            parent_task->event_queue_);
     bool was_empty = parent_event_queue->Empty();
     parent_event_queue->Emplace(run_ctx->future_);
     if (was_empty && parent_task->lane_) {
@@ -1289,32 +832,6 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     // directly so the client's Wait() can see it
     future_shm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
   }
-}
-
-void Worker::RerouteDynamicTask(const FullPtr<Task> &task_ptr,
-                                RunContext *run_ctx) {
-  // Dynamic scheduling complete - now re-route task with updated pool_query
-  // The task's pool_query_ should have been updated during execution
-  // (e.g., from Dynamic to Local or Broadcast)
-
-  Container *container = run_ctx->container_;
-  TaskLane *lane = run_ctx->lane_;
-
-  // Reset flags so the task can be re-routed and executed again
-  task_ptr->ClearFlags(TASK_STARTED | TASK_ROUTED);
-
-  // Re-route the task using the updated pool_query
-  if (RouteTask(run_ctx->future_, lane, container)) {
-    // Avoids recursive call to RerouteDynamicTask
-    if (run_ctx->exec_mode_ == ExecMode::kDynamicSchedule) {
-      EndTask(task_ptr, run_ctx, false);
-      return;
-    }
-    // Successfully re-routed - execute the task again
-    // Note: ExecTask will call BeginFiber since TASK_STARTED is unset
-    ExecTask(task_ptr, run_ctx, false);
-  }
-  // RouteTask returned false means task was routed globally
 }
 
 void Worker::ProcessBlockedQueue(std::queue<RunContext *> &queue,
@@ -1417,7 +934,7 @@ void Worker::ProcessPeriodicQueue(std::queue<RunContext *> &queue,
       run_ctx->block_start_ = batch_timestamp;
 
       // Route task again - this will handle both local and distributed routing
-      if (RouteTask(run_ctx->future_, run_ctx->lane_, container)) {
+      if (CHI_IPC->RouteTask(run_ctx->future_)) {
         // Routing successful, execute the task
         ExecTask(run_ctx->task_, run_ctx, is_started);
 
@@ -1616,10 +1133,10 @@ void Worker::ProcessRetryQueue() {
     }
 
     // Re-resolve the pool query for this task
-    std::vector<PoolQuery> pool_queries =
-        ResolvePoolQuery(task_ptr->pool_query_, task_ptr->pool_id_, task_ptr);
+    std::vector<PoolQuery> pool_queries = CHI_IPC->ResolvePoolQuery(
+        task_ptr->pool_query_, task_ptr->pool_id_, task_ptr);
 
-    bool is_local = IsTaskLocal(task_ptr, pool_queries);
+    bool is_local = CHI_IPC->IsTaskLocal(task_ptr, pool_queries);
     if (is_local) {
       // Container is back / available locally — check plug state
       auto *pool_manager = CHI_POOL_MANAGER;
@@ -1642,7 +1159,7 @@ void Worker::ProcessRetryQueue() {
       }
     } else {
       // Container migrated away — route globally
-      RouteGlobal(run_ctx->future_, pool_queries);
+      CHI_IPC->RouteGlobal(run_ctx->future_, pool_queries);
     }
   }
 }
@@ -1685,6 +1202,5 @@ RunContext *GetCurrentRunContextFromWorker() {
   }
   return nullptr;
 }
-
 
 }  // namespace chi

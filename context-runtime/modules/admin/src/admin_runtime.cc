@@ -139,6 +139,25 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
   co_return;
 }
 
+chi::PoolQuery Runtime::ScheduleTask(const hipc::FullPtr<chi::Task> &task) {
+  using namespace chimaera::admin;
+  switch (task->method_) {
+    case Method::kGetOrCreatePool: {
+      auto typed = task.template Cast<
+          GetOrCreatePoolTask<CreateParams>>();
+      auto *pool_manager = CHI_POOL_MANAGER;
+      std::string pool_name = typed->pool_name_.str();
+      chi::PoolId existing_pool_id = pool_manager->FindPoolByName(pool_name);
+      if (!existing_pool_id.IsNull()) {
+        return chi::PoolQuery::Local();
+      }
+      return chi::PoolQuery::Broadcast();
+    }
+    default:
+      return task->pool_query_;
+  }
+}
+
 chi::TaskResume Runtime::GetOrCreatePool(
     hipc::FullPtr<
         chimaera::admin::GetOrCreatePoolTask<chimaera::admin::CreateParams>>
@@ -149,36 +168,9 @@ chi::TaskResume Runtime::GetOrCreatePool(
        "Admin::GetOrCreatePool ENTRY: task->do_compose_={}, task->is_admin_={}",
        task->do_compose_, task->is_admin_);
 
-  // Get pool manager once - used by both dynamic scheduling and normal
-  // execution
+  // Get pool manager and pool name
   auto *pool_manager = CHI_POOL_MANAGER;
-
-  // Extract pool name once
   std::string pool_name = task->pool_name_.str();
-
-  // Check if this is dynamic scheduling mode
-  if (rctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
-    // Dynamic routing with cache optimization
-    // Check if pool exists locally first to avoid unnecessary broadcast
-    HLOG(kDebug,
-         "Admin: Dynamic routing for GetOrCreatePool - checking local cache");
-
-    chi::PoolId existing_pool_id = pool_manager->FindPoolByName(pool_name);
-
-    if (!existing_pool_id.IsNull()) {
-      // Pool exists locally - change pool query to Local
-      HLOG(kDebug, "Admin: Pool '{}' found locally (ID: {}), using Local query",
-           pool_name, existing_pool_id);
-      task->pool_query_ = chi::PoolQuery::Local();
-    } else {
-      // Pool doesn't exist locally - update pool query to Broadcast for
-      // creation
-      HLOG(kDebug, "Admin: Pool '{}' not found locally, broadcasting creation",
-           pool_name);
-      task->pool_query_ = chi::PoolQuery::Broadcast();
-    }
-    co_return;
-  }
 
   // Pool get-or-create operation logic (IS_ADMIN=false)
   HLOG(kDebug, "Admin: Executing GetOrCreatePool task - ChiMod: {}, Pool: {}",
@@ -510,7 +502,11 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
     // Send using Lightbeam asynchronously (non-blocking)
     // Note: No lock needed - single net worker processes all Send/Recv tasks
     hshm::lbm::LbmContext ctx(0);  // Non-blocking async send
+    HLOG(kDebug, "[SendIn] Task {} sending to node {} via lightbeam",
+         origin_task->task_id_, target_node_id);
     int rc = lbm_transport->Send(archive, ctx);
+    HLOG(kDebug, "[SendIn] Task {} lightbeam Send rc={}",
+         origin_task->task_id_, rc);
 
     if (rc != 0) {
       HLOG(kError,
@@ -749,7 +745,8 @@ void Runtime::RecvIn(hipc::FullPtr<RecvTask> task,
         (static_cast<size_t>(task_ptr->task_id_.replica_id_) * 0x9e3779b97f4a7c15ULL);
     recv_map_[recv_key] = task_ptr;
 
-    HLOG(kDebug, "[RecvIn] Task {}", task_ptr->task_id_);
+    HLOG(kDebug, "[RecvIn] Task {} method={} pool_id={} dispatching to workers",
+         task_ptr->task_id_, task_ptr->method_, task_ptr->pool_id_);
 
     // Send task for execution using IpcManager::Send with awake_event=false
     // Note: This creates a Future and enqueues it to worker lanes
@@ -911,9 +908,13 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
       // Note: No lock needed - single net worker processes all Send/Recv tasks
       send_map_.erase(net_key);
 
-      // Add task back to blocked queue for both periodic and non-periodic tasks
-      // ExecTask will handle checking if the task is complete and ending it
-      // properly
+      // Set container in origin RunContext (may be null if task was routed
+      // globally without passing through RouteLocal, e.g. TASK_FORCE_NET)
+      if (container) {
+        origin_rctx->container_ = container;
+      }
+
+      // Complete the origin task via EndTask
       auto *worker = CHI_CUR_WORKER;
       worker->EndTask(origin_task, origin_rctx, true);
     }
@@ -963,13 +964,17 @@ chi::TaskResume Runtime::Recv(hipc::FullPtr<RecvTask> task,
   rctx.did_work_ = true;
 
   chi::MsgType msg_type = archive.GetMsgType();
+  HLOG(kDebug, "[Recv] Received message with msg_type={}",
+       static_cast<int>(msg_type));
 
   // Dispatch based on message type
   switch (msg_type) {
     case chi::MsgType::kSerializeIn:
+      HLOG(kDebug, "[Recv] Dispatching to RecvIn");
       RecvIn(task, archive, lbm_transport);
       break;
     case chi::MsgType::kSerializeOut:
+      HLOG(kDebug, "[Recv] Dispatching to RecvOut");
       RecvOut(task, archive, lbm_transport);
       break;
     case chi::MsgType::kHeartbeat:
