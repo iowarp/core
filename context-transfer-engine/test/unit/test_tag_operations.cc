@@ -78,9 +78,11 @@ class TagTestFixture {
     REQUIRE(!home_dir.empty());
     test_storage_path_ = home_dir + "/cte_tag_test.dat";
 
-    // Clean up existing test file
-    if (fs::exists(test_storage_path_)) {
-      fs::remove(test_storage_path_);
+    // Clean up existing test file (use error_code to avoid throwing on Windows
+    // where the file may be locked by bdev from a previous test in the same run)
+    std::error_code ec;
+    if (fs::exists(test_storage_path_, ec)) {
+      fs::remove(test_storage_path_, ec);
     }
 
     // Initialize Chimaera and CTE client once
@@ -126,8 +128,12 @@ class TagTestFixture {
 
   ~TagTestFixture() {
     INFO("=== Cleaning up Tag Test Environment ===");
-    if (fs::exists(test_storage_path_)) {
-      fs::remove(test_storage_path_);
+    std::error_code ec;
+    if (fs::exists(test_storage_path_, ec)) {
+      fs::remove(test_storage_path_, ec);
+      if (ec) {
+        INFO("Note: Could not remove test file (may be locked by bdev): " << ec.message());
+      }
     }
   }
 

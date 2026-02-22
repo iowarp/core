@@ -84,12 +84,14 @@ class CoreClientConfigFixture {
     test_storage_path_ = home_dir + "/cte_client_test.dat";
     test_config_path_ = home_dir + "/cte_test_config.yaml";
 
-    // Clean up existing files
-    if (fs::exists(test_storage_path_)) {
-      fs::remove(test_storage_path_);
+    // Clean up existing files (use error_code to avoid throwing on Windows
+    // where files may be locked by bdev from a previous test in the same run)
+    std::error_code ec;
+    if (fs::exists(test_storage_path_, ec)) {
+      fs::remove(test_storage_path_, ec);
     }
-    if (fs::exists(test_config_path_)) {
-      fs::remove(test_config_path_);
+    if (fs::exists(test_config_path_, ec)) {
+      fs::remove(test_config_path_, ec);
     }
 
     // Initialize Chimaera and CTE once
@@ -124,11 +126,12 @@ class CoreClientConfigFixture {
 
   ~CoreClientConfigFixture() {
     INFO("=== Cleaning up Core Client/Config Test Environment ===");
-    if (fs::exists(test_storage_path_)) {
-      fs::remove(test_storage_path_);
+    std::error_code ec;
+    if (fs::exists(test_storage_path_, ec)) {
+      fs::remove(test_storage_path_, ec);
     }
-    if (fs::exists(test_config_path_)) {
-      fs::remove(test_config_path_);
+    if (fs::exists(test_config_path_, ec)) {
+      fs::remove(test_config_path_, ec);
     }
   }
 

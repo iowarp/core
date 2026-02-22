@@ -118,11 +118,12 @@ class TieredStorageStressFixture {
   }
 
   void Cleanup() {
-    if (fs::exists(config_path_)) {
-      fs::remove(config_path_);
+    std::error_code ec;
+    if (fs::exists(config_path_, ec)) {
+      fs::remove(config_path_, ec);
     }
-    if (fs::exists(file_storage_path_)) {
-      fs::remove(file_storage_path_);
+    if (fs::exists(file_storage_path_, ec)) {
+      fs::remove(file_storage_path_, ec);
     }
   }
 

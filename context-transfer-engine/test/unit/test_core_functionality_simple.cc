@@ -89,10 +89,14 @@ public:
 
     test_storage_path_ = home_dir + "/cte_test_storage.dat";
     
-    // Clean up any existing test file
-    if (fs::exists(test_storage_path_)) {
-      fs::remove(test_storage_path_);
-      INFO("Cleaned up existing test file: " << test_storage_path_);
+    // Clean up any existing test file (use error_code to avoid throwing on
+    // Windows where the file may be locked by bdev)
+    std::error_code ec;
+    if (fs::exists(test_storage_path_, ec)) {
+      fs::remove(test_storage_path_, ec);
+      if (!ec) {
+        INFO("Cleaned up existing test file: " << test_storage_path_);
+      }
     }
     
     // Initialize Chimaera runtime and client for proper functionality
@@ -117,10 +121,14 @@ public:
     // Reset core client
     core_client_.reset();
     
-    // Cleanup test storage file
-    if (fs::exists(test_storage_path_)) {
-      fs::remove(test_storage_path_);
-      INFO("Cleaned up test file: " << test_storage_path_);
+    // Cleanup test storage file (use error_code to avoid throwing on Windows
+    // where the file may be locked by bdev)
+    std::error_code ec;
+    if (fs::exists(test_storage_path_, ec)) {
+      fs::remove(test_storage_path_, ec);
+      if (!ec) {
+        INFO("Cleaned up test file: " << test_storage_path_);
+      }
     }
     
     // Cleanup handled automatically by framework

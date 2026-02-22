@@ -81,9 +81,11 @@ public:
     REQUIRE(!home_dir.empty());
     test_storage_path_ = home_dir + "/cte_unit_test.dat";
     
-    // Clean up any existing test file
-    if (fs::exists(test_storage_path_)) {
-      fs::remove(test_storage_path_);
+    // Clean up any existing test file (use error_code to avoid throwing on
+    // Windows where the file may be locked by bdev)
+    std::error_code ec;
+    if (fs::exists(test_storage_path_, ec)) {
+      fs::remove(test_storage_path_, ec);
     }
     
     // Create unique pool ID for this test session
@@ -94,8 +96,9 @@ public:
   }
   
   ~CTECoreTestFixture() {
-    if (fs::exists(test_storage_path_)) {
-      fs::remove(test_storage_path_);
+    std::error_code ec;
+    if (fs::exists(test_storage_path_, ec)) {
+      fs::remove(test_storage_path_, ec);
     }
   }
   

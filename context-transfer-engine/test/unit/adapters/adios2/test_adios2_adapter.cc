@@ -107,16 +107,18 @@ public:
   }
 
   ~ADIOS2AdapterTestFixture() {
-    // Clean up test config
-    if (fs::exists(test_config_path_)) {
-      fs::remove(test_config_path_);
+    // Clean up test config (use error_code to avoid throwing on Windows
+    // where files may be locked)
+    std::error_code ec;
+    if (fs::exists(test_config_path_, ec)) {
+      fs::remove(test_config_path_, ec);
     }
 
     // Clean up all test output files
     for (size_t i = 0; i <= test_counter_.load(); ++i) {
       std::string test_path = test_output_base_path_ + "_" + std::to_string(i) + ".bp";
-      if (fs::exists(test_path)) {
-        fs::remove_all(test_path);
+      if (fs::exists(test_path, ec)) {
+        fs::remove_all(test_path, ec);
       }
     }
   }

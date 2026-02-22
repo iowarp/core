@@ -159,9 +159,11 @@
 
      test_storage_path_ = home_dir + "/cte_query_test.dat";
 
-     // Clean up any existing test file
-     if (fs::exists(test_storage_path_)) {
-       fs::remove(test_storage_path_);
+     // Clean up any existing test file (use error_code to avoid throwing on
+     // Windows where the file may be locked by bdev)
+     std::error_code ec;
+     if (fs::exists(test_storage_path_, ec)) {
+       fs::remove(test_storage_path_, ec);
      }
 
      // Initialize Chimaera and CTE client once per test suite
@@ -190,9 +192,11 @@
    }
 
    ~CTEQueryTestFixture() {
-     // Clean up test storage
-     if (fs::exists(test_storage_path_)) {
-       fs::remove(test_storage_path_);
+     // Clean up test storage (use error_code to avoid throwing on Windows
+     // where the file may be locked by bdev)
+     std::error_code ec;
+     if (fs::exists(test_storage_path_, ec)) {
+       fs::remove(test_storage_path_, ec);
      }
    }
 
