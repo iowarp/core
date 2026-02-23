@@ -18,7 +18,7 @@ To install from this repository:
 
 ```bash
 # Clone the IOWarp Core repository
-git clone https://github.com/iowarp/core.git
+git clone https://github.com/iowarp/clio-core.git
 cd core
 
 # Install using vcpkg with overlay

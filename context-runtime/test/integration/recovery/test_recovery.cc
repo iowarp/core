@@ -88,6 +88,7 @@ class RecoveryTestFixture {
       bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
       if (success) {
         g_initialized = true;
+        SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
         std::this_thread::sleep_for(500ms);
         REQUIRE(CHI_CHIMAERA_MANAGER != nullptr);
         REQUIRE(CHI_IPC != nullptr);

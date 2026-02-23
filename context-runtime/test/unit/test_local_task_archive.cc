@@ -52,6 +52,7 @@ public:
     // Initialize Chimaera with client mode and runtime
     bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
     REQUIRE(success);
+    SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
 
     // Give runtime time to initialize
     std::this_thread::sleep_for(std::chrono::milliseconds(500));

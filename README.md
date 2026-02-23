@@ -141,8 +141,8 @@ Interactive tools and interfaces for exploring scientific data contents and meta
 IOWarp Core uses git submodules for several dependencies. Always clone with `--recurse-submodules`:
 
 ```bash
-git clone --recurse-submodules https://github.com/iowarp/iowarp-core.git
-cd iowarp-core
+git clone --recurse-submodules https://github.com/iowarp/clio-core.git
+cd clio-core
 ```
 
 If you already cloned without submodules, initialize them with:

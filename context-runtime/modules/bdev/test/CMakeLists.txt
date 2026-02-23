@@ -41,103 +41,48 @@ set_target_properties(${BDEV_TEST_TARGET} PROPERTIES
 
 # Enable CTest integration if testing is enabled
 if(WRP_CORE_ENABLE_TESTS)
-  # Bdev ChiMod Tests
-  add_test(
-    NAME cr_bdev_container_creation_tests
-    COMMAND ${BDEV_TEST_TARGET}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_bdev_container_creation_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-  )
-
-  add_test(
-    NAME cr_bdev_block_allocation_tests
-    COMMAND ${BDEV_TEST_TARGET}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_bdev_block_allocation_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-  )
-
-  add_test(
-    NAME cr_bdev_io_operations_tests
-    COMMAND ${BDEV_TEST_TARGET}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_bdev_io_operations_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-  )
-
-  add_test(
-    NAME cr_bdev_async_operations_tests
-    COMMAND ${BDEV_TEST_TARGET}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_bdev_async_operations_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-  )
-
-  add_test(
-    NAME cr_bdev_free_management_tests
-    COMMAND ${BDEV_TEST_TARGET}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_bdev_free_management_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-  )
-
-  add_test(
-    NAME cr_bdev_performance_tests
-    COMMAND ${BDEV_TEST_TARGET}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_bdev_performance_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-  )
-
-  add_test(
-    NAME cr_bdev_error_handling_tests
-    COMMAND ${BDEV_TEST_TARGET}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_bdev_error_handling_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-  )
-
-  add_test(
-    NAME cr_bdev_cleanup_tests
-    COMMAND ${BDEV_TEST_TARGET}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-  set_tests_properties(cr_bdev_cleanup_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-  )
-
-  # Comprehensive bdev test
+  # Comprehensive bdev test (runs all tests; explicit TCP/IPC auto-skip
+  # because default IPC mode is SHM and the skip guards filter them out)
   add_test(
     NAME cr_all_bdev_tests
     COMMAND ${BDEV_TEST_TARGET}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
   set_tests_properties(cr_all_bdev_tests PROPERTIES
-    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    TIMEOUT 180
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1"
   )
 
-  # Set test properties
-  set_tests_properties(
-    cr_bdev_container_creation_tests
-    cr_bdev_block_allocation_tests
-    cr_bdev_io_operations_tests
-    cr_bdev_async_operations_tests
-    cr_bdev_free_management_tests
-    cr_bdev_performance_tests
-    cr_bdev_error_handling_tests
-    cr_bdev_cleanup_tests
-    cr_all_bdev_tests
-    PROPERTIES
-      TIMEOUT 180
-      ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1"
+  # Dedicated explicit backend tests — each sets CHI_IPC_MODE so the
+  # corresponding TEST_CASE runs while the other two auto-skip.
+  add_test(
+    NAME cr_bdev_explicit_backend_shm
+    COMMAND ${BDEV_TEST_TARGET} "bdev_file_explicit_backend_shm"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_bdev_explicit_backend_shm PROPERTIES
+    TIMEOUT 180
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1;CHI_IPC_MODE=SHM"
+  )
+
+  add_test(
+    NAME cr_bdev_explicit_backend_tcp
+    COMMAND ${BDEV_TEST_TARGET} "bdev_file_explicit_backend_tcp"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_bdev_explicit_backend_tcp PROPERTIES
+    TIMEOUT 180
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1;CHI_IPC_MODE=TCP"
+  )
+
+  add_test(
+    NAME cr_bdev_explicit_backend_ipc
+    COMMAND ${BDEV_TEST_TARGET} "bdev_file_explicit_backend_ipc"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_bdev_explicit_backend_ipc PROPERTIES
+    TIMEOUT 180
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1;CHI_IPC_MODE=IPC"
   )
 endif()
 

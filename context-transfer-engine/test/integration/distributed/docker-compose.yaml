@@ -18,8 +18,11 @@ services:
   # Node 1 - Primary node that runs tests
   cte-node1:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: cte-distributed-node1
     hostname: iowarp-node1
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       cte-cluster:
         ipv4_address: 172.26.0.10
@@ -83,8 +86,11 @@ services:
   # Node 2 - Secondary node
   cte-node2:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: cte-distributed-node2
     hostname: iowarp-node2
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       cte-cluster:
         ipv4_address: 172.26.0.11
@@ -119,8 +125,11 @@ services:
   # Node 3 - Secondary node
   cte-node3:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: cte-distributed-node3
     hostname: iowarp-node3
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       cte-cluster:
         ipv4_address: 172.26.0.12
@@ -155,8 +164,11 @@ services:
   # Node 4 - Secondary node
   cte-node4:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: cte-distributed-node4
     hostname: iowarp-node4
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       cte-cluster:
         ipv4_address: 172.26.0.13

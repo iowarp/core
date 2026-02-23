@@ -130,6 +130,11 @@ private:
   chi::TaskResume Decompress(hipc::FullPtr<DecompressTask> task,
                               chi::RunContext &ctx);
 
+  /**
+   * Schedule a task by resolving Dynamic pool queries.
+   */
+  chi::PoolQuery ScheduleTask(const hipc::FullPtr<chi::Task> &task) override;
+
   // Autogen-provided methods
   void Init(const chi::PoolId &pool_id, const std::string &pool_name,
             chi::u32 container_id = 0) override;

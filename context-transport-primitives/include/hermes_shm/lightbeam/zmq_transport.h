@@ -69,6 +69,21 @@ static inline void ClearZmqRecvHandles(LbmMeta<> &meta) {
   }
 }
 
+/** Action that reads ZMQ_EVENTS when epoll fires on ZMQ_FD.
+ *  Required by ZMQ docs: the FD is edge-triggered and won't
+ *  re-arm until the application reads ZMQ_EVENTS. */
+class ZmqFiredAction : public EventAction {
+ public:
+  void *socket_;
+  explicit ZmqFiredAction(void *socket) : socket_(socket) {}
+  void Run(const EventInfo &event) override {
+    (void)event;
+    int zmq_events = 0;
+    size_t opt_len = sizeof(zmq_events);
+    zmq_getsockopt(socket_, ZMQ_EVENTS, &zmq_events, &opt_len);
+  }
+};
+
 class ZeroMqTransport : public Transport {
  private:
   static void* GetSharedContext() {
@@ -79,6 +94,14 @@ class ZeroMqTransport : public Transport {
       std::mutex mtx;
       ~CtxOwner() {
         if (ctx) {
+          // zmq_ctx_shutdown() causes all blocking ZMQ calls on open sockets
+          // to return immediately with ETERM.  This unblocks any background
+          // receive threads (e.g. RecvZmqClientThread) that are polling the
+          // socket, allowing them to exit cleanly.  zmq_ctx_destroy() would
+          // otherwise block forever if a socket is still open (because the
+          // Chimaera singleton is heap-allocated and its destructor -- which
+          // calls ClientFinalize / closes the socket -- is never invoked).
+          zmq_ctx_shutdown(ctx);
           zmq_ctx_destroy(ctx);
           ctx = nullptr;
         }
@@ -100,7 +123,8 @@ class ZeroMqTransport : public Transport {
       : Transport(mode),
         addr_(addr),
         protocol_(protocol),
-        port_(port) {
+        port_(port),
+        zmq_fired_action_(nullptr) {
     type_ = TransportType::kZeroMq;
     sock::InitSocketLib();
 
@@ -172,6 +196,7 @@ class ZeroMqTransport : public Transport {
       }
 
       HLOG(kDebug, "ZeroMqTransport(DEALER) connected to {} (pid={})", full_url, pid);
+      zmq_fired_action_.socket_ = socket_;
     } else {
       // ROUTER socket for server
       ctx_ = zmq_ctx_new();
@@ -207,6 +232,7 @@ class ZeroMqTransport : public Transport {
         throw std::runtime_error(err);
       }
       HLOG(kDebug, "ZeroMqTransport(ROUTER) bound successfully to {}", full_url);
+      zmq_fired_action_.socket_ = socket_;
     }
   }
 
@@ -214,7 +240,7 @@ class ZeroMqTransport : public Transport {
     HLOG(kDebug, "ZeroMqTransport destructor - closing socket to {}:{}", addr_,
          port_);
 
-    int linger = 5000;
+    int linger = 0;
     zmq_setsockopt(socket_, ZMQ_LINGER, &linger, sizeof(linger));
 
     zmq_close(socket_);
@@ -459,7 +485,7 @@ class ZeroMqTransport : public Transport {
     size_t fd_size = sizeof(fd);
     zmq_getsockopt(socket_, ZMQ_FD, &fd, reinterpret_cast<::size_t *>(&fd_size));
     if (fd >= 0) {
-      em.AddEvent(fd, kDefaultReadEvent);
+      em.AddEvent(fd, kDefaultReadEvent, nullptr);
     }
   }
 
@@ -472,6 +498,7 @@ class ZeroMqTransport : public Transport {
   void* ctx_;
   bool owns_ctx_;
   void* socket_;
+  ZmqFiredAction zmq_fired_action_;
 };
 
 }  // namespace hshm::lbm

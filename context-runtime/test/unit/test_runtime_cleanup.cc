@@ -59,6 +59,7 @@ static bool InitializeRuntime() {
   if (!initialized) {
     bool success = CHIMAERA_INIT(ChimaeraMode::kClient, true);
     initialized = success;
+    if (success) SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
     return success;
   }
   return true;

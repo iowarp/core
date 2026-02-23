@@ -173,8 +173,9 @@ pid_t StartServerProcess() {
 bool WaitForServer(int max_attempts = 50) {
   // The main shared memory segment name is "chi_main_segment_${USER}"
   const char *user = std::getenv("USER");
-  std::string memfd_path = std::string("/tmp/chimaera_memfd/chi_main_segment_") +
-                           (user ? user : "");
+  std::string memfd_path = std::string("/tmp/chimaera_") +
+                           (user ? user : "unknown") +
+                           "/chi_main_segment_" + (user ? user : "");
 
   for (int i = 0; i < max_attempts; ++i) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -196,8 +197,9 @@ bool WaitForServer(int max_attempts = 50) {
  */
 void CleanupSharedMemory() {
   const char *user = std::getenv("USER");
-  std::string memfd_path = std::string("/tmp/chimaera_memfd/chi_main_segment_") +
-                           (user ? user : "");
+  std::string memfd_path = std::string("/tmp/chimaera_") +
+                           (user ? user : "unknown") +
+                           "/chi_main_segment_" + (user ? user : "");
   unlink(memfd_path.c_str());
 }
 

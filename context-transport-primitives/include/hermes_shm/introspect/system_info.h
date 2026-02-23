@@ -208,6 +208,15 @@ class SystemInfo {
 
   HSHM_DLL static void Unsetenv(const char *name);
 
+  /** Get the per-user chimaera tmp directory path (/tmp/chimaera_$USER) */
+  HSHM_DLL static std::string GetMemfdDir();
+
+  /** Get the full path for a named file in the memfd directory */
+  HSHM_DLL static std::string GetMemfdPath(const std::string &name);
+
+  /** Ensure the per-user memfd directory exists */
+  HSHM_DLL static void EnsureMemfdDir();
+
   HSHM_DLL static bool IsProcessAlive(int pid);
 
   HSHM_DLL static std::string GetModuleDirectory();

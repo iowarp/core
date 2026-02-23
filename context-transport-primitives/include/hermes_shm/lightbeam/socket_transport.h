@@ -271,11 +271,12 @@ class SocketTransport : public Transport {
       if (em_) {
         auto it = std::find_if(fired_events_.begin(), fired_events_.end(),
             [this](const EventInfo &e) { return e.trigger_.fd_ == fd_; });
-        if (it == fired_events_.end()) { info.rc = EAGAIN; return info; }
+        if (it != fired_events_.end()) {
+          fired_events_.erase(it);
+        }
       }
       info.rc = RecvAll(fd_, meta, ctx);
       info.fd_ = fd_;
-      if (info.rc == EAGAIN) RemoveFiredEvent(fd_);
       return info;
     }
 
@@ -302,11 +303,11 @@ class SocketTransport : public Transport {
         }
         return info;
       }
-      info.rc = EAGAIN;
-      return info;
+      // Fall through to poll all client fds directly when fired_events_
+      // is exhausted (data may be on sockets that epoll hasn't re-armed yet)
     }
 
-    // Fallback: no EventManager — poll all client fds directly
+    // Poll all client fds directly
     for (size_t i = 0; i < client_fds_.size(); ++i) {
       sock::socket_t fd = client_fds_[i];
       info.rc = RecvAll(fd, meta, ctx);

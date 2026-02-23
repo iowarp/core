@@ -79,7 +79,7 @@ about:
     IOWarp Core provides a unified framework for context-aware data management
     in scientific workflows, including the Context Transfer Engine (CTE),
     Context Assimilation Engine (CAE), and Context Exploration Engine (CEE).
-  repository: https://github.com/iowarp/iowarp-core
+  repository: https://github.com/iowarp/clio-core
   documentation: https://docs.iowarp.ai
 
 extra:

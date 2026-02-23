@@ -60,6 +60,7 @@ class ChimaeraTestFixture {
     // Use the unified Chimaera initialization
     bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
     REQUIRE(success);
+    SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
   }
 
   ~ChimaeraTestFixture() {

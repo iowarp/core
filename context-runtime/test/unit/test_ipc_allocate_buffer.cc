@@ -46,7 +46,11 @@
 
 namespace {
 // Test setup helper - same pattern as other tests
-bool initialize_chimaera() { return chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true); }
+bool initialize_chimaera() {
+  bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
+  if (success) SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
+  return success;
+}
 }  // namespace
 
 TEST_CASE("CHI_IPC AllocateBuffer basic functionality",

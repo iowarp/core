@@ -26,8 +26,8 @@ git checkout v${SPACK_VERSION}
 . ${SPACK_DIR}/share/spack/setup-env.sh
 
 # Clone iowarp-install
-git clone https://github.com/iowarp/iowarp-install.git
-spack repo add iowarp-install/iowarp-spack
+git clone --recurse-submodules https://github.com/iowarp/clio-core.git
+spack repo add clio-core/installers/spack
 
 # This will allow Spack to skip building some packages that are directly
 spack external find

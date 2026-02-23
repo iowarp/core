@@ -59,6 +59,10 @@ start_docker_cluster() {
     log_info "Starting Docker cluster with $NUM_NODES nodes..."
     cd "$SCRIPT_DIR"
 
+    # Pass host UID/GID so container processes match host file ownership
+    export HOST_UID=$(id -u)
+    export HOST_GID=$(id -g)
+
     # Start containers in detached mode
     docker compose up -d
 
@@ -100,8 +104,10 @@ matches_filter() {
 # $1: test filter name
 run_single_test() {
     local filter="$1"
+    local ipc_mode="${2:-}"
     docker exec iowarp-distributed-node1 bash -c "
         export CHI_WITH_RUNTIME=0
+        ${ipc_mode:+export CHI_IPC_MODE=$ipc_mode}
         chimaera_bdev_chimod_tests '$filter'
     "
 }
@@ -121,7 +127,7 @@ run_test_docker_direct() {
         local test_name="bdev_file_explicit_backend_${mode}"
         if matches_filter "$test_name" "$TEST_FILTER"; then
             log_info "Running $test_name (CHI_IPC_MODE=${mode^^})..."
-            run_single_test "$test_name"
+            run_single_test "$test_name" "${mode^^}"
             log_success "$test_name passed"
         fi
     done

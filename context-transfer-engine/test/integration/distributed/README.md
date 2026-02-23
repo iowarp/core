@@ -21,7 +21,7 @@ This directory contains configuration for running Content Transfer Engine (CTE) 
 ## Prerequisites
 
 1. Docker and Docker Compose installed
-2. IOWarp runtime dependencies image available: `iowarp/iowarp:latest`
+2. IOWarp runtime dependencies image available: `iowarp/clio-core:latest`
 3. Spack environment with `iowarp-runtime` package
 4. At least 64GB RAM available for containers (16GB per node)
 

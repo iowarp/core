@@ -64,6 +64,7 @@ void EnsureInitialized() {
   if (!g_initialized) {
     chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
     g_initialized = true;
+    SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
   }
 }
 
@@ -13776,7 +13777,7 @@ TEST_CASE("Autogen - DefaultScheduler AdjustPolling", "[autogen][scheduler][adju
   SECTION("RuntimeMapTask with null worker") {
     chi::DefaultScheduler sched;
     chi::Future<chi::Task> f;
-    chi::u32 result = sched.RuntimeMapTask(nullptr, f);
+    chi::u32 result = sched.RuntimeMapTask(nullptr, f, nullptr);
     REQUIRE(result == 0);
     INFO("RuntimeMapTask(nullptr) returned 0");
   }
@@ -13931,18 +13932,6 @@ TEST_CASE("Autogen - RunContext struct", "[autogen][types][runcontext]") {
   }
 }
 
-// ==========================================================================
-// ExecMode enum tests
-// ==========================================================================
-TEST_CASE("Autogen - ExecMode enum", "[autogen][types][execmode]") {
-  SECTION("Enum values") {
-    chi::RunContext rctx;
-    rctx.exec_mode_ = chi::ExecMode::kExec;
-    REQUIRE(rctx.exec_mode_ == chi::ExecMode::kExec);
-    rctx.exec_mode_ = chi::ExecMode::kDynamicSchedule;
-    REQUIRE(rctx.exec_mode_ == chi::ExecMode::kDynamicSchedule);
-  }
-}
 
 // ==========================================================================
 // IpcManager accessor tests (safe, non-network methods)

@@ -85,6 +85,7 @@ public:
   ChimaeraTestFixture() {
     // Initialize Chimaera (client with embedded runtime)
     chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
+    SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
 
     // Create admin pool
     admin_client_ =

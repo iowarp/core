@@ -23,7 +23,7 @@ chimaera = "iowarp_core._cli:main"
 
 [project.urls]
 Homepage = "https://iowarp.ai"
-Repository = "https://github.com/iowarp/iowarp-core"
+Repository = "https://github.com/iowarp/clio-core"
 Documentation = "https://docs.iowarp.ai"
 
 [tool.scikit-build]

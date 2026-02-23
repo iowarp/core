@@ -123,7 +123,8 @@ struct IpcSharedHeader {
   u32 num_sched_queues;     // Number of scheduling queues for task distribution
   u64 node_id;        // 64-bit hash of the hostname for node identification
   pid_t runtime_pid;  // PID of the runtime process (for tgkill)
-  std::atomic<u64> server_generation;  // Monotonic counter, set from epoch nanos at init
+  std::atomic<u64>
+      server_generation;  // Monotonic counter, set from epoch nanos at init
 };
 
 /**
@@ -527,7 +528,6 @@ class IpcManager {
 #else  // HOST PATH
     bool is_runtime = CHI_CHIMAERA_MANAGER->IsRuntime();
     Worker *worker = CHI_CUR_WORKER;
-    bool use_runtime_path = is_runtime && worker != nullptr;
 
     // Client TCP/IPC path: serialize and send via ZMQ
     // Runtime always uses SHM path internally, even from the main thread
@@ -540,41 +540,53 @@ class IpcManager {
       return SendShm(task_ptr);
     }
 
-    // Runtime SHM path: pointer future (no serialization, same address space)
-    Future<TaskT> future = MakePointerFuture(task_ptr);
-
-    // Set parent task RunContext from current worker (runtime only)
-    if (use_runtime_path) {
-      RunContext *run_ctx = worker->GetCurrentRunContext();
-      if (run_ctx != nullptr) {
-        future.SetParentTask(run_ctx);
-      }
-    }
-
-    // 4. Map task to lane using scheduler
-    LaneId lane_id;
-    Future<Task> task_future_for_sched = future.template Cast<Task>();
-    if (use_runtime_path) {
-      lane_id = scheduler_->RuntimeMapTask(worker, task_future_for_sched);
+    // Runtime SHM path: worker threads use SendRuntimeClient (simple
+    // ClientMapTask path), non-worker threads use SendRuntime.
+    Future<Task> base_future;
+    if (worker != nullptr) {
+      base_future = SendRuntimeClient(task_ptr.template Cast<Task>());
     } else {
-      lane_id = scheduler_->ClientMapTask(this, task_future_for_sched);
+      base_future = SendRuntime(task_ptr.template Cast<Task>());
     }
-
-    // 5. Enqueue the Future object to the worker queue
-    auto &lane_ref = worker_queues_->GetLane(lane_id, 0);
-    bool was_empty = lane_ref.Empty();
-    Future<Task> task_future_for_queue = future.template Cast<Task>();
-    lane_ref.Push(task_future_for_queue);
-
-    // 6. Awaken worker for this lane (only if it was idle)
-    if (was_empty) {
-      AwakenWorker(&lane_ref);
-    }
-
-    // 7. Return the same Future (no separate user_future/queue_future)
-    return future;
+    return base_future.Cast<TaskT>();
 #endif
   }
+
+  /** Send from a worker thread: creates pointer future, uses ClientMapTask */
+  Future<Task> SendRuntimeClient(const hipc::FullPtr<Task> &task_ptr);
+
+  /** Send from non-worker thread: full routing (pool query, local/global) */
+  Future<Task> SendRuntime(const hipc::FullPtr<Task> &task_ptr);
+
+  /**
+   * Initialize RunContext for a task before routing.
+   * @param future Future containing the task
+   * @param container Container for the task (can be nullptr)
+   * @param lane Lane for the task (can be nullptr)
+   */
+  void BeginTask(Future<Task> &future, Container *container, TaskLane *lane);
+
+  /** Route a task: resolve pool query, determine local vs global.
+   * If force_enqueue is true, always enqueue to the destination worker's lane
+   * (used by SendRuntime which cannot execute tasks directly). */
+  bool RouteTask(Future<Task> &future, bool force_enqueue = false);
+
+  /** Resolve a pool query into concrete physical addresses */
+  std::vector<PoolQuery> ResolvePoolQuery(const PoolQuery &query,
+                                          PoolId pool_id,
+                                          const FullPtr<Task> &task_ptr);
+
+  /** Check if task should be processed locally */
+  bool IsTaskLocal(const FullPtr<Task> &task_ptr,
+                   const std::vector<PoolQuery> &pool_queries);
+
+  /** Route task locally.
+   * If force_enqueue is true, always enqueue even if dest == current worker. */
+  bool RouteLocal(Future<Task> &future, bool force_enqueue = false);
+
+  /** Route task globally via network */
+  bool RouteGlobal(Future<Task> &future,
+                   const std::vector<PoolQuery> &pool_queries);
 
   /**
    * Send a task via SHM lightbeam transport
@@ -726,8 +738,7 @@ class IpcManager {
           if (max_sec > 0 && elapsed >= max_sec) return false;
 
           // Overall retry timeout
-          if (client_retry_timeout_ > 0 &&
-              elapsed >= client_retry_timeout_) {
+          if (client_retry_timeout_ > 0 && elapsed >= client_retry_timeout_) {
             HLOG(kError, "Recv: Timed out after {}s waiting for response",
                  elapsed);
             return false;
@@ -788,8 +799,7 @@ class IpcManager {
             float el = std::chrono::duration<float>(
                            std::chrono::steady_clock::now() - zmq_start)
                            .count();
-            if (client_retry_timeout_ > 0 &&
-                el >= client_retry_timeout_)
+            if (client_retry_timeout_ > 0 && el >= client_retry_timeout_)
               return false;
           }
           std::atomic_thread_fence(std::memory_order_acquire);
@@ -918,10 +928,9 @@ class IpcManager {
    * @return Server generation value, 0 if not available
    */
   u64 GetServerGeneration() const {
-    return shared_header_
-               ? shared_header_->server_generation.load(
-                     std::memory_order_acquire)
-               : 0;
+    return shared_header_ ? shared_header_->server_generation.load(
+                                std::memory_order_acquire)
+                          : 0;
   }
 
   /**
@@ -945,8 +954,7 @@ class IpcManager {
    * @param start Time point when the wait started (for overall timeout)
    * @return true if reconnection succeeded within timeout
    */
-  bool WaitForServerAndReconnect(
-      std::chrono::steady_clock::time_point start);
+  bool WaitForServerAndReconnect(std::chrono::steady_clock::time_point start);
 
   /**
    * Get number of workers from shared memory header
@@ -1088,9 +1096,7 @@ class IpcManager {
    * Get the list of dead nodes for retry queue scanning
    * @return Const reference to dead_nodes_ vector
    */
-  const std::vector<DeadNodeEntry>& GetDeadNodes() const {
-    return dead_nodes_;
-  }
+  const std::vector<DeadNodeEntry> &GetDeadNodes() const { return dead_nodes_; }
 
   /**
    * Add a new node to the internal hostfile
@@ -1282,6 +1288,13 @@ class IpcManager {
   void ClearClientPool();
 
   /**
+   * Set the net worker's lane pointer for signaling on EnqueueNetTask
+   * Called by scheduler after DivideWorkers assigns net_worker_
+   * @param lane Pointer to the net worker's TaskLane
+   */
+  void SetNetLane(TaskLane *lane) { net_lane_ = lane; }
+
+  /**
    * Enqueue a Future<SendTask> to the network queue
    * @param future Future containing the SendTask to enqueue
    * @param priority Network queue priority (kSendIn or kSendOut)
@@ -1374,14 +1387,11 @@ class IpcManager {
   size_t WreapAllIpcs();
 
   /**
-   * Clear all chimaera_* memfd symlinks from /tmp/chimaera_memfd/
+   * Clear all memfd symlinks from the per-user chimaera directory.
    *
    * Called during RuntimeInit to clean up leftover memfd symlinks
-   * from previous runs or crashed processes. Attempts to remove all files
-   * matching "chimaera_*" pattern in /tmp/chimaera_memfd/ directory.
-   *
-   * Permission errors are silently ignored to allow multi-user systems where
-   * other users may have active Chimaera processes.
+   * from previous runs or crashed processes. Since the directory is
+   * per-user, all entries are cleaned up.
    *
    * @return Number of memfd symlinks successfully removed
    */
@@ -1400,6 +1410,25 @@ class IpcManager {
   bool RegisterAcceleratorMemory(const hipc::MemoryBackend &backend);
 
  private:
+  // Pool query resolution helpers
+  std::vector<PoolQuery> ResolveLocalQuery(const PoolQuery &query,
+                                           const FullPtr<Task> &task_ptr);
+  std::vector<PoolQuery> ResolveDirectIdQuery(const PoolQuery &query,
+                                              PoolId pool_id,
+                                              const FullPtr<Task> &task_ptr);
+  std::vector<PoolQuery> ResolveDirectHashQuery(const PoolQuery &query,
+                                                PoolId pool_id,
+                                                const FullPtr<Task> &task_ptr);
+  std::vector<PoolQuery> ResolveRangeQuery(const PoolQuery &query,
+                                           PoolId pool_id,
+                                           const FullPtr<Task> &task_ptr);
+  std::vector<PoolQuery> ResolveBroadcastQuery(const PoolQuery &query,
+                                               PoolId pool_id,
+                                               const FullPtr<Task> &task_ptr);
+  std::vector<PoolQuery> ResolvePhysicalQuery(const PoolQuery &query,
+                                              PoolId pool_id,
+                                              const FullPtr<Task> &task_ptr);
+
   /**
    * Initialize memory segments for server
    * @return true if successful, false otherwise
@@ -1471,6 +1500,9 @@ class IpcManager {
   // Network queue for send operations (one lane, two priorities)
   hipc::FullPtr<NetQueue> net_queue_;
 
+  // Net worker's lane pointer for signaling on EnqueueNetTask
+  TaskLane *net_lane_ = nullptr;
+
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
   // GPU memory backends (one per GPU device, using pinned host memory)
   std::vector<std::unique_ptr<hipc::GpuShmMmap>> gpu_backends_;
@@ -1536,13 +1568,13 @@ class IpcManager {
       1;  // CHI_POLL_SERVER: poll interval in seconds (default 1)
 
   // Client-side retry configuration
-  u64 client_generation_ = 0;           // Cached server generation at connect time
-  float client_retry_timeout_ = 60.0f;  // CHI_CLIENT_RETRY_TIMEOUT (default 60s)
+  u64 client_generation_ = 0;  // Cached server generation at connect time
+  float client_retry_timeout_ =
+      60.0f;  // CHI_CLIENT_RETRY_TIMEOUT (default 60s)
 
   // Persistent ZeroMQ transport connection pool
   // Key format: "ip_address:port"
-  std::unordered_map<std::string, hshm::lbm::TransportPtr>
-      client_pool_;
+  std::unordered_map<std::string, hshm::lbm::TransportPtr> client_pool_;
   mutable std::mutex client_pool_mutex_;  // Mutex for thread-safe pool access
 
   // Scheduler for task routing

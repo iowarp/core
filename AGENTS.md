@@ -145,14 +145,23 @@ All timing prints MUST include units of measurement in milliseconds (ms). Always
 When Chimaera RuntimeInit is called (via `IpcManager::ServerInit()`), it automatically cleans up leftover shared memory segments from previous runs or crashed processes by calling `IpcManager::ClearUserIpcs()`.
 
 **ClearUserIpcs() Behavior:**
-- Scans `/dev/shm` directory for all files matching the pattern `chimaera_*`
-- Attempts to remove each matching shared memory segment using `shm_unlink()`
+- Scans the per-user chimaera directory (`SystemInfo::GetMemfdDir()`, i.e. `/tmp/chimaera_$USER/`)
+- Removes all memfd symlinks and IPC socket files from that directory
 - Silently ignores permission errors (EACCES, EPERM) to support multi-user systems
 - Other users' active Chimaera processes are not affected
-- Logs successfully removed segments at kInfo level
+- Logs successfully removed segments at kDebug level
 - Returns the count of segments removed
 
 This ensures a clean state for each runtime initialization without requiring manual cleanup scripts.
+
+### IPC Path Convention
+
+**CRITICAL**: Never hardcode `/tmp/chimaera_*` paths in IpcManager or elsewhere. Always use the `SystemInfo` helpers:
+- `hshm::SystemInfo::GetMemfdDir()` — returns `/tmp/chimaera_$USER`
+- `hshm::SystemInfo::GetMemfdPath(name)` — returns `/tmp/chimaera_$USER/<name>` (strips leading `/`)
+- `hshm::SystemInfo::EnsureMemfdDir()` — creates the directory if it doesn't exist
+
+For IPC Unix domain socket paths, use: `hshm::SystemInfo::GetMemfdPath("chimaera_" + std::to_string(port) + ".ipc")`
 
 ## Workflow
 

@@ -133,6 +133,7 @@ class BdevChimodFixture {
       bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
       if (success) {
         g_initialized = true;
+        SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
         std::this_thread::sleep_for(500ms);
         HLOG(kInfo, "Chimaera initialization successful");
       } else {
@@ -141,7 +142,8 @@ class BdevChimodFixture {
     }
 
     // Generate unique test file name
-    current_test_file_ = kTestFilePrefix + std::to_string(getpid()) + "_" +
+    current_test_file_ = kTestFilePrefix +
+                         std::to_string(getpid()) + "_" +
                          std::to_string(++g_test_counter) + ".dat";
   }
 
@@ -1345,16 +1347,31 @@ void run_bdev_file_explicit_backend_test(const char *mode_name) {
 }
 
 TEST_CASE("bdev_file_explicit_backend_shm", "[bdev][file][explicit][shm]") {
+  const char* ipc_mode = std::getenv("CHI_IPC_MODE");
+  if (ipc_mode && std::string(ipc_mode) != "SHM" && std::string(ipc_mode) != "shm") {
+    INFO("Skipping: CHI_IPC_MODE=" + std::string(ipc_mode) + " (need SHM)");
+    return;
+  }
   setenv("CHI_IPC_MODE", "SHM", 1);
   run_bdev_file_explicit_backend_test("shm");
 }
 
 TEST_CASE("bdev_file_explicit_backend_tcp", "[bdev][file][explicit][tcp]") {
+  const char* ipc_mode = std::getenv("CHI_IPC_MODE");
+  if (ipc_mode && std::string(ipc_mode) != "TCP" && std::string(ipc_mode) != "tcp") {
+    INFO("Skipping: CHI_IPC_MODE=" + std::string(ipc_mode) + " (need TCP)");
+    return;
+  }
   setenv("CHI_IPC_MODE", "TCP", 1);
   run_bdev_file_explicit_backend_test("tcp");
 }
 
 TEST_CASE("bdev_file_explicit_backend_ipc", "[bdev][file][explicit][ipc]") {
+  const char* ipc_mode = std::getenv("CHI_IPC_MODE");
+  if (ipc_mode && std::string(ipc_mode) != "IPC" && std::string(ipc_mode) != "ipc") {
+    INFO("Skipping: CHI_IPC_MODE=" + std::string(ipc_mode) + " (need IPC)");
+    return;
+  }
   setenv("CHI_IPC_MODE", "IPC", 1);
   run_bdev_file_explicit_backend_test("ipc");
 }

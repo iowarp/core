@@ -122,6 +122,11 @@ public:
             chi::u32 container_id = 0) override;
 
   /**
+   * Schedule a task by resolving Dynamic pool queries.
+   */
+  chi::PoolQuery ScheduleTask(const hipc::FullPtr<chi::Task> &task) override;
+
+  /**
    * Execute a method on a task
    */
   chi::TaskResume Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,

@@ -8,7 +8,7 @@
             "HOST_GID": "${localEnv:HOST_GID:1000}"
         },
         "options": [
-            "--tag=iowarp/core-devcontainer:latest"
+            "--tag=iowarp/clio-core-devcontainer:latest"
         ]
     },
     "workspaceFolder": "/workspace",

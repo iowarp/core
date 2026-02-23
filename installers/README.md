@@ -49,7 +49,7 @@ For building from source without a package manager:
 
 ```bash
 # Clone the repository
-git clone https://github.com/iowarp/core.git
+git clone https://github.com/iowarp/clio-core.git
 cd core
 
 # Build with CMake

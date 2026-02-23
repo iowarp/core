@@ -79,6 +79,7 @@ TEST_CASE("gpu_queue_initialization", "[gpu][infrastructure][.skip]") {
     bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
     REQUIRE(success);
     g_initialized = true;
+    SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
     std::this_thread::sleep_for(500ms); // Give runtime time to initialize
   }
 
@@ -120,6 +121,7 @@ TEST_CASE("gpu_task_cpu_submission", "[gpu][cpu_submission]") {
     bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
     REQUIRE(success);
     g_initialized = true;
+    SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
     std::this_thread::sleep_for(500ms); // Give runtime time to initialize
   }
 
@@ -221,6 +223,7 @@ TEST_CASE("gpu_kernel_task_submission", "[gpu][kernel_submit]") {
     bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
     REQUIRE(success);
     g_initialized = true;
+    SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
     std::this_thread::sleep_for(500ms); // Give runtime time to initialize
   }
 

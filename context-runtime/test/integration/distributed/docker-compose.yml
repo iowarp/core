@@ -15,8 +15,11 @@ services:
   # Node 1 - Test coordinator that runs the test binary
   iowarp-node1:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: iowarp-distributed-node1
     hostname: iowarp-node1
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-cluster:
         ipv4_address: 172.25.0.10
@@ -47,8 +50,11 @@ services:
   # Node 2
   iowarp-node2:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: iowarp-distributed-node2
     hostname: iowarp-node2
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-cluster:
         ipv4_address: 172.25.0.11
@@ -75,8 +81,11 @@ services:
   # Node 3
   iowarp-node3:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: iowarp-distributed-node3
     hostname: iowarp-node3
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-cluster:
         ipv4_address: 172.25.0.12
@@ -103,8 +112,11 @@ services:
   # Node 4
   iowarp-node4:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: iowarp-distributed-node4
     hostname: iowarp-node4
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-cluster:
         ipv4_address: 172.25.0.13
