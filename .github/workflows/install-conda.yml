@@ -1,0 +1,71 @@
+name: Build and Publish Conda Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'Build variant config'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+          - cuda
+          - rocm
+          - mpi
+          - full
+  push:
+    branches: main
+    tags: ['v*']
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: '3.10'
+          channels: conda-forge,defaults
+          channel-priority: strict
+
+      - name: Install rattler-build
+        shell: bash -l {0}
+        run: |
+          conda install -y rattler-build anaconda-client
+
+      - name: Determine variant
+        id: variant
+        shell: bash -l {0}
+        run: |
+          # Use workflow_dispatch input if available, otherwise default to release
+          VARIANT="${{ github.event.inputs.variant || 'release' }}"
+          echo "name=${VARIANT}" >> "$GITHUB_OUTPUT"
+
+      - name: Build conda package
+        shell: bash -l {0}
+        run: |
+          rattler-build build \
+            --recipe installers/conda/ \
+            --variant-config installers/conda/variants/${{ steps.variant.outputs.name }}.yaml
+
+      - name: Upload to Anaconda.org
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash -l {0}
+        env:
+          ANACONDA_TOKEN: ${{ secrets.ANACONDA_TOKEN }}
+        run: |
+          # Find built packages and upload them
+          for pkg in output/**/*.conda output/**/*.tar.bz2; do
+            [ -f "$pkg" ] || continue
+            anaconda -t "$ANACONDA_TOKEN" upload --user iowarp --force "$pkg"
+          done

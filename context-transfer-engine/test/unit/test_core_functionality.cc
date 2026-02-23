@@ -140,11 +140,8 @@ class CTECoreFunctionalTestFixture {
   CTECoreFunctionalTestFixture() {
     INFO("=== Initializing CTE Core Functional Test Environment ===");
 
-    // Initialize test storage path in home directory
-    std::string home_dir = hshm::SystemInfo::Getenv("HOME");
-    REQUIRE(!home_dir.empty());
-
-    test_storage_path_ = home_dir + "/cte_functional_test.dat";
+    // Initialize test storage path in /tmp (always writable)
+    test_storage_path_ = "/tmp/cte_functional_test.dat";
 
     // Clean up any existing test file
     if (fs::exists(test_storage_path_)) {

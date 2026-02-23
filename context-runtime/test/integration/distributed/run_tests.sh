@@ -227,9 +227,15 @@ case $COMMAND in
         ;;
 
     all)
+        EXIT_CODE=0
         start_docker_cluster
-        run_test_docker_direct
-        log_success "All operations completed successfully"
+        run_test_docker_direct || EXIT_CODE=$?
+        stop_docker_cluster
+        if [ $EXIT_CODE -ne 0 ]; then
+            log_error "Distributed test FAILED"
+            exit $EXIT_CODE
+        fi
+        log_success "Distributed test PASSED"
         ;;
 
     *)
