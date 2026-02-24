@@ -273,9 +273,12 @@ if(cereal_FOUND)
     message(STATUS "found cereal at ${cereal_DIR}")
 endif()
 
-# MessagePack C library (pure C, no Boost dependency)
+# MessagePack C library (pure C, no Boost dependency) — always link static
 find_package(msgpack-c REQUIRED CONFIG)
 message(STATUS "found msgpack-c at ${msgpack-c_DIR}")
+if(NOT TARGET msgpack-c-static)
+  message(FATAL_ERROR "msgpack-c-static target not found; build msgpack-c with static libraries enabled")
+endif()
 
 # MPICH (only find when explicitly enabled)
 if(WRP_CORE_ENABLE_MPI)
@@ -312,8 +315,8 @@ if(WRP_CORE_ENABLE_CEREAL)
     set(SERIALIZATION_LIBS cereal::cereal ${SERIALIZATION_LIBS})
 endif()
 
-# Add msgpack-c to serialization libs (always enabled)
-set(SERIALIZATION_LIBS msgpack-c ${SERIALIZATION_LIBS})
+# Add msgpack-c to serialization libs (always enabled, static linkage)
+set(SERIALIZATION_LIBS msgpack-c-static ${SERIALIZATION_LIBS})
 
 # Thread support
 find_package(Threads REQUIRED)

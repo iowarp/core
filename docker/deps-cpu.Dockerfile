@@ -195,11 +195,12 @@ RUN cd /tmp \
     && cmake --install cereal-build \
     && rm -rf /tmp/cereal-*
 
-# msgpack-c 6.1.0 (pure C library — no Boost dependency)
+# msgpack-c 6.1.0 (pure C library — no Boost dependency, static with -fPIC)
 RUN cd /tmp \
     && git clone --depth 1 --branch c-6.1.0 https://github.com/msgpack/msgpack-c.git \
     && cmake -S msgpack-c -B msgpack-build \
        -DCMAKE_INSTALL_PREFIX=/usr/local \
+       -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
        -DMSGPACK_BUILD_TESTS=OFF \
        -DMSGPACK_BUILD_EXAMPLES=OFF \
     && cmake --build msgpack-build -j$(nproc) \
