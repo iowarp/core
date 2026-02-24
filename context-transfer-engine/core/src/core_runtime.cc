@@ -3040,6 +3040,13 @@ chi::PoolQuery Runtime::HashBlobToContainer(const TagId &tag_id,
   return chi::PoolQuery::DirectHash(hash_value);
 }
 
+chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
+                                 chi::RunContext &rctx) {
+  task->SetReturnCode(0);
+  (void)rctx;
+  co_return;
+}
+
 }  // namespace wrp_cte::core
 
 // Define ChiMod entry points using CHI_TASK_CC macro

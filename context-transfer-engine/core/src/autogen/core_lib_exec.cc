@@ -47,6 +47,12 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       co_await Destroy(typed_task, rctx);
       break;
     }
+    case Method::kMonitor: {
+      // Cast task FullPtr to specific type
+      hipc::FullPtr<MonitorTask> typed_task = task_ptr.template Cast<MonitorTask>();
+      co_await Monitor(typed_task, rctx);
+      break;
+    }
     case Method::kRegisterTarget: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<RegisterTargetTask> typed_task = task_ptr.template Cast<RegisterTargetTask>();
@@ -137,6 +143,12 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       co_await GetContainedBlobs(typed_task, rctx);
       break;
     }
+    case Method::kGetBlobInfo: {
+      // Cast task FullPtr to specific type
+      hipc::FullPtr<GetBlobInfoTask> typed_task = task_ptr.template Cast<GetBlobInfoTask>();
+      co_await GetBlobInfo(typed_task, rctx);
+      break;
+    }
     case Method::kTagQuery: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<TagQueryTask> typed_task = task_ptr.template Cast<TagQueryTask>();
@@ -153,12 +165,6 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       // Cast task FullPtr to specific type
       hipc::FullPtr<GetTargetInfoTask> typed_task = task_ptr.template Cast<GetTargetInfoTask>();
       co_await GetTargetInfo(typed_task, rctx);
-      break;
-    }
-    case Method::kGetBlobInfo: {
-      // Cast task FullPtr to specific type
-      hipc::FullPtr<GetBlobInfoTask> typed_task = task_ptr.template Cast<GetBlobInfoTask>();
-      co_await GetBlobInfo(typed_task, rctx);
       break;
     }
     case Method::kFlushMetadata: {
@@ -193,6 +199,10 @@ void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
     }
     case Method::kDestroy: {
       ipc_manager->DelTask(task_ptr.template Cast<DestroyTask>());
+      break;
+    }
+    case Method::kMonitor: {
+      ipc_manager->DelTask(task_ptr.template Cast<MonitorTask>());
       break;
     }
     case Method::kRegisterTarget: {
@@ -255,6 +265,10 @@ void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
       ipc_manager->DelTask(task_ptr.template Cast<GetContainedBlobsTask>());
       break;
     }
+    case Method::kGetBlobInfo: {
+      ipc_manager->DelTask(task_ptr.template Cast<GetBlobInfoTask>());
+      break;
+    }
     case Method::kTagQuery: {
       ipc_manager->DelTask(task_ptr.template Cast<TagQueryTask>());
       break;
@@ -265,10 +279,6 @@ void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
     }
     case Method::kGetTargetInfo: {
       ipc_manager->DelTask(task_ptr.template Cast<GetTargetInfoTask>());
-      break;
-    }
-    case Method::kGetBlobInfo: {
-      ipc_manager->DelTask(task_ptr.template Cast<GetBlobInfoTask>());
       break;
     }
     case Method::kFlushMetadata: {
@@ -297,6 +307,11 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
+      archive << *typed_task.ptr_;
+      break;
+    }
+    case Method::kMonitor: {
+      auto typed_task = task_ptr.template Cast<MonitorTask>();
       archive << *typed_task.ptr_;
       break;
     }
@@ -375,6 +390,11 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
       archive << *typed_task.ptr_;
       break;
     }
+    case Method::kGetBlobInfo: {
+      auto typed_task = task_ptr.template Cast<GetBlobInfoTask>();
+      archive << *typed_task.ptr_;
+      break;
+    }
     case Method::kTagQuery: {
       auto typed_task = task_ptr.template Cast<TagQueryTask>();
       archive << *typed_task.ptr_;
@@ -387,11 +407,6 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
     }
     case Method::kGetTargetInfo: {
       auto typed_task = task_ptr.template Cast<GetTargetInfoTask>();
-      archive << *typed_task.ptr_;
-      break;
-    }
-    case Method::kGetBlobInfo: {
-      auto typed_task = task_ptr.template Cast<GetBlobInfoTask>();
       archive << *typed_task.ptr_;
       break;
     }
@@ -425,6 +440,11 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
       archive >> *typed_task.ptr_;
       break;
     }
+    case Method::kMonitor: {
+      auto typed_task = task_ptr.template Cast<MonitorTask>();
+      archive >> *typed_task.ptr_;
+      break;
+    }
     case Method::kRegisterTarget: {
       auto typed_task = task_ptr.template Cast<RegisterTargetTask>();
       archive >> *typed_task.ptr_;
@@ -500,6 +520,11 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
       archive >> *typed_task.ptr_;
       break;
     }
+    case Method::kGetBlobInfo: {
+      auto typed_task = task_ptr.template Cast<GetBlobInfoTask>();
+      archive >> *typed_task.ptr_;
+      break;
+    }
     case Method::kTagQuery: {
       auto typed_task = task_ptr.template Cast<TagQueryTask>();
       archive >> *typed_task.ptr_;
@@ -512,11 +537,6 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
     }
     case Method::kGetTargetInfo: {
       auto typed_task = task_ptr.template Cast<GetTargetInfoTask>();
-      archive >> *typed_task.ptr_;
-      break;
-    }
-    case Method::kGetBlobInfo: {
-      auto typed_task = task_ptr.template Cast<GetBlobInfoTask>();
       archive >> *typed_task.ptr_;
       break;
     }
@@ -560,6 +580,12 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
       archive >> *typed_task.ptr_;
       break;
     }
+    case Method::kMonitor: {
+      auto typed_task = task_ptr.template Cast<MonitorTask>();
+      // Use archive operator which respects msg_type
+      archive >> *typed_task.ptr_;
+      break;
+    }
     case Method::kRegisterTarget: {
       auto typed_task = task_ptr.template Cast<RegisterTargetTask>();
       // Use archive operator which respects msg_type
@@ -650,6 +676,12 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
       archive >> *typed_task.ptr_;
       break;
     }
+    case Method::kGetBlobInfo: {
+      auto typed_task = task_ptr.template Cast<GetBlobInfoTask>();
+      // Use archive operator which respects msg_type
+      archive >> *typed_task.ptr_;
+      break;
+    }
     case Method::kTagQuery: {
       auto typed_task = task_ptr.template Cast<TagQueryTask>();
       // Use archive operator which respects msg_type
@@ -664,12 +696,6 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
     }
     case Method::kGetTargetInfo: {
       auto typed_task = task_ptr.template Cast<GetTargetInfoTask>();
-      // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
-      break;
-    }
-    case Method::kGetBlobInfo: {
-      auto typed_task = task_ptr.template Cast<GetBlobInfoTask>();
       // Use archive operator which respects msg_type
       archive >> *typed_task.ptr_;
       break;
@@ -716,6 +742,12 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
       archive << *typed_task.ptr_;
       break;
     }
+    case Method::kMonitor: {
+      auto typed_task = task_ptr.template Cast<MonitorTask>();
+      // Use archive operator which respects msg_type
+      archive << *typed_task.ptr_;
+      break;
+    }
     case Method::kRegisterTarget: {
       auto typed_task = task_ptr.template Cast<RegisterTargetTask>();
       // Use archive operator which respects msg_type
@@ -806,6 +838,12 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
       archive << *typed_task.ptr_;
       break;
     }
+    case Method::kGetBlobInfo: {
+      auto typed_task = task_ptr.template Cast<GetBlobInfoTask>();
+      // Use archive operator which respects msg_type
+      archive << *typed_task.ptr_;
+      break;
+    }
     case Method::kTagQuery: {
       auto typed_task = task_ptr.template Cast<TagQueryTask>();
       // Use archive operator which respects msg_type
@@ -820,12 +858,6 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
     }
     case Method::kGetTargetInfo: {
       auto typed_task = task_ptr.template Cast<GetTargetInfoTask>();
-      // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
-      break;
-    }
-    case Method::kGetBlobInfo: {
-      auto typed_task = task_ptr.template Cast<GetBlobInfoTask>();
       // Use archive operator which respects msg_type
       archive << *typed_task.ptr_;
       break;
@@ -873,6 +905,17 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       if (!new_task_ptr.IsNull()) {
         // Copy task fields (includes base Task fields)
         auto task_typed = orig_task_ptr.template Cast<DestroyTask>();
+        new_task_ptr->Copy(task_typed);
+        return new_task_ptr.template Cast<chi::Task>();
+      }
+      break;
+    }
+    case Method::kMonitor: {
+      // Allocate new task
+      auto new_task_ptr = ipc_manager->NewTask<MonitorTask>();
+      if (!new_task_ptr.IsNull()) {
+        // Copy task fields (includes base Task fields)
+        auto task_typed = orig_task_ptr.template Cast<MonitorTask>();
         new_task_ptr->Copy(task_typed);
         return new_task_ptr.template Cast<chi::Task>();
       }
@@ -1043,6 +1086,17 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       }
       break;
     }
+    case Method::kGetBlobInfo: {
+      // Allocate new task
+      auto new_task_ptr = ipc_manager->NewTask<GetBlobInfoTask>();
+      if (!new_task_ptr.IsNull()) {
+        // Copy task fields (includes base Task fields)
+        auto task_typed = orig_task_ptr.template Cast<GetBlobInfoTask>();
+        new_task_ptr->Copy(task_typed);
+        return new_task_ptr.template Cast<chi::Task>();
+      }
+      break;
+    }
     case Method::kTagQuery: {
       // Allocate new task
       auto new_task_ptr = ipc_manager->NewTask<TagQueryTask>();
@@ -1071,17 +1125,6 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       if (!new_task_ptr.IsNull()) {
         // Copy task fields (includes base Task fields)
         auto task_typed = orig_task_ptr.template Cast<GetTargetInfoTask>();
-        new_task_ptr->Copy(task_typed);
-        return new_task_ptr.template Cast<chi::Task>();
-      }
-      break;
-    }
-    case Method::kGetBlobInfo: {
-      // Allocate new task
-      auto new_task_ptr = ipc_manager->NewTask<GetBlobInfoTask>();
-      if (!new_task_ptr.IsNull()) {
-        // Copy task fields (includes base Task fields)
-        auto task_typed = orig_task_ptr.template Cast<GetBlobInfoTask>();
         new_task_ptr->Copy(task_typed);
         return new_task_ptr.template Cast<chi::Task>();
       }
@@ -1119,7 +1162,7 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       break;
     }
   }
-
+  
   (void)deep;    // Deep copy parameter reserved for future use
   return hipc::FullPtr<chi::Task>();
 }
@@ -1137,6 +1180,10 @@ hipc::FullPtr<chi::Task> Runtime::NewTask(chi::u32 method) {
     }
     case Method::kDestroy: {
       auto new_task_ptr = ipc_manager->NewTask<DestroyTask>();
+      return new_task_ptr.template Cast<chi::Task>();
+    }
+    case Method::kMonitor: {
+      auto new_task_ptr = ipc_manager->NewTask<MonitorTask>();
       return new_task_ptr.template Cast<chi::Task>();
     }
     case Method::kRegisterTarget: {
@@ -1199,6 +1246,10 @@ hipc::FullPtr<chi::Task> Runtime::NewTask(chi::u32 method) {
       auto new_task_ptr = ipc_manager->NewTask<GetContainedBlobsTask>();
       return new_task_ptr.template Cast<chi::Task>();
     }
+    case Method::kGetBlobInfo: {
+      auto new_task_ptr = ipc_manager->NewTask<GetBlobInfoTask>();
+      return new_task_ptr.template Cast<chi::Task>();
+    }
     case Method::kTagQuery: {
       auto new_task_ptr = ipc_manager->NewTask<TagQueryTask>();
       return new_task_ptr.template Cast<chi::Task>();
@@ -1209,10 +1260,6 @@ hipc::FullPtr<chi::Task> Runtime::NewTask(chi::u32 method) {
     }
     case Method::kGetTargetInfo: {
       auto new_task_ptr = ipc_manager->NewTask<GetTargetInfoTask>();
-      return new_task_ptr.template Cast<chi::Task>();
-    }
-    case Method::kGetBlobInfo: {
-      auto new_task_ptr = ipc_manager->NewTask<GetBlobInfoTask>();
       return new_task_ptr.template Cast<chi::Task>();
     }
     case Method::kFlushMetadata: {
@@ -1245,6 +1292,14 @@ void Runtime::Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> origin_task_pt
       // Get typed tasks for Aggregate call
       auto typed_origin = origin_task_ptr.template Cast<DestroyTask>();
       auto typed_replica = replica_task_ptr.template Cast<DestroyTask>();
+      // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
+      typed_origin.ptr_->Aggregate(typed_replica);
+      break;
+    }
+    case Method::kMonitor: {
+      // Get typed tasks for Aggregate call
+      auto typed_origin = origin_task_ptr.template Cast<MonitorTask>();
+      auto typed_replica = replica_task_ptr.template Cast<MonitorTask>();
       // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
       typed_origin.ptr_->Aggregate(typed_replica);
       break;
@@ -1369,6 +1424,14 @@ void Runtime::Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> origin_task_pt
       typed_origin.ptr_->Aggregate(typed_replica);
       break;
     }
+    case Method::kGetBlobInfo: {
+      // Get typed tasks for Aggregate call
+      auto typed_origin = origin_task_ptr.template Cast<GetBlobInfoTask>();
+      auto typed_replica = replica_task_ptr.template Cast<GetBlobInfoTask>();
+      // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
+      typed_origin.ptr_->Aggregate(typed_replica);
+      break;
+    }
     case Method::kTagQuery: {
       // Get typed tasks for Aggregate call
       auto typed_origin = origin_task_ptr.template Cast<TagQueryTask>();
@@ -1389,14 +1452,6 @@ void Runtime::Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> origin_task_pt
       // Get typed tasks for Aggregate call
       auto typed_origin = origin_task_ptr.template Cast<GetTargetInfoTask>();
       auto typed_replica = replica_task_ptr.template Cast<GetTargetInfoTask>();
-      // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
-      typed_origin.ptr_->Aggregate(typed_replica);
-      break;
-    }
-    case Method::kGetBlobInfo: {
-      // Get typed tasks for Aggregate call
-      auto typed_origin = origin_task_ptr.template Cast<GetBlobInfoTask>();
-      auto typed_replica = replica_task_ptr.template Cast<GetBlobInfoTask>();
       // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
       typed_origin.ptr_->Aggregate(typed_replica);
       break;

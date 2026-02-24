@@ -36,9 +36,13 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       break;
     }
     case Method::kDestroy: {
+      Destroy(task_ptr, rctx);
+      break;
+    }
+    case Method::kMonitor: {
       // Cast task FullPtr to specific type
-      hipc::FullPtr<DestroyTask> typed_task = task_ptr.template Cast<DestroyTask>();
-      Destroy(typed_task, rctx);
+      hipc::FullPtr<MonitorTask> typed_task = task_ptr.template Cast<MonitorTask>();
+      co_await Monitor(typed_task, rctx);
       break;
     }
     case Method::kParseOmni: {
@@ -75,6 +79,10 @@ void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
       ipc_manager->DelTask(task_ptr.template Cast<DestroyTask>());
       break;
     }
+    case Method::kMonitor: {
+      ipc_manager->DelTask(task_ptr.template Cast<MonitorTask>());
+      break;
+    }
     case Method::kParseOmni: {
       ipc_manager->DelTask(task_ptr.template Cast<ParseOmniTask>());
       break;
@@ -101,6 +109,11 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
+      archive << *typed_task.ptr_;
+      break;
+    }
+    case Method::kMonitor: {
+      auto typed_task = task_ptr.template Cast<MonitorTask>();
       archive << *typed_task.ptr_;
       break;
     }
@@ -131,6 +144,11 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
+      archive >> *typed_task.ptr_;
+      break;
+    }
+    case Method::kMonitor: {
+      auto typed_task = task_ptr.template Cast<MonitorTask>();
       archive >> *typed_task.ptr_;
       break;
     }
@@ -174,6 +192,12 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
       archive >> *typed_task.ptr_;
       break;
     }
+    case Method::kMonitor: {
+      auto typed_task = task_ptr.template Cast<MonitorTask>();
+      // Use archive operator which respects msg_type
+      archive >> *typed_task.ptr_;
+      break;
+    }
     case Method::kParseOmni: {
       auto typed_task = task_ptr.template Cast<ParseOmniTask>();
       // Use archive operator which respects msg_type
@@ -212,6 +236,12 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
+      // Use archive operator which respects msg_type
+      archive << *typed_task.ptr_;
+      break;
+    }
+    case Method::kMonitor: {
+      auto typed_task = task_ptr.template Cast<MonitorTask>();
       // Use archive operator which respects msg_type
       archive << *typed_task.ptr_;
       break;
@@ -264,6 +294,17 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       }
       break;
     }
+    case Method::kMonitor: {
+      // Allocate new task
+      auto new_task_ptr = ipc_manager->NewTask<MonitorTask>();
+      if (!new_task_ptr.IsNull()) {
+        // Copy task fields (includes base Task fields)
+        auto task_typed = orig_task_ptr.template Cast<MonitorTask>();
+        new_task_ptr->Copy(task_typed);
+        return new_task_ptr.template Cast<chi::Task>();
+      }
+      break;
+    }
     case Method::kParseOmni: {
       // Allocate new task
       auto new_task_ptr = ipc_manager->NewTask<ParseOmniTask>();
@@ -296,7 +337,7 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       break;
     }
   }
-
+  
   (void)deep;    // Deep copy parameter reserved for future use
   return hipc::FullPtr<chi::Task>();
 }
@@ -314,6 +355,10 @@ hipc::FullPtr<chi::Task> Runtime::NewTask(chi::u32 method) {
     }
     case Method::kDestroy: {
       auto new_task_ptr = ipc_manager->NewTask<DestroyTask>();
+      return new_task_ptr.template Cast<chi::Task>();
+    }
+    case Method::kMonitor: {
+      auto new_task_ptr = ipc_manager->NewTask<MonitorTask>();
       return new_task_ptr.template Cast<chi::Task>();
     }
     case Method::kParseOmni: {
@@ -346,6 +391,14 @@ void Runtime::Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> origin_task_pt
       // Get typed tasks for Aggregate call
       auto typed_origin = origin_task_ptr.template Cast<DestroyTask>();
       auto typed_replica = replica_task_ptr.template Cast<DestroyTask>();
+      // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
+      typed_origin.ptr_->Aggregate(typed_replica);
+      break;
+    }
+    case Method::kMonitor: {
+      // Get typed tasks for Aggregate call
+      auto typed_origin = origin_task_ptr.template Cast<MonitorTask>();
+      auto typed_replica = replica_task_ptr.template Cast<MonitorTask>();
       // Call Aggregate (uses task-specific Aggregate if available, otherwise base Task::Aggregate)
       typed_origin.ptr_->Aggregate(typed_replica);
       break;

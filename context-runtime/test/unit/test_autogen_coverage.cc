@@ -93,7 +93,7 @@ TEST_CASE("Autogen - Admin MonitorTask SaveTask/LoadTask", "[autogen][admin][mon
   SECTION("SaveTask and LoadTask for MonitorTask") {
     // Create MonitorTask
     auto orig_task = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
 
     if (orig_task.IsNull()) {
       INFO("Failed to create MonitorTask - skipping test");
@@ -274,7 +274,7 @@ TEST_CASE("Autogen - Admin NewCopyTask", "[autogen][admin][copytask]") {
 
   SECTION("NewCopyTask for MonitorTask") {
     auto orig_task = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
 
     if (orig_task.IsNull()) {
       INFO("Failed to create original task - skipping test");
@@ -349,9 +349,9 @@ TEST_CASE("Autogen - Admin Aggregate", "[autogen][admin][aggregate]") {
 
   SECTION("Aggregate for MonitorTask") {
     auto origin_task = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
     auto replica_task = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
 
     if (origin_task.IsNull() || replica_task.IsNull()) {
       INFO("Failed to create tasks - skipping test");
@@ -410,7 +410,7 @@ TEST_CASE("Autogen - Admin LocalSaveTask/LocalLoadTask", "[autogen][admin][local
 
   SECTION("LocalSaveTask and LocalLoadTask for MonitorTask") {
     auto orig_task = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
 
     if (orig_task.IsNull()) {
       INFO("Failed to create task - skipping test");
@@ -2500,9 +2500,9 @@ TEST_CASE("Autogen - Admin Additional Task Coverage", "[autogen][admin][addition
 
   SECTION("Copy for MonitorTask") {
     auto task1 = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
     auto task2 = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
 
     if (!task1.IsNull() && !task2.IsNull()) {
       task2->Copy(task1);
@@ -2542,9 +2542,9 @@ TEST_CASE("Autogen - Admin Additional Task Coverage", "[autogen][admin][addition
 
   SECTION("Aggregate for MonitorTask") {
     auto task1 = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
     auto task2 = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
 
     if (!task1.IsNull() && !task2.IsNull()) {
       task1->Aggregate(task2);
@@ -3343,7 +3343,7 @@ TEST_CASE("Autogen - Admin SerializeOut coverage", "[autogen][admin][serializeou
 
   SECTION("SerializeOut for MonitorTask") {
     auto task = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
     if (!task.IsNull()) {
       chi::SaveTaskArchive save_archive(chi::MsgType::kSerializeOut);
       save_archive << *task;
@@ -3351,7 +3351,7 @@ TEST_CASE("Autogen - Admin SerializeOut coverage", "[autogen][admin][serializeou
       chi::LoadTaskArchive load_archive(data);
       load_archive.msg_type_ = chi::MsgType::kSerializeOut;
       auto loaded = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-          chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+          chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
       load_archive >> *loaded;
       INFO("MonitorTask SerializeOut completed");
       ipc_manager->DelTask(task);
@@ -4990,18 +4990,18 @@ TEST_CASE("Autogen - Admin All Methods Comprehensive", "[autogen][admin][all][co
 
   SECTION("MonitorTask full coverage") {
     auto task = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
     if (!task.IsNull()) {
       chi::SaveTaskArchive save_in(chi::MsgType::kSerializeIn);
       save_in << *task;
       chi::LoadTaskArchive load_in(save_in.GetData());
       load_in.msg_type_ = chi::MsgType::kSerializeIn;
       auto loaded_in = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-          chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+          chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
       load_in >> *loaded_in;
 
       auto task2 = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-          chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+          chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
       if (!task2.IsNull()) {
         task2->Copy(task);
         task->Aggregate(task2);
@@ -9731,7 +9731,7 @@ TEST_CASE("Autogen - Admin LocalAllocLoadTask Additional Methods", "[autogen][ad
 
   SECTION("Monitor LocalAllocLoadTask") {
     auto orig_task = ipc_manager->NewTask<chimaera::admin::MonitorTask>(
-        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
 
     if (!orig_task.IsNull()) {
       chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);

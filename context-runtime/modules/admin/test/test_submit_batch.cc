@@ -252,7 +252,8 @@ TEST_CASE("SubmitBatch with MonitorTask", "[submit_batch][admin]") {
       batch.Add<chimaera::admin::MonitorTask>(
           chi::CreateTaskId(),
           chi::kAdminPoolId,
-          chi::PoolQuery::Local());
+          chi::PoolQuery::Local(),
+          std::string("status"));
     }
 
     INFO("TaskBatch has " << batch.GetTaskCount() << " MonitorTasks");

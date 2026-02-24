@@ -273,6 +273,10 @@ if(cereal_FOUND)
     message(STATUS "found cereal at ${cereal_DIR}")
 endif()
 
+# MessagePack (header-only C++ serialization)
+find_package(msgpack-cxx REQUIRED)
+message(STATUS "found msgpack-cxx")
+
 # MPICH (only find when explicitly enabled)
 if(WRP_CORE_ENABLE_MPI)
     find_package(MPI REQUIRED COMPONENTS C CXX)

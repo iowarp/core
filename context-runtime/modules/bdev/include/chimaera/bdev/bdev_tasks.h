@@ -50,6 +50,8 @@
 
 namespace chimaera::bdev {
 
+using MonitorTask = chimaera::admin::MonitorTask;
+
 /**
  * Block device type enumeration
  */

@@ -79,6 +79,11 @@ class Runtime : public chi::Container {
 
 
   /**
+   * Monitor container state (Method::kMonitor)
+   */
+  chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task, chi::RunContext &rctx);
+
+  /**
    * Create the container (Method::kCreate)
    * This method creates queues and sets up container resources
    * NOTE: Container is already initialized via Init() before Create is called

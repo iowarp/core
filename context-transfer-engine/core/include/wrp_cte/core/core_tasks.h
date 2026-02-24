@@ -52,6 +52,8 @@
 
 namespace wrp_cte::core {
 
+using MonitorTask = chimaera::admin::MonitorTask;
+
 // CTE Core Pool ID constant (major: 512, minor: 0)
 static constexpr chi::PoolId kCtePoolId(512, 0);
 

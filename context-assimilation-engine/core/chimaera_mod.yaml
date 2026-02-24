@@ -10,6 +10,8 @@ kNodeFailure: -1  # Not implemented (-1 means disabled)
 kRecover: -1      # Not implemented
 kMigrate: -1      # Not implemented
 kUpgrade: -1      # Not implemented
+kMonitor: 9       # 9 - Monitor container state
 
 # Custom Methods (start from 10, use sequential IDs)
-kParseOmni: 10       # Parse OMNI YAML file and schedule assimilation tasks
+kParseOmni: 10               # Parse OMNI YAML file and schedule assimilation tasks
+kProcessHdf5Dataset: 11      # Process HDF5 dataset

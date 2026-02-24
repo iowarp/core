@@ -46,6 +46,8 @@
 
 namespace wrp_cae::core {
 
+using MonitorTask = chimaera::admin::MonitorTask;
+
 /**
  * CreateParams for core chimod
  * Contains configuration parameters for core container creation
