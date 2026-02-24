@@ -52,6 +52,7 @@ requirements:
     - yaml-cpp
     - cereal
     - msgpack-cxx
+    - boost-cpp
     - hdf5
     - catch2
     - libaio
@@ -62,6 +63,7 @@ requirements:
     - yaml-cpp
     - cereal
     - msgpack-cxx
+    - boost-cpp
     - hdf5
     - catch2
     - libaio
