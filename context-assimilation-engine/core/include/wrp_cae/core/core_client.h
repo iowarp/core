@@ -74,6 +74,17 @@ class Client : public chi::ContainerClient {
   }
 
   /**
+   * Monitor container state - asynchronous
+   */
+  chi::Future<MonitorTask> AsyncMonitor(const chi::PoolQuery &pool_query,
+                                        const std::string &query) {
+    auto *ipc_manager = CHI_IPC;
+    auto task = ipc_manager->NewTask<MonitorTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, query);
+    return ipc_manager->Send(task);
+  }
+
+  /**
    * Asynchronous ParseOmni - Parse OMNI YAML file and schedule assimilation tasks
    * Accepts vector of AssimilationCtx and serializes it transparently in the task constructor
    * After Wait(), access results via task->num_tasks_scheduled_ and task->result_code_

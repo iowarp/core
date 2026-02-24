@@ -12,6 +12,7 @@ kNodeFailure: -1  # 2 - Not implemented
 kRecover: -1      # 3 - Not implemented
 kMigrate: -1      # 4 - Not implemented
 kUpgrade: -1      # 5 - Not implemented
+kMonitor: 9       # 9 - Monitor container state
 
 # Custom Methods (start from 10)
 kAllocateBlocks: 10     # Allocate data blocks

@@ -1868,6 +1868,14 @@ void Future<TaskT, AllocT>::Destroy(bool post_wait) {
 #endif
 }
 
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN void Future<TaskT, AllocT>::DelTask() {
+  if (!task_ptr_.IsNull()) {
+    CHI_IPC->DelTask(task_ptr_);
+    task_ptr_.SetNull();
+  }
+}
+
 }  // namespace chi
 
 #endif  // CHIMAERA_INCLUDE_CHIMAERA_MANAGERS_IPC_MANAGER_H_

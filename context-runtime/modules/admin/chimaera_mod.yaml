@@ -13,6 +13,7 @@ kNodeFailure: -1  # 2 - Not implemented
 kRecover: -1      # 3 - Not implemented
 kMigrate: -1      # 4 - Not implemented
 kUpgrade: -1      # 5 - Not implemented
+kMonitor: 9       # 9 - Unified monitor (all chimods implement this)
 
 # Admin-specific Methods (start from 10)
 kGetOrCreatePool: 10  # Get or create a new ChiPool
@@ -24,7 +25,6 @@ kFlush: 13            # Flush pending operations
 kSend: 14                # Send task inputs or outputs over network
 kRecv: 15                # Receive task inputs or outputs from network
 kClientConnect: 16       # Client connection handshake (was kHeartbeat)
-kMonitor: 17             # Monitor the runtime
 kSubmitBatch: 18         # Submit a batch of tasks in a single RPC
 kWreapDeadIpcs: 19       # Periodic task to reap dead IPC segments
 kClientRecv: 20          # Receive tasks from ZMQ clients

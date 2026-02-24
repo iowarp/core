@@ -612,6 +612,11 @@ class Future {
   HSHM_CROSS_FUN void Destroy(bool post_wait = false);
 
   /**
+   * Explicitly delete the underlying task via CHI_IPC->DelTask
+   */
+  HSHM_CROSS_FUN void DelTask();
+
+  /**
    * Copy constructor - does not transfer ownership
    * @param other Future to copy from
    */

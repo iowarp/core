@@ -40,6 +40,7 @@
 #include "../include/chimaera/MOD_NAME/MOD_NAME_runtime.h"
 
 #include <chrono>
+#include <hermes_shm/serialize/msgpack_wrapper.h>
 
 namespace chimaera::MOD_NAME {
 
@@ -248,6 +249,27 @@ chi::TaskResume Runtime::GpuSubmit(hipc::FullPtr<GpuSubmitTask> task,
 
   HLOG(kDebug, "MOD_NAME: GpuSubmit completed, result_value={}",
        task->result_value_);
+  (void)rctx;
+  co_return;
+}
+
+chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
+                                 chi::RunContext &rctx) {
+  // Generate test data: a vector of MonitorData structs
+  msgpack::sbuffer sbuf;
+  msgpack::packer<msgpack::sbuffer> pk(sbuf);
+
+  int num_items = 10;
+  pk.pack_array(num_items);
+  for (int i = 0; i < num_items; ++i) {
+    pk.pack_map(3);
+    pk.pack("id"); pk.pack(static_cast<int32_t>(i));
+    pk.pack("value"); pk.pack(static_cast<double>(i * 1.5));
+    pk.pack("name"); pk.pack(std::string("item_") + std::to_string(i));
+  }
+
+  task->results_[container_id_] = std::string(sbuf.data(), sbuf.size());
+  task->SetReturnCode(0);
   (void)rctx;
   co_return;
 }

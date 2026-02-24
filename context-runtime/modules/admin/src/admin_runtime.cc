@@ -49,6 +49,7 @@
 
 #include <cereal/archives/binary.hpp>
 #include <cereal/types/vector.hpp>
+#include <hermes_shm/serialize/msgpack_wrapper.h>
 #include <chrono>
 #include <memory>
 #include <sstream>
@@ -1217,34 +1218,164 @@ chi::TaskResume Runtime::ClientSend(hipc::FullPtr<ClientSendTask> task,
 
 chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
                                  chi::RunContext &rctx) {
-  // Get work orchestrator to access all workers
-  auto *work_orchestrator = CHI_WORK_ORCHESTRATOR;
-  if (!work_orchestrator) {
-    task->SetReturnCode(1);
-    HLOG(kError, "Monitor: WorkOrchestrator not available");
-    (void)rctx;
-    co_return;
-  }
-
-  // Get worker count from the work orchestrator
-  size_t num_workers = work_orchestrator->GetWorkerCount();
-
-  // Reserve space in the vector
-  task->info_.reserve(num_workers);
-
-  // Collect stats from all workers
-  for (size_t i = 0; i < num_workers; ++i) {
-    chi::Worker *worker =
-        work_orchestrator->GetWorker(static_cast<chi::u32>(i));
-    if (!worker) {
-      continue;
+  if (task->query_ == "worker_stats") {
+    auto *work_orchestrator = CHI_WORK_ORCHESTRATOR;
+    if (!work_orchestrator) {
+      task->SetReturnCode(1);
+      HLOG(kError, "Monitor(worker_stats): WorkOrchestrator not available");
+      (void)rctx;
+      co_return;
     }
 
-    // Get stats from this worker and add to vector
-    chi::WorkerStats stats = worker->GetWorkerStats();
-    task->info_.push_back(stats);
-  }
+    size_t num_workers = work_orchestrator->GetWorkerCount();
 
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> pk(sbuf);
+    pk.pack_array(num_workers);
+
+    for (size_t i = 0; i < num_workers; ++i) {
+      chi::Worker *worker =
+          work_orchestrator->GetWorker(static_cast<chi::u32>(i));
+      if (!worker) {
+        pk.pack_map(0);
+        continue;
+      }
+      chi::WorkerStats stats = worker->GetWorkerStats();
+      pk.pack_map(10);
+      pk.pack("worker_id");           pk.pack(stats.worker_id_);
+      pk.pack("is_running");          pk.pack(stats.is_running_);
+      pk.pack("is_active");           pk.pack(stats.is_active_);
+      pk.pack("idle_iterations");     pk.pack(stats.idle_iterations_);
+      pk.pack("num_queued_tasks");    pk.pack(stats.num_queued_tasks_);
+      pk.pack("num_blocked_tasks");   pk.pack(stats.num_blocked_tasks_);
+      pk.pack("num_periodic_tasks");  pk.pack(stats.num_periodic_tasks_);
+      pk.pack("num_retry_tasks");     pk.pack(stats.num_retry_tasks_);
+      pk.pack("suspend_period_us");   pk.pack(stats.suspend_period_us_);
+      pk.pack("num_tasks_processed"); pk.pack(stats.num_tasks_processed_);
+    }
+
+    task->results_[container_id_] = std::string(sbuf.data(), sbuf.size());
+  } else if (task->query_.rfind("pool_stats://", 0) == 0) {
+    // Parse pool_stats://PoolId:PoolQuery:selector
+    // Format: pool_stats://<major.minor>:<routing_mode[:params...]>:<selector>
+    std::string uri_body = task->query_.substr(13);  // skip "pool_stats://"
+
+    // 1. Extract PoolId (everything before first ':')
+    size_t first_colon = uri_body.find(':');
+    if (first_colon == std::string::npos) {
+      task->SetReturnCode(2);
+      HLOG(kError, "Monitor(pool_stats): missing ':' after PoolId in '{}'",
+           task->query_);
+      co_return;
+    }
+    std::string pool_id_str = uri_body.substr(0, first_colon);
+    chi::PoolId target_pool_id;
+    try {
+      target_pool_id = chi::PoolId::FromString(pool_id_str);
+    } catch (const std::exception &e) {
+      task->SetReturnCode(2);
+      HLOG(kError, "Monitor(pool_stats): invalid PoolId '{}': {}",
+           pool_id_str, e.what());
+      co_return;
+    }
+
+    // 2. Token-based parse of routing mode and its parameters
+    //    Tokens after PoolId: routing_mode[:extra1[:extra2]]:selector
+    //    local/broadcast/dynamic = 0 extra tokens
+    //    direct_id/direct_hash/physical = 1 extra token
+    //    range = 2 extra tokens
+    std::string remainder = uri_body.substr(first_colon + 1);
+    size_t colon_pos = remainder.find(':');
+    std::string routing_token = (colon_pos != std::string::npos)
+                                    ? remainder.substr(0, colon_pos)
+                                    : remainder;
+    // Lowercase for comparison
+    std::string routing_lower = routing_token;
+    std::transform(routing_lower.begin(), routing_lower.end(),
+                   routing_lower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    // Determine how many extra colon-separated tokens the mode consumes
+    int extra_tokens = 0;
+    if (routing_lower == "direct_id" || routing_lower == "direct_hash" ||
+        routing_lower == "physical") {
+      extra_tokens = 1;
+    } else if (routing_lower == "range") {
+      extra_tokens = 2;
+    }
+
+    // Consume routing_token + extra tokens to build PoolQuery string
+    std::string pool_query_str = routing_token;
+    size_t parse_pos = (colon_pos != std::string::npos)
+                           ? colon_pos + 1
+                           : remainder.size();
+    for (int i = 0; i < extra_tokens; ++i) {
+      if (parse_pos >= remainder.size()) {
+        task->SetReturnCode(2);
+        HLOG(kError,
+             "Monitor(pool_stats): not enough tokens for routing mode '{}' "
+             "in '{}'",
+             routing_token, task->query_);
+        co_return;
+      }
+      size_t next_colon = remainder.find(':', parse_pos);
+      std::string token = (next_colon != std::string::npos)
+                              ? remainder.substr(parse_pos, next_colon - parse_pos)
+                              : remainder.substr(parse_pos);
+      pool_query_str += ":" + token;
+      parse_pos = (next_colon != std::string::npos)
+                      ? next_colon + 1
+                      : remainder.size();
+    }
+
+    // Everything remaining is the selector
+    std::string selector;
+    if (parse_pos < remainder.size()) {
+      selector = remainder.substr(parse_pos);
+    }
+
+    // 3. Build PoolQuery from string
+    chi::PoolQuery target_pool_query;
+    try {
+      target_pool_query = chi::PoolQuery::FromString(pool_query_str);
+    } catch (const std::exception &e) {
+      task->SetReturnCode(2);
+      HLOG(kError, "Monitor(pool_stats): invalid PoolQuery '{}': {}",
+           pool_query_str, e.what());
+      co_return;
+    }
+
+    // 4. Verify the target pool exists
+    auto *pool_manager = CHI_POOL_MANAGER;
+    chi::Container *container =
+        pool_manager->GetStaticContainer(target_pool_id);
+    if (!container) {
+      task->SetReturnCode(3);
+      HLOG(kError, "Monitor(pool_stats): pool {} not found",
+           target_pool_id);
+      co_return;
+    }
+
+    // 5. Create sub-MonitorTask targeting the pool and dispatch it
+    auto *ipc_manager = CHI_IPC;
+    auto sub_task = ipc_manager->NewTask<MonitorTask>(
+        chi::CreateTaskId(), target_pool_id, target_pool_query, selector);
+    chi::Future<MonitorTask> sub_future = ipc_manager->Send(sub_task);
+    co_await sub_future;
+
+    // 6. Copy results from sub-task into this task
+    if (sub_future->GetReturnCode() != 0) {
+      task->SetReturnCode(sub_future->GetReturnCode());
+      HLOG(kError, "Monitor(pool_stats): sub-task failed with rc={}",
+           sub_future->GetReturnCode());
+    } else {
+      task->results_ = sub_future->results_;
+      task->SetReturnCode(0);
+    }
+    sub_future.DelTask();
+    co_return;
+  }
+  // Unknown queries get empty results (forward-compatible)
   task->SetReturnCode(0);
   (void)rctx;
   co_return;

@@ -52,6 +52,7 @@ class Iowarp(CMakePackage):
     depends_on('yaml-cpp')
     depends_on('doxygen')
     depends_on('cereal')
+    depends_on('msgpack-c')
     depends_on('libaio')
     depends_on('libzmq', when='+zmq')
 

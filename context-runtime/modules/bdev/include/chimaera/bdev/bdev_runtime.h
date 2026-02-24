@@ -267,6 +267,11 @@ class Runtime : public chi::Container {
   chi::TaskResume GetStats(hipc::FullPtr<GetStatsTask> task, chi::RunContext& ctx);
 
   /**
+   * Monitor container state (Method::kMonitor)
+   */
+  chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task, chi::RunContext &rctx);
+
+  /**
    * Destroy the container (Method::kDestroy)
    */
   chi::TaskResume Destroy(hipc::FullPtr<DestroyTask> task, chi::RunContext& ctx);

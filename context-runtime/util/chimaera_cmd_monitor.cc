@@ -5,6 +5,8 @@
 #include <thread>
 #include <iomanip>
 
+#include <hermes_shm/serialize/msgpack_wrapper.h>
+
 #include "chimaera/chimaera.h"
 #include "chimaera/singletons.h"
 #include "chimaera/types.h"
@@ -65,7 +67,47 @@ bool ParseMonitorArgs(int argc, char* argv[], MonitorOptions& opts) {
   return true;
 }
 
-void PrintStats(const chimaera::admin::MonitorTask& task) {
+/**
+ * Decode msgpack worker_stats from MonitorTask results into WorkerStats vector.
+ * Returns empty vector on decode failure.
+ */
+std::vector<chi::WorkerStats> DecodeWorkerStats(
+    const chimaera::admin::MonitorTask& task) {
+  std::vector<chi::WorkerStats> result;
+
+  // Merge all container results (admin typically has one container)
+  for (const auto& [container_id, blob] : task.results_) {
+    if (blob.empty()) continue;
+    msgpack::object_handle oh =
+        msgpack::unpack(blob.data(), blob.size());
+    const msgpack::object& obj = oh.get();
+    if (obj.type != msgpack::type::ARRAY) continue;
+    for (uint32_t i = 0; i < obj.via.array.size; ++i) {
+      const msgpack::object& item = obj.via.array.ptr[i];
+      if (item.type != msgpack::type::MAP) continue;
+      chi::WorkerStats stats;
+      for (uint32_t j = 0; j < item.via.map.size; ++j) {
+        const auto& kv = item.via.map.ptr[j];
+        std::string key;
+        kv.key.convert(key);
+        if (key == "worker_id")           kv.val.convert(stats.worker_id_);
+        else if (key == "is_running")     kv.val.convert(stats.is_running_);
+        else if (key == "is_active")      kv.val.convert(stats.is_active_);
+        else if (key == "idle_iterations")    kv.val.convert(stats.idle_iterations_);
+        else if (key == "num_queued_tasks")   kv.val.convert(stats.num_queued_tasks_);
+        else if (key == "num_blocked_tasks")  kv.val.convert(stats.num_blocked_tasks_);
+        else if (key == "num_periodic_tasks") kv.val.convert(stats.num_periodic_tasks_);
+        else if (key == "num_retry_tasks")    kv.val.convert(stats.num_retry_tasks_);
+        else if (key == "suspend_period_us")  kv.val.convert(stats.suspend_period_us_);
+        else if (key == "num_tasks_processed") kv.val.convert(stats.num_tasks_processed_);
+      }
+      result.push_back(stats);
+    }
+  }
+  return result;
+}
+
+void PrintStats(const std::vector<chi::WorkerStats>& workers) {
   HIPRINT("\033[2J\033[H");
 
   auto now = std::chrono::system_clock::now();
@@ -82,14 +124,14 @@ void PrintStats(const chimaera::admin::MonitorTask& task) {
   chi::u32 total_blocked = 0;
   chi::u32 total_periodic = 0;
 
-  for (const auto& stats : task.info_) {
+  for (const auto& stats : workers) {
     total_queued += stats.num_queued_tasks_;
     total_blocked += stats.num_blocked_tasks_;
     total_periodic += stats.num_periodic_tasks_;
   }
 
   HIPRINT("Summary:");
-  HIPRINT("  Total Workers:        {}", task.info_.size());
+  HIPRINT("  Total Workers:        {}", workers.size());
   HIPRINT("  Total Queued Tasks:   {}", total_queued);
   HIPRINT("  Total Blocked Tasks:  {}", total_blocked);
   HIPRINT("  Total Periodic Tasks: {}", total_periodic);
@@ -108,7 +150,7 @@ void PrintStats(const chimaera::admin::MonitorTask& task) {
   HIPRINT("{}", header.str());
   HIPRINT("{}", std::string(83, '-'));
 
-  for (const auto& stats : task.info_) {
+  for (const auto& stats : workers) {
     std::ostringstream row;
     row << std::setw(6) << stats.worker_id_
         << std::setw(10) << (stats.is_running_ ? "Yes" : "No")
@@ -154,8 +196,9 @@ int Monitor(int argc, char* argv[]) {
 
   while (g_monitor_running) {
     try {
-      HLOG(kInfo, "Sending AsyncMonitor request...");
-      auto future = admin_client->AsyncMonitor(chi::PoolQuery::Local());
+      HLOG(kInfo, "Sending AsyncMonitor(worker_stats) request...");
+      auto future = admin_client->AsyncMonitor(
+          chi::PoolQuery::Local(), "worker_stats");
       future.Wait();
 
       if (future->GetReturnCode() != 0) {
@@ -164,11 +207,13 @@ int Monitor(int argc, char* argv[]) {
         break;
       }
 
+      auto workers = DecodeWorkerStats(*future);
+
       if (opts.json_output) {
         std::ostringstream json;
         json << "{\"workers\":[";
         bool first = true;
-        for (const auto& stats : future->info_) {
+        for (const auto& stats : workers) {
           if (!first) json << ",";
           first = false;
           json << "{"
@@ -179,12 +224,14 @@ int Monitor(int argc, char* argv[]) {
                << "\"num_queued_tasks\":" << stats.num_queued_tasks_ << ","
                << "\"num_blocked_tasks\":" << stats.num_blocked_tasks_ << ","
                << "\"num_periodic_tasks\":" << stats.num_periodic_tasks_ << ","
-               << "\"suspend_period_us\":" << stats.suspend_period_us_ << "}";
+               << "\"num_retry_tasks\":" << stats.num_retry_tasks_ << ","
+               << "\"suspend_period_us\":" << stats.suspend_period_us_ << ","
+               << "\"num_tasks_processed\":" << stats.num_tasks_processed_ << "}";
         }
         json << "]}";
         HIPRINT("{}", json.str());
       } else {
-        PrintStats(*future);
+        PrintStats(workers);
       }
 
       if (opts.once) break;

@@ -80,6 +80,16 @@ if(WRP_CORE_ENABLE_TESTS)
   message(STATUS "Unit tests enabled - added test subdirectory")
 endif()
 
+# Add Python bindings if enabled
+if(WRP_CORE_ENABLE_PYTHON)
+  if(COMMAND nanobind_add_module)
+    add_subdirectory(wrapper/python)
+    message(STATUS "Chimaera runtime Python bindings enabled")
+  else()
+    message(WARNING "WRP_CORE_ENABLE_PYTHON is ON but nanobind_add_module not found.")
+  endif()
+endif()
+
 #------------------------------------------------------------------------------
 # SECTION 6: JARVIS INTEGRATION
 #------------------------------------------------------------------------------

@@ -129,11 +129,9 @@ add_library(configure INTERFACE)
 target_link_libraries(configure INTERFACE ${YAML_CPP_LIBS})
 add_library(hshm::configure ALIAS configure)
 
-# hshm::serialize - Serialization (cereal)
+# hshm::serialize - Serialization (cereal + msgpack)
 add_library(serialize INTERFACE)
-if(WRP_CORE_ENABLE_CEREAL)
-    target_link_libraries(serialize INTERFACE ${SERIALIZATION_LIBS})
-endif()
+target_link_libraries(serialize INTERFACE ${SERIALIZATION_LIBS})
 target_compile_definitions(serialize INTERFACE
     HSHM_ENABLE_CEREAL=$<BOOL:${WRP_CORE_ENABLE_CEREAL}>
 )

@@ -232,9 +232,9 @@ public:
   chi::TaskResume WreapDeadIpcs(hipc::FullPtr<WreapDeadIpcsTask> task, chi::RunContext &rctx);
 
   /**
-   * Handle Monitor - Collect and return worker statistics
-   * Iterates through all workers and collects their current statistics
-   * Returns serialized statistics in JSON format
+   * Handle Monitor - Unified monitor query for admin chimod
+   * Supported queries:
+   *   "worker_stats" - collect worker statistics (msgpack-encoded)
    */
   chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task, chi::RunContext &rctx);
 

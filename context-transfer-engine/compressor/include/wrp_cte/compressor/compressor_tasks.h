@@ -113,34 +113,7 @@ struct TargetState {
         bytes_written_(written), last_updated_(std::chrono::steady_clock::now()) {}
 };
 
-/**
- * MonitorTask - Periodically poll core for target information
- * Updates cached target state (scores, capacities) for compression decisions
- */
-struct MonitorTask : public chi::Task {
-  IN chi::PoolId core_pool_id_;  // Pool ID of core chimod to monitor
-
-  // SHM constructor
-  MonitorTask() : chi::Task() {}
-
-  // Emplace constructor
-  explicit MonitorTask(const chi::TaskId &task_id,
-                       const chi::PoolId &pool_id,
-                       const chi::PoolQuery &pool_query,
-                       const chi::PoolId &core_pool_id)
-      : chi::Task(task_id, pool_id, pool_query, Method::kMonitor),
-        core_pool_id_(core_pool_id) {}
-
-  void Copy(const hipc::FullPtr<MonitorTask>& other) {
-    core_pool_id_ = other->core_pool_id_;
-  }
-
-  template <typename Ar> void SerializeStart(Ar &ar) {
-    task_serialize<Ar>(ar);
-    ar(core_pool_id_);
-  }
-  template <typename Ar> void SerializeEnd(Ar &ar) {}
-};
+using MonitorTask = chimaera::admin::MonitorTask;
 
 /**
  * Compression telemetry data structure for performance monitoring

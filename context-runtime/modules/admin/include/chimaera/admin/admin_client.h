@@ -303,30 +303,18 @@ class Client : public chi::ContainerClient {
   }
 
   /**
-   * Monitor worker statistics (asynchronous)
-   * Collects current statistics from all workers including:
-   * - Number of queued, blocked, and periodic tasks
-   * - Worker idle status and suspend periods
+   * Unified Monitor - Query any chimod for runtime state (asynchronous)
+   * All chimods implement kMonitor:9 with this task type.
    *
    * @param pool_query Query for routing this task
-   * @param period_us Period in microseconds for periodic monitoring (0 =
-   * one-shot)
-   * @return Future for MonitorTask that will contain worker statistics
+   * @param query Free-form query string
+   * @return Future for MonitorTask with results
    */
   chi::Future<MonitorTask> AsyncMonitor(const chi::PoolQuery& pool_query,
-                                        double period_us = 0) {
+                                        const std::string& query) {
     auto* ipc_manager = CHI_IPC;
-
-    // Allocate MonitorTask
-    auto task = ipc_manager->NewTask<MonitorTask>(chi::CreateTaskId(), pool_id_,
-                                                  pool_query);
-    // Set task as periodic if period is specified
-    if (period_us > 0) {
-      task->SetPeriod(period_us, chi::kMicro);
-      task->SetFlags(TASK_PERIODIC);
-    }
-
-    // Submit to runtime and return Future
+    auto task = ipc_manager->NewTask<MonitorTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, query);
     return ipc_manager->Send(task);
   }
 

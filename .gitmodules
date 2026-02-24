@@ -22,14 +22,10 @@
 [submodule "external/yaml-cpp"]
 	path = external/yaml-cpp
 	url = https://github.com/jbeder/yaml-cpp.git
-[submodule "external/jarvis-cd"]
-	path = external/jarvis-cd
-	url = https://github.com/iowarp/runtime-deployment.git
 [submodule "docs"]
 	path = docs
 	url = https://github.com/iowarp/docs.git
 	branch = iowarp-dev
-[submodule "installers/iowarp"]
-	path = installers/iowarp
-	url = https://github.com/iowarp/iowarp
-	branch = core
+[submodule "external/jarvis-cd"]
+	path = external/jarvis-cd
+	url = https://github.com/grc-iit/jarvis-cd.git

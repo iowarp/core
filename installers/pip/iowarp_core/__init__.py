@@ -29,7 +29,7 @@ _DATA_DIR = os.path.join(_PACKAGE_DIR, "data")
 
 # Extension modules that live in ext/ and can be imported via
 # "from iowarp_core import <name>".
-_EXT_MODULES = {"wrp_cee", "wrp_cte_core_ext"}
+_EXT_MODULES = {"wrp_cee", "wrp_cte_core_ext", "chimaera_runtime_ext"}
 
 
 def _setup():

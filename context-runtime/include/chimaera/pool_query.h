@@ -164,6 +164,12 @@ class PoolQuery {
    */
   static PoolQuery FromString(const std::string& str);
 
+  /**
+   * Convert PoolQuery to string representation
+   * @return String representation (e.g., "local", "broadcast", "direct_id:5")
+   */
+  std::string ToString() const;
+
   // Getter methods for internal query parameters (used by routing logic)
 
   /**

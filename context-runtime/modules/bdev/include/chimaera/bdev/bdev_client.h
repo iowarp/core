@@ -149,6 +149,17 @@ class Client : public chi::ContainerClient {
   }
 
   /**
+   * Monitor container state - asynchronous
+   */
+  chi::Future<MonitorTask> AsyncMonitor(const chi::PoolQuery &pool_query,
+                                        const std::string &query) {
+    auto *ipc_manager = CHI_IPC;
+    auto task = ipc_manager->NewTask<MonitorTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, query);
+    return ipc_manager->Send(task);
+  }
+
+  /**
    * Get performance statistics - asynchronous
    */
   chi::Future<chimaera::bdev::GetStatsTask> AsyncGetStats() {

@@ -47,6 +47,8 @@
 
 namespace chimaera::MOD_NAME {
 
+using MonitorTask = chimaera::admin::MonitorTask;
+
 /**
  * CreateParams for MOD_NAME chimod
  * Contains configuration parameters for MOD_NAME container creation

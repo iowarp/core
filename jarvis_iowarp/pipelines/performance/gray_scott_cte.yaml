@@ -2,7 +2,7 @@
 # Purpose: Demonstrate CTE core functionality with the CTE benchmark application
 # Requirements: chimaera runtime start and chimaera runtime stop in PATH, wrp_cte_bench executable in PATH
 
-  config:
+config:
   name: cte_benchmark_example
 
   pkgs:

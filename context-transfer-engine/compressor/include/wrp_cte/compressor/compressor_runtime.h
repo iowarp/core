@@ -104,8 +104,8 @@ private:
   chi::TaskResume Destroy(hipc::FullPtr<DestroyTask> task, chi::RunContext &ctx);
 
   /**
-   * Monitor targets (Method::kMonitor)
-   * Periodically polls core for target information and updates cache
+   * Monitor container state (Method::kMonitor)
+   * Polls core for target information and serializes results with msgpack
    */
   chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task, chi::RunContext &ctx);
 
