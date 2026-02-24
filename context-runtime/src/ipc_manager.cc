@@ -718,6 +718,29 @@ bool IpcManager::WaitForLocalServer() {
   return false;
 }
 
+bool IpcManager::WaitForLocalRuntimeStop(u32 timeout_sec) {
+  HLOG(kInfo, "Waiting for runtime to stop (timeout={}s)", timeout_sec);
+
+  for (u32 elapsed = 0; elapsed < timeout_sec; ++elapsed) {
+    // Send a ClientConnectTask with a 1-second timeout
+    auto task = NewTask<chimaera::admin::ClientConnectTask>(
+        CreateTaskId(), kAdminPoolId, PoolQuery::Local());
+    auto future = SendZmq(task, ipc_mode_);
+
+    if (!future.Wait(1.0f)) {
+      // Timeout: runtime is no longer responding
+      HLOG(kInfo, "Runtime stopped (no response after {}s)", elapsed + 1);
+      return true;
+    }
+
+    // Runtime still responded — it's still alive, keep waiting
+    HLOG(kDebug, "Runtime still alive after {}s, retrying...", elapsed + 1);
+  }
+
+  HLOG(kError, "Runtime still running after {}s timeout", timeout_sec);
+  return false;
+}
+
 void IpcManager::SetNodeId(const std::string &hostname) {
   (void)hostname;  // Unused parameter
   if (!shared_header_) {

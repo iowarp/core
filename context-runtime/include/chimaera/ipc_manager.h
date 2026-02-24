@@ -1598,6 +1598,15 @@ class IpcManager {
 
  public:
   /**
+   * Wait for local server to stop by polling with ClientConnectTask.
+   * Sends repeated ClientConnectTask probes with a short timeout.
+   * Returns true once the runtime stops responding (connection fails/times out).
+   * @param timeout_sec Maximum time to wait for the runtime to stop
+   * @return true if runtime stopped, false if still running after timeout
+   */
+  bool WaitForLocalRuntimeStop(u32 timeout_sec = 30);
+
+  /**
    * RwLock for protecting allocator_map_ access
    * Reader lock: for normal ToFullPtr lookups and allocation attempts
    * Writer lock: for IpcManager cleanup and memory increase operations

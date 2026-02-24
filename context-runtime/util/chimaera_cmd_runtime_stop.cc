@@ -89,13 +89,19 @@ int RuntimeStop(int argc, char* argv[]) {
       return 1;
     }
 
-    HLOG(kDebug, "Stop runtime task submitted successfully (fire-and-forget)");
+    HLOG(kDebug, "Stop runtime task submitted, waiting for runtime to exit...");
+
+    // Wait for the runtime to actually stop by polling with ClientConnect
+    if (!ipc_manager->WaitForLocalRuntimeStop(30)) {
+      HLOG(kError, "Runtime did not stop within 30 seconds");
+      return 1;
+    }
 
     auto end_time = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
                         end_time - start_time).count();
 
-    HLOG(kDebug, "Runtime stop task submitted in {}ms", duration);
+    HLOG(kDebug, "Runtime stopped in {}ms", duration);
     return 0;
 
   } catch (const std::exception& e) {
