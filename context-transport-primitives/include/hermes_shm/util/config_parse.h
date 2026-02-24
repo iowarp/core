@@ -42,8 +42,16 @@
 #include <cstdlib>
 #include <iomanip>
 #include <list>
-#include <regex>
+// <regex> removed: ExpandPath now uses std::string::find to avoid std::locale
+// false positives under MemorySanitizer (uninstrumented conda libstdc++).
 #include <string>
+// MSan: mark yaml Node scalar bytes as initialized after YAML::Load(File).
+// Precompiled yaml-cpp.so propagates "uninitialized" bytes (from uninstrumented
+// libstdc++) through our instrumented _M_assign into Node scalar strings;
+// __msan_unpoison fixes the false-positive use-of-uninitialized-value reports.
+#if defined(__has_feature) && __has_feature(memory_sanitizer)
+#include <sanitizer/msan_interface.h>
+#endif
 
 #include "formatter.h"
 #include "hermes_shm/constants/macros.h"
@@ -239,18 +247,15 @@ class ConfigParse {
 
   /** Expands all environment variables in a path string */
   static std::string ExpandPath(std::string path) {
-    std::smatch env_names;
-    std::regex expr("\\$\\{[^\\}]+\\}");
-    if (!std::regex_search(path, env_names, expr)) {
-      return path;
-    }
-    for (auto &env_name_re : env_names) {
-      std::string to_replace = std::string(env_name_re);
-      std::string env_name = to_replace.substr(2, to_replace.size() - 3);
+    size_t pos = 0;
+    while ((pos = path.find("${", pos)) != std::string::npos) {
+      size_t end = path.find("}", pos + 2);
+      if (end == std::string::npos) break;
+      std::string env_name = path.substr(pos + 2, end - pos - 2);
       std::string env_val = hshm::SystemInfo::Getenv(
           env_name.c_str(), hshm::Unit<size_t>::Megabytes(1));
-      std::regex replace_expr("\\$\\{" + env_name + "\\}");
-      path = std::regex_replace(path, replace_expr, env_val);
+      path.replace(pos, end - pos + 1, env_val);
+      pos += env_val.size();
     }
     return path;
   }
@@ -270,6 +275,38 @@ class ConfigParse {
     }
     return hosts;
   }
+
+#if defined(__has_feature) && __has_feature(memory_sanitizer)
+  /**
+   * Traverse a fully-loaded YAML tree and mark all scalar string bytes as
+   * initialized in MSan's shadow memory.
+   *
+   * Background: precompiled yaml-cpp.so calls back into our MSan-instrumented
+   * binary via PLT (e.g. std::string::_M_assign).  The uninstrumented scanner
+   * bytes are propagated into yaml Node scalar strings and appear
+   * "uninitialized" to MSan.  After YAML::Load(File) returns, the tree is
+   * structurally valid; we just need to tell MSan the character bytes are OK.
+   * Called by BaseConfig::LoadText and BaseConfig::LoadFromFile.
+   */
+  static void MsanUnpoisonYamlNode(const YAML::Node &node) {
+    if (!node.IsDefined() || node.IsNull()) return;
+    if (node.IsScalar()) {
+      const std::string &s = node.Scalar();
+      if (!s.empty()) {
+        __msan_unpoison(s.data(), s.size());
+      }
+    } else if (node.IsSequence()) {
+      for (auto it = node.begin(); it != node.end(); ++it) {
+        MsanUnpoisonYamlNode(*it);
+      }
+    } else if (node.IsMap()) {
+      for (auto it = node.begin(); it != node.end(); ++it) {
+        MsanUnpoisonYamlNode(it->first);
+        MsanUnpoisonYamlNode(it->second);
+      }
+    }
+  }
+#endif
 };
 
 /**
@@ -286,6 +323,9 @@ class BaseConfig {
       return;
     }
     YAML::Node yaml_conf = YAML::Load(config_string);
+#if defined(__has_feature) && __has_feature(memory_sanitizer)
+    hshm::ConfigParse::MsanUnpoisonYamlNode(yaml_conf);
+#endif
     ParseYAML(yaml_conf);
   }
 
@@ -300,6 +340,9 @@ class BaseConfig {
     auto real_path = hshm::ConfigParse::ExpandPath(path);
     try {
       YAML::Node yaml_conf = YAML::LoadFile(real_path);
+#if defined(__has_feature) && __has_feature(memory_sanitizer)
+      hshm::ConfigParse::MsanUnpoisonYamlNode(yaml_conf);
+#endif
       ParseYAML(yaml_conf);
     } catch (std::exception &e) {
       HLOG(kFatal, e.what());

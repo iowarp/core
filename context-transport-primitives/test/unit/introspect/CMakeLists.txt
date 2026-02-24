@@ -21,4 +21,10 @@ set_tests_properties(
   ctp_mixed_mapping
   PROPERTIES TIMEOUT 15
 )
+
+# Skip under MSan: multi-process test; MSan shadow doesn't propagate across fork.
+set_tests_properties(
+  ctp_mixed_mapping
+  PROPERTIES LABELS "msan_skip"
+)
 endif()

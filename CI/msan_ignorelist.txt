@@ -53,14 +53,112 @@ fun:*basic_ios*
 fun:*__shared_count*
 fun:*__shared_ptr*
 fun:*shared_ptr*
+fun:*_Sp_counted_base*
 
-# Catch2 test framework (not instrumented)
-fun:*Catch*
 # Catch2 Clara header-only command line parser - shared_ptr internals
-src:/home/hyoklee/miniconda3/envs/iowarp/include/catch2/internal/catch_clara.hpp
+# NOTE: Do NOT suppress all of fun:*Catch* here. Doing so disables shadow tracking
+# inside engage_platform() and other Catch2 functions, making local variables appear
+# uninitialized and causing false-positive sigaction / ostream errors.
+src:/home/hyoklee/mc3/envs/iowarp-build/include/catch2/internal/catch_clara.hpp
+
+# Catch2 internal test infrastructure false positives:
+# 1. unique_ptr<ITestInvoker>::~unique_ptr() - Catch2 global test registration uses
+#    placement-new style init that leaves shadow uninitialized; fires at static dtor time.
+# 2. AssertionHandler::~AssertionHandler() - every REQUIRE/CHECK macro creates a local
+#    catchAssertionHandler on the stack whose shadow starts uninitialized.
+# 3. FatalConditionHandler::engage_platform / disengage_platform - the sigaction old-action
+#    struct is filled by the kernel; MSan cannot see that initialization. Suppress BOTH
+#    engage and disengage to avoid cross-function shadow propagation errors.
+fun:*unique_ptr*ITestInvoker*
+fun:*Catch*AssertionHandler*
+fun:*FatalConditionHandler*
 
 # cereal binary archive (not instrumented)
 fun:*cereal*
 
-# yaml-cpp (not instrumented)
+# yaml-cpp (not instrumented) - match by function name for portability across conda envs
+fun:*YAML*
 src:/home/hyoklee/miniconda3/envs/iowarp/include/yaml-cpp/*
+src:/home/hyoklee/mc3/envs/iowarp-build/include/yaml-cpp/*
+
+# std::vector<char> internals (uninstrumented stdlib - e.g. resize/append in string ops)
+fun:*vector*_M_default_append*
+fun:*_Construct*
+fun:*__fill_a1*
+
+# std::locale / std::collate internals (uninstrumented stdlib)
+fun:*collate*do_transform*
+fun:*char_traits*length*
+
+# std::ostream write/insert templates - compiled into our .so but called with data from
+# uninstrumented conda libstdc++.so stringbuf/stringstream; all these are false positives
+fun:*__ostream_write*
+fun:*__ostream_insert*
+fun:*ostreambuf_iterator*_M_put*
+
+# char_traits::copy and basic_string::_S_copy - inline helpers in system GCC 12 headers,
+# compiled into our binaries; copy bytes from uninstrumented libstdc++ string internals
+fun:*char_traits*copy*
+fun:*basic_string*_S_copy*
+
+# hshm::Logger and hshm::Formatter use std::stringstream / std::ostream;
+# the stringstream internal buffer is filled by uninstrumented libstdc++, causing
+# false-positive "uninitialized" reports on every log message
+fun:*hshm*Logger*Log*
+fun:*hshm*Logger*Print*
+fun:*hshm*Formatter*format*
+
+# std::map / std::set red-black tree with std::string keys - the string comparisons
+# and tree traversals touch memory initialized by uninstrumented libstdc++
+fun:*_Rb_tree*
+
+# std::unique_ptr impl reading uninitialized module info structs from uninstrumented alloc
+fun:*__uniq_ptr_impl*
+
+# zmq networking (not instrumented) - resolves addresses using system getaddrinfo
+fun:*zmq*ip_resolver*
+fun:*zmq*tcp_address*
+fun:*zmq*resolve*
+fun:*zmq*get_socket_address*
+
+# hshm::ConfigParse::ExpandPath uses std::regex/std::locale (uninstrumented conda libstdc++)
+# - collate, char_traits::length, strxfrm_l are all false positives from uninstrumented .so
+fun:*ConfigParse*ExpandPath*
+fun:*regex_traits*transform*
+fun:*regex_traits*transform_primary*
+fun:*BracketMatcher*_M_apply*
+fun:*BracketMatcher*_M_make_cache*
+
+# C++20 coroutine .destroy frames: MSan cannot track shadow across coroutine suspension;
+# uninitialized aggregates in cleanup are false positives from coroutine state machine
+fun:*HeartbeatProbe*
+
+# std::basic_string range constructor (basic_string.h:762) copies from input written by
+# uninstrumented libstdc++ (e.g. strxfrm_l output); result appears uninitialized to MSan
+fun:*basic_string*basic_string*
+
+# zmq poll/signaler: poll() called with fds initialized by uninstrumented ZMQ internals
+fun:*zmq*poll*
+fun:*zmq*signaler*
+fun:*zmq*mailbox*
+
+# std::char_traits<char>::compare and std::string::compare - called by yaml-cpp.so
+# (YAML::IsNullString) to compare scalar string values. The string bytes have
+# "uninitialized" MSan shadow from the uninstrumented scanner path (NodeBuilder::OnScalar
+# -> _M_assign -> _S_copy -> char_traits::copy -> __msan_memcpy). Adding these to
+# the ignorelist causes the compiler to use real memcmp (not __interceptor_memcmp)
+# inside these functions, preventing the false-positive check.
+fun:*char_traits*compare*
+fun:*basic_string*compare*
+
+# hshm::ConfigParse::ParseHostNameString uses std::stringstream (uninstrumented
+# libstdc++) which leaves internal state bytes uninitialized from MSan's view.
+# ss.good(), getline(ss, ...) etc. read those uninitialized state bits → false positives.
+fun:*ParseHostNameString*
+
+# hshm::SystemInfo::GetCpuFreqKhz opens /sys/devices/system/cpu/cpuN/.../cpuinfo_cur_freq
+# using std::ifstream. The path string construction goes through uninstrumented libstdc++
+# string operations, and the basic_file::open → fopen interceptor fires on "uninitialized"
+# path bytes. All uninstrumented libstdc++ false positives.
+fun:*GetCpuFreqKhz*
+fun:*RefreshCpuFreqKhz*

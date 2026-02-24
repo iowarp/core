@@ -244,6 +244,24 @@ if(WRP_CORE_ENABLE_TESTS)
       TIMEOUT 180
       ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1"
   )
+
+  # Mark all admin tests as msan_skip (they use ZMQ which is uninstrumented)
+  set_tests_properties(
+    cr_task_archive_basic_tests
+    cr_task_archive_bulk_transfer_tests
+    cr_task_archive_non_task_tests
+    cr_task_archive_task_base_tests
+    cr_task_archive_admin_tasks_tests
+    cr_task_archive_bidirectional_tests
+    cr_task_archive_container_tests
+    cr_task_archive_error_handling_tests
+    cr_task_archive_performance_tests
+    cr_task_archive_integration_tests
+    cr_all_task_archive_tests
+    cr_compose_tests
+    cr_submit_batch_tests
+    PROPERTIES LABELS "msan_skip"
+  )
 endif()
 
 # Custom targets for admin tests

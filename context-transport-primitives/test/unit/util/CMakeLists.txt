@@ -18,6 +18,13 @@ target_link_libraries(test_config_parse_exec
 add_test(NAME ctp_config_parse COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_config_parse_exec)
 
+# Skip under MSan: uses precompiled Catch2 (FatalConditionHandler/sigaction
+# false positives) and yaml-cpp (uninstrumented) for config parsing.
+set_tests_properties(
+  ctp_config_parse
+  PROPERTIES LABELS "msan_skip"
+)
+
 #------------------------------------------------------------------------------
 # Install Targets
 #------------------------------------------------------------------------------

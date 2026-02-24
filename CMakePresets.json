@@ -173,8 +173,9 @@
             "binaryDir": "${sourceDir}/build-msan",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_COMPILER": "clang",
-                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_C_COMPILER": "clang-14",
+                "CMAKE_CXX_COMPILER": "clang++-14",
+                "CMAKE_PREFIX_PATH": "/home/hyoklee/msan-deps",
                 "WRP_CORE_ENABLE_RUNTIME": "ON",
                 "WRP_CORE_ENABLE_CTE": "ON",
                 "WRP_CORE_ENABLE_CAE": "ON",

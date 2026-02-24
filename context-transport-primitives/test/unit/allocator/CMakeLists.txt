@@ -85,6 +85,18 @@ set_tests_properties(
   ctp_buddy_allocator_multiprocess
   PROPERTIES TIMEOUT 15
 )
+
+# Skip under MSan: Catch2 is precompiled without MSan instrumentation,
+# and multiprocess tests don't propagate MSan shadow across fork boundaries.
+set_tests_properties(
+  ctp_sub_alloc
+  ctp_sub_alloc_nested
+  ctp_mp_allocator
+  ctp_mp_allocator_multithread
+  ctp_mp_allocator_multiprocess
+  ctp_buddy_allocator_multiprocess
+  PROPERTIES LABELS "msan_skip"
+)
 endif()
 
 #------------------------------------------------------------------------------

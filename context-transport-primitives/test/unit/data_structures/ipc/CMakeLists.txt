@@ -95,6 +95,16 @@ set_tests_properties(
   PROPERTIES TIMEOUT 15
 )
 
+# Skip under MSan: slist/rb_tree tests use precompiled Catch2 which
+# has FatalConditionHandler false positives (sigaction filled by kernel).
+set_tests_properties(
+  ctp_slist_pre
+  ctp_slist_pre_atomic
+  ctp_rb_tree_pre
+  ctp_rb_tree_pre_atomic
+  PROPERTIES LABELS "msan_skip"
+)
+
 #------------------------------------------------------------------------------
 # Install Targets
 #------------------------------------------------------------------------------

@@ -84,6 +84,23 @@ if(WRP_CORE_ENABLE_TESTS)
     TIMEOUT 180
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1;CHI_IPC_MODE=IPC"
   )
+
+  # Set test properties
+  set_tests_properties(
+    cr_bdev_container_creation_tests
+    cr_bdev_block_allocation_tests
+    cr_bdev_io_operations_tests
+    cr_bdev_async_operations_tests
+    cr_bdev_free_management_tests
+    cr_bdev_performance_tests
+    cr_bdev_error_handling_tests
+    cr_bdev_cleanup_tests
+    cr_all_bdev_tests
+    PROPERTIES
+      TIMEOUT 180
+      LABELS "msan_skip"
+      ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1"
+  )
 endif()
 
 # Custom targets for bdev tests

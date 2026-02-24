@@ -36,6 +36,11 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer)
+#include <sanitizer/msan_interface.h>
+#endif
+#endif
 
 #include "hermes_shm/data_structures/serialization/local_serialize.h"
 #include "hermes_shm/thread/thread_model_manager.h"
@@ -252,6 +257,14 @@ class ShmTransport
   static void MemCopy(char* dst, const char* src, size_t n) {
 #if HSHM_IS_HOST
     std::memcpy(dst, src, n);
+    // Mark destination as initialized: shared-memory src was written by another
+    // process/thread without MSan tracking, so memcpy propagates "uninitialized"
+    // shadow; __msan_unpoison tells MSan the bytes are now valid.
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer)
+    __msan_unpoison(dst, n);
+#endif
+#endif
 #else
     for (size_t i = 0; i < n; ++i) {
       dst[i] = src[i];

@@ -30,6 +30,19 @@ add_test(NAME ctp_local_serialize_mixed COMMAND
 add_test(NAME ctp_local_serialize_nested COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_local_serialize_exec)
 
+# Skip under MSan: cereal serialization is uninstrumented; deserialized values
+# retain uninitialized shadow that propagates to SimpleTest::print_summary output.
+set_tests_properties(
+  ctp_local_serialize_basic
+  ctp_local_serialize_string
+  ctp_local_serialize_vector
+  ctp_local_serialize_list
+  ctp_local_serialize_map
+  ctp_local_serialize_mixed
+  ctp_local_serialize_nested
+  PROPERTIES LABELS "msan_skip"
+)
+
 #------------------------------------------------------------------------------
 # Install Targets
 #------------------------------------------------------------------------------
