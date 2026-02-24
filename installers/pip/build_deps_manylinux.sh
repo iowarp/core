@@ -72,6 +72,7 @@ cd /tmp
 curl -sL https://github.com/msgpack/msgpack-c/archive/refs/tags/cpp-6.1.1.tar.gz | tar xz
 cmake -S msgpack-c-cpp-6.1.1 -B msgpack-build \
     -DCMAKE_INSTALL_PREFIX=$PREFIX \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DMSGPACK_CXX20=ON \
     -DMSGPACK_USE_BOOST=OFF \
     -DMSGPACK_BUILD_TESTS=OFF \
