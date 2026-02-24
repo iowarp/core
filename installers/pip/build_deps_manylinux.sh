@@ -66,6 +66,20 @@ cmake --build cereal-build -j$NPROC
 cmake --install cereal-build
 rm -rf /tmp/cereal-*
 
+# msgpack-cxx 6.1.1 (header-only)
+echo "--- msgpack-cxx 6.1.1 ---"
+cd /tmp
+curl -sL https://github.com/msgpack/msgpack-c/archive/refs/tags/cpp-6.1.1.tar.gz | tar xz
+cmake -S msgpack-c-cpp-6.1.1 -B msgpack-build \
+    -DCMAKE_INSTALL_PREFIX=$PREFIX \
+    -DMSGPACK_CXX20=ON \
+    -DMSGPACK_USE_BOOST=OFF \
+    -DMSGPACK_BUILD_TESTS=OFF \
+    -DMSGPACK_BUILD_EXAMPLES=OFF
+cmake --build msgpack-build -j$NPROC
+cmake --install msgpack-build
+rm -rf /tmp/msgpack-c-* /tmp/msgpack-build
+
 # libsodium 1.0.20
 echo "--- libsodium 1.0.20 ---"
 cd /tmp
