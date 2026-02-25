@@ -17,6 +17,7 @@
 [![License](https://img.shields.io/badge/License-BSD%203--Clause-yellow.svg)](LICENSE)
 [![IoWarp](https://img.shields.io/badge/IoWarp-GitHub-blue.svg)](http://github.com/iowarp)
 [![GRC](https://img.shields.io/badge/GRC-Website-blue.svg)](https://grc.iit.edu/)
+[![codecov](https://codecov.io/gh/iowarp/clio-core/graph/badge.svg)](https://codecov.io/gh/iowarp/clio-core)
 
 ## Overview
 
@@ -141,8 +142,8 @@ Interactive tools and interfaces for exploring scientific data contents and meta
 IOWarp Core uses git submodules for several dependencies. Always clone with `--recurse-submodules`:
 
 ```bash
-git clone --recurse-submodules https://github.com/iowarp/iowarp-core.git
-cd iowarp-core
+git clone --recurse-submodules https://github.com/iowarp/clio-core.git
+cd clio-core
 ```
 
 If you already cloned without submodules, initialize them with:

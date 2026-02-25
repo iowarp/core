@@ -332,22 +332,27 @@ void *SystemInfo::GetTls(const ThreadLocalKey &key) {
 #endif
 }
 
-#if HSHM_ENABLE_PROCFS_SYSINFO && __linux__
-static const char *kMemfdDir = "/tmp/chimaera_memfd";
+std::string SystemInfo::GetMemfdDir() {
+  const char *user = getenv("USER");
+  if (!user) user = "unknown";
+  return std::string("/tmp/chimaera_") + user;
+}
 
-static std::string GetMemfdPath(const std::string &name) {
+std::string SystemInfo::GetMemfdPath(const std::string &name) {
   // Strip leading '/' from name if present
   const char *base = name.c_str();
   if (base[0] == '/') {
     base++;
   }
-  return std::string(kMemfdDir) + "/" + base;
+  return GetMemfdDir() + "/" + base;
 }
 
-static void EnsureMemfdDir() {
-  mkdir(kMemfdDir, 0777);
-}
+void SystemInfo::EnsureMemfdDir() {
+  std::string dir = GetMemfdDir();
+#if HSHM_ENABLE_PROCFS_SYSINFO && __linux__
+  mkdir(dir.c_str(), 0700);
 #endif
+}
 
 bool SystemInfo::CreateNewSharedMemory(File &fd, const std::string &name,
                                        size_t size) {

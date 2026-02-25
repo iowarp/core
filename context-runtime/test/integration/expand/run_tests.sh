@@ -51,6 +51,10 @@ start_docker_cluster() {
     log_info "Starting Docker cluster (2 initial nodes + 1 inducted node)..."
     cd "$SCRIPT_DIR"
 
+    # Pass host UID/GID so container processes match host file ownership
+    export HOST_UID=$(id -u)
+    export HOST_GID=$(id -g)
+
     docker compose up -d
 
     log_info "Waiting for containers to initialize..."

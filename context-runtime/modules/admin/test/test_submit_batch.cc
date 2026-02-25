@@ -60,6 +60,7 @@ class ChimaeraTestFixture {
     // Use the unified Chimaera initialization
     bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
     REQUIRE(success);
+    SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
 
     // Wait for runtime to fully initialize
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -251,7 +252,8 @@ TEST_CASE("SubmitBatch with MonitorTask", "[submit_batch][admin]") {
       batch.Add<chimaera::admin::MonitorTask>(
           chi::CreateTaskId(),
           chi::kAdminPoolId,
-          chi::PoolQuery::Local());
+          chi::PoolQuery::Local(),
+          std::string("status"));
     }
 
     INFO("TaskBatch has " << batch.GetTaskCount() << " MonitorTasks");

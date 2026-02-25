@@ -130,5 +130,6 @@ int main() {
   HIPRINT("\nNOTE: This test demonstrates successful external ChiMod development patterns.");
   HIPRINT("For full functionality, run chimaera runtime start in another terminal.");
 
+  chi::CHIMAERA_FINALIZE();
   return 0;
 }

@@ -49,6 +49,7 @@
 
 #include <cereal/archives/binary.hpp>
 #include <cereal/types/vector.hpp>
+#include <hermes_shm/serialize/msgpack_wrapper.h>
 #include <chrono>
 #include <memory>
 #include <sstream>
@@ -98,21 +99,27 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
   // Spawn periodic ClientSend task for client response sending via lightbeam
   client_.AsyncClientSend(chi::PoolQuery::Local(), 100);
 
-  // Register client server FDs with worker's EventManager
+  // Register ALL transport FDs with the net worker's EventManager
+  // This ensures epoll wakes the net worker when data arrives on any transport
   {
-    auto *worker = CHI_CUR_WORKER;
     auto *ipc_manager = CHI_IPC;
-    if (worker && ipc_manager) {
-      auto &em = worker->GetEventManager();
+    chi::Worker *net_worker = ipc_manager->GetScheduler()->GetNetWorker();
+    if (net_worker && ipc_manager) {
+      auto &em = net_worker->GetEventManager();
       auto *tcp_transport = ipc_manager->GetClientTransport(chi::IpcMode::kTcp);
       if (tcp_transport) {
         tcp_transport->RegisterEventManager(em);
-        HLOG(kDebug, "Admin: TCP transport registered with worker EventManager");
+        HLOG(kDebug, "Admin: TCP transport registered with net worker EventManager");
       }
       auto *ipc_transport = ipc_manager->GetClientTransport(chi::IpcMode::kIpc);
       if (ipc_transport) {
         ipc_transport->RegisterEventManager(em);
-        HLOG(kDebug, "Admin: IPC transport registered with worker EventManager");
+        HLOG(kDebug, "Admin: IPC transport registered with net worker EventManager");
+      }
+      auto *main_transport = ipc_manager->GetMainTransport();
+      if (main_transport) {
+        main_transport->RegisterEventManager(em);
+        HLOG(kDebug, "Admin: Main transport registered with net worker EventManager");
       }
     }
   }
@@ -133,6 +140,25 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
   co_return;
 }
 
+chi::PoolQuery Runtime::ScheduleTask(const hipc::FullPtr<chi::Task> &task) {
+  using namespace chimaera::admin;
+  switch (task->method_) {
+    case Method::kGetOrCreatePool: {
+      auto typed = task.template Cast<
+          GetOrCreatePoolTask<CreateParams>>();
+      auto *pool_manager = CHI_POOL_MANAGER;
+      std::string pool_name = typed->pool_name_.str();
+      chi::PoolId existing_pool_id = pool_manager->FindPoolByName(pool_name);
+      if (!existing_pool_id.IsNull()) {
+        return chi::PoolQuery::Local();
+      }
+      return chi::PoolQuery::Broadcast();
+    }
+    default:
+      return task->pool_query_;
+  }
+}
+
 chi::TaskResume Runtime::GetOrCreatePool(
     hipc::FullPtr<
         chimaera::admin::GetOrCreatePoolTask<chimaera::admin::CreateParams>>
@@ -143,36 +169,9 @@ chi::TaskResume Runtime::GetOrCreatePool(
        "Admin::GetOrCreatePool ENTRY: task->do_compose_={}, task->is_admin_={}",
        task->do_compose_, task->is_admin_);
 
-  // Get pool manager once - used by both dynamic scheduling and normal
-  // execution
+  // Get pool manager and pool name
   auto *pool_manager = CHI_POOL_MANAGER;
-
-  // Extract pool name once
   std::string pool_name = task->pool_name_.str();
-
-  // Check if this is dynamic scheduling mode
-  if (rctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
-    // Dynamic routing with cache optimization
-    // Check if pool exists locally first to avoid unnecessary broadcast
-    HLOG(kDebug,
-         "Admin: Dynamic routing for GetOrCreatePool - checking local cache");
-
-    chi::PoolId existing_pool_id = pool_manager->FindPoolByName(pool_name);
-
-    if (!existing_pool_id.IsNull()) {
-      // Pool exists locally - change pool query to Local
-      HLOG(kDebug, "Admin: Pool '{}' found locally (ID: {}), using Local query",
-           pool_name, existing_pool_id);
-      task->pool_query_ = chi::PoolQuery::Local();
-    } else {
-      // Pool doesn't exist locally - update pool query to Broadcast for
-      // creation
-      HLOG(kDebug, "Admin: Pool '{}' not found locally, broadcasting creation",
-           pool_name);
-      task->pool_query_ = chi::PoolQuery::Broadcast();
-    }
-    co_return;
-  }
 
   // Pool get-or-create operation logic (IS_ADMIN=false)
   HLOG(kDebug, "Admin: Executing GetOrCreatePool task - ChiMod: {}, Pool: {}",
@@ -504,7 +503,11 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
     // Send using Lightbeam asynchronously (non-blocking)
     // Note: No lock needed - single net worker processes all Send/Recv tasks
     hshm::lbm::LbmContext ctx(0);  // Non-blocking async send
+    HLOG(kDebug, "[SendIn] Task {} sending to node {} via lightbeam",
+         origin_task->task_id_, target_node_id);
     int rc = lbm_transport->Send(archive, ctx);
+    HLOG(kDebug, "[SendIn] Task {} lightbeam Send rc={}",
+         origin_task->task_id_, rc);
 
     if (rc != 0) {
       HLOG(kError,
@@ -647,7 +650,7 @@ chi::TaskResume Runtime::Send(hipc::FullPtr<SendTask> task,
     // Get the original task from the Future
     auto origin_task = queued_future.GetTaskPtr();
     if (!origin_task.IsNull()) {
-      HLOG(kInfo, "[Send] Processing SendIn task method={}, pool_id={}",
+      HLOG(kDebug, "[Send] Processing SendIn task method={}, pool_id={}",
            origin_task->method_, origin_task->pool_id_);
       SendIn(origin_task, rctx);
       did_send = true;
@@ -656,7 +659,7 @@ chi::TaskResume Runtime::Send(hipc::FullPtr<SendTask> task,
   }
 
   if (send_in_count > 0) {
-    HLOG(kInfo, "[Send] Processed {} SendIn tasks", send_in_count);
+    HLOG(kDebug, "[Send] Processed {} SendIn tasks", send_in_count);
   }
 
   // Poll priority 1 (SendOut) queue - tasks with outputs to send back
@@ -666,7 +669,7 @@ chi::TaskResume Runtime::Send(hipc::FullPtr<SendTask> task,
     // Get the original task from the Future
     auto origin_task = queued_future.GetTaskPtr();
     if (!origin_task.IsNull()) {
-      HLOG(kInfo, "[Send] Processing SendOut task method={}, pool_id={}",
+      HLOG(kDebug, "[Send] Processing SendOut task method={}, pool_id={}",
            origin_task->method_, origin_task->pool_id_);
       SendOut(origin_task);
       did_send = true;
@@ -675,7 +678,7 @@ chi::TaskResume Runtime::Send(hipc::FullPtr<SendTask> task,
   }
 
   if (send_out_count > 0) {
-    HLOG(kInfo, "[Send] Processed {} SendOut tasks", send_out_count);
+    HLOG(kDebug, "[Send] Processed {} SendOut tasks", send_out_count);
   }
 
   // Track whether this execution did actual work
@@ -743,7 +746,8 @@ void Runtime::RecvIn(hipc::FullPtr<RecvTask> task,
         (static_cast<size_t>(task_ptr->task_id_.replica_id_) * 0x9e3779b97f4a7c15ULL);
     recv_map_[recv_key] = task_ptr;
 
-    HLOG(kDebug, "[RecvIn] Task {}", task_ptr->task_id_);
+    HLOG(kDebug, "[RecvIn] Task {} method={} pool_id={} dispatching to workers",
+         task_ptr->task_id_, task_ptr->method_, task_ptr->pool_id_);
 
     // Send task for execution using IpcManager::Send with awake_event=false
     // Note: This creates a Future and enqueues it to worker lanes
@@ -905,9 +909,13 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
       // Note: No lock needed - single net worker processes all Send/Recv tasks
       send_map_.erase(net_key);
 
-      // Add task back to blocked queue for both periodic and non-periodic tasks
-      // ExecTask will handle checking if the task is complete and ending it
-      // properly
+      // Set container in origin RunContext (may be null if task was routed
+      // globally without passing through RouteLocal, e.g. TASK_FORCE_NET)
+      if (container) {
+        origin_rctx->container_ = container;
+      }
+
+      // Complete the origin task via EndTask
       auto *worker = CHI_CUR_WORKER;
       worker->EndTask(origin_task, origin_rctx, true);
     }
@@ -956,13 +964,18 @@ chi::TaskResume Runtime::Recv(hipc::FullPtr<RecvTask> task,
   // Mark that we received data (did work)
   rctx.did_work_ = true;
 
-  // Dispatch based on message type
   chi::MsgType msg_type = archive.GetMsgType();
+  HLOG(kDebug, "[Recv] Received message with msg_type={}",
+       static_cast<int>(msg_type));
+
+  // Dispatch based on message type
   switch (msg_type) {
     case chi::MsgType::kSerializeIn:
+      HLOG(kDebug, "[Recv] Dispatching to RecvIn");
       RecvIn(task, archive, lbm_transport);
       break;
     case chi::MsgType::kSerializeOut:
+      HLOG(kDebug, "[Recv] Dispatching to RecvOut");
       RecvOut(task, archive, lbm_transport);
       break;
     case chi::MsgType::kHeartbeat:
@@ -1091,6 +1104,8 @@ chi::TaskResume Runtime::ClientRecv(hipc::FullPtr<ClientRecvTask> task,
 
       did_work = true;
       task->tasks_received_++;
+      HLOG(kDebug, "[ClientRecv] Received task pool_id={}, method={}, mode={}",
+           pool_id, method_id, mode_idx == 0 ? "tcp" : "ipc");
     }
   }
 
@@ -1203,34 +1218,164 @@ chi::TaskResume Runtime::ClientSend(hipc::FullPtr<ClientSendTask> task,
 
 chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
                                  chi::RunContext &rctx) {
-  // Get work orchestrator to access all workers
-  auto *work_orchestrator = CHI_WORK_ORCHESTRATOR;
-  if (!work_orchestrator) {
-    task->SetReturnCode(1);
-    HLOG(kError, "Monitor: WorkOrchestrator not available");
-    (void)rctx;
-    co_return;
-  }
-
-  // Get worker count from the work orchestrator
-  size_t num_workers = work_orchestrator->GetWorkerCount();
-
-  // Reserve space in the vector
-  task->info_.reserve(num_workers);
-
-  // Collect stats from all workers
-  for (size_t i = 0; i < num_workers; ++i) {
-    chi::Worker *worker =
-        work_orchestrator->GetWorker(static_cast<chi::u32>(i));
-    if (!worker) {
-      continue;
+  if (task->query_ == "worker_stats") {
+    auto *work_orchestrator = CHI_WORK_ORCHESTRATOR;
+    if (!work_orchestrator) {
+      task->SetReturnCode(1);
+      HLOG(kError, "Monitor(worker_stats): WorkOrchestrator not available");
+      (void)rctx;
+      co_return;
     }
 
-    // Get stats from this worker and add to vector
-    chi::WorkerStats stats = worker->GetWorkerStats();
-    task->info_.push_back(stats);
-  }
+    size_t num_workers = work_orchestrator->GetWorkerCount();
 
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> pk(sbuf);
+    pk.pack_array(num_workers);
+
+    for (size_t i = 0; i < num_workers; ++i) {
+      chi::Worker *worker =
+          work_orchestrator->GetWorker(static_cast<chi::u32>(i));
+      if (!worker) {
+        pk.pack_map(0);
+        continue;
+      }
+      chi::WorkerStats stats = worker->GetWorkerStats();
+      pk.pack_map(10);
+      pk.pack("worker_id");           pk.pack(stats.worker_id_);
+      pk.pack("is_running");          pk.pack(stats.is_running_);
+      pk.pack("is_active");           pk.pack(stats.is_active_);
+      pk.pack("idle_iterations");     pk.pack(stats.idle_iterations_);
+      pk.pack("num_queued_tasks");    pk.pack(stats.num_queued_tasks_);
+      pk.pack("num_blocked_tasks");   pk.pack(stats.num_blocked_tasks_);
+      pk.pack("num_periodic_tasks");  pk.pack(stats.num_periodic_tasks_);
+      pk.pack("num_retry_tasks");     pk.pack(stats.num_retry_tasks_);
+      pk.pack("suspend_period_us");   pk.pack(stats.suspend_period_us_);
+      pk.pack("num_tasks_processed"); pk.pack(stats.num_tasks_processed_);
+    }
+
+    task->results_[container_id_] = std::string(sbuf.data(), sbuf.size());
+  } else if (task->query_.rfind("pool_stats://", 0) == 0) {
+    // Parse pool_stats://PoolId:PoolQuery:selector
+    // Format: pool_stats://<major.minor>:<routing_mode[:params...]>:<selector>
+    std::string uri_body = task->query_.substr(13);  // skip "pool_stats://"
+
+    // 1. Extract PoolId (everything before first ':')
+    size_t first_colon = uri_body.find(':');
+    if (first_colon == std::string::npos) {
+      task->SetReturnCode(2);
+      HLOG(kError, "Monitor(pool_stats): missing ':' after PoolId in '{}'",
+           task->query_);
+      co_return;
+    }
+    std::string pool_id_str = uri_body.substr(0, first_colon);
+    chi::PoolId target_pool_id;
+    try {
+      target_pool_id = chi::PoolId::FromString(pool_id_str);
+    } catch (const std::exception &e) {
+      task->SetReturnCode(2);
+      HLOG(kError, "Monitor(pool_stats): invalid PoolId '{}': {}",
+           pool_id_str, e.what());
+      co_return;
+    }
+
+    // 2. Token-based parse of routing mode and its parameters
+    //    Tokens after PoolId: routing_mode[:extra1[:extra2]]:selector
+    //    local/broadcast/dynamic = 0 extra tokens
+    //    direct_id/direct_hash/physical = 1 extra token
+    //    range = 2 extra tokens
+    std::string remainder = uri_body.substr(first_colon + 1);
+    size_t colon_pos = remainder.find(':');
+    std::string routing_token = (colon_pos != std::string::npos)
+                                    ? remainder.substr(0, colon_pos)
+                                    : remainder;
+    // Lowercase for comparison
+    std::string routing_lower = routing_token;
+    std::transform(routing_lower.begin(), routing_lower.end(),
+                   routing_lower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    // Determine how many extra colon-separated tokens the mode consumes
+    int extra_tokens = 0;
+    if (routing_lower == "direct_id" || routing_lower == "direct_hash" ||
+        routing_lower == "physical") {
+      extra_tokens = 1;
+    } else if (routing_lower == "range") {
+      extra_tokens = 2;
+    }
+
+    // Consume routing_token + extra tokens to build PoolQuery string
+    std::string pool_query_str = routing_token;
+    size_t parse_pos = (colon_pos != std::string::npos)
+                           ? colon_pos + 1
+                           : remainder.size();
+    for (int i = 0; i < extra_tokens; ++i) {
+      if (parse_pos >= remainder.size()) {
+        task->SetReturnCode(2);
+        HLOG(kError,
+             "Monitor(pool_stats): not enough tokens for routing mode '{}' "
+             "in '{}'",
+             routing_token, task->query_);
+        co_return;
+      }
+      size_t next_colon = remainder.find(':', parse_pos);
+      std::string token = (next_colon != std::string::npos)
+                              ? remainder.substr(parse_pos, next_colon - parse_pos)
+                              : remainder.substr(parse_pos);
+      pool_query_str += ":" + token;
+      parse_pos = (next_colon != std::string::npos)
+                      ? next_colon + 1
+                      : remainder.size();
+    }
+
+    // Everything remaining is the selector
+    std::string selector;
+    if (parse_pos < remainder.size()) {
+      selector = remainder.substr(parse_pos);
+    }
+
+    // 3. Build PoolQuery from string
+    chi::PoolQuery target_pool_query;
+    try {
+      target_pool_query = chi::PoolQuery::FromString(pool_query_str);
+    } catch (const std::exception &e) {
+      task->SetReturnCode(2);
+      HLOG(kError, "Monitor(pool_stats): invalid PoolQuery '{}': {}",
+           pool_query_str, e.what());
+      co_return;
+    }
+
+    // 4. Verify the target pool exists
+    auto *pool_manager = CHI_POOL_MANAGER;
+    chi::Container *container =
+        pool_manager->GetStaticContainer(target_pool_id);
+    if (!container) {
+      task->SetReturnCode(3);
+      HLOG(kError, "Monitor(pool_stats): pool {} not found",
+           target_pool_id);
+      co_return;
+    }
+
+    // 5. Create sub-MonitorTask targeting the pool and dispatch it
+    auto *ipc_manager = CHI_IPC;
+    auto sub_task = ipc_manager->NewTask<MonitorTask>(
+        chi::CreateTaskId(), target_pool_id, target_pool_query, selector);
+    chi::Future<MonitorTask> sub_future = ipc_manager->Send(sub_task);
+    co_await sub_future;
+
+    // 6. Copy results from sub-task into this task
+    if (sub_future->GetReturnCode() != 0) {
+      task->SetReturnCode(sub_future->GetReturnCode());
+      HLOG(kError, "Monitor(pool_stats): sub-task failed with rc={}",
+           sub_future->GetReturnCode());
+    } else {
+      task->results_ = sub_future->results_;
+      task->SetReturnCode(0);
+    }
+    sub_future.DelTask();
+    co_return;
+  }
+  // Unknown queries get empty results (forward-compatible)
   task->SetReturnCode(0);
   (void)rctx;
   co_return;

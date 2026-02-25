@@ -77,6 +77,31 @@
             }
         },
         {
+            "name": "debug-adios",
+            "hidden": false,
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "WRP_CORE_ENABLE_RUNTIME": "ON",
+                "WRP_CORE_ENABLE_CTE": "ON",
+                "WRP_CORE_ENABLE_CAE": "ON",
+                "WRP_CORE_ENABLE_CEE": "ON",
+                "WRP_CORE_ENABLE_TESTS": "ON",
+                "WRP_CORE_ENABLE_ELF": "OFF",
+                "WRP_CTE_ENABLE_COMPRESS": "OFF",
+                "WRP_CORE_ENABLE_GRAY_SCOTT": "ON",
+                "WRP_CTE_ENABLE_ADIOS2_ADAPTER": "ON",
+                "WRP_CORE_ENABLE_CONDA": "OFF",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "WRP_CORE_ENABLE_ASAN": "OFF",
+                "WRP_CORE_ENABLE_PYTHON": "ON",
+                "WRP_CORE_ENABLE_COVERAGE": "OFF",
+                "HSHM_LOG_LEVEL": "1",
+                "WRP_CORE_ENABLE_IO_URING": "ON"
+            }
+        },
+        {
             "name": "release",
             "hidden": false,
             "generator": "Unix Makefiles",
@@ -91,6 +116,7 @@
                 "WRP_CORE_ENABLE_ELF": "OFF",
                 "WRP_CTE_ENABLE_COMPRESS": "OFF",
                 "WRP_CORE_ENABLE_GRAY_SCOTT": "OFF",
+                "WRP_CTE_ENABLE_ADIOS2_ADAPTER": "OFF",
                 "WRP_CORE_ENABLE_CONDA": "OFF",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "WRP_CORE_ENABLE_ASAN": "OFF",

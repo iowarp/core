@@ -43,7 +43,7 @@
 
 namespace chi {
 
-bool CHIMAERA_INIT(ChimaeraMode mode, bool default_with_runtime) {
+bool CHIMAERA_INIT(ChimaeraMode mode, bool default_with_runtime, bool is_restart) {
   // Static guard to prevent double initialization
   static bool s_initialized = false;
   if (s_initialized) {
@@ -54,6 +54,7 @@ bool CHIMAERA_INIT(ChimaeraMode mode, bool default_with_runtime) {
   hshm::SystemInfo::SuppressErrorDialogs();
 
   auto* chimaera_manager = CHI_CHIMAERA_MANAGER;
+  chimaera_manager->is_restart_ = is_restart;
 
   // Check environment variable CHI_WITH_RUNTIME
   // Use hshm::SystemInfo::Getenv for Windows compatibility (std::getenv
@@ -92,16 +93,29 @@ bool CHIMAERA_INIT(ChimaeraMode mode, bool default_with_runtime) {
     }
   }
 
+  // Register atexit handler so CHIMAERA_FINALIZE runs before static
+  // destructors.  The Chimaera singleton is heap-allocated (GetGlobalPtrVar)
+  // so its destructor is never called automatically.  Without this the ZMQ
+  // DEALER socket stays open and zmq_ctx_destroy blocks forever at exit.
+  std::atexit(CHIMAERA_FINALIZE);
+
   // Mark as initialized on success
   s_initialized = true;
   return true;
 }
 
 void CHIMAERA_FINALIZE() {
-  auto* chimaera_manager = CHI_CHIMAERA_MANAGER;
-  if (chimaera_manager && chimaera_manager->IsInitialized()) {
-    chimaera_manager->ServerFinalize();
-    chimaera_manager->ClientFinalize();
+  static bool s_finalized = false;
+  if (s_finalized) {
+    return;
+  }
+  s_finalized = true;
+  auto *mgr = CHI_CHIMAERA_MANAGER;
+  if (mgr) {
+    // Server first: stop worker threads that may still be sending IPC
+    mgr->ServerFinalize();
+    // Client second: close DEALER socket and join recv thread
+    mgr->ClientFinalize();
   }
 }
 

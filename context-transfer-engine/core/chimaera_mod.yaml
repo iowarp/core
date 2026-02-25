@@ -10,6 +10,7 @@ kNodeFailure: -1  # Not implemented (-1 means disabled)
 kRecover: -1      # Not implemented 
 kMigrate: -1      # Not implemented
 kUpgrade: -1      # Not implemented
+kMonitor: 9       # 9 - Monitor container state
 
 # Custom Methods (start from 10, use sequential IDs)
 kRegisterTarget: 10     # Register a target on this node
@@ -33,3 +34,5 @@ kPollTelemetryLog: 21  # Poll telemetry log with minimum logical time filter
 kTagQuery: 30          # Query tags by regex pattern
 kBlobQuery: 31         # Query blobs by tag and blob regex patterns
 kGetTargetInfo: 32     # Get target information (score, capacity, perf metrics)
+kFlushMetadata: 33     # Periodic task to flush tag/blob metadata to durable storage
+kFlushData: 34         # Periodic task to flush data from volatile to non-volatile targets

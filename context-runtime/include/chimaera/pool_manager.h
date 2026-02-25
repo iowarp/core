@@ -286,6 +286,13 @@ class PoolManager {
    */
   void WriteAddressTableWAL(PoolId pool_id, ContainerId container_id, u32 old_node, u32 new_node);
 
+  /**
+   * Replay WAL entries to recover address table state after restart
+   * Reads all .bin files from conf_dir/wal/ and applies each entry's
+   * container-to-node mapping using UpdateContainerNodeMapping.
+   */
+  void ReplayAddressTableWAL();
+
  private:
   /**
    * Internal: Get Container by PoolId and ContainerId (no plug check)

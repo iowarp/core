@@ -122,6 +122,11 @@ public:
             chi::u32 container_id = 0) override;
 
   /**
+   * Schedule a task by resolving Dynamic pool queries.
+   */
+  chi::PoolQuery ScheduleTask(const hipc::FullPtr<chi::Task> &task) override;
+
+  /**
    * Execute a method on a task
    */
   chi::TaskResume Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
@@ -227,9 +232,9 @@ public:
   chi::TaskResume WreapDeadIpcs(hipc::FullPtr<WreapDeadIpcsTask> task, chi::RunContext &rctx);
 
   /**
-   * Handle Monitor - Collect and return worker statistics
-   * Iterates through all workers and collects their current statistics
-   * Returns serialized statistics in JSON format
+   * Handle Monitor - Unified monitor query for admin chimod
+   * Supported queries:
+   *   "worker_stats" - collect worker statistics (msgpack-encoded)
    */
   chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task, chi::RunContext &rctx);
 

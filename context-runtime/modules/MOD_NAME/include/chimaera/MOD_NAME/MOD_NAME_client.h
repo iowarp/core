@@ -84,6 +84,17 @@ class Client : public chi::ContainerClient {
   }
 
   /**
+   * Monitor container state - asynchronous
+   */
+  chi::Future<MonitorTask> AsyncMonitor(const chi::PoolQuery &pool_query,
+                                        const std::string &query) {
+    auto *ipc_manager = CHI_IPC;
+    auto task = ipc_manager->NewTask<MonitorTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, query);
+    return ipc_manager->Send(task);
+  }
+
+  /**
    * Execute custom operation (asynchronous)
    * @param pool_query Pool routing information
    * @param input_data Input data for the operation

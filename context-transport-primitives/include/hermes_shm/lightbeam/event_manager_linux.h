@@ -109,16 +109,24 @@ class EventManager {
   }
 
   int Wait(int timeout_us = -1) {
-    int timeout_ms;
+    int nfds;
     if (timeout_us < 0) {
-      timeout_ms = -1;
+      // Indefinite wait — use epoll_wait for simplicity
+      nfds = epoll_wait(epoll_fd_, epoll_events_, kMaxEvents, -1);
     } else {
-      timeout_ms = static_cast<int>((timeout_us + 999) / 1000);
-      if (timeout_ms < 1 && timeout_us > 0) {
-        timeout_ms = 1;
+      // Try epoll_pwait2 for microsecond precision (kernel 5.11+, syscall 441)
+      struct timespec ts;
+      ts.tv_sec = timeout_us / 1000000;
+      ts.tv_nsec = (timeout_us % 1000000) * 1000L;
+      nfds = static_cast<int>(syscall(441, epoll_fd_, epoll_events_,
+                                       kMaxEvents, &ts, nullptr, 0));
+      if (nfds == -1 && errno == ENOSYS) {
+        // Fallback to epoll_wait if kernel doesn't support epoll_pwait2
+        int timeout_ms = static_cast<int>((timeout_us + 999) / 1000);
+        if (timeout_ms < 1 && timeout_us > 0) timeout_ms = 1;
+        nfds = epoll_wait(epoll_fd_, epoll_events_, kMaxEvents, timeout_ms);
       }
     }
-    int nfds = epoll_wait(epoll_fd_, epoll_events_, kMaxEvents, timeout_ms);
     for (int i = 0; i < nfds; ++i) {
       int fd = epoll_events_[i].data.fd;
       auto it = fd_to_reg_.find(fd);

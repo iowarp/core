@@ -3,6 +3,7 @@ This module provides classes and methods to launch Redis.
 Redis cluster is used if the hostfile has many hosts
 """
 import time
+import subprocess
 from jarvis_cd.core.pkg import Application
 from jarvis_cd.util.logger import Color
 from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo
@@ -85,6 +86,19 @@ class Redis(Application):
         self.log(f'Sleeping for {self.config["sleep"]} seconds', color=Color.YELLOW)
         time.sleep(self.config['sleep'])
 
+        # Wait for Redis to be ready before proceeding
+        port = self.config['port']
+        self.log(f'Waiting for Redis to accept connections on port {port}', color=Color.YELLOW)
+        for i in range(30):
+            ret = subprocess.run(
+                ['redis-cli', '-p', str(port), 'ping'],
+                capture_output=True, text=True, timeout=2)
+            if ret.returncode == 0 and 'PONG' in ret.stdout:
+                break
+            time.sleep(1)
+        else:
+            self.log('WARNING: Redis did not respond to PING after 30s', color=Color.RED)
+
         # Create redis clients
         if len(hostfile) > 1:
             self.log('Flushing all data and resetting the cluster', color=Color.YELLOW)
@@ -118,16 +132,24 @@ class Redis(Application):
 
         :return: None
         """
+        port = self.config['port']
         # Gracefully shutdown redis on each host via redis-cli
-        Exec(f'redis-cli -p {self.config["port"]} shutdown nosave',
-             PsshExecInfo(env=self.env,
+        Exec(f'redis-cli -p {port} shutdown nosave',
+             PsshExecInfo(env=self.mod_env,
                           hostfile=self.hostfile)).run()
         # Fallback: force kill any remaining redis-server processes
-        # Use partial=False to avoid pkill -f matching its own shell process
         Kill('redis-server',
-             PsshExecInfo(env=self.env,
+             PsshExecInfo(env=self.mod_env,
                           hostfile=self.hostfile),
              partial=False).run()
+        # Wait for the port to be free before returning
+        for i in range(10):
+            ret = subprocess.run(
+                ['redis-cli', '-p', str(port), 'ping'],
+                capture_output=True, text=True, timeout=2)
+            if ret.returncode != 0 or 'PONG' not in ret.stdout:
+                break
+            time.sleep(1)
         time.sleep(1)
 
     def clean(self):

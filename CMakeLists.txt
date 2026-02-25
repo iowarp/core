@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(iowarp-core VERSION 1.0.0 LANGUAGES C CXX)
+project(iowarp-core VERSION 1.0.3 LANGUAGES C CXX)
 
 #------------------------------------------------------------------------------
 # Project Options
@@ -273,6 +273,31 @@ if(cereal_FOUND)
     message(STATUS "found cereal at ${cereal_DIR}")
 endif()
 
+# MessagePack C library (pure C, no Boost dependency)
+# Prefer static linkage so pip wheels don't need libmsgpack-c.so at runtime.
+# Try msgpack-c first (v6+, post C/C++ split), then msgpack (v3.x, pre-split).
+find_package(msgpack-c CONFIG QUIET)
+if(NOT msgpack-c_FOUND)
+  find_package(msgpack REQUIRED CONFIG)
+  message(STATUS "found msgpack (legacy v3.x) at ${msgpack_DIR}")
+  # Create alias targets matching the msgpack-c v6+ naming convention
+  if(TARGET msgpackc-static AND NOT TARGET msgpack-c-static)
+    add_library(msgpack-c-static ALIAS msgpackc-static)
+  endif()
+  if(TARGET msgpackc AND NOT TARGET msgpack-c)
+    add_library(msgpack-c ALIAS msgpackc)
+  endif()
+else()
+  message(STATUS "found msgpack-c at ${msgpack-c_DIR}")
+endif()
+if(TARGET msgpack-c-static)
+  set(MSGPACK_TARGET msgpack-c-static)
+  message(STATUS "  using static msgpack-c")
+else()
+  set(MSGPACK_TARGET msgpack-c)
+  message(STATUS "  using shared msgpack-c (static not available)")
+endif()
+
 # MPICH (only find when explicitly enabled)
 if(WRP_CORE_ENABLE_MPI)
     find_package(MPI REQUIRED COMPONENTS C CXX)
@@ -307,6 +332,9 @@ endif()
 if(WRP_CORE_ENABLE_CEREAL)
     set(SERIALIZATION_LIBS cereal::cereal ${SERIALIZATION_LIBS})
 endif()
+
+# Add msgpack-c to serialization libs (always enabled)
+set(SERIALIZATION_LIBS ${MSGPACK_TARGET} ${SERIALIZATION_LIBS})
 
 # Thread support
 find_package(Threads REQUIRED)
@@ -593,8 +621,14 @@ if(WRP_CORE_ENABLE_PYTHON)
   # Find Python for nanobind
   find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
-  # Add nanobind as subdirectory (git submodule)
-  add_subdirectory(external/nanobind)
+  # Fetch nanobind (no submodule needed)
+  include(FetchContent)
+  FetchContent_Declare(nanobind
+      GIT_REPOSITORY https://github.com/wjakob/nanobind.git
+      GIT_TAG        v2.9.2
+      GIT_SHALLOW    ON
+  )
+  FetchContent_MakeAvailable(nanobind)
 
   message(STATUS "Python bindings enabled:")
   message(STATUS "  Install prefix:     ${CMAKE_INSTALL_PREFIX}")
@@ -626,6 +660,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Position Independent Code - Applied to all subdirectories
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# ccache — accelerate rebuilds by caching compiled objects
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    message(STATUS "ccache enabled: ${CCACHE_PROGRAM}")
+else()
+    message(STATUS "ccache not found — install ccache for faster rebuilds")
+endif()
+
 # RPATH configuration - Uses $ORIGIN-relative paths for portability
 # This ensures binaries and libraries can find their dependencies regardless
 # of where the installation is located (works for system installs, pip wheels,
@@ -633,7 +677,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 if(WRP_CORE_ENABLE_RPATH)
     set(CMAKE_SKIP_BUILD_RPATH FALSE)
     set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
-    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
+    set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
     if(APPLE)
         set(CMAKE_MACOSX_RPATH TRUE)
@@ -978,6 +1022,12 @@ endif()
 install(FILES context-runtime/config/chimaera_default.yaml
   COMPONENT pip_package
   DESTINATION ${PIP_PKG_DIR}/data)
+
+# .pth file at site-packages root so "import wrp_cee" works without
+# explicitly importing iowarp_core first (triggers _setup() at startup).
+install(FILES installers/pip/iowarp_core.pth
+  COMPONENT pip_package
+  DESTINATION .)
 
 #------------------------------------------------------------------------------
 # CPack Configuration

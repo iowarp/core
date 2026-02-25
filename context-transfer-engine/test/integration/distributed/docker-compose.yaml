@@ -18,18 +18,19 @@ services:
   # Node 1 - Primary node that runs tests
   cte-node1:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: cte-distributed-node1
     hostname: iowarp-node1
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       cte-cluster:
         ipv4_address: 172.26.0.10
     volumes:
       # Mount the entire workspace for coverage support
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
-      - hdd1-storage:/mnt/hdd1
-      - hdd2-storage:/mnt/hdd2
-      - hdd3-storage:/mnt/hdd3
-      - hdd4-storage:/mnt/hdd4
+    tmpfs:
+      - /mnt:mode=1777
     environment:
       - NODE_ID=1
       - NODE_IP=172.26.0.10
@@ -47,13 +48,6 @@ services:
     command: >
       "
         set -x &&
-        echo '========================================' &&
-        echo 'Node 1: Starting initialization' &&
-        echo '========================================' &&
-        echo 'Node 1: Setting up permissions...' &&
-        sudo chown -R $$(id -u):$$(id -g) /mnt 2>/dev/null || true &&
-        echo 'Node 1: Creating storage directories...' &&
-        mkdir -p /mnt/hdd1 /mnt/hdd2 /mnt/hdd3 /mnt/hdd4 &&
         echo '========================================' &&
         echo 'Node 1: Starting Chimaera runtime in background' &&
         echo '========================================' &&
@@ -83,14 +77,18 @@ services:
   # Node 2 - Secondary node
   cte-node2:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: cte-distributed-node2
     hostname: iowarp-node2
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       cte-cluster:
         ipv4_address: 172.26.0.11
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
-      - hdd2-storage:/mnt/hdd2
+    tmpfs:
+      - /mnt:mode=1777
     environment:
       - NODE_ID=2
       - NODE_IP=172.26.0.11
@@ -104,29 +102,25 @@ services:
     entrypoint: [ "/bin/bash", "-c" ]
     command: >
       "
-        set -x &&
-        echo '========================================' &&
-        echo 'Node 2: Starting initialization' &&
-        echo '========================================' &&
-        sudo chown -R $$(id -u):$$(id -g) /mnt 2>/dev/null || true &&
-        mkdir -p /mnt/hdd2 &&
-        echo '========================================' &&
         echo 'Node 2: Starting Chimaera runtime in foreground' &&
-        echo '========================================' &&
         /workspace/build/bin/chimaera runtime start
       "
 
   # Node 3 - Secondary node
   cte-node3:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: cte-distributed-node3
     hostname: iowarp-node3
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       cte-cluster:
         ipv4_address: 172.26.0.12
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
-      - hdd3-storage:/mnt/hdd3
+    tmpfs:
+      - /mnt:mode=1777
     environment:
       - NODE_ID=3
       - NODE_IP=172.26.0.12
@@ -140,29 +134,25 @@ services:
     entrypoint: [ "/bin/bash", "-c" ]
     command: >
       "
-        set -x &&
-        echo '========================================' &&
-        echo 'Node 3: Starting initialization' &&
-        echo '========================================' &&
-        sudo chown -R $$(id -u):$$(id -g) /mnt 2>/dev/null || true &&
-        mkdir -p /mnt/hdd3 &&
-        echo '========================================' &&
         echo 'Node 3: Starting Chimaera runtime in foreground' &&
-        echo '========================================' &&
         /workspace/build/bin/chimaera runtime start
       "
 
   # Node 4 - Secondary node
   cte-node4:
     image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
     container_name: cte-distributed-node4
     hostname: iowarp-node4
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       cte-cluster:
         ipv4_address: 172.26.0.13
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
-      - hdd4-storage:/mnt/hdd4
+    tmpfs:
+      - /mnt:mode=1777
     environment:
       - NODE_ID=4
       - NODE_IP=172.26.0.13
@@ -176,27 +166,9 @@ services:
     entrypoint: [ "/bin/bash", "-c" ]
     command: >
       "
-        set -x &&
-        echo '========================================' &&
-        echo 'Node 4: Starting initialization' &&
-        echo '========================================' &&
-        sudo chown -R $$(id -u):$$(id -g) /mnt 2>/dev/null || true &&
-        mkdir -p /mnt/hdd4 &&
-        echo '========================================' &&
         echo 'Node 4: Starting Chimaera runtime in foreground' &&
-        echo '========================================' &&
         /workspace/build/bin/chimaera runtime start
       "
-
-volumes:
-  hdd1-storage:
-    driver: local
-  hdd2-storage:
-    driver: local
-  hdd3-storage:
-    driver: local
-  hdd4-storage:
-    driver: local
 
 networks:
   cte-cluster:

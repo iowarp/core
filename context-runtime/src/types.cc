@@ -57,4 +57,8 @@ UniqueId UniqueId::FromString(const std::string& str) {
   }
 }
 
+std::string UniqueId::ToString() const {
+  return std::to_string(major_) + "." + std::to_string(minor_);
+}
+
 }  // namespace chi

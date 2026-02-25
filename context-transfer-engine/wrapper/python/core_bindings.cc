@@ -258,11 +258,12 @@ NB_MODULE(wrp_cte_core_ext, m) {
 
   // Chimaera initialization function (unified)
   m.def("chimaera_init", &chi::CHIMAERA_INIT,
-        "mode"_a, "default_with_runtime"_a = false,
+        "mode"_a, "default_with_runtime"_a = false, "is_restart"_a = false,
         "Initialize Chimaera with specified mode.\n\n"
         "Args:\n"
         "    mode: ChimaeraMode.kClient or ChimaeraMode.kServer/kRuntime\n"
-        "    default_with_runtime: If True, starts runtime in addition to client (default: False)\n\n"
+        "    default_with_runtime: If True, starts runtime in addition to client (default: False)\n"
+        "    is_restart: If True, force restart on compose pools and replay WAL (default: False)\n\n"
         "Environment variable CHI_WITH_RUNTIME overrides default_with_runtime:\n"
         "    CHI_WITH_RUNTIME=1 - Start runtime regardless of mode\n"
         "    CHI_WITH_RUNTIME=0 - Don't start runtime (client only)\n\n"

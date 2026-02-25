@@ -147,6 +147,12 @@ public:
   chi::TaskResume GpuSubmit(hipc::FullPtr<GpuSubmitTask> task, chi::RunContext& rctx);
 
   /**
+   * Handle Monitor task - return msgpack-encoded test data
+   * Part of the unified kMonitor:9 interface
+   */
+  chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task, chi::RunContext &rctx);
+
+  /**
    * Handle Destroy task - Alias for DestroyPool (DestroyTask = DestroyPoolTask)
    * Returns TaskResume for consistency with Run method
    */

@@ -30,6 +30,7 @@ int main() {
     HIPRINT("Pool query created successfully");
 
     HIPRINT("All external ChiMod integration tests passed!");
+    chi::CHIMAERA_FINALIZE();
     return 0;
 
   } catch (const std::exception& e) {

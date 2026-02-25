@@ -73,30 +73,14 @@ class Client : public chi::ContainerClient {
   }
 
   /**
-   * Asynchronous monitor - polls core for target information
-   * @param core_pool_id Pool ID of core chimod to monitor
-   * @param pool_query Pool query for task routing (default: Dynamic)
-   * @return Future for MonitorTask
+   * Monitor container state - asynchronous
    */
-  chi::Future<MonitorTask> AsyncMonitor(
-      const chi::PoolId &core_pool_id,
-      const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
+  chi::Future<MonitorTask> AsyncMonitor(const chi::PoolQuery &pool_query,
+                                        const std::string &query) {
     auto *ipc_manager = CHI_IPC;
-
     auto task = ipc_manager->NewTask<MonitorTask>(
-        chi::CreateTaskId(), pool_id_, pool_query, core_pool_id);
-
+        chi::CreateTaskId(), pool_id_, pool_query, query);
     return ipc_manager->Send(task);
-  }
-
-  /**
-   * Synchronous monitor - blocks until complete
-   */
-  void Monitor(
-      const chi::PoolId &core_pool_id,
-      const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
-    auto future = AsyncMonitor(core_pool_id, pool_query);
-    future.Wait();
   }
 
   /**

@@ -947,6 +947,13 @@ void Runtime::ReadFromRam(hipc::FullPtr<ReadTask> task) {
 
 chi::u64 Runtime::GetWorkRemaining() const { return 0; }
 
+chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
+                                 chi::RunContext &rctx) {
+  task->SetReturnCode(0);
+  (void)rctx;
+  co_return;
+}
+
 }  // namespace chimaera::bdev
 
 // Define ChiMod entry points using CHI_TASK_CC macro

@@ -113,6 +113,9 @@ class Chimaera {
    */
   bool IsInitializing() const;
 
+ public:
+  bool is_restart_ = false;  /**< If true, force restart on compose pools and replay WAL */
+
  private:
   bool is_initialized_ = false;
   bool is_client_mode_ = false;

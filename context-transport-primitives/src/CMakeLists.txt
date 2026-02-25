@@ -45,6 +45,10 @@ target_include_directories(hermes_shm_host PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 hshm_target_compile_definitions(hermes_shm_host)
+target_precompile_headers(hermes_shm_host PRIVATE
+    <string> <vector> <memory> <unordered_map>
+    <functional> <algorithm> <cstdint> <cstring> <iostream>
+)
 list(APPEND HSHM_LIBS hermes_shm_host)
 add_library(cxx INTERFACE)
 target_link_libraries(cxx INTERFACE hermes_shm_host)

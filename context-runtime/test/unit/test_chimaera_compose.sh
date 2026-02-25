@@ -67,7 +67,7 @@ cleanup() {
     rm -f /tmp/test_compose_util_bdev.dat 2>/dev/null || true
 
     # Clean up memfd symlinks
-    rm -rf /tmp/chimaera_memfd/* 2>/dev/null || true
+    rm -rf /tmp/chimaera_${USER:-unknown}/* 2>/dev/null || true
 
     sleep 1
     echo -e "${GREEN}Cleanup complete${NC}"

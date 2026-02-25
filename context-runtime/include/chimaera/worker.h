@@ -162,6 +162,12 @@ class Worker {
   u32 GetId() const;
 
   /**
+   * Get the event queue for this worker
+   * @return Pointer to this worker's event queue
+   */
+  auto *GetEventQueue() { return event_queue_; }
+
+  /**
    * Check if worker is running
    * @return true if worker is active, false otherwise
    */
@@ -283,50 +289,7 @@ class Worker {
   const std::vector<TaskLane *> &GetGpuLanes() const;
 #endif
 
-  /**
-   * Route a task by calling ResolvePoolQuery and determining local vs global
-   * scheduling
-   * @param future Future containing the task to route
-   * @param lane Pointer to the task lane for execution context
-   * @param container The container to use for task execution
-   * @return true if task was successfully routed, false otherwise
-   */
-  bool RouteTask(Future<Task> &future, TaskLane *lane, Container *container);
-
-  /**
-   * Resolve a pool query into concrete physical addresses
-   * @param query Pool query to resolve
-   * @param pool_id Pool ID for the query
-   * @param task_ptr Task pointer (needed for Dynamic routing)
-   * @return Vector of pool queries for routing
-   */
-  std::vector<PoolQuery> ResolvePoolQuery(const PoolQuery &query,
-                                          PoolId pool_id,
-                                          const FullPtr<Task> &task_ptr);
-
  private:
-  // Pool query resolution helper functions
-  std::vector<PoolQuery> ResolveLocalQuery(const PoolQuery &query,
-                                           const FullPtr<Task> &task_ptr);
-  std::vector<PoolQuery> ResolveDynamicQuery(const PoolQuery &query,
-                                             PoolId pool_id,
-                                             const FullPtr<Task> &task_ptr);
-  std::vector<PoolQuery> ResolveDirectIdQuery(const PoolQuery &query,
-                                              PoolId pool_id,
-                                              const FullPtr<Task> &task_ptr);
-  std::vector<PoolQuery> ResolveDirectHashQuery(const PoolQuery &query,
-                                                PoolId pool_id,
-                                                const FullPtr<Task> &task_ptr);
-  std::vector<PoolQuery> ResolveRangeQuery(const PoolQuery &query,
-                                           PoolId pool_id,
-                                           const FullPtr<Task> &task_ptr);
-  std::vector<PoolQuery> ResolveBroadcastQuery(const PoolQuery &query,
-                                               PoolId pool_id,
-                                               const FullPtr<Task> &task_ptr);
-  std::vector<PoolQuery> ResolvePhysicalQuery(const PoolQuery &query,
-                                              PoolId pool_id,
-                                              const FullPtr<Task> &task_ptr);
-
   /**
    * Process a blocked queue, checking tasks and re-queuing as needed
    * @param queue Reference to the ext_ring_buffer to process
@@ -358,34 +321,6 @@ class Worker {
 
  public:
   /**
-   * Check if task should be processed locally based on task flags and pool
-   * queries
-   * @param task_ptr Full pointer to task to check for TASK_FORCE_NET flag
-   * @param pool_queries Vector of pool queries from ResolvePoolQuery
-   * @return true if task should be processed locally, false for global routing
-   */
-  bool IsTaskLocal(const FullPtr<Task> &task_ptr,
-                   const std::vector<PoolQuery> &pool_queries);
-
-  /**
-   * Route task locally using container query and Monitor with kLocalSchedule
-   * @param future Future containing the task to route locally
-   * @param lane Pointer to the task lane for execution context
-   * @param container The container to use for task execution
-   * @return true if local routing successful, false otherwise
-   */
-  bool RouteLocal(Future<Task> &future, TaskLane *lane, Container *container);
-
-  /**
-   * Route task globally using admin client's ClientSendTaskIn method
-   * @param future Future containing the task to route globally
-   * @param pool_queries Vector of pool queries for global routing
-   * @return true if global routing successful, false otherwise
-   */
-  bool RouteGlobal(Future<Task> &future,
-                   const std::vector<PoolQuery> &pool_queries);
-
-  /**
    * Begin client transfer for task outputs
    * Called only when task was copied from client (was_copied = true)
    * @param task_ptr Task to serialize
@@ -405,14 +340,6 @@ class Worker {
                bool can_resched);
 
  private:
-  /**
-   * Begin task execution
-   * @param future Future object containing the task and completion state
-   * @param container Container for the task
-   * @param lane Lane for the task (can be nullptr)
-   */
-  void BeginTask(Future<Task> &future, Container *container, TaskLane *lane);
-
   /**
    * Continue processing blocked tasks that are ready to resume
    * @param force If true, process both queues regardless of iteration count
@@ -484,13 +411,6 @@ class Worker {
    * @param run_ctx Pointer to RunContext for task
    */
   void ResumeCoroutine(const FullPtr<Task> &task_ptr, RunContext *run_ctx);
-
-  /**
-   * End dynamic scheduling task and re-route with updated pool query
-   * @param task_ptr Full pointer to task to re-route
-   * @param run_ctx Pointer to RunContext for task
-   */
-  void RerouteDynamicTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx);
 
   u32 worker_id_;
   bool is_running_;

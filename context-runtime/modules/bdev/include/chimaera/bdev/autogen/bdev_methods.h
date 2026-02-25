@@ -13,6 +13,7 @@ namespace Method {
 // Inherited methods
 GLOBAL_CONST chi::u32 kCreate = 0;
 GLOBAL_CONST chi::u32 kDestroy = 1;
+GLOBAL_CONST chi::u32 kMonitor = 9;
 
 // bdev-specific methods
 GLOBAL_CONST chi::u32 kAllocateBlocks = 10;

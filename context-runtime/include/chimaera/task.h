@@ -82,8 +82,33 @@ class Worker;
 RunContext* GetCurrentRunContextFromWorker();
 
 /**
+ * TaskGroup - Identifies a scheduling affinity group
+ *
+ * Tasks in the same group are pinned to the same worker once routed.
+ * A null TaskGroup (id_ == -1) means no affinity group.
+ */
+struct TaskGroup {
+  int64_t id_{-1}; /**< Group identifier; -1 = null (no group) */
+
+  /** Default constructor - null group */
+  HSHM_CROSS_FUN TaskGroup() : id_(-1) {}
+
+  /** Construct with explicit group ID */
+  HSHM_CROSS_FUN explicit TaskGroup(int64_t id) : id_(id) {}
+
+  /** Check if this group is null (unassigned) */
+  HSHM_CROSS_FUN bool IsNull() const { return id_ == -1; }
+
+  /** Equality operators */
+  HSHM_CROSS_FUN bool operator==(const TaskGroup& o) const { return id_ == o.id_; }
+  HSHM_CROSS_FUN bool operator!=(const TaskGroup& o) const { return id_ != o.id_; }
+};
+
+/**
  * Task statistics for I/O and compute time tracking
- * Used to route tasks to appropriate worker groups
+ * Represents group-level properties: when a task belongs to a TaskGroup,
+ * these stats describe the characteristics of the entire group (not just
+ * the individual task) and are used to route all group tasks consistently.
  */
 struct TaskStat {
   size_t io_size_{0}; /**< I/O size in bytes */
@@ -117,7 +142,8 @@ class Task {
       return_code_; /**< Task return code (0=success, non-zero=error) */
   OUT hipc::atomic<ContainerId>
       completer_; /**< Container ID that completed this task */
-  TaskStat stat_; /**< Task statistics for I/O and compute tracking */
+  TaskStat stat_;        /**< Task statistics for I/O and compute tracking */
+  TaskGroup task_group_; /**< Scheduling affinity group (null = no affinity) */
 
   /**
    * Default constructor
@@ -163,6 +189,7 @@ class Task {
     return_code_.store(other->return_code_.load());
     completer_.store(other->completer_.load());
     stat_ = other->stat_;
+    task_group_ = other->task_group_;
   }
 
   /**
@@ -182,6 +209,7 @@ class Task {
     completer_.store(0);    // Initialize as null (0 is invalid container ID)
     stat_.io_size_ = 0;
     stat_.compute_ = 0;
+    task_group_ = TaskGroup();  // null group
   }
 
   /**
@@ -394,14 +422,6 @@ class Task {
   }
 };
 
-/**
- * Execution mode for task processing
- */
-enum class ExecMode : u32 {
-  kExec = 0,           /**< Normal task execution */
-  kDynamicSchedule = 1 /**< Dynamic scheduling - route after execution */
-};
-
 // ============================================================================
 // FutureShm and Future classes (must be before RunContext which uses Future)
 // ============================================================================
@@ -490,7 +510,7 @@ struct FutureShm {
     response_transport_ = nullptr;
     response_fd_ = -1;
     response_identity_len_ = 0;
-    flags_.SetBits(0);
+    flags_.Clear();
   }
 };
 
@@ -590,6 +610,11 @@ class Future {
    * Sets the task pointer to null afterwards
    */
   HSHM_CROSS_FUN void Destroy(bool post_wait = false);
+
+  /**
+   * Explicitly delete the underlying task via CHI_IPC->DelTask
+   */
+  HSHM_CROSS_FUN void DelTask();
 
   /**
    * Copy constructor - does not transfer ownership
@@ -940,7 +965,6 @@ struct RunContext {
   hshm::Timepoint block_start_; /**< Time when task was blocked (real time) */
   Container* container_;        /**< Current container being executed */
   TaskLane* lane_;              /**< Current lane being processed */
-  ExecMode exec_mode_;          /**< Execution mode (kExec or kDynamicSchedule) */
   void* event_queue_;           /**< Pointer to worker's event queue */
   std::vector<PoolQuery>
       pool_queries_;            /**< Pool queries for task distribution */
@@ -962,7 +986,6 @@ struct RunContext {
         block_start_(),
         container_(nullptr),
         lane_(nullptr),
-        exec_mode_(ExecMode::kExec),
         event_queue_(nullptr),
         completed_replicas_(0),
         yield_count_(0),
@@ -982,7 +1005,6 @@ struct RunContext {
         block_start_(other.block_start_),
         container_(other.container_),
         lane_(other.lane_),
-        exec_mode_(other.exec_mode_),
         event_queue_(other.event_queue_),
         pool_queries_(std::move(other.pool_queries_)),
         subtasks_(std::move(other.subtasks_)),
@@ -1009,7 +1031,6 @@ struct RunContext {
       block_start_ = other.block_start_;
       container_ = other.container_;
       lane_ = other.lane_;
-      exec_mode_ = other.exec_mode_;
       event_queue_ = other.event_queue_;
       pool_queries_ = std::move(other.pool_queries_);
       subtasks_ = std::move(other.subtasks_);

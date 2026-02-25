@@ -521,6 +521,12 @@ function(add_chimod_client)
     )
   endif()
 
+  # Precompiled headers for faster builds
+  target_precompile_headers(${TARGET_NAME} PRIVATE
+      <string> <vector> <memory> <unordered_map>
+      <functional> <algorithm> <cstdint> <cstring> <iostream>
+  )
+
   # Export module info to parent scope
   set(CHIMAERA_MODULE_CLIENT_TARGET ${TARGET_NAME} PARENT_SCOPE)
   set(CHIMAERA_MODULE_NAME ${CHIMAERA_MODULE_NAME} PARENT_SCOPE)
@@ -754,6 +760,12 @@ check_required_components(${MODULE_PACKAGE_NAME})
     message(STATUS "  Targets: ${INSTALLED_TARGETS}")
     message(STATUS "  Aliases: ${CHIMAERA_NAMESPACE}::${CHIMAERA_MODULE_NAME}_client, ${CHIMAERA_NAMESPACE}::${CHIMAERA_MODULE_NAME}_runtime")
   endif()
+
+  # Precompiled headers for faster builds
+  target_precompile_headers(${TARGET_NAME} PRIVATE
+      <string> <vector> <memory> <unordered_map>
+      <functional> <algorithm> <cstdint> <cstring> <iostream>
+  )
 
   # Export module info to parent scope
   set(CHIMAERA_MODULE_RUNTIME_TARGET ${TARGET_NAME} PARENT_SCOPE)

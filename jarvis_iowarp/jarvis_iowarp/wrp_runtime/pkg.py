@@ -8,7 +8,10 @@ from jarvis_cd.core.pkg import Service
 from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Kill, GdbServer
 from jarvis_cd.util import SizeType
+from jarvis_cd.util.logger import Color
 import os
+import subprocess
+import time
 import yaml
 
 
@@ -180,7 +183,7 @@ class WrpRuntime(Service):
         # Launch runtime on all nodes using PsshExecInfo
         # IMPORTANT: Use env (shared environment), not mod_env
         self.log(f"Starting IOWarp runtime on all nodes")
-        self.log(f"  Config (CHI_SERVER_CONF): {self.config_file}")
+        self.log(f"  Config (CHI_SERVER_CONF from env): {self.env.get('CHI_SERVER_CONF', 'NOT SET')}")
         self.log(f"  Nodes: {len(self.jarvis.hostfile)}")
 
         # The chimaera binary will read CHI_SERVER_CONF from environment
@@ -203,20 +206,54 @@ class WrpRuntime(Service):
 
         self.sleep()
 
+        # Wait for the runtime to be ready (port accepting connections)
+        port = self.config['port']
+        self.log(f'Waiting for runtime to accept connections on port {port}', color=Color.YELLOW)
+        for i in range(30):
+            try:
+                ret = subprocess.run(
+                    ['bash', '-c', f'echo > /dev/tcp/127.0.0.1/{port}'],
+                    capture_output=True, timeout=2)
+                if ret.returncode == 0:
+                    break
+            except subprocess.TimeoutExpired:
+                pass
+            time.sleep(1)
+        else:
+            self.log(f'WARNING: Runtime did not respond on port {port} after 30s', color=Color.RED)
+
         self.log("IOWarp runtime started successfully on all nodes")
 
     def stop(self):
         """Stop the IOWarp runtime service on all nodes"""
         self.log("Stopping IOWarp runtime on all nodes")
 
-        # Use chimaera runtime stop to gracefully shutdown
-        # The chimaera binary will also read CHI_SERVER_CONF from environment
+        # chimaera runtime stop now waits for the runtime to actually exit
         cmd = 'chimaera runtime stop'
-
-        Exec(cmd, LocalExecInfo(
+        Exec(cmd, PsshExecInfo(
             env=self.env,
             hostfile=self.jarvis.hostfile
         )).run()
+
+        # Fallback: force kill any remaining chimaera processes
+        Kill('chimaera',
+             PsshExecInfo(env=self.env,
+                          hostfile=self.jarvis.hostfile),
+             partial=False).run()
+
+        # Wait for the port to be free before returning
+        port = self.config['port']
+        for i in range(10):
+            try:
+                ret = subprocess.run(
+                    ['bash', '-c', f'echo > /dev/tcp/127.0.0.1/{port}'],
+                    capture_output=True, timeout=2)
+                if ret.returncode != 0:
+                    break
+            except subprocess.TimeoutExpired:
+                break
+            time.sleep(1)
+        time.sleep(1)
 
         self.log("IOWarp runtime stopped on all nodes")
 

@@ -178,6 +178,12 @@ struct UniqueId {
    */
   static UniqueId FromString(const std::string &str);
 
+  /**
+   * Convert UniqueId to string format "major.minor"
+   * @return String representation (e.g., "200.0")
+   */
+  std::string ToString() const;
+
   // Get null/invalid instance
   HSHM_CROSS_FUN static constexpr UniqueId GetNull() { return UniqueId(0, 0); }
 

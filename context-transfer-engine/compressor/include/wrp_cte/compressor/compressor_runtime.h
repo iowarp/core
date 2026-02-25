@@ -104,8 +104,8 @@ private:
   chi::TaskResume Destroy(hipc::FullPtr<DestroyTask> task, chi::RunContext &ctx);
 
   /**
-   * Monitor targets (Method::kMonitor)
-   * Periodically polls core for target information and updates cache
+   * Monitor container state (Method::kMonitor)
+   * Polls core for target information and serializes results with msgpack
    */
   chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task, chi::RunContext &ctx);
 
@@ -129,6 +129,11 @@ private:
    */
   chi::TaskResume Decompress(hipc::FullPtr<DecompressTask> task,
                               chi::RunContext &ctx);
+
+  /**
+   * Schedule a task by resolving Dynamic pool queries.
+   */
+  chi::PoolQuery ScheduleTask(const hipc::FullPtr<chi::Task> &task) override;
 
   // Autogen-provided methods
   void Init(const chi::PoolId &pool_id, const std::string &pool_name,

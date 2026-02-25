@@ -16,6 +16,7 @@
     "zeromq",
     "yaml-cpp",
     "cereal",
+    "msgpack",
     "hdf5",
     "catch2"
   ]

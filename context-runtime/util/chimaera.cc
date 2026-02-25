@@ -11,6 +11,7 @@ void PrintUsage() {
             << "\n"
             << "Commands:\n"
             << "  runtime start   Start the Chimaera runtime server\n"
+            << "  runtime restart Restart the Chimaera runtime (WAL replay)\n"
             << "  runtime stop    Stop the Chimaera runtime server\n"
             << "  migrate         Migrate a container to a different node\n"
             << "  monitor         Monitor worker statistics\n"
@@ -38,7 +39,7 @@ int main(int argc, char* argv[]) {
   // Handle "runtime start" and "runtime stop" subcommands
   if (cmd == "runtime") {
     if (argc < 3) {
-      std::cerr << "Usage: chimaera runtime <start|stop> [options]\n";
+      std::cerr << "Usage: chimaera runtime <start|restart|stop> [options]\n";
       return 1;
     }
 
@@ -49,11 +50,13 @@ int main(int argc, char* argv[]) {
 
     if (subcmd == "start") {
       return RuntimeStart(new_argc, new_argv);
+    } else if (subcmd == "restart") {
+      return RuntimeRestart(new_argc, new_argv);
     } else if (subcmd == "stop") {
       return RuntimeStop(new_argc, new_argv);
     } else {
       std::cerr << "Unknown runtime subcommand: " << subcmd << "\n";
-      std::cerr << "Usage: chimaera runtime <start|stop> [options]\n";
+      std::cerr << "Usage: chimaera runtime <start|restart|stop> [options]\n";
       return 1;
     }
   }

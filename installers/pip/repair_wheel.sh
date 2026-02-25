@@ -4,6 +4,7 @@
 # Called by CIBW_REPAIR_WHEEL_COMMAND_LINUX in place of auditwheel repair.
 # auditwheel doesn't work well with our bundled shared libraries, so we
 # fix RPATHs to use $ORIGIN and repack preserving Unix permissions.
+# We then use `wheel tags` to apply the correct manylinux platform tag.
 #
 # Usage (called by cibuildwheel):
 #   bash repair_wheel.sh {dest_dir} {wheel}
@@ -12,7 +13,6 @@ set -euo pipefail
 
 DEST_DIR="${1:?Usage: repair_wheel.sh <dest_dir> <wheel>}"
 WHEEL="${2:?Usage: repair_wheel.sh <dest_dir> <wheel>}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "=== Repairing wheel: $(basename "$WHEEL") ==="
 
@@ -46,8 +46,52 @@ for bin in "$WORK_DIR"/unpack/iowarp_core/bin/*; do
     patchelf --set-rpath '$ORIGIN/../lib' "$bin" 2>/dev/null || true
 done
 
-# Repack preserving permissions
+# Regenerate RECORD with correct hashes after patchelf modified binaries
+echo "Regenerating RECORD..."
+python3 -c "
+import hashlib, base64, os, sys, csv, io
+
+base = sys.argv[1]
+# Find the RECORD file
+record_path = None
+for root, dirs, files in os.walk(base):
+    for f in files:
+        if f == 'RECORD' and '.dist-info' in root:
+            record_path = os.path.join(root, f)
+            break
+
+if not record_path:
+    print('WARNING: No RECORD file found, skipping regeneration')
+    sys.exit(0)
+
+dist_info = os.path.dirname(record_path)
+record_relpath = os.path.relpath(record_path, base)
+rows = []
+for root, dirs, files in os.walk(base):
+    for f in sorted(files):
+        full = os.path.join(root, f)
+        arc = os.path.relpath(full, base)
+        if arc == record_relpath:
+            continue  # RECORD itself has no hash
+        with open(full, 'rb') as fh:
+            data = fh.read()
+        digest = hashlib.sha256(data).digest()
+        h = 'sha256=' + base64.urlsafe_b64encode(digest).rstrip(b'=').decode('ascii')
+        rows.append((arc, h, str(len(data))))
+
+# Write RECORD
+with open(record_path, 'w', newline='') as rf:
+    writer = csv.writer(rf)
+    for row in rows:
+        writer.writerow(row)
+    writer.writerow((record_relpath, '', ''))
+" "$WORK_DIR/unpack"
+
+# Repack preserving permissions into a temp location
 WHEEL_NAME=$(basename "$WHEEL")
+REPACK_DIR="$WORK_DIR/repacked"
+mkdir -p "$REPACK_DIR"
+
 python3 -c "
 import os, sys, zipfile
 base = sys.argv[1]
@@ -62,6 +106,22 @@ with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zf:
             info.external_attr = (st.st_mode & 0xFFFF) << 16
             with open(full, 'rb') as fh:
                 zf.writestr(info, fh.read())
-" "$WORK_DIR/unpack" "$DEST_DIR/$WHEEL_NAME"
+" "$WORK_DIR/unpack" "$REPACK_DIR/$WHEEL_NAME"
 
-echo "=== Repaired wheel: $DEST_DIR/$WHEEL_NAME ==="
+# Detect the architecture and apply the manylinux platform tag.
+# PyPI rejects raw linux_* platform tags; we need manylinux_2_34_*.
+# `wheel tags` properly updates the filename, WHEEL metadata, and RECORD.
+ARCH=$(echo "$WHEEL_NAME" | grep -oP 'linux_\K(x86_64|aarch64|i686|ppc64le|s390x)')
+if [ -n "$ARCH" ]; then
+    echo "Retagging wheel with manylinux_2_34_${ARCH}..."
+    pip install -q wheel
+    python3 -m wheel tags \
+        --platform-tag "manylinux_2_34_${ARCH}" \
+        --remove \
+        "$REPACK_DIR/$WHEEL_NAME"
+fi
+
+# Move the final wheel (retagged or original) to the destination
+mv "$REPACK_DIR"/*.whl "$DEST_DIR/"
+echo "=== Repaired wheel placed in: $DEST_DIR ==="
+ls -1 "$DEST_DIR"/*.whl | tail -1

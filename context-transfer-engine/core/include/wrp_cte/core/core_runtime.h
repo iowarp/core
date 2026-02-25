@@ -73,6 +73,11 @@ public:
   chi::TaskResume Create(hipc::FullPtr<CreateTask> task, chi::RunContext &ctx);
 
   /**
+   * Monitor container state (Method::kMonitor)
+   */
+  chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task, chi::RunContext &rctx);
+
+  /**
    * Destroy the container (Method::kDestroy)
    */
   chi::TaskResume Destroy(hipc::FullPtr<DestroyTask> task, chi::RunContext &ctx);
@@ -148,6 +153,11 @@ public:
    * Get tag size operation - returns total size of all blobs in tag
    */
   chi::TaskResume GetTagSize(hipc::FullPtr<GetTagSizeTask> task, chi::RunContext &ctx);
+
+  /**
+   * Schedule a task by resolving Dynamic pool queries.
+   */
+  chi::PoolQuery ScheduleTask(const hipc::FullPtr<chi::Task> &task) override;
 
   // Pure virtual methods - implementations are in autogen/core_lib_exec.cc
   void Init(const chi::PoolId &pool_id, const std::string &pool_name,

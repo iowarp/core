@@ -66,6 +66,13 @@ struct TestStats {
 // Global test statistics
 static TestStats g_stats;
 
+// Optional finalize callback invoked after all tests run but before main
+// returns.  Set this from test fixtures that allocate framework resources
+// (e.g., Chimaera runtime) to ensure clean shutdown before static
+// destructors fire.  Type: void(*)().
+using FinalizeFunc = void(*)();
+static FinalizeFunc g_test_finalize = nullptr;
+
 // Test failure exception
 class TestFailure : public std::exception {
 public:
@@ -268,6 +275,7 @@ int main(int argc, char* argv[]) { \
         filter = argv[1]; \
     } \
     int rc = SimpleTest::run_all_tests(filter); \
+    if (SimpleTest::g_test_finalize) SimpleTest::g_test_finalize(); \
     chi::CHIMAERA_FINALIZE(); \
     _exit(rc); \
     return rc; \

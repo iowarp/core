@@ -42,6 +42,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "chimaera/corwlock.h"
 #include "chimaera/pool_query.h"
 #include "chimaera/task.h"
 #include "chimaera/task_archives.h"
@@ -93,6 +94,11 @@ class Container {
   u32 container_id_;       ///< The logical ID of this container instance
   hshm::abitfield32_t flags_;  ///< Atomic bitfield for container state
 
+  /** Group affinity map: TaskGroup id -> pinned Worker* */
+  std::unordered_map<int64_t, Worker*> task_group_map_;
+  /** Lock protecting task_group_map_ */
+  CoRwLock task_group_lock_;
+
  protected:
   PoolQuery pool_query_;
 
@@ -118,6 +124,7 @@ class Container {
     container_id_ = container_id;
     flags_.Clear();
     pool_query_ = PoolQuery();  // Default pool query
+    task_group_map_.clear();
   }
 
   /** Mark container as plugged (no new tasks accepted) */
@@ -125,6 +132,20 @@ class Container {
 
   /** Check if container is plugged */
   bool IsPlugged() const { return flags_.Any(CONTAINER_PLUG) != 0; }
+
+  /**
+   * Schedule a task by resolving its PoolQuery before routing.
+   * Called from RouteTask on the static container (no container state).
+   * Override in chimods to implement dynamic scheduling logic (e.g.,
+   * checking local caches, hashing blob names to containers).
+   * Default: returns the task's existing pool_query_ unchanged.
+   *
+   * @param task Full pointer to the task being scheduled
+   * @return The PoolQuery to use for routing this task
+   */
+  virtual PoolQuery ScheduleTask(const hipc::FullPtr<Task> &task) {
+    return task->pool_query_;
+  }
 
   /**
    * Execute a method on a task - must be implemented by derived classes

@@ -1,15 +1,3 @@
-[submodule "external/nanobind"]
-	path = external/nanobind
-	url = https://github.com/wjakob/nanobind.git
-	branch = v2.9.2
-[submodule "external/Catch2"]
-	path = external/Catch2
-	url = https://github.com/catchorg/Catch2.git
-	branch = v3.11.0
-[submodule "external/cereal"]
-	path = external/cereal
-	url = https://github.com/USCiLab/cereal.git
-	branch = v1.3.2
 [submodule "external/hindsight"]
 	path = external/hindsight
 	url = https://github.com/vectorize-io/hindsight.git
@@ -18,11 +6,11 @@
 	url = https://github.com/getzep/graphiti.git
 [submodule "context-transfer-engine/benchmark/memorybench"]
 	path = context-transfer-engine/benchmark/memorybench
-	url = git@github.com:iowarp/memorybench.git
-[submodule "external/jarvis-cd"]
-	path = external/jarvis-cd
-	url = https://github.com/iowarp/runtime-deployment.git
+	url = https://github.com/iowarp/memorybench.git
 [submodule "docs"]
 	path = docs
-	url = git@github.com:iowarp/docs.git
+	url = https://github.com/iowarp/docs.git
 	branch = iowarp-dev
+[submodule "external/jarvis-cd"]
+	path = external/jarvis-cd
+	url = https://github.com/grc-iit/jarvis-cd.git

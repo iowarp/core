@@ -101,6 +101,12 @@ void PrintRuntimeStartUsage() {
   HIPRINT("  --induct: Register this node with all existing cluster nodes");
 }
 
+void PrintRuntimeRestartUsage() {
+  HIPRINT("Usage: chimaera runtime restart [--induct]");
+  HIPRINT("  Restarts the Chimaera runtime, replaying WAL to recover address table");
+  HIPRINT("  --induct: Register this node with all existing cluster nodes");
+}
+
 }  // namespace
 
 int RuntimeStart(int argc, char* argv[]) {
@@ -127,6 +133,56 @@ int RuntimeStart(int argc, char* argv[]) {
   }
 
   HLOG(kDebug, "Chimaera runtime started successfully");
+
+  if (!InitializeAdminChiMod()) {
+    HLOG(kError, "FATAL ERROR: Failed to find or initialize admin ChiMod");
+    return 1;
+  }
+
+  HLOG(kDebug, "Admin ChiMod initialized successfully with pool ID {}", chi::kAdminPoolId);
+
+  if (induct) {
+    if (!InductNode()) {
+      HLOG(kError, "FATAL ERROR: Failed to induct node into cluster");
+      return 1;
+    }
+  }
+
+  while (g_keep_running) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+
+  HLOG(kDebug, "Shutting down Chimaera runtime...");
+  ShutdownAdminChiMod();
+  HLOG(kDebug, "Chimaera runtime stopped (finalization will happen automatically)");
+  return 0;
+}
+
+int RuntimeRestart(int argc, char* argv[]) {
+  bool induct = false;
+  for (int i = 0; i < argc; ++i) {
+    if (std::strcmp(argv[i], "--induct") == 0) {
+      induct = true;
+    } else if (std::strcmp(argv[i], "--help") == 0 ||
+               std::strcmp(argv[i], "-h") == 0) {
+      PrintRuntimeRestartUsage();
+      return 0;
+    } else {
+      HLOG(kError, "Unknown argument: {}", argv[i]);
+      PrintRuntimeRestartUsage();
+      return 1;
+    }
+  }
+
+  HLOG(kInfo, "Restarting Chimaera runtime (WAL replay enabled)...");
+
+  if (!chi::CHIMAERA_INIT(chi::ChimaeraMode::kRuntime, true,
+                           /*is_restart=*/true)) {
+    HLOG(kError, "Failed to restart Chimaera runtime");
+    return 1;
+  }
+
+  HLOG(kInfo, "Chimaera runtime restarted successfully");
 
   if (!InitializeAdminChiMod()) {
     HLOG(kError, "FATAL ERROR: Failed to find or initialize admin ChiMod");

@@ -746,4 +746,47 @@ void PoolManager::WriteAddressTableWAL(PoolId pool_id,
   HLOG(kDebug, "PoolManager: WAL entry written to {}", wal_path);
 }
 
+void PoolManager::ReplayAddressTableWAL() {
+  auto *config_manager = CHI_CONFIG_MANAGER;
+  if (!config_manager) {
+    HLOG(kError, "ReplayAddressTableWAL: ConfigManager not available");
+    return;
+  }
+
+  std::string wal_dir = config_manager->GetConfDir() + "/wal";
+
+  namespace fs = std::filesystem;
+  if (!fs::exists(wal_dir) || !fs::is_directory(wal_dir)) {
+    HLOG(kInfo, "ReplayAddressTableWAL: No WAL directory at {}", wal_dir);
+    return;
+  }
+
+  size_t entries_replayed = 0;
+  for (const auto &dir_entry : fs::directory_iterator(wal_dir)) {
+    if (dir_entry.path().extension() != ".bin") continue;
+
+    std::ifstream ifs(dir_entry.path(), std::ios::binary);
+    if (!ifs.is_open()) continue;
+
+    while (ifs.good()) {
+      u64 timestamp;
+      PoolId pool_id;
+      u32 container_id, old_node, new_node;
+
+      ifs.read(reinterpret_cast<char*>(&timestamp), sizeof(timestamp));
+      ifs.read(reinterpret_cast<char*>(&pool_id), sizeof(pool_id));
+      ifs.read(reinterpret_cast<char*>(&container_id), sizeof(container_id));
+      ifs.read(reinterpret_cast<char*>(&old_node), sizeof(old_node));
+      ifs.read(reinterpret_cast<char*>(&new_node), sizeof(new_node));
+      if (ifs.fail()) break;
+
+      // Apply the last-writer-wins mapping
+      UpdateContainerNodeMapping(pool_id, container_id, new_node);
+      entries_replayed++;
+    }
+  }
+
+  HLOG(kInfo, "ReplayAddressTableWAL: Replayed {} entries", entries_replayed);
+}
+
 }  // namespace chi

@@ -45,6 +45,13 @@
 // Global pointer variable definition for Chimaera manager singleton
 HSHM_DEFINE_GLOBAL_PTR_VAR_CC(chi::Chimaera, g_chimaera_manager);
 
+static void ChimaeraCleanupAtExit() {
+  if (g_chimaera_manager) {
+    delete g_chimaera_manager;
+    g_chimaera_manager = nullptr;
+  }
+}
+
 namespace chi {
 
 // HSHM Thread-local storage key definitions
@@ -105,14 +112,14 @@ TaskId CreateTaskId() {
 
 Chimaera::~Chimaera() {
   if (is_initialized_) {
-    // Always finalize client components if client mode was initialized
-    if (is_client_mode_) {
-      ClientFinalize();
-    }
-
-    // Only finalize server components if runtime mode was initialized
+    // Finalize server first (stops worker threads that may be processing tasks)
     if (is_runtime_mode_) {
       ServerFinalize();
+    }
+
+    // Then finalize client (closes DEALER socket on the shared ZMQ context)
+    if (is_client_mode_) {
+      ClientFinalize();
     }
   }
 }
@@ -165,6 +172,7 @@ bool Chimaera::ClientInit() {
   is_client_initialized_ = true;
   is_initialized_ = true;
   client_is_initializing_ = false;
+  std::atexit(ChimaeraCleanupAtExit);
 
   return true;
 }
@@ -242,9 +250,14 @@ bool Chimaera::ServerInit() {
     }
 
     // Iterate over each pool configuration and create asynchronously
-    for (const auto& pool_config : compose_config.pools_) {
-      HLOG(kInfo, "Compose: Creating pool {} (module: {})",
-            pool_config.pool_name_, pool_config.mod_name_);
+    for (auto pool_config : compose_config.pools_) {
+      // On restart, force restart_=true so containers call Restart() instead of Init()
+      if (is_restart_) {
+        pool_config.restart_ = true;
+      }
+
+      HLOG(kInfo, "Compose: Creating pool {} (module: {}, restart: {})",
+            pool_config.pool_name_, pool_config.mod_name_, pool_config.restart_);
 
       // Create pool asynchronously and wait
       auto task = admin_client->AsyncCompose(pool_config);
@@ -265,6 +278,12 @@ bool Chimaera::ServerInit() {
     }
 
     HLOG(kInfo, "Compose: All {} pools created successfully", compose_config.pools_.size());
+
+    // After compose, replay WAL to recover address table state from before crash
+    if (is_restart_) {
+      HLOG(kInfo, "Replaying address table WAL for restart recovery...");
+      pool_manager->ReplayAddressTableWAL();
+    }
   }
 
   // Start local server last - after all other initialization is complete
@@ -279,6 +298,7 @@ bool Chimaera::ServerInit() {
   is_runtime_initialized_ = true;
   is_initialized_ = true;
   runtime_is_initializing_ = false;
+  std::atexit(ChimaeraCleanupAtExit);
 
   return true;
 }

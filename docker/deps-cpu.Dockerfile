@@ -42,6 +42,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     g++ \
     patchelf \
+    ccache \
     && rm -rf /var/lib/apt/lists/*
 
 # Python
@@ -194,6 +195,18 @@ RUN cd /tmp \
     && cmake --build cereal-build -j$(nproc) \
     && cmake --install cereal-build \
     && rm -rf /tmp/cereal-*
+
+# msgpack-c 6.1.0 (pure C library — no Boost dependency, static with -fPIC)
+RUN cd /tmp \
+    && git clone --depth 1 --branch c-6.1.0 https://github.com/msgpack/msgpack-c.git \
+    && cmake -S msgpack-c -B msgpack-build \
+       -DCMAKE_INSTALL_PREFIX=/usr/local \
+       -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+       -DMSGPACK_BUILD_TESTS=OFF \
+       -DMSGPACK_BUILD_EXAMPLES=OFF \
+    && cmake --build msgpack-build -j$(nproc) \
+    && cmake --install msgpack-build \
+    && rm -rf /tmp/msgpack-c /tmp/msgpack-build
 
 # libsodium 1.0.20 (shared + static with -fPIC, required by zeromq)
 RUN cd /tmp \
@@ -393,7 +406,7 @@ ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
 # Install Jarvis-CD (deployment and pipeline management)
 RUN cd /home/iowarp \
-    && git clone https://github.com/iowarp/runtime-deployment.git jarvis-cd \
+    && git clone https://github.com/grc-iit/jarvis-cd.git jarvis-cd \
     && cd jarvis-cd \
     && pip install -r requirements.txt \
     && pip install -e .

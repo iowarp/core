@@ -16,7 +16,7 @@ class Iowarp(CMakePackage):
 
     # Branch versions
     version('main', branch='main', submodules=True, preferred=True)
-    version('dev', branch='123-integrate-adios2-gray-scott-into-iowarp', submodules=True)
+    version('dev', branch='74-fix-context-transport-primitives-for-the-gpu', submodules=True)
 
     # Build variants
     variant('debug', default=False, description='Build in Debug mode')
@@ -52,6 +52,7 @@ class Iowarp(CMakePackage):
     depends_on('yaml-cpp')
     depends_on('doxygen')
     depends_on('cereal')
+    depends_on('msgpack-c')
     depends_on('libaio')
     depends_on('libzmq', when='+zmq')
 

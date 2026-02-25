@@ -34,6 +34,7 @@
 // Copyright 2024 IOWarp contributors
 #include <wrp_cte/compressor/compressor_runtime.h>
 
+#include <hermes_shm/serialize/msgpack_wrapper.h>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -199,63 +200,52 @@ chi::TaskResume Runtime::Destroy(hipc::FullPtr<DestroyTask> task,
   co_return;
 }
 
+chi::PoolQuery Runtime::ScheduleTask(const hipc::FullPtr<chi::Task> &task) {
+  // All compressor Dynamic methods resolve to Local
+  return chi::PoolQuery::Local();
+}
+
 chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
-                                 chi::RunContext& ctx) {
-  // Dynamic schedule: just set pool query
-  if (ctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
-    task->pool_query_ = chi::PoolQuery::Local();
+                                 chi::RunContext &ctx) {
+  if (!core_client_) {
+    task->SetReturnCode(0);
     co_return;
   }
-
+  // Poll target states
   try {
-    // Initialize core client if needed
-    if (!core_client_) {
-      core_client_ =
-          std::make_unique<wrp_cte::core::Client>(task->core_pool_id_);
-    }
-
-    // List all registered targets from core
     auto list_task = core_client_->AsyncListTargets();
     list_task.Wait();
-
-    if (list_task->return_code_ != 0u) {
-      HLOG(kWarning, "Failed to list targets from core (error code: {})",
-           list_task->return_code_);
-      co_return;
-    }
-
-    // Update target states for each registered target
-    std::lock_guard<std::mutex> lock(target_states_mutex_);
-
-    for (const auto& target_name : list_task->target_names_) {
-      // Get detailed info for this target
-      auto info_task = core_client_->AsyncGetTargetInfo(target_name);
-      info_task.Wait();
-
-      if (info_task->return_code_ == 0u) {
-        // Update or create target state entry
-        auto& state = target_states_[target_name];
-        state.target_name_ = target_name;
-        state.target_score_ = info_task->target_score_;
-        state.remaining_space_ = info_task->remaining_space_;
-        state.bytes_written_ = info_task->bytes_written_;
-        state.last_updated_ = std::chrono::steady_clock::now();
-
-        HLOG(kDebug,
-             "Updated target state: {} (score={:.3f}, remaining={} bytes, "
-             "written={} bytes)",
-             target_name, state.target_score_, state.remaining_space_,
-             state.bytes_written_);
-      } else {
-        HLOG(kWarning, "Failed to get info for target '{}' (error code: {})",
-             target_name, info_task->return_code_);
+    if (list_task->GetReturnCode() == 0) {
+      std::lock_guard<std::mutex> lock(target_states_mutex_);
+      for (auto &target_name : list_task->target_names_) {
+        auto stat_task = core_client_->AsyncGetTargetInfo(target_name);
+        stat_task.Wait();
+        if (stat_task->GetReturnCode() == 0) {
+          auto &state = target_states_[target_name];
+          state.target_name_ = target_name;
+          state.target_score_ = stat_task->target_score_;
+          state.remaining_space_ = stat_task->remaining_space_;
+          state.bytes_written_ = stat_task->bytes_written_;
+        }
       }
     }
-
-    HLOG(kDebug, "Monitor updated {} target states", target_states_.size());
-  } catch (const std::exception& e) {
-    HLOG(kError, "Exception during monitor: {}", e.what());
+    // Serialize target_states_ to msgpack
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> pk(sbuf);
+    pk.pack_map(target_states_.size());
+    for (auto &[name, state] : target_states_) {
+      pk.pack(name);
+      pk.pack_map(4);
+      pk.pack("score"); pk.pack(state.target_score_);
+      pk.pack("remaining"); pk.pack(state.remaining_space_);
+      pk.pack("written"); pk.pack(state.bytes_written_);
+      pk.pack("name"); pk.pack(state.target_name_);
+    }
+    task->results_[container_id_] = std::string(sbuf.data(), sbuf.size());
+  } catch (const std::exception &e) {
+    HLOG(kError, "Compressor::Monitor failed: {}", e.what());
   }
+  task->SetReturnCode(0);
   co_return;
 }
 
@@ -526,12 +516,6 @@ static void WriteTraceLog(const std::string& trace_folder,
 
 chi::TaskResume Runtime::DynamicSchedule(
     hipc::FullPtr<DynamicScheduleTask> task, chi::RunContext& ctx) {
-  // Dynamic scheduling phase - determine routing
-  if (ctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
-    task->pool_query_ = chi::PoolQuery::Local();
-    co_return;
-  }
-
   try {
     // Extract task parameters (same as PutBlobTask)
     chi::u64 chunk_size = task->size_;
@@ -625,12 +609,6 @@ chi::TaskResume Runtime::DynamicSchedule(
 
 chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
                                   chi::RunContext& ctx) {
-  // Dynamic scheduling phase - determine routing
-  if (ctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
-    task->pool_query_ = chi::PoolQuery::Local();
-    co_return;
-  }
-
   try {
     // Extract task parameters (same as PutBlobTask)
     chi::u64 input_size = task->size_;
@@ -806,12 +784,6 @@ chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
 
 chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
                                     chi::RunContext& ctx) {
-  // Dynamic scheduling phase - determine routing
-  if (ctx.exec_mode_ == chi::ExecMode::kDynamicSchedule) {
-    task->pool_query_ = chi::PoolQuery::Local();
-    co_return;
-  }
-
   try {
     // Extract task parameters (same as GetBlobTask)
     chi::u64 expected_size = task->size_;
