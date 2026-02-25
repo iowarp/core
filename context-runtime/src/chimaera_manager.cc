@@ -331,21 +331,27 @@ void Chimaera::ServerFinalize() {
   auto *work_orchestrator = CHI_WORK_ORCHESTRATOR;
   work_orchestrator->StopWorkers();
   work_orchestrator->Finalize();
+
+  // Close ZMQ transports BEFORE unloading modules.  On Windows,
+  // ModuleManager::Finalize unloads ChiMod DLLs, triggering
+  // DLL_PROCESS_DETACH which can call WSACleanup via ZMQ's internal
+  // static destructors.  If ZMQ sockets are still open at that point,
+  // subsequent zmq_close calls fail with WSA assertion errors.
+  auto *ipc_manager = CHI_IPC;
+  ipc_manager->ServerFinalize();
+
   auto *module_manager = CHI_MODULE_MANAGER;
   module_manager->Finalize();
 
   // Finalize shared components
   auto *pool_manager = CHI_POOL_MANAGER;
   pool_manager->Finalize();
-  auto *ipc_manager = CHI_IPC;
 
-  // Reap all shared memory segments before finalizing IPC
+  // Reap all shared memory segments after IPC finalization
   size_t reaped = ipc_manager->WreapAllIpcs();
   if (reaped > 0) {
     HLOG(kInfo, "ServerFinalize: Reaped {} shared memory segments", reaped);
   }
-
-  ipc_manager->ServerFinalize();
 
   is_runtime_mode_ = false;
   is_runtime_initialized_ = false;

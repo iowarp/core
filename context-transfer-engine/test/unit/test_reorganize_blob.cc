@@ -439,6 +439,8 @@ TEST_CASE("ReorganizeBlob - Cleanup", "[reorganize][cleanup]") {
 }
 
 int main(int argc, char** argv) {
+  hshm::SystemInfo::SuppressErrorDialogs();
+
   // Create fixture (initializes runtime)
   g_fixture = new ReorganizeBlobTestFixture();
 
@@ -450,5 +452,7 @@ int main(int argc, char** argv) {
   delete g_fixture;
   g_fixture = nullptr;
 
+  chi::CHIMAERA_FINALIZE();
+  SIMPLE_TEST_HARD_EXIT(result);
   return result;
 }

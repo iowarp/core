@@ -273,7 +273,8 @@ int main(int argc, char* argv[]) {
     // Step 4: Load OMNI configuration file
     HLOG(kInfo, "[STEP 4] Loading OMNI configuration...");
     const std::string source_path = __FILE__;  // Get current source file path
-    const std::string omni_file = source_path.substr(0, source_path.find_last_of('/')) + "/binary_assim_omni.yaml";
+    const auto last_sep = source_path.find_last_of("/\\");
+    const std::string omni_file = source_path.substr(0, last_sep) + "/binary_assim_omni.yaml";
 
     std::vector<wrp_cae::core::AssimilationCtx> contexts;
     try {

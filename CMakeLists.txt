@@ -754,6 +754,9 @@ else()
     # MSVC compiler flags
     # /FS enables synchronized PDB writes to avoid C1041 errors with parallel builds
     add_compile_options(/FS)
+    # Prevent windows.h from defining min/max macros that conflict with
+    # std::numeric_limits<>::max() and similar standard library usage.
+    add_compile_definitions(NOMINMAX)
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /Zi /Od /DDEBUG")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /DNDEBUG")
 endif()

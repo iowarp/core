@@ -213,8 +213,9 @@ TEST_CASE("IpcErrors - SetNumSchedQueues Edge Cases", "[ipc][errors][sched]") {
 // ============================================================================
 
 TEST_CASE("IpcErrors - ZZZ Final Cleanup", "[ipc][errors][cleanup]") {
-  // Force exit to avoid hanging on worker thread joins during finalization
-  _exit(0);
+  // Finalize before hard exit to release ZMQ ports
+  chi::CHIMAERA_FINALIZE();
+  SIMPLE_TEST_HARD_EXIT(0);
 }
 
 SIMPLE_TEST_MAIN()

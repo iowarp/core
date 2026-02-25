@@ -257,12 +257,23 @@ inline int run_all_tests(const std::string& filter = "") {
     void CHI_UNIQUE_NAME(test_func_)()
 
 // Main function for test executable
+// Use _exit() for hard termination on all platforms.  On Windows, the
+// CtxOwner destructor in zmq_transport.h is a no-op, so _exit() ->
+// ExitProcess -> DLL_PROCESS_DETACH is safe (no zmq_ctx_destroy calls).
+// Using _exit() instead of TerminateProcess allows the kernel to
+// properly close TCP sockets and release ports, preventing "Address in
+// use" errors when subsequent tests try to bind the same port.
+#include "hermes_shm/introspect/system_info.h"
+#define SIMPLE_TEST_HARD_EXIT(rc) _exit(rc)
+
 #define SIMPLE_TEST_MAIN() \
 int main(int argc, char* argv[]) { \
+    hshm::SystemInfo::SuppressErrorDialogs(); \
     std::string filter = ""; \
     if (argc > 1) { \
         filter = argv[1]; \
     } \
     int rc = SimpleTest::run_all_tests(filter); \
-    _exit(rc); \
+    SIMPLE_TEST_HARD_EXIT(rc); \
+    return rc; \
 }

@@ -930,8 +930,7 @@ TEST_CASE("Complete Serialization Flow", "[task_archive][integration]") {
 
 // Main function to run all tests with Chimaera runtime initialization
 int main(int argc, char *argv[]) {
-  (void)argc;
-  (void)argv;
+  hshm::SystemInfo::SuppressErrorDialogs();
 
   // Initialize Chimaera runtime for memory management
   bool runtime_success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
@@ -941,8 +940,15 @@ int main(int argc, char *argv[]) {
   }
 
   // Run all tests
-  int result = SimpleTest::run_all_tests();
+  std::string filter = "";
+  if (argc > 1) {
+    filter = argv[1];
+  }
+  int result = SimpleTest::run_all_tests(filter);
 
-  // Runtime will be cleaned up automatically
+  // Finalize before _exit to stop worker threads cleanly
+  chi::CHIMAERA_FINALIZE();
+
+  SIMPLE_TEST_HARD_EXIT(result);
   return result;
 }

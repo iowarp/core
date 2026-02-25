@@ -84,6 +84,22 @@ class ZmqFiredAction : public EventAction {
   }
 };
 
+#ifdef _WIN32
+// Separate function for SEH: __try cannot appear in functions that require
+// C++ object unwinding, so we isolate the zmq_close call.
+inline void ZmqCloseSafe(void *socket) {
+  __try {
+    zmq_close(socket);
+  } __except (GetExceptionCode() == 0x40000015
+                  ? EXCEPTION_EXECUTE_HANDLER
+                  : EXCEPTION_CONTINUE_SEARCH) {
+    // ZMQ raises STATUS_FATAL_APP_EXIT (0x40000015) via wsa_assert
+    // if Winsock was cleaned up before the signaler socket is closed.
+    // Safe to ignore at shutdown.
+  }
+}
+#endif
+
 class ZeroMqTransport : public Transport {
  private:
   static void* GetSharedContext() {
@@ -94,6 +110,16 @@ class ZeroMqTransport : public Transport {
       std::mutex mtx;
       ~CtxOwner() {
         if (ctx) {
+#ifdef _WIN32
+          // On Windows, skip ZMQ context destruction.  Each DLL that includes
+          // this header gets its own static CtxOwner.  When ModuleManager
+          // unloads ChiMod DLLs, their CtxOwner destructors fire and call
+          // zmq_ctx_destroy, which decrements ZMQ's global WSAStartup
+          // reference count.  Once all DLL contexts are destroyed, WSACleanup
+          // is called, breaking any ZMQ operations still in progress (e.g.
+          // IpcManager closing its sockets).  Since the process terminates
+          // via _exit() shortly after, the OS reclaims all resources.
+#else
           // zmq_ctx_shutdown() causes all blocking ZMQ calls on open sockets
           // to return immediately with ETERM.  This unblocks any background
           // receive threads (e.g. RecvZmqClientThread) that are polling the
@@ -104,6 +130,7 @@ class ZeroMqTransport : public Transport {
           zmq_ctx_shutdown(ctx);
           zmq_ctx_destroy(ctx);
           ctx = nullptr;
+#endif
         }
       }
     };
@@ -198,10 +225,12 @@ class ZeroMqTransport : public Transport {
       HLOG(kDebug, "ZeroMqTransport(DEALER) connected to {} (pid={})", full_url, pid);
       zmq_fired_action_.socket_ = socket_;
     } else {
-      // ROUTER socket for server
-      ctx_ = zmq_ctx_new();
-      owns_ctx_ = true;
-      zmq_ctx_set(ctx_, ZMQ_IO_THREADS, 2);
+      // ROUTER socket for server — use shared context so that
+      // zmq_ctx_destroy is never called during CHIMAERA_FINALIZE.
+      // On Windows, destroying individual contexts triggers WSACleanup
+      // which breaks subsequent ZMQ operations on other contexts.
+      ctx_ = GetSharedContext();
+      owns_ctx_ = false;
       socket_ = zmq_socket(ctx_, ZMQ_ROUTER);
 
       // Set mandatory routing - reject messages to unknown identities
@@ -222,13 +251,27 @@ class ZeroMqTransport : public Transport {
       int hb_ttl = 3000;
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_TTL, &hb_ttl, sizeof(hb_ttl));
 
+      // Set linger to 0 so zmq_close releases the port immediately
+      int linger = 0;
+      zmq_setsockopt(socket_, ZMQ_LINGER, &linger, sizeof(linger));
+
       HLOG(kDebug, "ZeroMqTransport(ROUTER) binding to URL: {}", full_url);
       int rc = zmq_bind(socket_, full_url.c_str());
+#ifdef _WIN32
+      // On Windows, the OS may take a moment to release the port after
+      // a previous process exits.  Retry a few times with short delays.
+      if (rc == -1 && zmq_errno() == EADDRINUSE) {
+        for (int retry = 0; retry < 10 && rc == -1; ++retry) {
+          HLOG(kDebug, "ZeroMqTransport(ROUTER) bind retry {} for {}", retry + 1, full_url);
+          std::this_thread::sleep_for(std::chrono::milliseconds(500));
+          rc = zmq_bind(socket_, full_url.c_str());
+        }
+      }
+#endif
       if (rc == -1) {
         std::string err = "ZeroMqTransport(ROUTER) failed to bind to URL '" +
                           full_url + "': " + zmq_strerror(zmq_errno());
         zmq_close(socket_);
-        zmq_ctx_destroy(ctx_);
         throw std::runtime_error(err);
       }
       HLOG(kDebug, "ZeroMqTransport(ROUTER) bound successfully to {}", full_url);
@@ -243,7 +286,11 @@ class ZeroMqTransport : public Transport {
     int linger = 0;
     zmq_setsockopt(socket_, ZMQ_LINGER, &linger, sizeof(linger));
 
+#ifdef _WIN32
+    ZmqCloseSafe(socket_);
+#else
     zmq_close(socket_);
+#endif
     if (owns_ctx_) {
       zmq_ctx_destroy(ctx_);
     }

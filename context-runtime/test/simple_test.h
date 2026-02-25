@@ -261,11 +261,25 @@ inline int run_all_tests(const std::string& filter = "") {
     void CHI_UNIQUE_NAME(test_func_)()
 
 // Main function for test executable
-// Calls CHIMAERA_FINALIZE() to properly release ports and shared memory,
-// then uses _exit() to force immediate termination without waiting for
-// any remaining threads.
+// Hard termination to avoid ZMQ/WSA assertion failures during cleanup.
+// On Windows, _exit() triggers DLL_PROCESS_DETACH which destroys ZMQ's
+// internal signaler sockets after WSACleanup, causing assertion failures.
+// TerminateProcess avoids DLL_PROCESS_DETACH entirely.
+// CHIMAERA_FINALIZE (called via g_test_finalize before exit) properly
+// closes all ZMQ sockets with linger=0, releasing the ports.
 #include "hermes_shm/introspect/system_info.h"
-#include "chimaera/chimaera.h"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#define SIMPLE_TEST_HARD_EXIT(rc) TerminateProcess(GetCurrentProcess(), rc)
+#else
+#define SIMPLE_TEST_HARD_EXIT(rc) _exit(rc)
+#endif
 
 #define SIMPLE_TEST_MAIN() \
 int main(int argc, char* argv[]) { \
@@ -276,7 +290,6 @@ int main(int argc, char* argv[]) { \
     } \
     int rc = SimpleTest::run_all_tests(filter); \
     if (SimpleTest::g_test_finalize) SimpleTest::g_test_finalize(); \
-    chi::CHIMAERA_FINALIZE(); \
-    _exit(rc); \
+    SIMPLE_TEST_HARD_EXIT(rc); \
     return rc; \
 }

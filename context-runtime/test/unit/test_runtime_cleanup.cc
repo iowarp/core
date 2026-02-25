@@ -169,7 +169,8 @@ TEST_CASE("Cleanup - Client Thread Flags", "[cleanup][ipc][threads]") {
 // ============================================================================
 
 TEST_CASE("Cleanup - ZZZ Final Cleanup", "[cleanup][ipc]") {
-  _exit(0);
+  chi::CHIMAERA_FINALIZE();
+  SIMPLE_TEST_HARD_EXIT(0);
 }
 
 SIMPLE_TEST_MAIN()

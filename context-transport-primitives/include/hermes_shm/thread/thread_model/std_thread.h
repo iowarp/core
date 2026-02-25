@@ -40,6 +40,13 @@
 #include "hermes_shm/introspect/system_info.h"
 #include "thread_model.h"
 
+// Windows <windows.h> defines Yield() as a macro, which breaks our method.
+#ifdef _WIN32
+#ifdef Yield
+#undef Yield
+#endif
+#endif
+
 namespace hshm::thread {
 
 /** Represents the generic operations of a thread */

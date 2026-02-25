@@ -424,9 +424,13 @@ int main(int argc, char *argv[]) {
   }
 
   // Normal test mode
+  hshm::SystemInfo::SuppressErrorDialogs();
   std::string filter = "";
   if (argc > 1) {
     filter = argv[1];
   }
-  return SimpleTest::run_all_tests(filter);
+  int rc = SimpleTest::run_all_tests(filter);
+  chi::CHIMAERA_FINALIZE();
+  SIMPLE_TEST_HARD_EXIT(rc);
+  return rc;
 }

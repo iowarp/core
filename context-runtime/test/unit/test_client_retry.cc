@@ -306,5 +306,6 @@ int main(int argc, char *argv[]) {
   }
   int rc = SimpleTest::run_all_tests(filter);
   chi::CHIMAERA_FINALIZE();
+  SIMPLE_TEST_HARD_EXIT(rc);
   return rc;
 }

@@ -75,6 +75,16 @@ set_target_properties(${TASK_ARCHIVE_TEST_TARGET} PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
+# Precompiled headers for faster builds and correct Windows header ordering.
+# posix_socket.h must be included early to pull in winsock2.h and #undef
+# Windows macros (Yield, min, max) before other project headers use those
+# names as identifiers.
+target_precompile_headers(${TASK_ARCHIVE_TEST_TARGET} PRIVATE
+    <string> <vector> <memory> <unordered_map>
+    <functional> <algorithm> <cstdint> <cstring> <iostream>
+    "$<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/context-transport-primitives/include/hermes_shm/lightbeam/posix_socket.h>"
+)
+
 # Create SubmitBatch test executable
 add_executable(${SUBMIT_BATCH_TEST_TARGET} ${SUBMIT_BATCH_TEST_SOURCES})
 

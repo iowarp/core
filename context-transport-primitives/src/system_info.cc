@@ -771,13 +771,24 @@ ProcessHandle SystemInfo::SpawnProcess(
     si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
   }
 
+  // Create a Job Object so the child is automatically killed when the
+  // parent process exits (the Job handle is closed).
+  HANDLE hJob = CreateJobObjectA(nullptr, nullptr);
+  if (hJob) {
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
+    jeli.BasicLimitInformation.LimitFlags =
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    SetInformationJobObject(hJob, JobObjectExtendedLimitInformation,
+                            &jeli, sizeof(jeli));
+  }
+
   PROCESS_INFORMATION pi{};
   BOOL ok = CreateProcessA(
       nullptr,
       const_cast<char *>(cmd_line.c_str()),
       nullptr, nullptr,
       (hNull != INVALID_HANDLE_VALUE) ? TRUE : FALSE,  // inherit handles for NUL redirect
-      0, nullptr, nullptr,
+      CREATE_SUSPENDED, nullptr, nullptr,
       &si, &pi);
 
   if (hNull != INVALID_HANDLE_VALUE) {
@@ -785,13 +796,21 @@ ProcessHandle SystemInfo::SpawnProcess(
   }
 
   if (ok) {
+    // Assign child to Job Object before resuming so it can't escape
+    if (hJob) {
+      AssignProcessToJobObject(hJob, pi.hProcess);
+    }
+    ResumeThread(pi.hThread);
     handle.hProcess = pi.hProcess;
     handle.hThread = pi.hThread;
+    handle.hJob = hJob;
     handle.pid = pi.dwProcessId;
   } else {
     handle.hProcess = nullptr;
     handle.hThread = nullptr;
+    handle.hJob = nullptr;
     handle.pid = 0;
+    if (hJob) CloseHandle(hJob);
   }
 #endif
 
@@ -806,6 +825,10 @@ void SystemInfo::KillProcess(ProcessHandle &proc) {
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
   if (proc.hProcess != nullptr) {
     TerminateProcess(proc.hProcess, 1);
+  }
+  if (proc.hJob != nullptr) {
+    CloseHandle(proc.hJob);
+    proc.hJob = nullptr;
   }
 #endif
 }
@@ -827,6 +850,10 @@ int SystemInfo::WaitProcess(ProcessHandle &proc) {
   ::GetExitCodeProcess(proc.hProcess, &exit_code);
   CloseHandle(proc.hProcess);
   CloseHandle(proc.hThread);
+  if (proc.hJob != nullptr) {
+    CloseHandle(proc.hJob);
+    proc.hJob = nullptr;
+  }
   proc.hProcess = nullptr;
   proc.hThread = nullptr;
   return static_cast<int>(exit_code);

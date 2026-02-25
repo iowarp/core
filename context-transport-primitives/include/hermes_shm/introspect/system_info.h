@@ -103,6 +103,7 @@ struct ProcessHandle {
 #ifdef _WIN32
   HANDLE hProcess;
   HANDLE hThread;
+  HANDLE hJob;   // Job object: kills child when parent exits
   DWORD pid;
 #else
   pid_t pid;

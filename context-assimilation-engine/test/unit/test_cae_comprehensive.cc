@@ -48,6 +48,7 @@
 #include <chimaera/admin/admin_client.h>
 #include <chimaera/bdev/bdev_client.h>
 #include <chimaera/bdev/bdev_tasks.h>
+#include <filesystem>
 #include <fstream>
 #include <cstdlib>
 
@@ -139,7 +140,7 @@ public:
 
   void SetupTestData() {
     // Create test data directory
-    (void)system(("mkdir -p " + test_data_dir_).c_str());
+    std::filesystem::create_directories(test_data_dir_);
 
     // Generate small binary test file
     GenerateBinaryFile(test_binary_file_, kSmallFileSize);
