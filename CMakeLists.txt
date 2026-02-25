@@ -654,6 +654,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Position Independent Code - Applied to all subdirectories
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# ccache — accelerate rebuilds by caching compiled objects
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    message(STATUS "ccache enabled: ${CCACHE_PROGRAM}")
+else()
+    message(STATUS "ccache not found — install ccache for faster rebuilds")
+endif()
+
 # RPATH configuration - Uses $ORIGIN-relative paths for portability
 # This ensures binaries and libraries can find their dependencies regardless
 # of where the installation is located (works for system installs, pip wheels,

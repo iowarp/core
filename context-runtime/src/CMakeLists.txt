@@ -54,5 +54,12 @@ set_target_properties(${CHIMAERA_LIB_NAME} PROPERTIES
 # Export target for parent scope
 set_target_properties(${CHIMAERA_LIB_NAME} PROPERTIES EXPORT_NAME cxx)
 
+# Precompiled headers for faster builds
+target_precompile_headers(${CHIMAERA_LIB_NAME} PRIVATE
+    <string> <vector> <memory> <unordered_map>
+    <functional> <algorithm> <cstdint> <cstring> <iostream>
+    <sstream> <fstream> <chrono> <mutex> <thread>
+)
+
 # Create namespace alias for external consumption
 add_library(${CHIMAERA_NAMESPACE}::cxx ALIAS ${CHIMAERA_LIB_NAME})
