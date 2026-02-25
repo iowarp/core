@@ -621,8 +621,14 @@ if(WRP_CORE_ENABLE_PYTHON)
   # Find Python for nanobind
   find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
-  # Add nanobind as subdirectory (git submodule)
-  add_subdirectory(external/nanobind)
+  # Fetch nanobind (no submodule needed)
+  include(FetchContent)
+  FetchContent_Declare(nanobind
+      GIT_REPOSITORY https://github.com/wjakob/nanobind.git
+      GIT_TAG        v2.9.2
+      GIT_SHALLOW    ON
+  )
+  FetchContent_MakeAvailable(nanobind)
 
   message(STATUS "Python bindings enabled:")
   message(STATUS "  Install prefix:     ${CMAKE_INSTALL_PREFIX}")
@@ -657,6 +663,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Position Independent Code - Applied to all subdirectories
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# ccache — accelerate rebuilds by caching compiled objects
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    message(STATUS "ccache enabled: ${CCACHE_PROGRAM}")
+else()
+    message(STATUS "ccache not found — install ccache for faster rebuilds")
+endif()
 
 # RPATH configuration - Uses $ORIGIN-relative paths for portability
 # This ensures binaries and libraries can find their dependencies regardless

@@ -317,12 +317,14 @@ class packer {
   void pack(double v)   { msgpack_pack_double(&pk_, v); }
 
   void pack(const std::string& v) {
-    msgpack_pack_str_with_body(&pk_, v.data(), v.size());
+    msgpack_pack_str(&pk_, v.size());
+    msgpack_pack_str_body(&pk_, v.data(), v.size());
   }
 
   void pack(const char* v) {
     size_t len = std::char_traits<char>::length(v);
-    msgpack_pack_str_with_body(&pk_, v, len);
+    msgpack_pack_str(&pk_, len);
+    msgpack_pack_str_body(&pk_, v, len);
   }
 
  private:

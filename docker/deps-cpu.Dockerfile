@@ -42,6 +42,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     g++ \
     patchelf \
+    ccache \
     && rm -rf /var/lib/apt/lists/*
 
 # Python
