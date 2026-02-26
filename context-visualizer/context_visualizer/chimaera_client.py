@@ -9,13 +9,12 @@ except ImportError:
 
 _lock = threading.Lock()
 _chi = None
-_admin = None
 _init_done = False
 
 
 def _ensure_init():
     """Lazy-initialize the Chimaera client connection."""
-    global _chi, _admin, _init_done
+    global _chi, _init_done
     if _init_done:
         return
     with _lock:
@@ -23,10 +22,10 @@ def _ensure_init():
             return
         import chimaera_runtime_ext as chi
         _chi = chi
-        ok = chi.chimaera_init(chi.ChimaeraMode.kClient)
+        # 0 = kClient — pass a plain int to avoid any nanobind enum objects
+        ok = chi.chimaera_init(0)
         if not ok:
             raise RuntimeError("chimaera_init(kClient) failed -- is the runtime running?")
-        _admin = chi.AdminClient(chi.PoolId(0, 0))
         _init_done = True
 
 
@@ -52,7 +51,7 @@ def is_connected():
 def get_worker_stats():
     """Query worker_stats from the admin pool (local node)."""
     _ensure_init()
-    results = _admin.monitor(_chi.PoolQuery.Local(), "worker_stats")
+    results = _chi.async_monitor("local", "worker_stats").wait()
     return _decode_results(results)
 
 
@@ -60,21 +59,20 @@ def get_pool_worker_stats(pool_id_str, routing="local"):
     """Query worker_stats for a specific pool via pool_stats:// URI."""
     _ensure_init()
     uri = f"pool_stats://{pool_id_str}:{routing}:worker_stats"
-    results = _admin.monitor(_chi.PoolQuery.Local(), uri)
+    results = _chi.async_monitor("local", uri).wait()
     return _decode_results(results)
 
 
 def get_status():
     """Query general status from the admin pool."""
     _ensure_init()
-    results = _admin.monitor(_chi.PoolQuery.Local(), "status")
+    results = _chi.async_monitor("local", "status").wait()
     return _decode_results(results)
 
 
 def finalize():
     """Clean shutdown of the Chimaera client."""
-    global _init_done, _admin
+    global _init_done
     if _init_done and _chi is not None:
         _chi.chimaera_finalize()
-        _admin = None
         _init_done = False

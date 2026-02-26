@@ -131,6 +131,13 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
   // Spawn periodic HeartbeatProbe task (SWIM failure detector, 2s period)
   client_.AsyncHeartbeatProbe(chi::PoolQuery::Local(), 2000000);
 
+  // Initialize system stats ring buffer and spawn periodic monitor task
+  system_stats_ring_ = std::make_unique<
+      hipc::circular_mpsc_ring_buffer<SystemStats, hipc::MallocAllocator>>(
+      HSHM_MALLOC, kSystemStatsRingSize);
+  prev_cpu_times_ = hshm::SystemInfo::GetCpuTimes();
+  client_.AsyncSystemMonitor(chi::PoolQuery::Local(), 1000000);  // 1s
+
   HLOG(kDebug,
        "Admin: Container created and initialized for pool: {} (ID: {}, count: "
        "{})",
@@ -1374,6 +1381,57 @@ chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
     }
     sub_future.DelTask();
     co_return;
+  } else if (task->query_.rfind("system_stats", 0) == 0) {
+    // system_stats or system_stats:<min_event_id>
+    uint64_t min_event_id = 0;
+    if (task->query_.size() > 13 && task->query_[12] == ':') {
+      try {
+        min_event_id = std::stoull(task->query_.substr(13));
+      } catch (...) {
+        // ignore parse errors, default to 0
+      }
+    }
+
+    if (!system_stats_ring_) {
+      task->SetReturnCode(1);
+      co_return;
+    }
+
+    chi::u64 head = system_stats_ring_->GetHead();
+    chi::u64 tail = system_stats_ring_->GetTail();
+    chi::u64 start = (min_event_id > head) ? min_event_id : head;
+
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> pk(sbuf);
+
+    // Count entries first
+    uint64_t count = (tail > start) ? (tail - start) : 0;
+    pk.pack_array(static_cast<uint32_t>(count));
+
+    for (chi::u64 idx = start; idx < tail; ++idx) {
+      SystemStats s;
+      if (system_stats_ring_->Peek(idx, s)) {
+        pk.pack_map(12);
+        pk.pack("event_id");            pk.pack(idx);
+        pk.pack("timestamp_ns");        pk.pack(s.timestamp_ns_);
+        pk.pack("wall_time_ns");        pk.pack(s.wall_time_ns_);
+        pk.pack("ram_total_bytes");     pk.pack(s.ram_total_bytes_);
+        pk.pack("ram_available_bytes"); pk.pack(s.ram_available_bytes_);
+        pk.pack("ram_usage_pct");       pk.pack(s.ram_usage_pct_);
+        pk.pack("cpu_usage_pct");       pk.pack(s.cpu_usage_pct_);
+        pk.pack("gpu_count");           pk.pack(s.gpu_count_);
+        pk.pack("gpu_usage_pct");       pk.pack(s.gpu_usage_pct_);
+        pk.pack("hbm_usage_pct");       pk.pack(s.hbm_usage_pct_);
+        pk.pack("hbm_used_bytes");      pk.pack(s.hbm_used_bytes_);
+        pk.pack("hbm_total_bytes");     pk.pack(s.hbm_total_bytes_);
+      } else {
+        pk.pack_map(0);
+      }
+    }
+
+    task->results_[container_id_] = std::string(sbuf.data(), sbuf.size());
+    task->SetReturnCode(0);
+    co_return;
   }
   // Unknown queries get empty results (forward-compatible)
   task->SetReturnCode(0);
@@ -2218,6 +2276,54 @@ chi::TaskResume Runtime::RecoverContainers(
 
   task->SetReturnCode(0);
   rctx.did_work_ = true;
+  co_return;
+}
+
+//===========================================================================
+// System Monitor
+//===========================================================================
+
+chi::TaskResume Runtime::SystemMonitor(hipc::FullPtr<SystemMonitorTask> task,
+                                       chi::RunContext &rctx) {
+  SystemStats stats;
+
+  // Timestamps
+  auto mono_now = std::chrono::steady_clock::now();
+  auto wall_now = std::chrono::system_clock::now();
+  stats.timestamp_ns_ = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          mono_now.time_since_epoch())
+          .count());
+  stats.wall_time_ns_ = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          wall_now.time_since_epoch())
+          .count());
+
+  // DRAM
+  stats.ram_total_bytes_ = HSHM_SYSTEM_INFO->ram_size_;
+  stats.ram_available_bytes_ = hshm::SystemInfo::GetRamAvailable();
+  if (stats.ram_total_bytes_ > 0) {
+    stats.ram_usage_pct_ =
+        (1.0f - static_cast<float>(stats.ram_available_bytes_) /
+                    static_cast<float>(stats.ram_total_bytes_)) *
+        100.0f;
+  }
+
+  // CPU
+  hshm::CpuTimes cur = hshm::SystemInfo::GetCpuTimes();
+  stats.cpu_usage_pct_ =
+      hshm::SystemInfo::ComputeCpuUtilization(prev_cpu_times_, cur);
+  prev_cpu_times_ = cur;
+
+  // GPU/HBM — stub (zeroed by default constructor)
+
+  // Push into ring buffer
+  if (system_stats_ring_) {
+    system_stats_ring_->Push(stats);
+  }
+
+  rctx.did_work_ = true;
+  (void)task;
   co_return;
 }
 

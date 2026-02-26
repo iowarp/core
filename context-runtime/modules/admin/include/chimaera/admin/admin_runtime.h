@@ -39,7 +39,10 @@
 #include <chimaera/chimaera.h>
 #include <chimaera/container.h>
 #include <chimaera/pool_manager.h>
+#include <hermes_shm/data_structures/ipc/ring_buffer.h>
 #include <hermes_shm/data_structures/priv/unordered_map_ll.h>
+#include <hermes_shm/introspect/system_info.h>
+#include <hermes_shm/memory/allocator/malloc_allocator.h>
 
 #include <deque>
 #include <random>
@@ -96,6 +99,12 @@ private:
 
   // Client for making calls to this ChiMod
   Client client_;
+
+  // System monitor ring buffer and CPU state
+  static inline constexpr size_t kSystemStatsRingSize = 1024;
+  std::unique_ptr<hipc::circular_mpsc_ring_buffer<SystemStats, hipc::MallocAllocator>>
+      system_stats_ring_;
+  hshm::CpuTimes prev_cpu_times_;
 
   // Network task tracking maps (keyed by net_key for efficient lookup)
   // Using lock-free unordered_map_ll with 1024 buckets for high concurrency
@@ -300,6 +309,12 @@ public:
    * All nodes update address_map_, only dest node creates the container
    */
   chi::TaskResume RecoverContainers(hipc::FullPtr<RecoverContainersTask> task, chi::RunContext &rctx);
+
+  /**
+   * Handle SystemMonitor - Periodic system resource utilization sampling
+   * Samples DRAM, CPU, and (optionally) GPU/HBM utilization into ring buffer
+   */
+  chi::TaskResume SystemMonitor(hipc::FullPtr<SystemMonitorTask> task, chi::RunContext &rctx);
 
   /**
    * Helper: Receive task inputs from remote node

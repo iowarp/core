@@ -494,6 +494,23 @@ class Client : public chi::ContainerClient {
         chi::CreateTaskId(), pool_id_, pool_query, os.str(), dead_node_id);
     return ipc_manager->Send(task);
   }
+  /**
+   * SystemMonitor - Periodic system resource utilization sampling
+   * @param pool_query Pool routing (use Local())
+   * @param period_us Period in microseconds (default 1000000us = 1s)
+   * @return Future for the SystemMonitorTask
+   */
+  chi::Future<SystemMonitorTask> AsyncSystemMonitor(
+      const chi::PoolQuery &pool_query, double period_us = 1000000) {
+    auto *ipc_manager = CHI_IPC;
+    auto task = ipc_manager->NewTask<SystemMonitorTask>(
+        chi::CreateTaskId(), pool_id_, pool_query);
+    if (period_us > 0) {
+      task->SetPeriod(period_us, chi::kMicro);
+      task->SetFlags(TASK_PERIODIC);
+    }
+    return ipc_manager->Send(task);
+  }
 };
 
 }  // namespace chimaera::admin

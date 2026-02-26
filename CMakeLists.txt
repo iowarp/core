@@ -1016,6 +1016,13 @@ if(TARGET chimaera)
   install(TARGETS chimaera
     COMPONENT pip_package
     RUNTIME DESTINATION ${PIP_PKG_DIR}/bin)
+  # Also install to PYTHON_SITE_PACKAGES/iowarp_core/bin/ so that
+  # `sudo make install` keeps the binary in sync with the Python package,
+  # matching how chimaera_runtime_ext.so is installed directly to site-packages.
+  if(WRP_CORE_ENABLE_PYTHON AND PYTHON_SITE_PACKAGES)
+    install(TARGETS chimaera
+      RUNTIME DESTINATION "${PYTHON_SITE_PACKAGES}/iowarp_core/bin")
+  endif()
 endif()
 
 # Python extensions -> iowarp_core/ext/

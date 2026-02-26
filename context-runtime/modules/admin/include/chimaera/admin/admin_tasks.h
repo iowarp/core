@@ -1690,6 +1690,77 @@ struct RecoverContainersTask : public chi::Task {
   }
 };
 
+/**
+ * SystemStats - A single sample of system resource utilization.
+ * Trivially copyable for ring buffer storage.
+ */
+struct SystemStats {
+  uint64_t timestamp_ns_;       // steady_clock nanoseconds (monotonic)
+  uint64_t wall_time_ns_;       // system_clock nanoseconds since Unix epoch
+  size_t ram_total_bytes_;      // Total physical RAM
+  size_t ram_available_bytes_;  // Available RAM
+  float ram_usage_pct_;         // (1 - avail/total) * 100
+  float cpu_usage_pct_;         // Aggregate CPU util 0-100
+  uint32_t gpu_count_;          // 0 if no GPUs
+  float gpu_usage_pct_;         // Average GPU compute util
+  float hbm_usage_pct_;         // Average GPU memory util
+  size_t hbm_used_bytes_;       // Total HBM used
+  size_t hbm_total_bytes_;      // Total HBM capacity
+
+  SystemStats()
+      : timestamp_ns_(0),
+        wall_time_ns_(0),
+        ram_total_bytes_(0),
+        ram_available_bytes_(0),
+        ram_usage_pct_(0),
+        cpu_usage_pct_(0),
+        gpu_count_(0),
+        gpu_usage_pct_(0),
+        hbm_usage_pct_(0),
+        hbm_used_bytes_(0),
+        hbm_total_bytes_(0) {}
+};
+
+/**
+ * SystemMonitorTask - Periodic task that samples system resource utilization.
+ * No IN/OUT fields — the task is just a trigger.
+ */
+struct SystemMonitorTask : public chi::Task {
+  /** SHM default constructor */
+  SystemMonitorTask() : chi::Task() {}
+
+  /** Emplace constructor */
+  explicit SystemMonitorTask(const chi::TaskId &task_node,
+                             const chi::PoolId &pool_id,
+                             const chi::PoolQuery &pool_query)
+      : chi::Task(task_node, pool_id, pool_query, Method::kSystemMonitor) {
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kSystemMonitor;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+  }
+
+  void Copy(const hipc::FullPtr<SystemMonitorTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+  }
+
+  void Aggregate(const hipc::FullPtr<SystemMonitorTask> &other) {
+    Task::Aggregate(other.template Cast<Task>());
+    Copy(other);
+  }
+};
+
 }  // namespace chimaera::admin
 
 #endif  // ADMIN_TASKS_H_
