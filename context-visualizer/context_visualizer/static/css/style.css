@@ -345,6 +345,61 @@ tr.row-idle { background: rgba(76, 175, 80, 0.08); }
     color: var(--text-muted);
 }
 
+/* Node card action buttons */
+.node-card-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+}
+.btn-action {
+    flex: 1;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+.btn-action:hover:not(:disabled) {
+    color: var(--text);
+}
+.btn-action:disabled {
+    cursor: default;
+    opacity: 0.8;
+}
+.btn-restart {
+    border-color: var(--warning);
+    color: var(--warning);
+}
+.btn-restart:hover:not(:disabled) {
+    background: rgba(255, 152, 0, 0.15);
+    color: var(--warning);
+}
+.btn-shutdown {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.btn-shutdown:hover:not(:disabled) {
+    background: rgba(233, 69, 96, 0.15);
+    color: var(--accent);
+}
+.btn-success-done {
+    border-color: var(--success) !important;
+    color: var(--success) !important;
+}
+.btn-failed {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+    background: rgba(233, 69, 96, 0.15) !important;
+}
+
 /* Empty state */
 .empty-state {
     text-align: center;

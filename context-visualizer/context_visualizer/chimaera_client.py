@@ -112,6 +112,54 @@ def get_bdev_stats_for_node(node_id):
     return _decode_results(results)
 
 
+def shutdown_node(ip_address, grace_period_ms=5000):
+    """Shutdown a remote node via SSH running 'chimaera runtime stop'.
+
+    Exit codes 0 and 134 (SIGABRT from std::abort in InitiateShutdown)
+    are both treated as success.
+    """
+    import subprocess
+    cmd = [
+        "ssh",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "ConnectTimeout=5",
+        ip_address,
+        f"chimaera runtime stop --grace-period {grace_period_ms}",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    success = result.returncode in (0, 134)
+    return {
+        "success": success,
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+
+
+def restart_node(ip_address):
+    """Restart a remote node via SSH.
+
+    Uses nohup so the SSH session returns immediately while the restart
+    proceeds in the background.
+    """
+    import subprocess
+    cmd = [
+        "ssh",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "ConnectTimeout=5",
+        ip_address,
+        "nohup chimaera runtime restart </dev/null >/dev/null 2>&1 &",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    success = result.returncode == 0
+    return {
+        "success": success,
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+
+
 def finalize():
     """Clean shutdown of the Chimaera client."""
     global _init_done

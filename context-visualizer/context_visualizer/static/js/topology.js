@@ -103,6 +103,11 @@
                 html += makeBar("GPU", node.gpu_usage_pct || 0);
             }
 
+            html += '<div class="node-card-actions">' +
+                '<button class="btn-action btn-restart" data-node="' + node.node_id + '" data-action="restart" onclick="event.stopPropagation(); nodeAction(this, ' + node.node_id + ', \'restart\')">Restart</button>' +
+                '<button class="btn-action btn-shutdown" data-node="' + node.node_id + '" data-action="shutdown" onclick="event.stopPropagation(); nodeAction(this, ' + node.node_id + ', \'shutdown\')">Shutdown</button>' +
+                '</div>';
+
             card.innerHTML = html;
             grid.appendChild(card);
         });
@@ -111,6 +116,31 @@
             grid.innerHTML = '<div class="empty-state">No nodes match filter</div>';
         }
     }
+
+    // Expose nodeAction globally so inline onclick handlers can call it
+    window.nodeAction = function (btn, nodeId, action) {
+        if (!confirm("Are you sure you want to " + action + " node " + nodeId + "?")) {
+            return;
+        }
+        btn.disabled = true;
+        btn.textContent = action === "shutdown" ? "Stopping..." : "Restarting...";
+
+        fetch("/api/topology/node/" + nodeId + "/" + action, { method: "POST" })
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+            .then(function (res) {
+                if (res.ok && res.data.success) {
+                    btn.textContent = action === "shutdown" ? "Stopped" : "Restarted";
+                    btn.classList.add("btn-success-done");
+                } else {
+                    btn.textContent = "Failed";
+                    btn.classList.add("btn-failed");
+                }
+            })
+            .catch(function () {
+                btn.textContent = "Failed";
+                btn.classList.add("btn-failed");
+            });
+    };
 
     var lastNodes = [];
 

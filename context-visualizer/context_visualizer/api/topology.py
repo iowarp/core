@@ -1,4 +1,4 @@
-"""GET /api/topology -- cluster topology overview."""
+"""GET /api/topology -- cluster topology overview + node management."""
 
 import socket
 
@@ -7,6 +7,26 @@ from flask import Blueprint, jsonify
 from .. import chimaera_client
 
 bp = Blueprint("topology", __name__)
+
+
+def _find_node_ip(raw, target_node_id):
+    """Extract the IP address for a given node_id from system_stats broadcast results."""
+    target_node_id = int(target_node_id)
+    for cid, entries in raw.items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            nid = entry.get("node_id")
+            if nid is not None and int(nid) == target_node_id:
+                ip = entry.get("ip_address", "")
+                if ip:
+                    return ip
+    # Fallback: node_id 0 with no IP means we're on the local node
+    if target_node_id == 0:
+        return "127.0.0.1"
+    return None
 
 
 @bp.route("/topology")
@@ -64,3 +84,43 @@ def get_topology():
         })
 
     return jsonify({"nodes": result})
+
+
+@bp.route("/topology/node/<node_id>/shutdown", methods=["POST"])
+def shutdown_node(node_id):
+    try:
+        raw = chimaera_client.get_system_stats_all()
+    except Exception as exc:
+        return jsonify({"error": f"Cannot query cluster: {exc}"}), 503
+
+    ip = _find_node_ip(raw, node_id)
+    if ip is None:
+        return jsonify({"error": f"Node {node_id} not found or has no IP"}), 404
+
+    try:
+        result = chimaera_client.shutdown_node(ip)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    status_code = 200 if result["success"] else 500
+    return jsonify(result), status_code
+
+
+@bp.route("/topology/node/<node_id>/restart", methods=["POST"])
+def restart_node(node_id):
+    try:
+        raw = chimaera_client.get_system_stats_all()
+    except Exception as exc:
+        return jsonify({"error": f"Cannot query cluster: {exc}"}), 503
+
+    ip = _find_node_ip(raw, node_id)
+    if ip is None:
+        return jsonify({"error": f"Node {node_id} not found or has no IP"}), 404
+
+    try:
+        result = chimaera_client.restart_node(ip)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    status_code = 200 if result["success"] else 500
+    return jsonify(result), status_code
