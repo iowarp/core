@@ -438,6 +438,7 @@ enum MemorySegment { kMainSegment = 0, kClientDataSegment = 1 };
 
 // HSHM Thread-local storage keys
 extern hshm::ThreadLocalKey chi_cur_worker_key_;
+extern bool chi_cur_worker_key_created_;
 extern hshm::ThreadLocalKey chi_task_counter_key_;
 extern hshm::ThreadLocalKey chi_is_client_thread_key_;
 

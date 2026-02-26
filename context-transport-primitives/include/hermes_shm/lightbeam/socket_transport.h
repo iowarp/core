@@ -108,6 +108,7 @@ class SocketTransport : public Transport {
               std::to_string(port_));
         }
       }
+      sock::SetNonBlocking(fd_, true);
       HLOG(kDebug, "SocketTransport(client) connected to {}:{}", addr_, port_);
     } else {
       // Server mode: bind + listen

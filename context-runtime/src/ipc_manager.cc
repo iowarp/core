@@ -160,6 +160,16 @@ bool IpcManager::ClientInit() {
     return false;
   }
 
+  // Create TLS key for current worker if not already created.
+  // Must happen before any CoRwLock/CoMutex operations (e.g. IncreaseClientShm).
+  // Server mode creates it earlier in WorkOrchestrator::Init.
+  if (!chi_cur_worker_key_created_) {
+    HSHM_THREAD_MODEL->CreateTls<Worker>(chi_cur_worker_key_, nullptr);
+    chi_cur_worker_key_created_ = true;
+  }
+  HSHM_THREAD_MODEL->SetTls(chi_cur_worker_key_,
+                            static_cast<Worker *>(nullptr));
+
   // SHM mode: Attach to main SHM segment and initialize queues
   if (ipc_mode_ == IpcMode::kShm) {
     if (!ClientInitShm()) {
@@ -206,9 +216,7 @@ bool IpcManager::ClientInit() {
   auto *counter = new TaskCounter();
   HSHM_THREAD_MODEL->SetTls(chi_task_counter_key_, counter);
 
-  // Set current worker to null for client-only mode
-  HSHM_THREAD_MODEL->SetTls(chi_cur_worker_key_,
-                            static_cast<Worker *>(nullptr));
+  // chi_cur_worker_key_ already created and set above (before SHM init)
 
   // Create scheduler using factory
   auto *config = CHI_CONFIG_MANAGER;
