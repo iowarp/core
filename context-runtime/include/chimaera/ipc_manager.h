@@ -240,10 +240,10 @@ class IpcManager {
   HSHM_CROSS_FUN void DelTask(hipc::FullPtr<TaskT> task_ptr) {
     if (task_ptr.IsNull()) return;
 #if HSHM_IS_HOST
-    // Host path: use standard delete
+    // Host path: use standard delete (virtual destructor handles derived types)
     delete task_ptr.ptr_;
 #else
-    // GPU path: call destructor and free buffer
+    // GPU path: call virtual destructor and free buffer
     task_ptr.ptr_->~TaskT();
     FreeBuffer(hipc::FullPtr<char>(reinterpret_cast<char *>(task_ptr.ptr_)));
 #endif
@@ -1201,7 +1201,7 @@ class IpcManager {
 
     // Case 3: Check per-process shared memory allocators via alloc_map_
     // Acquire reader lock for thread-safe access to allocator_map_
-    allocator_map_lock_.ReadLock(0);
+    allocator_map_lock_.ReadLock();
 
     // Convert AllocatorId to lookup key (combine major and minor)
     u64 alloc_key = (static_cast<u64>(shm_ptr.alloc_id_.major_) << 32) |
@@ -1251,7 +1251,7 @@ class IpcManager {
 
     // Check per-process shared memory allocators
     // Acquire reader lock for thread-safe access
-    allocator_map_lock_.ReadLock(0);
+    allocator_map_lock_.ReadLock();
 
     hipc::FullPtr<T> result;
     for (auto *alloc : alloc_vector_) {
@@ -1765,6 +1765,9 @@ HSHM_CROSS_FUN Future<TaskT, AllocT>::~Future() {
       CHI_IPC->FreeBuffer(buffer_shm);
       future_shm_.SetNull();
     }
+    // Auto-free the task (only when consumed to avoid double-free
+    // from runtime-internal Future copies in event queues / RunContext)
+    DelTask();
   }
 #endif
 }

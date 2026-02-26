@@ -750,7 +750,10 @@ void Worker::EndTaskShmTransfer(const FullPtr<Task> &task_ptr,
 
   // Set FUTURE_COMPLETE and clean up task
   future_shm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
-  container->DelTask(task_ptr->method_, task_ptr);
+  // Clear TASK_DATA_OWNER before deletion so the virtual destructor
+  // doesn't try to FreeBuffer on transport-allocated data
+  task_ptr->ClearFlags(TASK_DATA_OWNER);
+  CHI_IPC->DelTask(task_ptr);
 }
 
 void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,

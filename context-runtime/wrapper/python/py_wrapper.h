@@ -96,7 +96,6 @@ class PyMonitorTask {
   std::unordered_map<chi::ContainerId, std::string> wait() {
     future_.Wait();
     auto results = future_->results_;
-    future_.DelTask();
     return results;
   }
 };

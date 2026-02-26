@@ -630,6 +630,10 @@ void Runtime::SendOut(hipc::FullPtr<chi::Task> origin_task) {
 
   HLOG(kDebug, "[SendOut] Task {}", origin_task->task_id_);
 
+  // Clear TASK_DATA_OWNER before deferred deletion so the virtual
+  // destructor doesn't try to FreeBuffer on transport-allocated data
+  origin_task->ClearFlags(TASK_DATA_OWNER);
+
   // Defer task deletion to next invocation for zero-copy send safety
   deferred_deletes.push_back(origin_task);
 }
@@ -884,7 +888,7 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
     }
 
     // Aggregate replica results into origin task
-    container->Aggregate(origin_task->method_, origin_task, replica);
+    origin_task->Aggregate(replica);
 
     HLOG(kDebug, "[RecvOut] Task {}", origin_task->task_id_);
 
@@ -900,13 +904,11 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
           pool_manager->GetStaticContainer(origin_task->pool_id_);
 
       // Unmark TASK_DATA_OWNER before deleting replicas to avoid freeing the
-      // same data pointers twice Delete all origin_task replicas using
-      // container->DelTask() to avoid memory leak
-      if (container) {
-        for (const auto &origin_task_ptr : origin_rctx->subtasks_) {
-          origin_task_ptr->ClearFlags(TASK_DATA_OWNER);
-          container->DelTask(origin_task_ptr->method_, origin_task_ptr);
-        }
+      // same data pointers twice. Delete all origin_task replicas using
+      // CHI_IPC->DelTask() to avoid memory leak
+      for (const auto &origin_task_ptr : origin_rctx->subtasks_) {
+        origin_task_ptr->ClearFlags(TASK_DATA_OWNER);
+        CHI_IPC->DelTask(origin_task_ptr);
       }
 
       // Clear subtasks vector after deleting tasks
@@ -1210,6 +1212,10 @@ chi::TaskResume Runtime::ClientSend(hipc::FullPtr<ClientSendTask> task,
         HLOG(kError, "ClientSend: lightbeam Send failed: {}", rc);
       }
 
+      // Clear TASK_DATA_OWNER before deferred deletion so the virtual
+      // destructor doesn't try to FreeBuffer on transport-allocated data
+      origin_task->ClearFlags(TASK_DATA_OWNER);
+
       // Defer task deletion to next invocation for zero-copy send safety
       deferred_deletes.push_back(origin_task);
 
@@ -1379,7 +1385,6 @@ chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
       task->results_ = sub_future->results_;
       task->SetReturnCode(0);
     }
-    sub_future.DelTask();
     co_return;
   } else if (task->query_.rfind("system_stats", 0) == 0) {
     // system_stats or system_stats:<min_event_id>

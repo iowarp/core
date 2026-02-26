@@ -543,12 +543,6 @@ public:
     co_return;
   }
 
-  void DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) override {
-    // Test implementation - do nothing
-    (void)method;
-    (void)task_ptr;
-  }
-
   void SaveTask(chi::u32 method, chi::SaveTaskArchive &archive,
                 hipc::FullPtr<chi::Task> task_ptr) override {
     // Test implementation - just call task serialization
@@ -596,14 +590,6 @@ public:
       return ipc_manager->NewTask<chi::Task>();
     }
     return hipc::FullPtr<chi::Task>();
-  }
-
-  void Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> origin_task_ptr,
-                 hipc::FullPtr<chi::Task> replica_task_ptr) override {
-    // Test implementation - do nothing
-    (void)method;
-    (void)origin_task_ptr;
-    (void)replica_task_ptr;
   }
 
   void LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive &archive,

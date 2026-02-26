@@ -157,10 +157,6 @@ class Container {
   virtual TaskResume Run(u32 method, hipc::FullPtr<Task> task_ptr,
                          RunContext& rctx) = 0;
 
-  /**
-   * Delete/cleanup a task - must be implemented by derived classes
-   */
-  virtual void DelTask(u32 method, hipc::FullPtr<Task> task_ptr) = 0;
 
   /**
    * Get remaining work count for this container - PURE VIRTUAL
@@ -326,17 +322,6 @@ class Container {
    */
   HSHM_DLL virtual hipc::FullPtr<Task> NewTask(u32 method) = 0;
 
-  /**
-   * Aggregate a replica task into the origin task - must be implemented by derived classes
-   * Uses switch-case structure based on method ID to dispatch to appropriate task type aggregation
-   * This is used for merging replica results back into the origin task after distributed execution
-   * @param method The method ID for the task type
-   * @param origin_task_ptr Full pointer to the origin task to aggregate into
-   * @param replica_task_ptr Full pointer to the replica task to aggregate from
-   */
-  HSHM_DLL virtual void Aggregate(u32 method,
-                                   hipc::FullPtr<Task> origin_task_ptr,
-                                   hipc::FullPtr<Task> replica_task_ptr) = 0; 
 };
 
 /**

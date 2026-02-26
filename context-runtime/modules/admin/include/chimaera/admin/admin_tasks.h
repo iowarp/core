@@ -277,9 +277,9 @@ struct BaseCreateTask : public chi::Task {
   }
 
   /** Aggregate replica results into this task */
-  void Aggregate(const hipc::FullPtr<BaseCreateTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<BaseCreateTask>());
   }
 
   /**
@@ -392,9 +392,9 @@ struct DestroyPoolTask : public chi::Task {
   }
 
   /** Aggregate replica results into this task */
-  void Aggregate(const hipc::FullPtr<DestroyPoolTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<DestroyPoolTask>());
   }
 };
 
@@ -470,9 +470,9 @@ struct StopRuntimeTask : public chi::Task {
   }
 
   /** Aggregate replica results into this task */
-  void Aggregate(const hipc::FullPtr<StopRuntimeTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<StopRuntimeTask>());
   }
 };
 
@@ -532,9 +532,9 @@ struct FlushTask : public chi::Task {
   }
 
   /** Aggregate replica results into this task */
-  void Aggregate(const hipc::FullPtr<FlushTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<FlushTask>());
   }
 };
 
@@ -608,9 +608,9 @@ struct SendTask : public chi::Task {
   }
 
   /** Aggregate replica results into this task */
-  void Aggregate(const hipc::FullPtr<SendTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<SendTask>());
   }
 };
 
@@ -678,9 +678,9 @@ struct RecvTask : public chi::Task {
   }
 
   /** Aggregate replica results into this task */
-  void Aggregate(const hipc::FullPtr<RecvTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<RecvTask>());
   }
 };
 
@@ -728,9 +728,9 @@ struct ClientConnectTask : public chi::Task {
     server_generation_ = other->server_generation_;
   }
 
-  void Aggregate(const hipc::FullPtr<ClientConnectTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<ClientConnectTask>());
   }
 };
 
@@ -773,9 +773,9 @@ struct ClientRecvTask : public chi::Task {
     tasks_received_ = other->tasks_received_;
   }
 
-  void Aggregate(const hipc::FullPtr<ClientRecvTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<ClientRecvTask>());
   }
 };
 
@@ -818,9 +818,9 @@ struct ClientSendTask : public chi::Task {
     tasks_sent_ = other->tasks_sent_;
   }
 
-  void Aggregate(const hipc::FullPtr<ClientSendTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<ClientSendTask>());
   }
 };
 
@@ -885,9 +885,9 @@ struct WreapDeadIpcsTask : public chi::Task {
   }
 
   /** Aggregate replica results into this task */
-  void Aggregate(const hipc::FullPtr<WreapDeadIpcsTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<WreapDeadIpcsTask>());
   }
 };
 
@@ -933,8 +933,9 @@ struct MonitorTask : public chi::Task {
     results_ = other->results_;
   }
 
-  void Aggregate(const hipc::FullPtr<MonitorTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    auto other = other_base.template Cast<MonitorTask>();
     for (auto &[k, v] : other->results_) {
       results_[k] = std::move(v);
     }
@@ -1116,9 +1117,9 @@ struct SubmitBatchTask : public chi::Task {
   /**
    * Aggregate replica results into this task
    */
-  void Aggregate(const hipc::FullPtr<SubmitBatchTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<SubmitBatchTask>());
   }
 };
 
@@ -1202,9 +1203,9 @@ struct SubmitBatchTask : public chi::Task {
 //   }
 //
 //   /** Aggregate replica results into this task */
-//   void Aggregate(const hipc::FullPtr<RegisterAcceleratorMemoryTask> &other) {
-//     Task::Aggregate(other.template Cast<Task>());
-//     Copy(other);
+//   void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+//     Task::Aggregate(other_base);
+//     Copy(other_base.template Cast<RegisterAcceleratorMemoryTask>());
 //   }
 // };
 
@@ -1259,9 +1260,9 @@ struct RegisterMemoryTask : public chi::Task {
     success_ = other->success_;
   }
 
-  void Aggregate(const hipc::FullPtr<RegisterMemoryTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<RegisterMemoryTask>());
   }
 };
 
@@ -1310,9 +1311,9 @@ struct RestartContainersTask : public chi::Task {
     error_message_ = other->error_message_;
   }
 
-  void Aggregate(const hipc::FullPtr<RestartContainersTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<RestartContainersTask>());
   }
 };
 
@@ -1372,9 +1373,9 @@ struct AddNodeTask : public chi::Task {
     error_message_ = other->error_message_;
   }
 
-  void Aggregate(const hipc::FullPtr<AddNodeTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<AddNodeTask>());
   }
 };
 
@@ -1435,9 +1436,9 @@ struct ChangeAddressTableTask : public chi::Task {
     error_message_ = other->error_message_;
   }
 
-  void Aggregate(const hipc::FullPtr<ChangeAddressTableTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<ChangeAddressTableTask>());
   }
 };
 
@@ -1492,9 +1493,9 @@ struct MigrateContainersTask : public chi::Task {
     error_message_ = other->error_message_;
   }
 
-  void Aggregate(const hipc::FullPtr<MigrateContainersTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<MigrateContainersTask>());
   }
 };
 
@@ -1532,9 +1533,9 @@ struct HeartbeatTask : public chi::Task {
     Task::Copy(other.template Cast<Task>());
   }
 
-  void Aggregate(const hipc::FullPtr<HeartbeatTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<HeartbeatTask>());
   }
 };
 
@@ -1572,9 +1573,9 @@ struct HeartbeatProbeTask : public chi::Task {
     Task::Copy(other.template Cast<Task>());
   }
 
-  void Aggregate(const hipc::FullPtr<HeartbeatProbeTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<HeartbeatProbeTask>());
   }
 };
 
@@ -1622,9 +1623,9 @@ struct ProbeRequestTask : public chi::Task {
     probe_result_ = other->probe_result_;
   }
 
-  void Aggregate(const hipc::FullPtr<ProbeRequestTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<ProbeRequestTask>());
   }
 };
 
@@ -1684,9 +1685,9 @@ struct RecoverContainersTask : public chi::Task {
     error_message_ = other->error_message_;
   }
 
-  void Aggregate(const hipc::FullPtr<RecoverContainersTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<RecoverContainersTask>());
   }
 };
 
@@ -1755,9 +1756,9 @@ struct SystemMonitorTask : public chi::Task {
     Task::Copy(other.template Cast<Task>());
   }
 
-  void Aggregate(const hipc::FullPtr<SystemMonitorTask> &other) {
-    Task::Aggregate(other.template Cast<Task>());
-    Copy(other);
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) override {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<SystemMonitorTask>());
   }
 };
 

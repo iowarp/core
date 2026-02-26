@@ -89,11 +89,6 @@ public:
    */
   chi::TaskResume Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) override;
 
-  /**
-   * Delete/cleanup a task
-   */
-  void DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) override;
-
   //===========================================================================
   // Method implementations
   //===========================================================================
@@ -162,11 +157,6 @@ public:
    */
   hipc::FullPtr<chi::Task> NewTask(chi::u32 method) override;
 
-  /**
-   * Aggregate a replica task into the origin task (auto-generated)
-   */
-  void Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> origin_task_ptr,
-                 hipc::FullPtr<chi::Task> replica_task_ptr) override;
 };
 
 }  // namespace external_test::simple_mod

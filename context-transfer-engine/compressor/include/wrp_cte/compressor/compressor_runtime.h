@@ -143,11 +143,8 @@ private:
   chi::u64 GetWorkRemaining() const override;
   void SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
                 hipc::FullPtr<chi::Task> task_ptr) override;
-  void Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> origin_task,
-                 hipc::FullPtr<chi::Task> replica_task) override;
 
   // Container virtual method implementations (defined in autogen/compressor_lib_exec.cc)
-  void DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) override;
   void LoadTask(chi::u32 method, chi::LoadTaskArchive &archive,
                 hipc::FullPtr<chi::Task> task_ptr) override;
   hipc::FullPtr<chi::Task> AllocLoadTask(chi::u32 method, chi::LoadTaskArchive &archive) override;

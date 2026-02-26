@@ -1275,7 +1275,7 @@ bool IpcManager::IncreaseClientShm(size_t size) {
   std::lock_guard<std::mutex> lock(shm_mutex_);
   // Acquire writer lock on allocator_map_lock_ during memory increase
   // This ensures exclusive access to the allocator_map_ structures
-  allocator_map_lock_.WriteLock(0);
+  allocator_map_lock_.WriteLock();
 
   pid_t pid = getpid();
   u32 index = shm_count_.fetch_add(1, std::memory_order_relaxed);
@@ -1363,7 +1363,7 @@ bool IpcManager::RegisterMemory(const hipc::AllocatorId &alloc_id) {
        alloc_id.minor_);
   std::lock_guard<std::mutex> lock(shm_mutex_);
   // Acquire writer lock on allocator_map_lock_ during memory registration
-  allocator_map_lock_.WriteLock(0);
+  allocator_map_lock_.WriteLock();
 
   // Derive shm_name from alloc_id: chimaera_{pid}_{index}
   pid_t owner_pid = static_cast<pid_t>(alloc_id.major_);
@@ -1457,7 +1457,7 @@ size_t IpcManager::WreapDeadIpcs() {
   HLOG(kDebug, "WreapDeadIpcs CALLED");
   std::lock_guard<std::mutex> lock(shm_mutex_);
   // Acquire writer lock on allocator_map_lock_ during reaping
-  allocator_map_lock_.WriteLock(0);
+  allocator_map_lock_.WriteLock();
 
   pid_t current_pid = getpid();
   size_t reaped_count = 0;
@@ -1559,7 +1559,7 @@ size_t IpcManager::WreapAllIpcs() {
   HLOG(kDebug, "WreapAllIpcs CALLED");
   std::lock_guard<std::mutex> lock(shm_mutex_);
   // Acquire writer lock on allocator_map_lock_ during cleanup
-  allocator_map_lock_.WriteLock(0);
+  allocator_map_lock_.WriteLock();
 
   size_t reaped_count = 0;
 
