@@ -1416,7 +1416,7 @@ chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
     for (chi::u64 idx = start; idx < tail; ++idx) {
       SystemStats s;
       if (system_stats_ring_->Peek(idx, s)) {
-        pk.pack_map(12);
+        pk.pack_map(15);
         pk.pack("event_id");            pk.pack(idx);
         pk.pack("timestamp_ns");        pk.pack(s.timestamp_ns_);
         pk.pack("wall_time_ns");        pk.pack(s.wall_time_ns_);
@@ -1429,8 +1429,61 @@ chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
         pk.pack("hbm_usage_pct");       pk.pack(s.hbm_usage_pct_);
         pk.pack("hbm_used_bytes");      pk.pack(s.hbm_used_bytes_);
         pk.pack("hbm_total_bytes");     pk.pack(s.hbm_total_bytes_);
+        pk.pack("hostname");            pk.pack(CHI_IPC->GetCurrentHostname());
+        pk.pack("ip_address");          pk.pack(CHI_IPC->GetThisHost().ip_address);
+        pk.pack("node_id");             pk.pack(CHI_IPC->GetNodeId());
       } else {
         pk.pack_map(0);
+      }
+    }
+
+    task->results_[container_id_] = std::string(sbuf.data(), sbuf.size());
+    task->SetReturnCode(0);
+    co_return;
+  } else if (task->query_ == "bdev_stats") {
+    // Collect stats from all bdev pools on this node
+    auto *pool_manager = CHI_POOL_MANAGER;
+    auto *ipc_manager = CHI_IPC;
+    auto all_pool_ids = pool_manager->GetAllPoolIds();
+
+    msgpack::sbuffer sbuf;
+    msgpack::packer<msgpack::sbuffer> pk(sbuf);
+
+    // Collect bdev pool ids first
+    std::vector<chi::PoolId> bdev_pools;
+    for (const auto &pid : all_pool_ids) {
+      const auto *info = pool_manager->GetPoolInfo(pid);
+      if (info && info->chimod_name_ == "chimaera_bdev") {
+        bdev_pools.push_back(pid);
+      }
+    }
+
+    pk.pack_array(static_cast<uint32_t>(bdev_pools.size()));
+
+    for (const auto &pid : bdev_pools) {
+      const auto *info = pool_manager->GetPoolInfo(pid);
+      // Create sub-MonitorTask targeting this bdev pool (local routing)
+      chi::PoolQuery bdev_query;  // default = Local routing
+      auto sub_task = ipc_manager->NewTask<MonitorTask>(
+          chi::CreateTaskId(), pid, bdev_query, "stats");
+      chi::Future<MonitorTask> sub_future = ipc_manager->Send(sub_task);
+      co_await sub_future;
+
+      if (sub_future->GetReturnCode() == 0 && !sub_future->results_.empty()) {
+        // Wrap bdev stats with pool_id metadata
+        const auto &bdev_result = sub_future->results_.begin()->second;
+        pk.pack_map(2);
+        pk.pack("pool_id");
+        pk.pack(pid.ToString());
+        pk.pack("stats");
+        pk.pack_raw_msgpack(bdev_result);
+      } else {
+        // Pack an empty entry on failure
+        pk.pack_map(2);
+        pk.pack("pool_id");
+        pk.pack(info ? info->pool_name_ : "unknown");
+        pk.pack("stats");
+        pk.pack_nil();
       }
     }
 

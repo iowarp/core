@@ -70,6 +70,48 @@ def get_status():
     return _decode_results(results)
 
 
+def get_system_stats(pool_query="local", min_event_id=0):
+    """Query system_stats from the admin pool."""
+    _ensure_init()
+    results = _chi.async_monitor(pool_query, f"system_stats:{min_event_id}").wait()
+    return _decode_results(results)
+
+
+def get_system_stats_all(min_event_id=0):
+    """Broadcast system_stats to all nodes (each self-identifies via hostname/ip/node_id)."""
+    _ensure_init()
+    results = _chi.async_monitor("broadcast", f"system_stats:{min_event_id}").wait()
+    return _decode_results(results)
+
+
+def get_bdev_stats(pool_query="local"):
+    """Query bdev_stats from the admin pool."""
+    _ensure_init()
+    results = _chi.async_monitor(pool_query, "bdev_stats").wait()
+    return _decode_results(results)
+
+
+def get_worker_stats_for_node(node_id):
+    """Query worker_stats for a specific node."""
+    _ensure_init()
+    results = _chi.async_monitor(f"physical:{node_id}", "worker_stats").wait()
+    return _decode_results(results)
+
+
+def get_system_stats_for_node(node_id, min_event_id=0):
+    """Query system_stats for a specific node."""
+    _ensure_init()
+    results = _chi.async_monitor(f"physical:{node_id}", f"system_stats:{min_event_id}").wait()
+    return _decode_results(results)
+
+
+def get_bdev_stats_for_node(node_id):
+    """Query bdev_stats for a specific node."""
+    _ensure_init()
+    results = _chi.async_monitor(f"physical:{node_id}", "bdev_stats").wait()
+    return _decode_results(results)
+
+
 def finalize():
     """Clean shutdown of the Chimaera client."""
     global _init_done
