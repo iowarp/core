@@ -237,7 +237,7 @@ if [ "$DO_ASAN" = true ]; then
     run_sanitizer_mode \
         "asan" \
         "AddressSanitizer" \
-        "detect_leaks=1:halt_on_error=0:print_stacktrace=1:symbolize=1" \
+        "detect_leaks=1:halt_on_error=0:print_stacktrace=1:symbolize=1:allocator_may_return_null=1" \
         || OVERALL_STATUS=$?
 fi
 
@@ -272,7 +272,7 @@ if [ "$DO_SANITIZE" = true ]; then
     run_sanitizer_mode \
         "sanitize" \
         "AddressSanitizer" \
-        "detect_leaks=1:halt_on_error=0:print_stacktrace=1:symbolize=1" \
+        "detect_leaks=1:halt_on_error=0:print_stacktrace=1:symbolize=1:allocator_may_return_null=1" \
         || OVERALL_STATUS=$?
 fi
 
