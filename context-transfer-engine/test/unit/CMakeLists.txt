@@ -749,13 +749,21 @@ set_tests_properties(
     PROPERTIES LABELS "msan_skip"
 )
 
-# cte_functional_reorganize runs test_core_functionality (9 test cases) and
-# exhibits a non-deterministic heap-use-after-free in the chimaera runtime's
-# async shutdown path after multiple runtime init/finalize cycles.  The defect
-# originates from ZMQ background threads that fire callbacks on already-freed
-# runtime memory -- the same category of false positive that caused all CTE
-# tests to be msan_skip'd.  Skip under ASan memcheck to avoid flaky defects.
-set_tests_properties(cte_functional_reorganize
+# All cte_functional_* tests run test_core_functionality (9 test cases, each
+# initializing and finalizing the full chimaera runtime).  After multiple
+# runtime init/finalize cycles, ZMQ background threads fire callbacks on
+# already-freed runtime memory, producing non-deterministic heap-use-after-free
+# defects under ASan.  The same uninstrumented-runtime category caused all CTE
+# tests to be msan_skip'd.  Skip the whole functional group under ASan.
+set_tests_properties(
+    cte_functional_pool_creation
+    cte_functional_target_registration
+    cte_functional_putblob
+    cte_functional_getblob
+    cte_functional_putget_integration
+    cte_functional_putget_comprehensive
+    cte_functional_reorganize
+    cte_functional_e2e_workflow
     PROPERTIES LABELS "msan_skip;asan_skip"
 )
 

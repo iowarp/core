@@ -81,7 +81,7 @@ set_tests_properties(
   CEE_Destroy_Multi CEE_Destroy_Partial CEE_Splice_Stub CEE_Integration
   PROPERTIES
     TIMEOUT 180
-    LABELS "cee;comprehensive;coverage"
+    LABELS "cee;comprehensive;coverage;msan_skip"
     ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 

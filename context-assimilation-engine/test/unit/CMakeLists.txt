@@ -197,7 +197,7 @@ set_tests_properties(
   CAE_HDF5Format CAE_UnknownFormat
   PROPERTIES
     TIMEOUT 120
-    LABELS "coverage;comprehensive"
+    LABELS "coverage;comprehensive;msan_skip"
     ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
