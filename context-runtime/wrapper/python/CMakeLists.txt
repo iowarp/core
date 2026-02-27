@@ -38,9 +38,9 @@ if(BUILD_TESTING)
     set_tests_properties(
         test_monitor_python
         PROPERTIES
-        LABELS "python;bindings;monitor"
+        LABELS "python;bindings;monitor;msan_skip"
         TIMEOUT 120
-        ENVIRONMENT "CHI_WITH_RUNTIME=1"
+        ENVIRONMENT "CHI_WITH_RUNTIME=1;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
     )
 
     set_tests_properties(

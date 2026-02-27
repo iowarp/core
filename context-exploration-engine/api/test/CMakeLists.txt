@@ -174,6 +174,8 @@ endif()
 #------------------------------------------------------------------------------
 # Test labels for selective execution
 #------------------------------------------------------------------------------
-set_tests_properties(test_context_bundle PROPERTIES LABELS "cee;api;bundle")
-set_tests_properties(test_context_query PROPERTIES LABELS "cee;api;query")
-set_tests_properties(test_context_destroy PROPERTIES LABELS "cee;api;destroy")
+# Skip under MSan: CEE tests use uninstrumented chimaera runtime (ZMQ, shared
+# memory, forked processes) that produce false-positive MSan reports.
+set_tests_properties(test_context_bundle PROPERTIES LABELS "cee;api;bundle;msan_skip")
+set_tests_properties(test_context_query PROPERTIES LABELS "cee;api;query;msan_skip")
+set_tests_properties(test_context_destroy PROPERTIES LABELS "cee;api;destroy;msan_skip")

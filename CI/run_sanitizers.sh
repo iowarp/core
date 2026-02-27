@@ -124,6 +124,18 @@ run_sanitizer_mode() {
 
     print_header "Sanitizer mode: ${MODE} (${MEMCHECK_TYPE})"
 
+    # Strip conda env lib dirs from LD_LIBRARY_PATH to prevent OpenSSL conflicts.
+    # 'conda activate' prepends its lib dir (e.g. /envs/iowarp/lib) which contains
+    # libssl/libcurl that conflict with system HDF5 (system HDF5 → conda libcurl →
+    # conda libssl → needs OPENSSL_3.3+ symbols missing from system libcrypto).
+    # Stripping before cmake configure ensures the cleaned path is baked into
+    # test ENVIRONMENT properties, fixing tests that launch HDF5-linked binaries.
+    local STRIPPED_LD_PATH
+    STRIPPED_LD_PATH=$(echo "${LD_LIBRARY_PATH:-}" | tr ':' '\n' \
+        | grep -Ev 'miniconda.*envs|conda.*envs' | tr '\n' ':' | sed 's/:$//')
+    export LD_LIBRARY_PATH="${BUILD_DIR}/bin${STRIPPED_LD_PATH:+:${STRIPPED_LD_PATH}}"
+    print_info "LD_LIBRARY_PATH (conda-stripped): ${LD_LIBRARY_PATH}"
+
     # --- Clean ---
     if [ "$CLEAN_BUILD" = true ] && [ -d "${BUILD_DIR}" ]; then
         print_info "Cleaning ${BUILD_DIR}..."

@@ -219,7 +219,7 @@ if(HDF5_ENABLED)
   )
 
   # Set test labels
-  set_tests_properties(cae_hdf5_assim PROPERTIES LABELS "format;hdf5")
+  set_tests_properties(cae_hdf5_assim PROPERTIES LABELS "format;hdf5;msan_skip")
 endif()
 
 #------------------------------------------------------------------------------
@@ -235,9 +235,11 @@ endif()
 #------------------------------------------------------------------------------
 
 # Create test labels for selective execution
-set_tests_properties(cae_binary_assim PROPERTIES LABELS "core;basic")
-set_tests_properties(cae_range_assim PROPERTIES LABELS "core;advanced")
-set_tests_properties(cae_error_handling PROPERTIES LABELS "core;validation")
+# Skip under MSan: CAE tests use uninstrumented HDF5/yaml-cpp/ZMQ deps and
+# the chimaera runtime which involves shared memory and forked processes.
+set_tests_properties(cae_binary_assim PROPERTIES LABELS "core;basic;msan_skip")
+set_tests_properties(cae_range_assim PROPERTIES LABELS "core;advanced;msan_skip")
+set_tests_properties(cae_error_handling PROPERTIES LABELS "core;validation;msan_skip")
 
 #------------------------------------------------------------------------------
 # Test Summary Target
