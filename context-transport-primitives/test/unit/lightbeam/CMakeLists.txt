@@ -38,7 +38,10 @@ install(TARGETS socket_transport_test
 add_executable(shm_transport_test shm_transport_test.cc)
 target_link_libraries(shm_transport_test hermes_shm_host hshm::lightbeam hshm::serialize)
 add_test(NAME ctp_shm_transport COMMAND shm_transport_test)
+# Skip under MSan: shm_transport uses mmap-backed shared memory regions that
+# MSan cannot instrument (no instrumented allocator backing).
 set_tests_properties(ctp_shm_transport PROPERTIES
+    LABELS "msan_skip"
     ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}")
 install(TARGETS shm_transport_test
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
