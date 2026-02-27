@@ -267,6 +267,10 @@ fi
 
 if [ "$DO_MSAN" = true ]; then
     print_warning "MSan note: false-positives are expected from uninstrumented third-party libraries."
+    # Load LLVM module on Slurm/Lmod clusters so llvm-symbolizer is in PATH.
+    if command -v module &>/dev/null; then
+        module load llvm 2>/dev/null || true
+    fi
     # Point MSan at llvm-symbolizer so stack traces are human-readable.
     # Check plain name first, then fall back to versioned names (e.g. llvm-symbolizer-18).
     LLVM_SYMBOLIZER=$(command -v llvm-symbolizer 2>/dev/null \
