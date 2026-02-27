@@ -50,6 +50,32 @@ add_test(NAME ctp_priv_string_serialization COMMAND
 add_test(NAME ctp_priv_string_local_serialize COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_priv_string_exec)
 
+# Skip ctp_priv_string* under MSan: cereal deserialization is uninstrumented,
+# leaving restored values with uninitialized shadow that propagates to test output.
+set_tests_properties(
+  ctp_priv_string
+  ctp_priv_string_sso
+  ctp_priv_string_operations
+  ctp_priv_string_edge
+  ctp_priv_string_serialization
+  ctp_priv_string_local_serialize
+  PROPERTIES LABELS "msan_skip"
+)
+
+# Skip ctp_priv_vector* under MSan: hshm priv::vector uses mmap-backed shared
+# memory regions that MSan cannot instrument (no instrumented allocator backing),
+# and cereal serialization leaves restored bytes with uninitialized MSan shadow.
+set_tests_properties(
+  ctp_priv_vector
+  ctp_priv_vector_pod
+  ctp_priv_vector_complex
+  ctp_priv_vector_edge
+  ctp_priv_vector_stress
+  ctp_priv_vector_serialization
+  ctp_priv_vector_local_serialize
+  PROPERTIES LABELS "msan_skip"
+)
+
 #------------------------------------------------------------------------------
 # Install Targets
 #------------------------------------------------------------------------------

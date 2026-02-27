@@ -405,6 +405,35 @@ if(WRP_CORE_ENABLE_TESTS)
       TIMEOUT 180
       ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1"
   )
+
+  # Mark all MOD_NAME tests as msan_skip (they use ZMQ which is uninstrumented)
+  set_tests_properties(
+    cr_flush_basic_tests
+    cr_flush_work_orchestrator_tests
+    cr_flush_stress_tests
+    cr_all_flush_tests
+    cr_comutex_basic_tests
+    cr_comutex_concurrent_tests
+    cr_corwlock_basic_tests
+    cr_corwlock_readers_tests
+    cr_corwlock_writers_tests
+    cr_corwlock_interaction_tests
+    cr_tasknode_grouping_tests
+    cr_comutex_error_tests
+    cr_comutex_performance_tests
+    cr_comutex_integration_tests
+    cr_all_comutex_tests
+    cr_wait_test_basic_tests
+    cr_wait_test_recursive_tests
+    cr_wait_test_async_tests
+    cr_wait_test_edge_cases_tests
+    cr_all_wait_functionality_tests
+    cr_streaming_small_tests
+    cr_streaming_large_tests
+    cr_streaming_concurrent_tests
+    cr_all_streaming_tests
+    PROPERTIES LABELS "msan_skip"
+  )
 endif()
 
 # Custom targets for MOD_NAME tests

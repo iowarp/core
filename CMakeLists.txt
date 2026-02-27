@@ -650,12 +650,16 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   add_compile_options(-fcoroutines)
   message(STATUS "GCC detected - enabling coroutines with -fcoroutines")
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  # GCC's libstdc++ <coroutine> header (the default C++ runtime on Linux)
-  # guards itself with __cpp_impl_coroutine, which GCC sets via -fcoroutines.
-  # Clang does not pass that flag automatically, so we add it explicitly so
-  # the libstdc++ header compiles cleanly under Clang.
-  add_compile_options(-fcoroutines)
-  message(STATUS "Clang detected - enabling coroutines with -fcoroutines (libstdc++ compat)")
+  # GCC's libstdc++ <coroutine> header guards itself with __cpp_impl_coroutine,
+  # which GCC sets via -fcoroutines. Clang does not pass that flag automatically.
+  # Clang 16+ accepts -fcoroutines as an alias; older clang needs a -D instead.
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16")
+    add_compile_options(-fcoroutines)
+    message(STATUS "Clang ${CMAKE_CXX_COMPILER_VERSION} detected - enabling coroutines with -fcoroutines")
+  else()
+    add_compile_definitions(__cpp_impl_coroutine=1)
+    message(STATUS "Clang ${CMAKE_CXX_COMPILER_VERSION} detected - enabling coroutines with -D__cpp_impl_coroutine=1 (libstdc++ compat)")
+  endif()
 endif()
 
 # Export compile commands for IDE integration - Applied to all subdirectories
@@ -801,10 +805,11 @@ if(WRP_CORE_ENABLE_TESTS)
     add_test(
         NAME chimaera_pre_test_cleanup
         COMMAND bash -c
-            "fuser -k 9413/tcp 9414/tcp 9416/tcp 2>/dev/null; \
+            "fuser -k 5555/tcp 5558/tcp 9413/tcp 9414/tcp 9416/tcp 2>/dev/null; \
              rm -f /tmp/chimaera_*.ipc 2>/dev/null; \
              rm -f /tmp/chimaera_server_timing.log 2>/dev/null; \
              rm -rf /tmp/chimaera_memfd 2>/dev/null; \
+             rm -rf /tmp/chimaera_${USER} 2>/dev/null; \
              rm -f /dev/shm/sm_segment.* 2>/dev/null; \
              exit 0"
     )

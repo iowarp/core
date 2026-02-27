@@ -40,6 +40,17 @@
 #include <filesystem>
 
 #include "hermes_shm/constants/macros.h"
+// MSan: inform sanitizer that mmap-backed memory is initialized by the kernel
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer)
+#include <sanitizer/msan_interface.h>
+#define HSHM_MSAN_UNPOISON(ptr, size) __msan_unpoison((ptr), (size))
+#else
+#define HSHM_MSAN_UNPOISON(ptr, size) ((void)0)
+#endif
+#else
+#define HSHM_MSAN_UNPOISON(ptr, size) ((void)0)
+#endif
 #if HSHM_ENABLE_PROCFS_SYSINFO
 #include <dlfcn.h>
 #include <signal.h>
@@ -303,8 +314,8 @@ void SystemInfo::YieldThread() {
 
 bool SystemInfo::CreateTls(ThreadLocalKey &key, void *data) {
 #if HSHM_ENABLE_PROCFS_SYSINFO
-  key.pthread_key_ = pthread_key_create(&key.pthread_key_, nullptr);
-  return key.pthread_key_ == 0;
+  int ret = pthread_key_create(&key.pthread_key_, nullptr);
+  return ret == 0;
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
   key.windows_key_ = TlsAlloc();
   if (key.windows_key_ == TLS_OUT_OF_INDEXES) {
@@ -438,14 +449,22 @@ void SystemInfo::DestroySharedMemory(const std::string &name) {
 void *SystemInfo::MapPrivateMemory(size_t size) {
 #if HSHM_ENABLE_PROCFS_SYSINFO
 #if __APPLE__ || __OpenBSD__
-  return mmap(nullptr, size, PROT_READ | PROT_WRITE,
-              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  void *ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 #else
-  return mmap64(nullptr, size, PROT_READ | PROT_WRITE,
-                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  void *ptr = mmap64(nullptr, size, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 #endif
+  if (ptr != MAP_FAILED && ptr != nullptr) {
+    HSHM_MSAN_UNPOISON(ptr, size);
+  }
+  return ptr;
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
-  return VirtualAlloc(nullptr, size, MEM_COMMIT, PAGE_READWRITE);
+  void *ptr = VirtualAlloc(nullptr, size, MEM_COMMIT, PAGE_READWRITE);
+  if (ptr) {
+    HSHM_MSAN_UNPOISON(ptr, size);
+  }
+  return ptr;
 #endif
 }
 
@@ -457,6 +476,7 @@ void *SystemInfo::MapSharedMemory(const File &fd, size_t size, i64 off) {
     perror("mmap");
     return nullptr;
   }
+  HSHM_MSAN_UNPOISON(ptr, size);
   return ptr;
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
   // Convert i64 to low and high dwords
@@ -495,6 +515,7 @@ void *SystemInfo::MapMixedMemory(const File &fd, size_t private_size,
     perror("MapMixedMemory: initial mmap failed");
     return nullptr;
   }
+  HSHM_MSAN_UNPOISON(ptr, total_size);
 
   // Step 2: Remap the shared portion using MAP_FIXED
   // This replaces the shared portion with actual shared memory from the fd
@@ -518,6 +539,7 @@ void *SystemInfo::MapMixedMemory(const File &fd, size_t private_size,
     munmap(ptr, total_size);
     return nullptr;
   }
+  HSHM_MSAN_UNPOISON(shared_ptr, shared_size);
 
   // Success: we now have [private_size bytes private | shared_size bytes shared]
   return ptr;

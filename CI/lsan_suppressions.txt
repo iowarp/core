@@ -12,14 +12,15 @@
 leak:libzmq.so
 
 # ---------------------------------------------------------------------------
-# Chi runtime: Worker RunContext leaks on shutdown
-# When the runtime shuts down, some tasks may still be in-flight in the
-# worker's periodic queue. Their associated RunContext (unique_ptr stored in
-# chi::Task::run_ctx_) is freed only when the task reaches DelTask.
-# Forcibly stopping worker threads before draining the queue can leave
-# RunContext objects unreachable.
+# Chi runtime: RunContext leaks on shutdown
+# When the runtime shuts down, some tasks may still be in-flight. Their
+# RunContext (unique_ptr<chi::RunContext> created in IpcManager::BeginTask
+# or Worker::BeginTask) is freed only when the task reaches DelTask.
+# Stopping worker threads before draining the queue leaves RunContexts
+# unreachable.
 # ---------------------------------------------------------------------------
 leak:chi::Worker::BeginTask
+leak:chi::IpcManager::BeginTask
 
 # ---------------------------------------------------------------------------
 # Chi runtime: large IPC buffer allocations in tests
@@ -99,3 +100,112 @@ leak:BlobQuery
 # the OS reclaims the allocation on process exit.
 # ---------------------------------------------------------------------------
 leak:chi::CreateTaskId
+
+# ---------------------------------------------------------------------------
+# Chi modules: new_chimod container objects leak on server shutdown
+# ModuleManager::CreateContainer() calls new_chimod() to instantiate each
+# ChiMod object (CAE, CTE, bdev, etc.) with operator new. On server shutdown
+# the runtime does not delete these container objects, leaving them unreachable.
+# ---------------------------------------------------------------------------
+leak:new_chimod
+
+# ---------------------------------------------------------------------------
+# bdev module: 512 MB RAM buffer allocated in bdev::Runtime::Create()
+# The bdev module allocates its backing RAM buffer with `operator new[]` in
+# bdev_runtime.cc::Create(). This buffer persists for the module lifetime
+# (until process exit). LSAN sees it as an indirect leak when the bdev module
+# container pointer is not freed on server shutdown.
+# ---------------------------------------------------------------------------
+leak:bdev/src/bdev_runtime.cc
+
+# ---------------------------------------------------------------------------
+# CTE core module: internal hash-map allocations in wrp_cte::core::Create()
+# The CTE Create coroutine initialises several unordered_map_ll instances
+# (blob map, tag map, blob-name map) in context-transfer-engine/core/
+# src/core_runtime.cc. These are runtime-lifetime objects that the server
+# does not explicitly destroy before exit.
+# ---------------------------------------------------------------------------
+leak:context-transfer-engine/core/src/core_runtime.cc
+
+# ---------------------------------------------------------------------------
+# CAE core module: shared_ptr<CTE::Client> allocated in wrp_cae::core::Create()
+# The CAE Create coroutine allocates a shared_ptr to a wrp_cte::core::Client
+# object (for accessing the CTE service). This shared_ptr control block is
+# allocated in context-assimilation-engine/core/src/core_runtime.cc and
+# persists for the module's lifetime.
+# ---------------------------------------------------------------------------
+leak:context-assimilation-engine/core/src/core_runtime.cc
+
+# ---------------------------------------------------------------------------
+# Chi runtime: Container::Init() name string allocation
+# chi::Container::Init() assigns the module pool name to a std::string member
+# (Container::name_). When the module container object is not explicitly
+# destroyed on server shutdown, this std::string heap allocation leaks.
+# All chi module containers (bdev, CTE, CAE, admin) go through this path.
+# ---------------------------------------------------------------------------
+leak:chi::Container::Init
+
+# ---------------------------------------------------------------------------
+# Chi runtime: LocalLoadTaskArchive::bulk IPC buffer allocations in tests
+# LocalLoadTaskArchive::bulk() allocates a small IPC ShmPtr buffer to hold
+# deserialized task data (e.g. WriteTask data, ReadTask data, GetBlobTask data).
+# In the autogen-coverage tests, tasks are constructed and serialized without
+# a paired destruction path, so these 16-byte allocations are never freed.
+# This is a test-infrastructure artefact; the OS reclaims on process exit.
+# ---------------------------------------------------------------------------
+leak:chi::LocalLoadTaskArchive::bulk
+
+# ---------------------------------------------------------------------------
+# CTE core module: coroutine frame allocation in autogen Run dispatch
+# wrp_cte::core::Runtime::Run() is a C++20 coroutine. Each task invocation
+# allocates a coroutine frame (~1640 bytes) at the first co_await. If the
+# chimaera server shuts down while a CTE Run coroutine is suspended
+# (task still in-flight), the frame is never resumed and thus never freed.
+# This is the same architectural shutdown-before-drain pattern as BeginTask;
+# the allocation site lands in the autogen dispatch file, not core_runtime.cc.
+# ---------------------------------------------------------------------------
+leak:context-transfer-engine/core/src/autogen/core_lib_exec.cc
+
+# ---------------------------------------------------------------------------
+# bdev / ZMQ transport: block-data vectors allocated during RecvBulks
+# hshm::lbm::ZeroMqTransport::RecvBulks<chi::LoadTaskArchive>() receives a
+# ZMQ multi-part message and deserialises bdev Block entries into heap vectors
+# (via cereal/msgpack) before passing them to LoadTask / AllocLoadTask.
+# If the server shuts down before the task completes, the interim heap buffer
+# (allocated in zmq_transport.h, NOT inside libzmq.so) remains unreachable.
+# The existing `leak:libzmq.so` rule does not cover this site because the
+# allocation is in our wrapper code, not in the ZMQ shared library itself.
+# ---------------------------------------------------------------------------
+leak:hshm::lbm::ZeroMqTransport::RecvBulks
+
+# ---------------------------------------------------------------------------
+# bdev module: Block vector deserialized in LoadTask / AllocLoadTask
+# bdev::Runtime::LoadTask() and AllocLoadTask() (autogen bdev_lib_exec.cc)
+# deserialise incoming bdev tasks (WriteTask, ReadTask, etc.) from the
+# chi::LoadTaskArchive. This calls LoadTaskArchive::operator>> which resizes
+# a hshm::priv::vector<bdev::Block> on the malloc heap. If the server shuts
+# down while bdev tasks are still in-flight, these block vectors are never
+# freed (the task is freed via IPC path that bypasses C++ destructors).
+# ---------------------------------------------------------------------------
+leak:bdev/src/autogen/bdev_lib_exec.cc
+
+# ---------------------------------------------------------------------------
+# Chi runtime: IpcManager::RouteGlobal PoolQuery vector copy for in-flight tasks
+# When IpcManager::Send() routes a task to a remote module, RouteGlobal()
+# copies the caller's std::vector<PoolQuery> into a temporary used for
+# routing decisions. If the task is in-flight when the server shuts down,
+# this copied PoolQuery vector is never freed. The leak manifests as an
+# indirect leak reachable only through the (suppressed) task allocation.
+# ---------------------------------------------------------------------------
+leak:chi::IpcManager::RouteGlobal
+
+# ---------------------------------------------------------------------------
+# Chi runtime: admin::Runtime::SendIn coroutine sub-allocations
+# admin::Runtime::SendIn() (admin_runtime.cc) is a coroutine that routes
+# tasks from local clients to remote module servers via ZMQ. It allocates
+# intermediate buffers for serialisation / transport framing. When the server
+# shuts down while a SendIn coroutine is suspended (task in-flight), these
+# sub-allocations are never freed and appear as indirect leaks reachable only
+# through the abandoned coroutine frame.
+# ---------------------------------------------------------------------------
+leak:chimaera::admin::Runtime::SendIn

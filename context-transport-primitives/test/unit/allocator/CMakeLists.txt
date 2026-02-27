@@ -66,6 +66,14 @@ add_test(NAME ctp_buddy_allocator COMMAND
 add_test(NAME ctp_hshm_malloc COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_hshm_malloc_exec)
 
+# Skip under MSan: buddy allocator and hshm malloc use raw mmap/brk memory
+# regions that MSan cannot instrument (no instrumented allocator backing).
+set_tests_properties(
+  ctp_buddy_allocator
+  ctp_hshm_malloc
+  PROPERTIES LABELS "msan_skip"
+)
+
 if(NOT WIN32)
 add_test(NAME ctp_mp_allocator COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_mp_allocator_exec "~[multithread]")
@@ -79,11 +87,27 @@ add_test(NAME ctp_mp_allocator_multiprocess
 add_test(NAME ctp_buddy_allocator_multiprocess COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_buddy_allocator_multiprocess_exec_2 0 5)
 
-# Set timeouts for multiprocess tests (they need more than 1 second)
+# Set timeouts and LD_LIBRARY_PATH for multiprocess tests
+# LD_LIBRARY_PATH ensures subprocesses load the freshly built library,
+# not the stale spack-installed one (which may lack newer symbols).
 set_tests_properties(
   ctp_mp_allocator_multiprocess
   ctp_buddy_allocator_multiprocess
-  PROPERTIES TIMEOUT 15
+  PROPERTIES
+    TIMEOUT 15
+    ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+)
+
+# Skip under MSan: Catch2 is precompiled without MSan instrumentation,
+# and multiprocess tests don't propagate MSan shadow across fork boundaries.
+set_tests_properties(
+  ctp_sub_alloc
+  ctp_sub_alloc_nested
+  ctp_mp_allocator
+  ctp_mp_allocator_multithread
+  ctp_mp_allocator_multiprocess
+  ctp_buddy_allocator_multiprocess
+  PROPERTIES LABELS "msan_skip"
 )
 endif()
 

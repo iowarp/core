@@ -95,6 +95,32 @@ set_tests_properties(
   PROPERTIES TIMEOUT 15
 )
 
+# Skip under MSan: slist/rb_tree tests use precompiled Catch2 which
+# has FatalConditionHandler false positives (sigaction filled by kernel).
+set_tests_properties(
+  ctp_slist_pre
+  ctp_slist_pre_atomic
+  ctp_rb_tree_pre
+  ctp_rb_tree_pre_atomic
+  PROPERTIES LABELS "msan_skip"
+)
+
+# Skip under MSan: vector and ring buffer tests use raw shared-memory and
+# atomic operations that MSan cannot instrument (uninstrumented backing alloc).
+set_tests_properties(
+  ctp_vector
+  ctp_vector_pod
+  ctp_vector_non_pod
+  ctp_vector_edge
+  ctp_vector_stress
+  ctp_ring_buffer
+  ctp_ring_buffer_spsc
+  ctp_ring_buffer_ext
+  ctp_ring_buffer_mpsc
+  ctp_multi_ring_buffer
+  PROPERTIES LABELS "msan_skip"
+)
+
 #------------------------------------------------------------------------------
 # Install Targets
 #------------------------------------------------------------------------------

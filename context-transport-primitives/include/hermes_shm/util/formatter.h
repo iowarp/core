@@ -44,6 +44,19 @@
 
 #include "hermes_shm/types/argpack.h"
 
+// MSan: unpoison strings produced by uninstrumented libstdc++ stringstream
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer)
+#include <sanitizer/msan_interface.h>
+#define HSHM_MSAN_UNPOISON_STRING(s) \
+  __msan_unpoison((s).data(), (s).size())
+#else
+#define HSHM_MSAN_UNPOISON_STRING(s) ((void)0)
+#endif
+#else
+#define HSHM_MSAN_UNPOISON_STRING(s) ((void)0)
+#endif
+
 namespace hshm {
 
 class Formatter {
@@ -54,6 +67,7 @@ class Formatter {
     std::vector<std::pair<size_t, size_t>> offsets = tokenize(fmt);
     size_t packlen = make_argpack(std::forward<Args>(args)...).Size();
     if (offsets.size() != packlen + 1) {
+      HSHM_MSAN_UNPOISON_STRING(fmt);
       return fmt;
     }
     auto lambda = [&ss, &fmt, &offsets](auto i, auto &&arg) {
@@ -70,7 +84,9 @@ class Formatter {
       auto &sub = offsets.back();
       ss << fmt.substr(sub.first, sub.second);
     }
-    return ss.str();
+    std::string result = ss.str();
+    HSHM_MSAN_UNPOISON_STRING(result);
+    return result;
   }
 
   static std::vector<std::pair<size_t, size_t>> tokenize(
