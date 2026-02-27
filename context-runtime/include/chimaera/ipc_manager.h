@@ -1806,6 +1806,14 @@ bool Future<TaskT, AllocT>::Wait(float max_sec) {
   return true;
 #else
   if (!task_ptr_.IsNull() && !future_shm_.IsNull()) {
+    // Fire-and-forget: return immediately without waiting.
+    // Detach so ~Future() won't free the in-flight task.
+    if (task_ptr_->task_flags_.Any(TASK_FIRE_AND_FORGET)) {
+      task_ptr_.SetNull();
+      future_shm_.SetNull();
+      return true;
+    }
+
     // Convert ShmPtr to FullPtr to access flags_
     hipc::FullPtr<FutureShm> future_full = CHI_IPC->ToFullPtr(future_shm_);
     if (future_full.IsNull()) {

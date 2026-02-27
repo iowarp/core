@@ -34,7 +34,7 @@ def main():
     args = parser.parse_args()
 
     app = create_app()
-    app.run(host=args.host, port=args.port, debug=args.debug)
+    app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
 
 
 if __name__ == "__main__":

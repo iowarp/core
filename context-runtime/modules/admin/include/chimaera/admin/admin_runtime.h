@@ -257,6 +257,16 @@ public:
   /** Monitor sub-handler: collect bdev pool statistics. */
   chi::TaskResume MonitorBdevStats(hipc::FullPtr<MonitorTask> task);
 
+  /** Monitor sub-handler: return host info (hostname, IP, node_id). */
+  void MonitorGetHostInfo(hipc::FullPtr<MonitorTask> task);
+
+  /**
+   * Handle AnnounceShutdown - Mark a departing node as dead immediately
+   * and trigger recovery if this node is the new leader.
+   */
+  chi::TaskResume AnnounceShutdown(hipc::FullPtr<AnnounceShutdownTask> task,
+                                    chi::RunContext &rctx);
+
   /**
    * Handle RegisterMemory - Register client shared memory with runtime
    * Called by SHM-mode clients after IncreaseMemory() to tell the runtime

@@ -1762,6 +1762,56 @@ struct SystemMonitorTask : public chi::Task {
   }
 };
 
+/**
+ * AnnounceShutdownTask - Broadcast to all nodes that a node is shutting down.
+ * Receiving nodes mark the departing node as dead immediately, skipping the
+ * SWIM failure detection delay, and the new leader triggers recovery.
+ */
+struct AnnounceShutdownTask : public chi::Task {
+  IN chi::u64 shutting_down_node_id_;  ///< Node ID that is shutting down
+
+  /** SHM default constructor */
+  AnnounceShutdownTask()
+      : chi::Task(),
+        shutting_down_node_id_(0) {}
+
+  /** Emplace constructor */
+  explicit AnnounceShutdownTask(const chi::TaskId &task_node,
+                                const chi::PoolId &pool_id,
+                                const chi::PoolQuery &pool_query,
+                                chi::u64 shutting_down_node_id)
+      : chi::Task(task_node, pool_id, pool_query,
+                   Method::kAnnounceShutdown),
+        shutting_down_node_id_(shutting_down_node_id) {
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kAnnounceShutdown;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+    ar(shutting_down_node_id_);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+  }
+
+  void Copy(const hipc::FullPtr<AnnounceShutdownTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    shutting_down_node_id_ = other->shutting_down_node_id_;
+  }
+
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<AnnounceShutdownTask>());
+  }
+};
+
 }  // namespace chimaera::admin
 
 #endif  // ADMIN_TASKS_H_

@@ -53,7 +53,6 @@
 #include <chrono>
 #include <memory>
 #include <sstream>
-#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <filesystem>
@@ -281,13 +280,25 @@ chi::TaskResume Runtime::StopRuntime(hipc::FullPtr<StopRuntimeTask> task,
     // Set shutdown flag
     is_shutdown_requested_ = true;
 
-    // Initiate graceful shutdown
-    InitiateShutdown(task->grace_period_ms_);
+    // Broadcast our departure to all nodes so they immediately mark us
+    // as dead and elect a new leader (skips the ~18 s SWIM detection delay).
+    // TASK_FIRE_AND_FORGET: co_await returns instantly; remote peers skip
+    // SendOut (no response needed).  net_timeout=0: dead peers are skipped
+    // immediately in SendIn.
+    auto *ipc_manager = CHI_IPC;
+    chi::u64 my_node_id = ipc_manager->GetNodeId();
 
-    // Set success results
+    HLOG(kInfo, "Admin: Broadcasting shutdown announcement for node {}",
+         my_node_id);
+    auto announce_task = ipc_manager->NewTask<AnnounceShutdownTask>(
+        chi::CreateTaskId(), pool_id_,
+        chi::PoolQuery::Broadcast(0), my_node_id);
+    announce_task->task_flags_.SetBits(TASK_FIRE_AND_FORGET);
+    co_await ipc_manager->Send(announce_task);
+
     task->return_code_ = 0;
-
-    HLOG(kDebug, "Admin: Runtime shutdown initiated successfully");
+    HLOG(kInfo, "Admin: Runtime shutdown initiated successfully");
+    InitiateShutdown(task->grace_period_ms_);
 
   } catch (const std::exception &e) {
     task->return_code_ = 99;
@@ -478,6 +489,14 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
 
     // Check aliveness before sending
     if (!ipc_manager->IsAlive(target_node_id)) {
+      float net_timeout = origin_task->pool_query_.GetNetTimeout();
+      if (net_timeout >= 0 && net_timeout < 0.001f) {
+        // net_timeout=0: fail immediately for dead nodes, skip this replica
+        HLOG(kWarning, "[SendIn] Task {} target node {} is dead, net_timeout=0 -> skip",
+             origin_task->task_id_, target_node_id);
+        origin_task_rctx->completed_replicas_++;
+        continue;
+      }
       HLOG(kWarning, "[SendIn] Task {} target node {} is dead, queuing for retry",
            origin_task->task_id_, target_node_id);
       send_in_retry_.push_back({task_copy, target_node_id,
@@ -1245,6 +1264,8 @@ chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
     MonitorSystemStats(task);
   } else if (task->query_ == "bdev_stats") {
     co_await MonitorBdevStats(task);
+  } else if (task->query_ == "get_host_info") {
+    MonitorGetHostInfo(task);
   } else {
     // Unknown queries get empty results (forward-compatible)
     task->SetReturnCode(0);
@@ -1464,6 +1485,38 @@ void Runtime::MonitorSystemStats(hipc::FullPtr<MonitorTask> task) {
 
   task->results_[container_id_] = std::string(sbuf.data(), sbuf.size());
   task->SetReturnCode(0);
+}
+
+void Runtime::MonitorGetHostInfo(hipc::FullPtr<MonitorTask> task) {
+  msgpack::sbuffer sbuf;
+  msgpack::packer<msgpack::sbuffer> pk(sbuf);
+  pk.pack_map(3);
+  pk.pack("hostname");    pk.pack(CHI_IPC->GetCurrentHostname());
+  pk.pack("ip_address");  pk.pack(CHI_IPC->GetThisHost().ip_address);
+  pk.pack("node_id");     pk.pack(CHI_IPC->GetNodeId());
+  task->results_[container_id_] = std::string(sbuf.data(), sbuf.size());
+  task->SetReturnCode(0);
+}
+
+chi::TaskResume Runtime::AnnounceShutdown(
+    hipc::FullPtr<AnnounceShutdownTask> task, chi::RunContext &rctx) {
+  chi::u64 dead_node_id = task->shutting_down_node_id_;
+  auto *ipc_manager = CHI_IPC;
+
+  HLOG(kInfo, "Admin: Received shutdown announcement for node {}",
+       dead_node_id);
+
+  // Mark the node as dead immediately — skips the SWIM detection delay
+  ipc_manager->SetDead(dead_node_id);
+
+  // If we are the new leader, trigger recovery for the departing node
+  if (ipc_manager->IsLeader()) {
+    TriggerRecovery(dead_node_id);
+  }
+
+  task->SetReturnCode(0);
+  (void)rctx;
+  co_return;
 }
 
 chi::TaskResume Runtime::MonitorBdevStats(hipc::FullPtr<MonitorTask> task) {
@@ -1895,7 +1948,12 @@ void Runtime::ProcessRetryQueues() {
   auto it = send_in_retry_.begin();
   while (it != send_in_retry_.end()) {
     float elapsed = std::chrono::duration<float>(now - it->enqueued_at).count();
-    if (elapsed >= kRetryTimeoutSec) {
+    float task_timeout = kRetryTimeoutSec;
+    float task_net_timeout = it->task->pool_query_.GetNetTimeout();
+    if (task_net_timeout >= 0) {
+      task_timeout = task_net_timeout;
+    }
+    if (elapsed >= task_timeout) {
       // Timeout: mark task as failed
       HLOG(kError, "[RetryQueue] SendIn task timed out after {}s for node {}",
            elapsed, it->target_node_id);
@@ -1933,7 +1991,12 @@ void Runtime::ProcessRetryQueues() {
   it = send_out_retry_.begin();
   while (it != send_out_retry_.end()) {
     float elapsed = std::chrono::duration<float>(now - it->enqueued_at).count();
-    if (elapsed >= kRetryTimeoutSec) {
+    float out_task_timeout = kRetryTimeoutSec;
+    float out_task_net_timeout = it->task->pool_query_.GetNetTimeout();
+    if (out_task_net_timeout >= 0) {
+      out_task_timeout = out_task_net_timeout;
+    }
+    if (elapsed >= out_task_timeout) {
       HLOG(kError, "[RetryQueue] SendOut task timed out after {}s for node {}",
            elapsed, it->target_node_id);
       // For send_out, the result is lost; origin will timeout
@@ -1956,18 +2019,11 @@ void Runtime::ScanSendMapTimeouts() {
   const auto &dead_nodes = ipc_manager->GetDeadNodes();
   if (dead_nodes.empty()) return;
 
-  // Build set of dead node IDs for fast lookup
-  std::unordered_set<chi::u64> dead_set;
+  // Build map of dead node IDs to their detected_at times for per-task checks
+  std::unordered_map<chi::u64, std::chrono::steady_clock::time_point> dead_map;
   for (const auto &entry : dead_nodes) {
-    // Only timeout entries that have been dead long enough
-    float dead_elapsed = std::chrono::duration<float>(
-        now - entry.detected_at).count();
-    if (dead_elapsed >= kRetryTimeoutSec) {
-      dead_set.insert(entry.node_id);
-    }
+    dead_map[entry.node_id] = entry.detected_at;
   }
-
-  if (dead_set.empty()) return;
 
   // Scan send_map_ for tasks targeting dead nodes using for_each
   std::vector<size_t> keys_to_remove;
@@ -1976,16 +2032,30 @@ void Runtime::ScanSendMapTimeouts() {
     if (origin_task.IsNull() || !origin_task->run_ctx_) return;
 
     chi::RunContext *rctx = origin_task->run_ctx_.get();
-    // Check if any replica targets a dead node
-    bool any_dead = false;
+    // Use per-task timeout if set, otherwise kRetryTimeoutSec
+    float task_timeout = kRetryTimeoutSec;
+    float task_net_timeout = origin_task->pool_query_.GetNetTimeout();
+    if (task_net_timeout >= 0) {
+      task_timeout = task_net_timeout;
+    }
+
+    // Check if any replica targets a dead node that has exceeded the timeout
+    bool any_timed_out = false;
     for (const auto &pq : rctx->pool_queries_) {
-      if (pq.IsPhysicalMode() && dead_set.count(pq.GetNodeId())) {
-        any_dead = true;
-        break;
+      if (pq.IsPhysicalMode()) {
+        auto dit = dead_map.find(pq.GetNodeId());
+        if (dit != dead_map.end()) {
+          float dead_elapsed = std::chrono::duration<float>(
+              now - dit->second).count();
+          if (dead_elapsed >= task_timeout) {
+            any_timed_out = true;
+            break;
+          }
+        }
       }
     }
 
-    if (any_dead) {
+    if (any_timed_out) {
       HLOG(kError, "[ScanSendMapTimeouts] Task {} timed out waiting for dead node",
            origin_task->task_id_);
       origin_task->SetReturnCode(kNetworkTimeoutRC);

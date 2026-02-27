@@ -780,6 +780,13 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     container->UpdateWork(task_ptr, *run_ctx, -1);
   }
 
+  // Fire-and-forget: skip all response paths, just delete the task
+  if (task_ptr->task_flags_.Any(TASK_FIRE_AND_FORGET)) {
+    task_ptr->ClearFlags(TASK_DATA_OWNER);
+    container->DelTask(task_ptr->method_, task_ptr);
+    return;
+  }
+
   // If task is remote, enqueue to net_queue_ for SendOut
   if (is_remote) {
     CHI_IPC->EnqueueNetTask(run_ctx->future_, NetQueuePriority::kSendOut);

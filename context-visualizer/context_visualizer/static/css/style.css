@@ -217,6 +217,13 @@ tr.row-idle { background: rgba(76, 175, 80, 0.08); }
     border-color: var(--accent-secondary);
     transform: translateY(-2px);
 }
+.node-card-down {
+    opacity: 0.6;
+    border-color: var(--accent);
+}
+.node-card-down:hover {
+    border-color: var(--accent);
+}
 .node-card-header {
     display: flex;
     justify-content: space-between;

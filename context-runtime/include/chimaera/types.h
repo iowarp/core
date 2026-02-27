@@ -405,6 +405,10 @@ struct AddressHash {
   BIT_OPT(chi::u32, 6)  ///< RunContext has been allocated for this task (set in
                         ///< BeginTask, prevents duplicate BeginTask calls when
                         ///< task is forwarded between workers)
+#define TASK_FIRE_AND_FORGET \
+  BIT_OPT(chi::u32, 7)  ///< Task does not need a response. Wait/co_await return
+                        ///< instantly; SendOut, ClientSend, and
+                        ///< EndTaskShmTransfer are skipped.
 
 // Bulk transfer flags are defined in hermes_shm/lightbeam/lightbeam.h:
 // - BULK_EXPOSE: Bulk is exposed (sender exposes for reading)

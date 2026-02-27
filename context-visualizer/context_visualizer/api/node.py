@@ -1,10 +1,38 @@
 """Per-node API endpoints: workers, system_stats, bdev_stats."""
 
+import os
+
 from flask import Blueprint, jsonify, request
 
 from .. import chimaera_client
 
 bp = Blueprint("node", __name__)
+
+
+def _node_is_alive(node_id):
+    """TCP liveness check before querying a remote node.
+
+    For node_id 0 (the local/dashboard node) we always return True since
+    the dashboard wouldn't be running if the local runtime were dead.
+    For remote nodes, we look up the IP from the hostfile and attempt a
+    TCP connect to the RPC port.
+    """
+    if node_id == 0:
+        return True
+    # Look up IP from hostfile
+    hostfile = os.environ.get("CONTAINER_HOSTFILE", "")
+    if not hostfile:
+        return True  # No hostfile — can't check, let it try
+    try:
+        with open(hostfile) as f:
+            lines = [line.strip() for line in f if line.strip()]
+        if node_id < len(lines):
+            ip = lines[node_id]
+            alive = chimaera_client.check_nodes_alive([ip], port=9413, timeout=1)
+            return 0 in alive
+    except Exception:
+        pass
+    return True  # Can't determine — let it try
 
 
 def _worker_stats(node_id):
@@ -30,6 +58,11 @@ def _bdev_stats(node_id):
 
 @bp.route("/node/<int:node_id>/workers")
 def get_node_workers(node_id):
+    if not _node_is_alive(node_id):
+        return jsonify({"error": "node_down", "workers": [], "summary": {
+            "count": 0, "queued": 0, "blocked": 0, "processed": 0,
+        }}), 503
+
     try:
         raw = _worker_stats(node_id)
     except Exception as exc:
@@ -55,6 +88,9 @@ def get_node_workers(node_id):
 
 @bp.route("/node/<int:node_id>/system_stats")
 def get_node_system_stats(node_id):
+    if not _node_is_alive(node_id):
+        return jsonify({"error": "node_down", "entries": []}), 503
+
     min_event_id = request.args.get("min_event_id", 0, type=int)
     try:
         raw = _system_stats(node_id, min_event_id)
@@ -73,6 +109,9 @@ def get_node_system_stats(node_id):
 
 @bp.route("/node/<int:node_id>/bdev_stats")
 def get_node_bdev_stats(node_id):
+    if not _node_is_alive(node_id):
+        return jsonify({"error": "node_down", "devices": []}), 503
+
     try:
         raw = _bdev_stats(node_id)
     except Exception as exc:

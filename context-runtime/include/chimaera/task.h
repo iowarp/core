@@ -857,7 +857,12 @@ class Future {
    * @return True if task is complete, false if coroutine should suspend
    */
   bool await_ready() const noexcept {
-    return IsComplete();
+    if (IsComplete()) return true;
+    if (!task_ptr_.IsNull() &&
+        task_ptr_->task_flags_.Any(TASK_FIRE_AND_FORGET)) {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -889,6 +894,14 @@ class Future {
    * case). Calls PostWait() on the task for post-completion actions.
    */
   void await_resume() noexcept {
+    if (!task_ptr_.IsNull() &&
+        task_ptr_->task_flags_.Any(TASK_FIRE_AND_FORGET)) {
+      // Fire-and-forget: detach without destroying. The task is still
+      // in-flight on the network; the remote EndTask will clean it up.
+      task_ptr_.SetNull();
+      future_shm_.SetNull();
+      return;
+    }
     Destroy(true);
   }
 };

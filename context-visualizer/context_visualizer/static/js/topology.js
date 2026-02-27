@@ -5,6 +5,11 @@
 
     var POLL_MS = 2000;
 
+    // Track which nodes the user has shut down or restarted so we can
+    // update their state immediately without waiting for the next poll.
+    // Maps node_id -> "down" | "restarting"
+    var localOverrides = {};
+
     function setStatus(ok) {
         var el = document.getElementById("conn-status");
         if (ok) {
@@ -84,29 +89,52 @@
         grid.innerHTML = "";
 
         filtered.forEach(function (node) {
+            // Apply local overrides (user just clicked shutdown/restart)
+            var override = localOverrides[node.node_id];
+            var alive = node.alive;
+            if (override === "down") {
+                alive = false;
+            } else if (override === "restarting") {
+                // Keep showing as down until the server confirms it's back
+                if (node.alive) {
+                    // Server says it's alive again — clear the override
+                    delete localOverrides[node.node_id];
+                } else {
+                    alive = false;
+                }
+            }
+
             var card = document.createElement("div");
-            card.className = "node-card";
+            card.className = "node-card" + (alive ? "" : " node-card-down");
             card.onclick = function () {
                 window.location = "/node/" + node.node_id;
             };
 
+            var badgeClass = alive ? "alive-badge" : "dead-badge";
+            var badgeText = alive ? "alive" : "down";
+
             var html = '<div class="node-card-header">' +
                 '<span class="node-hostname">' + (node.hostname || "node-" + node.node_id) + '</span>' +
-                '<span class="alive-badge">alive</span>' +
+                '<span class="' + badgeClass + '">' + badgeText + '</span>' +
                 '</div>' +
                 '<div class="node-card-meta">' + (node.ip_address || "") + ' &middot; ID ' + node.node_id + '</div>';
 
-            html += makeBar("CPU", node.cpu_usage_pct || 0);
-            html += makeBar("RAM", node.ram_usage_pct || 0);
-
-            if (node.gpu_count > 0) {
-                html += makeBar("GPU", node.gpu_usage_pct || 0);
+            if (alive) {
+                html += makeBar("CPU", node.cpu_usage_pct || 0);
+                html += makeBar("RAM", node.ram_usage_pct || 0);
+                if (node.gpu_count > 0) {
+                    html += makeBar("GPU", node.gpu_usage_pct || 0);
+                }
             }
 
-            html += '<div class="node-card-actions">' +
-                '<button class="btn-action btn-restart" data-node="' + node.node_id + '" data-action="restart" onclick="event.stopPropagation(); nodeAction(this, ' + node.node_id + ', \'restart\')">Restart</button>' +
-                '<button class="btn-action btn-shutdown" data-node="' + node.node_id + '" data-action="shutdown" onclick="event.stopPropagation(); nodeAction(this, ' + node.node_id + ', \'shutdown\')">Shutdown</button>' +
-                '</div>';
+            // Actions: Shutdown only when alive, Restart only when down
+            html += '<div class="node-card-actions">';
+            if (alive) {
+                html += '<button class="btn-action btn-shutdown" onclick="event.stopPropagation(); nodeAction(this, ' + node.node_id + ', \'shutdown\')">Shutdown</button>';
+            } else {
+                html += '<button class="btn-action btn-restart" onclick="event.stopPropagation(); nodeAction(this, ' + node.node_id + ', \'restart\')">Restart</button>';
+            }
+            html += '</div>';
 
             card.innerHTML = html;
             grid.appendChild(card);
@@ -125,18 +153,38 @@
         btn.disabled = true;
         btn.textContent = action === "shutdown" ? "Stopping..." : "Restarting...";
 
-        fetch("/api/topology/node/" + nodeId + "/" + action, { method: "POST" })
+        // Restart waits for the runtime to accept connections (up to ~10s)
+        var controller = new AbortController();
+        var timeoutId = setTimeout(function () { controller.abort(); }, 30000);
+
+        fetch("/api/topology/node/" + nodeId + "/" + action,
+              { method: "POST", signal: controller.signal })
             .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
             .then(function (res) {
+                clearTimeout(timeoutId);
                 if (res.ok && res.data.success) {
-                    btn.textContent = action === "shutdown" ? "Stopped" : "Restarted";
-                    btn.classList.add("btn-success-done");
+                    if (action === "shutdown") {
+                        // Mark as down immediately so the UI updates on next render
+                        localOverrides[nodeId] = "down";
+                        renderNodes(lastNodes);
+                    } else {
+                        btn.textContent = "Restarted";
+                        btn.classList.add("btn-success-done");
+                        // Clear any "down" override so the poll picks it up
+                        delete localOverrides[nodeId];
+                    }
                 } else {
+                    var errMsg = (res.data && res.data.stderr) ? res.data.stderr : "";
                     btn.textContent = "Failed";
+                    btn.title = errMsg || "Restart failed";
                     btn.classList.add("btn-failed");
+                    if (errMsg) {
+                        console.error("Restart node " + nodeId + " failed:\n" + errMsg);
+                    }
                 }
             })
             .catch(function () {
+                clearTimeout(timeoutId);
                 btn.textContent = "Failed";
                 btn.classList.add("btn-failed");
             });

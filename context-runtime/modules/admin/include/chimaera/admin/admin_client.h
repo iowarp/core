@@ -511,6 +511,21 @@ class Client : public chi::ContainerClient {
     }
     return ipc_manager->Send(task);
   }
+
+  /**
+   * AnnounceShutdown - Broadcast that a node is shutting down
+   * Receiving nodes mark the departing node as dead immediately.
+   * @param pool_query Pool routing (use Broadcast())
+   * @param shutting_down_node_id Node ID that is shutting down
+   * @return Future for the AnnounceShutdownTask
+   */
+  chi::Future<AnnounceShutdownTask> AsyncAnnounceShutdown(
+      const chi::PoolQuery &pool_query, chi::u64 shutting_down_node_id) {
+    auto *ipc_manager = CHI_IPC;
+    auto task = ipc_manager->NewTask<AnnounceShutdownTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, shutting_down_node_id);
+    return ipc_manager->Send(task);
+  }
 };
 
 }  // namespace chimaera::admin

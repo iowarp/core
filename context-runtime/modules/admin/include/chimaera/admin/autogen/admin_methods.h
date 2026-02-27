@@ -37,6 +37,7 @@ GLOBAL_CONST chi::u32 kHeartbeatProbe = 28;
 GLOBAL_CONST chi::u32 kProbeRequest = 29;
 GLOBAL_CONST chi::u32 kRecoverContainers = 30;
 GLOBAL_CONST chi::u32 kSystemMonitor = 31;
+GLOBAL_CONST chi::u32 kAnnounceShutdown = 32;
 }  // namespace Method
 
 }  // namespace chimaera::admin

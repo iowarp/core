@@ -23,6 +23,7 @@
 
     var lastEventId = 0;
     var headerSet = false;
+    var nodeDown = false;
 
     var cpuChart, ramChart, gpuChart, hbmChart;
     var processedChart, queueChart;
@@ -114,6 +115,21 @@
         }
     }
 
+    function setNodeDown(down) {
+        nodeDown = down;
+        var banner = document.getElementById("nodeDownBanner");
+        if (!banner) {
+            // Create banner on first use
+            banner = document.createElement("div");
+            banner.id = "nodeDownBanner";
+            banner.className = "error-banner";
+            banner.textContent = "Node " + NODE_ID + " is down. Monitoring paused until the node comes back online.";
+            var content = document.querySelector(".content");
+            if (content) content.insertBefore(banner, content.firstChild.nextSibling);
+        }
+        banner.style.display = down ? "" : "none";
+    }
+
     function utilizationColor(pct) {
         if (pct < 60) return "var(--success)";
         if (pct < 80) return "var(--warning)";
@@ -190,7 +206,9 @@
         fetch("/api/node/" + NODE_ID + "/system_stats?min_event_id=" + lastEventId)
             .then(function (r) { return r.json(); })
             .then(function (data) {
+                if (data.error === "node_down") { setNodeDown(true); setStatus(false); return; }
                 if (data.error) { setStatus(false); return; }
+                setNodeDown(false);
                 setStatus(true);
 
                 var entries = data.entries || [];

@@ -30,37 +30,38 @@ services:
       - CONTAINER_HOSTFILE=/workspace/context-runtime/integration/dashboard/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
-      - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
+      - PATH=/home/iowarp/venv/bin:/workspace/build/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - LD_LIBRARY_PATH=/workspace/build/bin
+      - PYTHONPATH=/workspace/build/bin:/workspace/context-visualizer
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: ["/bin/bash", "-c"]
     command: >
       "
         echo 'Node 1: Configuring SSH...' &&
-        mkdir -p /run/sshd ~/.ssh &&
-        ssh-keygen -A 2>/dev/null;
+        sudo mkdir -p /run/sshd &&
+        sudo ssh-keygen -A 2>/dev/null;
+        mkdir -p ~/.ssh &&
         ssh-keygen -t rsa -N '' -f ~/.ssh/id_rsa -q &&
         cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys &&
         chmod 600 ~/.ssh/authorized_keys &&
         cp ~/.ssh/id_rsa.pub /shared-ssh/node1.pub &&
-        /usr/sbin/sshd 2>/dev/null;
+        sudo /usr/sbin/sshd;
+
+        echo 'Node 1: Installing dashboard dependencies...' &&
+        pip install flask pyyaml msgpack 2>&1 | tail -3 &&
 
         echo 'Node 1: Starting runtime in background...' &&
         /workspace/build/bin/chimaera runtime start &
         RUNTIME_PID=\$! &&
         sleep 5 &&
 
-        echo 'Node 1: Installing context-visualizer...' &&
-        pip install -e /workspace/context-visualizer 2>&1 | tail -3 &&
-
         echo 'Node 1: Starting dashboard on port 5000...' &&
-        cd /workspace/context-visualizer &&
-        python -m context_visualizer --host 0.0.0.0 --port 5000 &
+        python3 -m context_visualizer --host 0.0.0.0 --port 5000 &
         DASH_PID=\$! &&
 
         echo 'Node 1: Runtime PID='\$RUNTIME_PID' Dashboard PID='\$DASH_PID &&
-        wait \$RUNTIME_PID
+        wait \$DASH_PID
       "
 
   # Node 2 - Runtime + sshd
@@ -85,7 +86,7 @@ services:
       - CONTAINER_HOSTFILE=/workspace/context-runtime/integration/dashboard/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
-      - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
+      - PATH=/home/iowarp/venv/bin:/workspace/build/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - LD_LIBRARY_PATH=/workspace/build/bin
     mem_limit: 16g
     working_dir: /workspace
@@ -93,16 +94,18 @@ services:
     command: >
       "
         echo 'Node 2: Configuring SSH...' &&
-        mkdir -p /run/sshd ~/.ssh &&
-        ssh-keygen -A 2>/dev/null;
+        sudo mkdir -p /run/sshd &&
+        sudo ssh-keygen -A 2>/dev/null;
+        mkdir -p ~/.ssh &&
         echo 'Node 2: Waiting for node 1 SSH key...' &&
         while [ ! -f /shared-ssh/node1.pub ]; do sleep 0.5; done &&
         cat /shared-ssh/node1.pub >> ~/.ssh/authorized_keys &&
         chmod 600 ~/.ssh/authorized_keys &&
-        /usr/sbin/sshd 2>/dev/null;
+        sudo /usr/sbin/sshd;
 
         echo 'Node 2: Starting runtime...' &&
-        /workspace/build/bin/chimaera runtime start
+        /workspace/build/bin/chimaera runtime start &
+        sleep infinity
       "
 
   # Node 3 - Runtime + sshd
@@ -127,7 +130,7 @@ services:
       - CONTAINER_HOSTFILE=/workspace/context-runtime/integration/dashboard/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
-      - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
+      - PATH=/home/iowarp/venv/bin:/workspace/build/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - LD_LIBRARY_PATH=/workspace/build/bin
     mem_limit: 16g
     working_dir: /workspace
@@ -135,16 +138,18 @@ services:
     command: >
       "
         echo 'Node 3: Configuring SSH...' &&
-        mkdir -p /run/sshd ~/.ssh &&
-        ssh-keygen -A 2>/dev/null;
+        sudo mkdir -p /run/sshd &&
+        sudo ssh-keygen -A 2>/dev/null;
+        mkdir -p ~/.ssh &&
         echo 'Node 3: Waiting for node 1 SSH key...' &&
         while [ ! -f /shared-ssh/node1.pub ]; do sleep 0.5; done &&
         cat /shared-ssh/node1.pub >> ~/.ssh/authorized_keys &&
         chmod 600 ~/.ssh/authorized_keys &&
-        /usr/sbin/sshd 2>/dev/null;
+        sudo /usr/sbin/sshd;
 
         echo 'Node 3: Starting runtime...' &&
-        /workspace/build/bin/chimaera runtime start
+        /workspace/build/bin/chimaera runtime start &
+        sleep infinity
       "
 
   # Node 4 - Runtime + sshd
@@ -169,7 +174,7 @@ services:
       - CONTAINER_HOSTFILE=/workspace/context-runtime/integration/dashboard/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
-      - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
+      - PATH=/home/iowarp/venv/bin:/workspace/build/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - LD_LIBRARY_PATH=/workspace/build/bin
     mem_limit: 16g
     working_dir: /workspace
@@ -177,20 +182,27 @@ services:
     command: >
       "
         echo 'Node 4: Configuring SSH...' &&
-        mkdir -p /run/sshd ~/.ssh &&
-        ssh-keygen -A 2>/dev/null;
+        sudo mkdir -p /run/sshd &&
+        sudo ssh-keygen -A 2>/dev/null;
+        mkdir -p ~/.ssh &&
         echo 'Node 4: Waiting for node 1 SSH key...' &&
         while [ ! -f /shared-ssh/node1.pub ]; do sleep 0.5; done &&
         cat /shared-ssh/node1.pub >> ~/.ssh/authorized_keys &&
         chmod 600 ~/.ssh/authorized_keys &&
-        /usr/sbin/sshd 2>/dev/null;
+        sudo /usr/sbin/sshd;
 
         echo 'Node 4: Starting runtime...' &&
-        /workspace/build/bin/chimaera runtime start
+        /workspace/build/bin/chimaera runtime start &
+        sleep infinity
       "
 
 volumes:
   ssh-keys:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "mode=1777"
 
 networks:
   dashboard-cluster:
