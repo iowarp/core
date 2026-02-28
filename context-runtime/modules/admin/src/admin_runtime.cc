@@ -1469,7 +1469,7 @@ void Runtime::MonitorSystemStats(hipc::FullPtr<MonitorTask> task) {
   for (chi::u64 idx = start; idx < tail; ++idx) {
     SystemStats s;
     if (system_stats_ring_->Peek(idx, s)) {
-      pk.pack_map(15);
+      pk.pack_map(16);
       pk.pack("event_id");
       pk.pack(idx);
       pk.pack("timestamp_ns");
@@ -1500,6 +1500,8 @@ void Runtime::MonitorSystemStats(hipc::FullPtr<MonitorTask> task) {
       pk.pack(CHI_IPC->GetThisHost().ip_address);
       pk.pack("node_id");
       pk.pack(CHI_IPC->GetNodeId());
+      pk.pack("is_leader");
+      pk.pack(CHI_IPC->IsLeader());
     } else {
       pk.pack_map(0);
     }
