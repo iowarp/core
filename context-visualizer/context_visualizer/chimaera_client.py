@@ -1,8 +1,14 @@
 """Wrapper around chimaera_runtime_ext for the visualizer."""
 
 import concurrent.futures
+import os
 import socket
 import threading
+
+# The dashboard client should never block retrying a dead runtime.
+# 0 = fail immediately; the dashboard relies on TCP liveness checks instead.
+os.environ.setdefault("CHI_CLIENT_RETRY_TIMEOUT", "0")
+os.environ.setdefault("CHI_CLIENT_TRY_NEW_SERVERS", "16")
 
 try:
     import msgpack
@@ -51,7 +57,9 @@ def _decode_results(results):
 
 def _do_monitor(pool_query, query):
     """Run async_monitor + wait in the calling thread (used by _monitor)."""
-    return _chi.async_monitor(pool_query, query).wait()
+    task = _chi.async_monitor(pool_query, query)
+    results = task.wait()
+    return results
 
 
 def _monitor(pool_query, query, timeout=_MONITOR_TIMEOUT):
@@ -60,6 +68,8 @@ def _monitor(pool_query, query, timeout=_MONITOR_TIMEOUT):
     Both async_monitor() and .wait() can block when the runtime or a
     target node is dead, so the entire operation runs in a worker thread
     with shutdown(wait=False) to avoid blocking the caller.
+
+    Server-side failover is handled by the C++ layer (CHI_CLIENT_TRY_NEW_SERVERS).
     """
     _ensure_init()
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -78,6 +88,24 @@ def _monitor(pool_query, query, timeout=_MONITOR_TIMEOUT):
 def is_connected():
     """Return True if the client has been initialized."""
     return _init_done
+
+
+
+def reinit():
+    """Tear down and reset the C++ client so the next call reconnects.
+
+    Call this after the local runtime has been restarted so the client
+    picks up the fresh process instead of using stale state.
+    """
+    global _init_done, _chi
+    with _lock:
+        if _init_done and _chi is not None:
+            try:
+                _chi.chimaera_finalize()
+            except Exception:
+                pass
+        _init_done = False
+        _chi = None
 
 
 def get_worker_stats():
@@ -274,6 +302,8 @@ def restart_node(ip_address, port=9413, wait_timeout=10):
     import time
     import subprocess
 
+    print(f"[restart_node] Starting restart for {ip_address}:{port}", flush=True)
+
     # Step 1: Kill any existing runtime process to free the port.
     # Uses SIGKILL to avoid the graceful stop hanging for 30s.
     kill_cmd = [
@@ -283,10 +313,13 @@ def restart_node(ip_address, port=9413, wait_timeout=10):
         ip_address,
         "pkill -9 -f 'chimaera runtime start' 2>/dev/null; sleep 1",
     ]
+    print(f"[restart_node] Step 1: Killing existing runtime via SSH: {' '.join(kill_cmd)}", flush=True)
     try:
-        subprocess.run(kill_cmd, capture_output=True, text=True, timeout=10)
-    except Exception:
-        pass  # OK if nothing to kill
+        kill_result = subprocess.run(kill_cmd, capture_output=True, text=True, timeout=10)
+        print(f"[restart_node] Step 1: Kill rc={kill_result.returncode} "
+              f"stdout={kill_result.stdout!r} stderr={kill_result.stderr!r}", flush=True)
+    except Exception as exc:
+        print(f"[restart_node] Step 1: Kill exception (OK): {exc}", flush=True)
 
     # Step 2: Build the environment and start the runtime.
     env_parts = [
@@ -298,6 +331,7 @@ def restart_node(ip_address, port=9413, wait_timeout=10):
         val = os.environ.get(var)
         if val:
             env_parts.append(f"{var}={val}")
+        print(f"[restart_node] env {var}={val!r}", flush=True)
     env_str = " ".join(env_parts)
     log_file = "/tmp/chimaera_restart.log"
     # setsid creates a new session so the process is fully detached from SSH.
@@ -314,8 +348,21 @@ def restart_node(ip_address, port=9413, wait_timeout=10):
         ip_address,
         remote_cmd,
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    print(f"[restart_node] Step 2: Starting runtime via SSH: {' '.join(cmd)}", flush=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except Exception as exc:
+        print(f"[restart_node] Step 2: SSH exception: {exc}", flush=True)
+        return {
+            "success": False,
+            "returncode": -1,
+            "stdout": "",
+            "stderr": f"SSH start command failed: {exc}",
+        }
+    print(f"[restart_node] Step 2: SSH rc={result.returncode} "
+          f"stdout={result.stdout!r} stderr={result.stderr!r}", flush=True)
     if result.returncode != 0:
+        print(f"[restart_node] Step 2: FAILED — SSH returned non-zero", flush=True)
         return {
             "success": False,
             "returncode": result.returncode,
@@ -324,24 +371,29 @@ def restart_node(ip_address, port=9413, wait_timeout=10):
         }
 
     # Step 3: Poll the node's main port to verify the runtime started.
+    print(f"[restart_node] Step 3: Polling {ip_address}:{port} for up to {wait_timeout}s", flush=True)
     deadline = time.monotonic() + wait_timeout
+    attempt = 0
     while time.monotonic() < deadline:
+        attempt += 1
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(1)
             s.connect((ip_address, port))
             s.close()
+            print(f"[restart_node] Step 3: Connected on attempt {attempt} — runtime is up!", flush=True)
             return {
                 "success": True,
                 "returncode": 0,
                 "stdout": "Runtime is accepting connections",
                 "stderr": "",
             }
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[restart_node] Step 3: Attempt {attempt} failed: {exc}", flush=True)
         time.sleep(1)
 
     # Node didn't come up — fetch the log file for diagnostics.
+    print(f"[restart_node] Step 3: TIMEOUT — runtime did not come up after {wait_timeout}s", flush=True)
     log_output = ""
     try:
         log_cmd = [
@@ -353,8 +405,9 @@ def restart_node(ip_address, port=9413, wait_timeout=10):
         log_result = subprocess.run(
             log_cmd, capture_output=True, text=True, timeout=10)
         log_output = log_result.stdout
-    except Exception:
-        pass
+        print(f"[restart_node] Remote log:\n{log_output}", flush=True)
+    except Exception as exc:
+        print(f"[restart_node] Failed to fetch remote log: {exc}", flush=True)
 
     return {
         "success": False,
