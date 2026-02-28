@@ -1,11 +1,11 @@
-# Chimaera Configuration for Dashboard Integration Testing
-# 4-node cluster with dashboard on node 1
+# Chimaera Configuration for Leader Election Integration Testing
+# 4-node cluster testing leader shutdown, failover, and restart
 
 # Network configuration
 networking:
   port: 9413
   neighborhood_size: 4
-  hostfile: "/workspace/context-runtime/integration/dashboard/hostfile"
+  hostfile: "/workspace/context-runtime/test/integration/leader_elect/hostfile"
 
 # Logging configuration
 logging:
@@ -14,7 +14,7 @@ logging:
 
 # Runtime configuration
 runtime:
-  num_threads: 4
+  num_threads: 8
   queue_depth: 1024
   local_sched: "default"
   first_busy_wait: 50

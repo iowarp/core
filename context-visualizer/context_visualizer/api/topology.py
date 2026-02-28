@@ -143,12 +143,8 @@ def get_topology():
 
 @bp.route("/topology/node/<node_id>/shutdown", methods=["POST"])
 def shutdown_node(node_id):
-    ip = _get_node_ip(node_id)
-    if ip is None:
-        return jsonify({"error": f"Node {node_id} not found or has no IP"}), 404
-
     try:
-        result = chimaera_client.shutdown_node(ip)
+        result = chimaera_client.shutdown_node(int(node_id))
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 

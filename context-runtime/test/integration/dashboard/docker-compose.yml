@@ -26,8 +26,8 @@ services:
     environment:
       - NODE_ID=1
       - NODE_IP=172.26.0.10
-      - CHI_SERVER_CONF=/workspace/context-runtime/integration/dashboard/wrp_conf.yaml
-      - CONTAINER_HOSTFILE=/workspace/context-runtime/integration/dashboard/hostfile
+      - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/dashboard/wrp_conf.yaml
+      - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/dashboard/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/home/iowarp/venv/bin:/workspace/build/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -82,8 +82,8 @@ services:
     environment:
       - NODE_ID=2
       - NODE_IP=172.26.0.11
-      - CHI_SERVER_CONF=/workspace/context-runtime/integration/dashboard/wrp_conf.yaml
-      - CONTAINER_HOSTFILE=/workspace/context-runtime/integration/dashboard/hostfile
+      - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/dashboard/wrp_conf.yaml
+      - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/dashboard/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/home/iowarp/venv/bin:/workspace/build/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -126,8 +126,8 @@ services:
     environment:
       - NODE_ID=3
       - NODE_IP=172.26.0.12
-      - CHI_SERVER_CONF=/workspace/context-runtime/integration/dashboard/wrp_conf.yaml
-      - CONTAINER_HOSTFILE=/workspace/context-runtime/integration/dashboard/hostfile
+      - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/dashboard/wrp_conf.yaml
+      - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/dashboard/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/home/iowarp/venv/bin:/workspace/build/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -170,8 +170,8 @@ services:
     environment:
       - NODE_ID=4
       - NODE_IP=172.26.0.13
-      - CHI_SERVER_CONF=/workspace/context-runtime/integration/dashboard/wrp_conf.yaml
-      - CONTAINER_HOSTFILE=/workspace/context-runtime/integration/dashboard/hostfile
+      - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/dashboard/wrp_conf.yaml
+      - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/dashboard/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/home/iowarp/venv/bin:/workspace/build/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

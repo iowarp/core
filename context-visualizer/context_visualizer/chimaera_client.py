@@ -23,6 +23,13 @@ _lock = threading.Lock()
 _chi = None
 _init_done = False
 
+# Single shared worker thread for ALL C++ client calls.
+# The C++ IPC layer is not thread-safe (ReconnectToNewHost mutates shared
+# transport state), so we must serialize all calls.  The GIL is released
+# inside task.wait() so the main thread can still enforce timeouts and
+# serve Flask requests while the worker blocks in C++.
+_chi_worker = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
 
 def _ensure_init():
     """Lazy-initialize the Chimaera client connection."""
@@ -55,33 +62,28 @@ def _decode_results(results):
     return decoded
 
 
-def _do_monitor(pool_query, query):
+def _do_monitor(pool_query, query, timeout):
     """Run async_monitor + wait in the calling thread (used by _monitor)."""
     task = _chi.async_monitor(pool_query, query)
-    results = task.wait()
+    results = task.wait(timeout)
     return results
 
 
 def _monitor(pool_query, query, timeout=_MONITOR_TIMEOUT):
     """Execute an async_monitor call with a timeout.
 
-    Both async_monitor() and .wait() can block when the runtime or a
-    target node is dead, so the entire operation runs in a worker thread
-    with shutdown(wait=False) to avoid blocking the caller.
-
-    Server-side failover is handled by the C++ layer (CHI_CLIENT_TRY_NEW_SERVERS).
+    The timeout is passed to both the C++ Wait() (so the worker thread
+    is freed promptly) and the Python future.result() (so the caller
+    is not blocked longer than necessary).
     """
     _ensure_init()
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(_do_monitor, pool_query, query)
+    future = _chi_worker.submit(_do_monitor, pool_query, query, timeout)
     try:
         results = future.result(timeout=timeout)
     except concurrent.futures.TimeoutError:
-        pool.shutdown(wait=False)
         raise TimeoutError(
             f"Monitor({pool_query!r}, {query!r}) timed out after {timeout}s"
         )
-    pool.shutdown(wait=False)
     return _decode_results(results)
 
 
@@ -165,18 +167,22 @@ def check_nodes_alive(ip_list, port=9413, timeout=1):
 
 
 def get_system_stats_per_node(node_ids, min_event_id=0, timeout=3):
-    """Query system_stats for each node individually in parallel.
+    """Query system_stats for each node sequentially.
 
     Returns {node_id: entry_dict} for nodes that responded, skipping
     dead nodes instead of blocking the whole request.
+
+    Queries are serialized through the shared _chi_worker to avoid
+    concurrent access to the C++ IPC layer.  The topology endpoint
+    already filters to alive-only nodes via TCP checks, so the
+    sequential delay is minimal.
     """
     _ensure_init()
     results = {}
 
-    def _query_one(node_id):
+    for node_id in node_ids:
         try:
             raw = _monitor(f"physical:{node_id}", f"system_stats:{min_event_id}", timeout=timeout)
-            # Use the last (most recent) entry from the ring buffer
             latest = None
             for cid, entries in raw.items():
                 if isinstance(entries, list):
@@ -184,20 +190,9 @@ def get_system_stats_per_node(node_ids, min_event_id=0, timeout=3):
                         if isinstance(entry, dict):
                             latest = entry
             if latest is not None:
-                return (node_id, latest)
+                results[node_id] = latest
         except Exception:
             pass
-        return (node_id, None)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(node_ids)) as pool:
-        futures = [pool.submit(_query_one, nid) for nid in node_ids]
-        for f in concurrent.futures.as_completed(futures, timeout=timeout + 2):
-            try:
-                nid, entry = f.result()
-                if entry is not None:
-                    results[nid] = entry
-            except Exception:
-                pass
 
     return results
 
@@ -231,150 +226,67 @@ def get_host_info(node_id):
     return {}
 
 
-def shutdown_node(ip_address, grace_period_ms=5000):
-    """Shutdown a remote node via SSH.
+def _do_stop_runtime(pool_query, grace_period_ms):
+    """Run stop_runtime on the shared worker thread."""
+    _chi.stop_runtime(pool_query, grace_period_ms)
 
-    First attempts graceful shutdown with 'chimaera runtime stop'.
-    Exit codes 0, 134 (SIGABRT), and 255 (SSH closed) are success.
-    If graceful stop fails, forcefully kills the runtime process.
+
+def shutdown_node(node_id, grace_period_ms=5000):
+    """Shutdown a node via AsyncStopRuntime through the C++ client.
+
+    Sends the same task the C++ unit tests use — no SSH required.
+    Fire-and-forget: the target runtime dies before it can reply.
+    Serialized through _chi_worker to avoid concurrent C++ access.
     """
-    import subprocess
-
-    # Step 1: Try graceful shutdown
-    cmd = [
-        "ssh",
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "ConnectTimeout=5",
-        ip_address,
-        f"export PATH=/workspace/build/bin:$PATH LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH && chimaera runtime stop --grace-period {grace_period_ms}",
-    ]
+    _ensure_init()
+    pool_query = f"physical:{node_id}"
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        if result.returncode in (0, 134, 255):
-            return {
-                "success": True,
-                "returncode": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
-    except subprocess.TimeoutExpired:
-        pass
-
-    # Step 2: Graceful stop failed or timed out — force kill
-    # Use -x (exact name match) to avoid killing the container's main bash
-    # process, which also has 'chimaera runtime start' in its command line.
-    kill_cmd = [
-        "ssh", "-T", "-n",
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "ConnectTimeout=5",
-        ip_address,
-        "pkill -9 -x chimaera 2>/dev/null; sleep 0.5; "
-        "! pgrep -x chimaera >/dev/null 2>&1",
-    ]
-    try:
-        kill_result = subprocess.run(
-            kill_cmd, capture_output=True, text=True, timeout=10)
-        # pgrep exits 1 when no processes found (good — runtime is dead)
-        return {
-            "success": True,
-            "returncode": kill_result.returncode,
-            "stdout": "Force-killed runtime process",
-            "stderr": "",
-        }
+        future = _chi_worker.submit(_do_stop_runtime, pool_query, grace_period_ms)
+        future.result(timeout=5)
     except Exception as exc:
         return {
             "success": False,
             "returncode": -1,
             "stdout": "",
-            "stderr": f"Both graceful and forced shutdown failed: {exc}",
+            "stderr": str(exc),
         }
+    return {
+        "success": True,
+        "returncode": 0,
+        "stdout": f"StopRuntime sent to node {node_id}",
+        "stderr": "",
+    }
 
 
 def restart_node(ip_address, port=9413):
     """Restart a node's Chimaera runtime (non-blocking).
 
-    Detects whether the target is the local node (by comparing against
-    NODE_IP env var) and uses a direct subprocess.Popen for local restarts
-    instead of SSH, which avoids SSH session hangs during leader init.
-
-    Uses ``chimaera runtime restart`` (WAL replay) so the node rejoins the
-    existing cluster rather than trying to bootstrap a new one.
-
-    Returns immediately after launching the process — the dashboard's
-    topology polling (TCP-based) will detect when the node comes back.
-    This prevents blocking the Flask server and freezing the entire UI.
+    Assumes the runtime is already dead (shutdown_node was called first).
+    Launches ``chimaera runtime restart`` (WAL replay) so the node rejoins
+    the existing cluster. Returns immediately — the dashboard's topology
+    polling (TCP-based) will detect when the node comes back.
     """
     import os
-    import time
     import subprocess
 
-    log_file = "/tmp/chimaera_restart.log"
     local_ip = os.environ.get("NODE_IP", "")
     is_local = (ip_address == local_ip)
 
     print(f"[restart_node] Starting restart for {ip_address}:{port} "
           f"(local={is_local})", flush=True)
 
-    # ------------------------------------------------------------------
-    # Step 1: Kill any existing runtime process to free the port.
-    # Use -x (exact executable name) to avoid killing the container's
-    # main bash process whose command line also contains 'chimaera'.
-    # ------------------------------------------------------------------
     if is_local:
-        print("[restart_node] Step 1: Killing local runtime", flush=True)
+        print("[restart_node] Launching local runtime via Popen", flush=True)
         try:
-            kill_result = subprocess.run(
-                ["pkill", "-9", "-x", "chimaera"],
-                capture_output=True, text=True, timeout=5)
-            print(f"[restart_node] Step 1: Kill rc={kill_result.returncode}",
-                  flush=True)
+            subprocess.Popen(
+                ["chimaera", "runtime", "restart"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
         except Exception as exc:
-            print(f"[restart_node] Step 1: Kill exception (OK): {exc}",
-                  flush=True)
-        time.sleep(1)
-    else:
-        kill_cmd = [
-            "ssh", "-T", "-n",
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "ConnectTimeout=5",
-            ip_address,
-            "pkill -9 -x chimaera 2>/dev/null; sleep 1",
-        ]
-        print(f"[restart_node] Step 1: Killing via SSH: "
-              f"{' '.join(kill_cmd)}", flush=True)
-        try:
-            kill_result = subprocess.run(
-                kill_cmd, capture_output=True, text=True, timeout=10)
-            print(f"[restart_node] Step 1: Kill rc={kill_result.returncode}",
-                  flush=True)
-        except Exception as exc:
-            print(f"[restart_node] Step 1: Kill exception (OK): {exc}",
-                  flush=True)
-
-    # ------------------------------------------------------------------
-    # Step 2: Launch the runtime in the background and return immediately.
-    # The dashboard's topology polling (TCP liveness) will detect when the
-    # node is back up — no need to block here.
-    # ------------------------------------------------------------------
-    if is_local:
-        env = os.environ.copy()
-        env["PATH"] = f"/workspace/build/bin:{env.get('PATH', '')}"
-        env["LD_LIBRARY_PATH"] = (
-            f"/workspace/build/bin:{env.get('LD_LIBRARY_PATH', '')}")
-        print("[restart_node] Step 2: Launching local runtime via Popen",
-              flush=True)
-        try:
-            with open(log_file, "w") as log_f:
-                subprocess.Popen(
-                    ["/workspace/build/bin/chimaera", "runtime", "restart"],
-                    stdin=subprocess.DEVNULL,
-                    stdout=log_f,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                    env=env,
-                )
-        except Exception as exc:
-            print(f"[restart_node] Step 2: Popen failed: {exc}", flush=True)
+            print(f"[restart_node] Popen failed: {exc}", flush=True)
             return {
                 "success": False,
                 "returncode": -1,
@@ -382,21 +294,18 @@ def restart_node(ip_address, port=9413):
                 "stderr": f"Failed to launch runtime: {exc}",
             }
     else:
-        env_parts = [
-            "export PATH=/workspace/build/bin:$PATH",
-            "LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH",
-        ]
-        for var in ("CHI_SERVER_CONF", "CHI_NUM_CONTAINERS",
+        env_parts = []
+        for var in ("PATH", "LD_LIBRARY_PATH",
+                    "CHI_SERVER_CONF", "CHI_NUM_CONTAINERS",
                     "CONTAINER_HOSTFILE"):
             val = os.environ.get(var)
             if val:
                 env_parts.append(f"{var}={val}")
-            print(f"[restart_node] env {var}={val!r}", flush=True)
-        env_str = " ".join(env_parts)
+        env_str = ("export " + " ".join(env_parts) + " && ") if env_parts else ""
         remote_cmd = (
-            f"{env_str} && "
-            f"nohup setsid /workspace/build/bin/chimaera runtime restart "
-            f"</dev/null >{log_file} 2>&1 & disown; exit 0"
+            f"{env_str}"
+            f"nohup setsid chimaera runtime restart "
+            f"</dev/null >/dev/null 2>&1 & disown; exit 0"
         )
         cmd = [
             "ssh", "-T", "-n",
@@ -405,27 +314,22 @@ def restart_node(ip_address, port=9413):
             ip_address,
             remote_cmd,
         ]
-        print(f"[restart_node] Step 2: Starting via SSH: "
-              f"{' '.join(cmd)}", flush=True)
+        print(f"[restart_node] Starting via SSH: {' '.join(cmd)}", flush=True)
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=15)
+            subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
         except Exception as exc:
-            print(f"[restart_node] Step 2: SSH exception: {exc}", flush=True)
+            print(f"[restart_node] SSH exception: {exc}", flush=True)
             return {
                 "success": False,
                 "returncode": -1,
                 "stdout": "",
                 "stderr": f"SSH start command failed: {exc}",
-            }
-        if result.returncode != 0:
-            print(f"[restart_node] Step 2: SSH rc={result.returncode}",
-                  flush=True)
-            return {
-                "success": False,
-                "returncode": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
             }
 
     print("[restart_node] Runtime launch initiated — returning immediately",
