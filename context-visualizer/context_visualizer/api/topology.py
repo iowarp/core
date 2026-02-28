@@ -158,14 +158,27 @@ def shutdown_node(node_id):
 
 @bp.route("/topology/node/<node_id>/restart", methods=["POST"])
 def restart_node(node_id):
+    print(f"[topology] POST restart node_id={node_id}", flush=True)
     ip = _get_node_ip(node_id)
+    print(f"[topology] Resolved node_id={node_id} -> ip={ip}", flush=True)
     if ip is None:
         return jsonify({"error": f"Node {node_id} not found or has no IP"}), 404
 
     try:
         result = chimaera_client.restart_node(ip)
     except Exception as exc:
+        print(f"[topology] restart_node raised: {exc}", flush=True)
         return jsonify({"error": str(exc)}), 500
+
+    print(f"[topology] restart_node result: success={result.get('success')} "
+          f"rc={result.get('returncode')} stderr={result.get('stderr', '')[:200]}", flush=True)
+
+    # NOTE: We intentionally do NOT call reinit() here.
+    # 1. CHIMAERA_INIT has a static guard that prevents re-initialization,
+    #    so reinit() is effectively a no-op after the first init.
+    # 2. After Phase 2 failover, the C++ client is connected to a surviving
+    #    node and can route physical:N queries to any node (including the
+    #    restarted one) without needing a direct local connection.
 
     status_code = 200 if result["success"] else 500
     return jsonify(result), status_code

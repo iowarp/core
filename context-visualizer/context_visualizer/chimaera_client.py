@@ -290,8 +290,8 @@ def shutdown_node(ip_address, grace_period_ms=5000):
         }
 
 
-def restart_node(ip_address, port=9413, wait_timeout=15):
-    """Restart a node's Chimaera runtime.
+def restart_node(ip_address, port=9413):
+    """Restart a node's Chimaera runtime (non-blocking).
 
     Detects whether the target is the local node (by comparing against
     NODE_IP env var) and uses a direct subprocess.Popen for local restarts
@@ -300,10 +300,9 @@ def restart_node(ip_address, port=9413, wait_timeout=15):
     Uses ``chimaera runtime restart`` (WAL replay) so the node rejoins the
     existing cluster rather than trying to bootstrap a new one.
 
-    Steps:
-      1. Kill any existing runtime (pkill -x chimaera).
-      2. Launch ``chimaera runtime restart`` in the background.
-      3. Poll the TCP port until the runtime is accepting connections.
+    Returns immediately after launching the process — the dashboard's
+    topology polling (TCP-based) will detect when the node comes back.
+    This prevents blocking the Flask server and freezing the entire UI.
     """
     import os
     import time
@@ -353,11 +352,11 @@ def restart_node(ip_address, port=9413, wait_timeout=15):
                   flush=True)
 
     # ------------------------------------------------------------------
-    # Step 2: Launch the runtime in the background.
+    # Step 2: Launch the runtime in the background and return immediately.
+    # The dashboard's topology polling (TCP liveness) will detect when the
+    # node is back up — no need to block here.
     # ------------------------------------------------------------------
     if is_local:
-        # Local node: launch directly via subprocess.Popen.
-        # start_new_session=True fully detaches from the dashboard process.
         env = os.environ.copy()
         env["PATH"] = f"/workspace/build/bin:{env.get('PATH', '')}"
         env["LD_LIBRARY_PATH"] = (
@@ -383,7 +382,6 @@ def restart_node(ip_address, port=9413, wait_timeout=15):
                 "stderr": f"Failed to launch runtime: {exc}",
             }
     else:
-        # Remote node: launch via SSH.
         env_parts = [
             "export PATH=/workspace/build/bin:$PATH",
             "LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH",
@@ -430,63 +428,13 @@ def restart_node(ip_address, port=9413, wait_timeout=15):
                 "stderr": result.stderr,
             }
 
-    # ------------------------------------------------------------------
-    # Step 3: Poll the node's TCP port to verify the runtime started.
-    # ------------------------------------------------------------------
-    print(f"[restart_node] Step 3: Polling {ip_address}:{port} "
-          f"for up to {wait_timeout}s", flush=True)
-    deadline = time.monotonic() + wait_timeout
-    attempt = 0
-    while time.monotonic() < deadline:
-        attempt += 1
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(1)
-            s.connect((ip_address, port))
-            s.close()
-            print(f"[restart_node] Step 3: Connected on attempt {attempt} "
-                  f"— runtime is up!", flush=True)
-            return {
-                "success": True,
-                "returncode": 0,
-                "stdout": "Runtime is accepting connections",
-                "stderr": "",
-            }
-        except Exception as exc:
-            if attempt <= 3 or attempt % 5 == 0:
-                print(f"[restart_node] Step 3: Attempt {attempt} failed: "
-                      f"{exc}", flush=True)
-        time.sleep(1)
-
-    # Node didn't come up — fetch the log file for diagnostics.
-    print(f"[restart_node] Step 3: TIMEOUT — runtime did not come up "
-          f"after {wait_timeout}s", flush=True)
-    log_output = ""
-    try:
-        if is_local:
-            with open(log_file) as f:
-                log_output = "".join(f.readlines()[-30:])
-        else:
-            log_cmd = [
-                "ssh", "-T", "-n",
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ConnectTimeout=5",
-                ip_address,
-                f"tail -30 {log_file} 2>/dev/null",
-            ]
-            log_result = subprocess.run(
-                log_cmd, capture_output=True, text=True, timeout=10)
-            log_output = log_result.stdout
-        print(f"[restart_node] Remote log:\n{log_output}", flush=True)
-    except Exception as exc:
-        print(f"[restart_node] Failed to fetch log: {exc}", flush=True)
-
+    print("[restart_node] Runtime launch initiated — returning immediately",
+          flush=True)
     return {
-        "success": False,
-        "returncode": -1,
-        "stdout": "",
-        "stderr": f"Runtime did not start within {wait_timeout}s. "
-                  f"Log from {log_file}:\n{log_output}",
+        "success": True,
+        "returncode": 0,
+        "stdout": "Restart initiated; topology polling will detect when ready",
+        "stderr": "",
     }
 
 
