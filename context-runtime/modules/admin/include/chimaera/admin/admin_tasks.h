@@ -1787,6 +1787,7 @@ struct AnnounceShutdownTask : public chi::Task {
     pool_id_ = pool_id;
     method_ = Method::kAnnounceShutdown;
     task_flags_.Clear();
+    task_flags_.SetBits(TASK_FIRE_AND_FORGET);
     pool_query_ = pool_query;
   }
 

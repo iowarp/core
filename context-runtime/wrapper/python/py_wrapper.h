@@ -94,9 +94,23 @@ class PyMonitorTask {
    * @return map of container-id to serialized result blob
    */
   std::unordered_map<chi::ContainerId, std::string> wait() {
-    future_.Wait();
+    bool ok = future_.Wait();
+    if (!ok) {
+      // Recv() failed (server dead, timeout, etc.)
+      // Wait() already set return_code_ to -1 on the task.
+      return {};
+    }
     auto results = future_->results_;
     return results;
+  }
+
+  /**
+   * Get the return code from the underlying task.
+   * Call after wait() to check if the task succeeded.
+   * @return 0 on success, non-zero on error
+   */
+  uint32_t get_return_code() {
+    return future_->GetReturnCode();
   }
 };
 

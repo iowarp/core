@@ -66,7 +66,9 @@ NB_MODULE(chimaera_runtime_ext, m) {
   nb::class_<PyMonitorTask>(m, "MonitorTask")
       .def("wait", [](PyMonitorTask& self) -> nb::dict {
         return results_to_dict(self.wait());
-      }, "Block until result is ready, return {container_id: bytes} dict.");
+      }, "Block until result is ready, return {container_id: bytes} dict.")
+      .def("get_return_code", &PyMonitorTask::get_return_code,
+           "Get task return code. Call after wait(). 0=success, non-zero=error.");
 
   m.def("async_monitor", &py_async_monitor,
         "pool_query"_a, "query"_a,

@@ -10,15 +10,12 @@ bp = Blueprint("node", __name__)
 
 
 def _node_is_alive(node_id):
-    """TCP liveness check before querying a remote node.
+    """TCP liveness check before querying a node.
 
-    For node_id 0 (the local/dashboard node) we always return True since
-    the dashboard wouldn't be running if the local runtime were dead.
-    For remote nodes, we look up the IP from the hostfile and attempt a
-    TCP connect to the RPC port.
+    Looks up the node's IP from the hostfile and attempts a TCP connect
+    to the RPC port.  The dashboard is a separate process and keeps
+    running even when the local runtime is down.
     """
-    if node_id == 0:
-        return True
     # Look up IP from hostfile
     hostfile = os.environ.get("CONTAINER_HOSTFILE", "")
     if not hostfile:

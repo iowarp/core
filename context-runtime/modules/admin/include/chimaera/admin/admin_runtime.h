@@ -467,7 +467,7 @@ private:
 
   // Recovery state
   std::vector<chi::RecoveryAssignment> ComputeRecoveryPlan(chi::u64 dead_node_id);
-  void TriggerRecovery(chi::u64 dead_node_id);
+  chi::TaskResume TriggerRecovery(chi::u64 dead_node_id);
   std::unordered_set<chi::u64> recovery_initiated_;
 };
 
