@@ -75,6 +75,7 @@ Worker::Worker(u32 worker_id)
       assigned_lane_(nullptr),
       event_queue_(nullptr),
       last_long_queue_check_(0),
+      num_tasks_processed_(0),
       iteration_count_(0),
       idle_iterations_(0),
       current_sleep_us_(0),
@@ -166,9 +167,7 @@ WorkerStats Worker::GetWorkerStats() const {
   stats.suspend_period_us_ =
       (suspend_period < 0) ? 0 : static_cast<u32>(suspend_period);
 
-  // Note: num_tasks_processed_ would require adding a counter to the worker
-  // For now, set to 0 - can be added later if needed
-  stats.num_tasks_processed_ = 0;
+  stats.num_tasks_processed_ = num_tasks_processed_;
 
   return stats;
 }
@@ -764,6 +763,9 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     HLOG(kError, "EndTask: container is null");
     return;
   }
+
+  // Track completed tasks
+  ++num_tasks_processed_;
 
   // Get task properties at the start
   bool is_remote = task_ptr->IsRemote();

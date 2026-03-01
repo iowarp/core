@@ -83,9 +83,7 @@ services:
         sleep 10 &&
 
         echo 'Node 1: Starting benchmark (200s, 16 threads)...' &&
-        /workspace/build/bin/wrp_run_thrpt_benchmark \
-          --test-case bdev_io --duration 200 --threads 16 \
-          --output-dir ram --verbose &
+        /workspace/build/bin/wrp_run_thrpt_benchmark --test-case bdev_io --duration 200 --threads 16 --output-dir ram --verbose &
         BENCH_PID=\$! &&
 
         echo 'Node 1: Starting dashboard on port 5000...' &&
