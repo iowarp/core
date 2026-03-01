@@ -64,14 +64,31 @@ NB_MODULE(chimaera_runtime_ext, m) {
         "Finalize the Chimaera runtime.");
 
   nb::class_<PyMonitorTask>(m, "MonitorTask")
-      .def("wait", [](PyMonitorTask& self) -> nb::dict {
-        return results_to_dict(self.wait());
-      }, "Block until result is ready, return {container_id: bytes} dict.")
+      .def("wait", [](PyMonitorTask& self, float max_sec) -> nb::dict {
+        // Release the GIL so Flask / timeout threads can run while
+        // the C++ Wait() blocks on ZMQ Recv().
+        std::unordered_map<chi::ContainerId, std::string> results;
+        {
+          nb::gil_scoped_release release;
+          results = self.wait(max_sec);
+        }
+        return results_to_dict(results);
+      }, "max_sec"_a = 0.0f,
+      "Block until result is ready, return {container_id: bytes} dict.")
+      .def("is_complete", &PyMonitorTask::is_complete,
+           "Non-blocking check if the task has completed.")
       .def("get_return_code", &PyMonitorTask::get_return_code,
            "Get task return code. Call after wait(). 0=success, non-zero=error.");
 
   m.def("async_monitor", &py_async_monitor,
         "pool_query"_a, "query"_a,
         "Submit async monitor query. Returns MonitorTask.");
+
+  m.def("stop_runtime", [](const std::string& pool_query_str,
+                            uint32_t grace_period_ms) {
+    nb::gil_scoped_release release;
+    py_stop_runtime(pool_query_str, grace_period_ms);
+  }, "pool_query"_a, "grace_period_ms"_a = 5000,
+     "Send stop-runtime command to a node. Fire-and-forget.");
 
 }

@@ -91,17 +91,37 @@ class PyMonitorTask {
 
   /**
    * Block until the monitor query completes, return results, free the task.
+   *
+   * IMPORTANT: The caller must release the Python GIL before calling this
+   * because Wait() calls IpcManager::Recv() which can block for seconds
+   * on ZMQ I/O (reconnection, dead nodes).  Holding the GIL here would
+   * freeze the entire Python process (Flask event loop, timeout checks, etc.).
+   *
+   * @param max_sec Maximum seconds to wait (0 = wait indefinitely)
    * @return map of container-id to serialized result blob
    */
-  std::unordered_map<chi::ContainerId, std::string> wait() {
-    bool ok = future_.Wait();
+  std::unordered_map<chi::ContainerId, std::string> wait(float max_sec = 0) {
+    bool ok = future_.Wait(max_sec);
     if (!ok) {
       // Recv() failed (server dead, timeout, etc.)
-      // Wait() already set return_code_ to -1 on the task.
       return {};
     }
     auto results = future_->results_;
     return results;
+  }
+
+  /**
+   * Non-blocking check if the task has completed.
+   *
+   * Just reads a flag in shared memory — no IPC, no blocking.
+   * Note: the task only becomes complete after Recv() processes the
+   * response, so this is useful for checking progress while wait()
+   * runs on another thread.
+   *
+   * @return true if the task is complete
+   */
+  bool is_complete() const {
+    return future_.IsComplete();
   }
 
   /**
@@ -129,5 +149,24 @@ inline PyMonitorTask py_async_monitor(const std::string& pool_query_str,
   return PyMonitorTask(std::move(future));
 }
 
+
+/**
+ * Send an asynchronous stop-runtime command to a node.
+ *
+ * This is the Python equivalent of:
+ *   admin_client.AsyncStopRuntime(pool_query, flags, grace_period_ms);
+ *
+ * The call is fire-and-forget: we submit the task but do not wait for
+ * a reply because the target runtime dies before it can respond.
+ *
+ * @param pool_query_str  Pool query string (e.g. "physical:3", "local")
+ * @param grace_period_ms Milliseconds to wait before forced shutdown
+ */
+inline void py_stop_runtime(const std::string& pool_query_str,
+                            uint32_t grace_period_ms = 5000) {
+  auto* admin = CHI_ADMIN;
+  chi::PoolQuery pq = chi::PoolQuery::FromString(pool_query_str);
+  admin->AsyncStopRuntime(pq, 0, grace_period_ms);
+}
 
 #endif  // PY_WRAPPER_H_

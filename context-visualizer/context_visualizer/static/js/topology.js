@@ -114,10 +114,13 @@
             var badgeText = alive ? "alive" : "down";
 
             var html = '<div class="node-card-header">' +
-                '<span class="node-hostname">' + (node.hostname || "node-" + node.node_id) + '</span>' +
+                '<span class="node-hostname">Node ' + node.node_id + '</span>' +
+                '<div class="node-card-badges">' +
+                (node.is_leader ? '<span class="leader-badge">leader</span>' : '') +
                 '<span class="' + badgeClass + '">' + badgeText + '</span>' +
                 '</div>' +
-                '<div class="node-card-meta">' + (node.ip_address || "") + ' &middot; ID ' + node.node_id + '</div>';
+                '</div>' +
+                '<div class="node-card-meta">' + (node.hostname || "") + ' &middot; ' + (node.ip_address || "") + '</div>';
 
             if (alive) {
                 html += makeBar("CPU", node.cpu_usage_pct || 0);

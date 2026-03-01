@@ -345,8 +345,11 @@ void SystemInfo::YieldThread() {
 
 bool SystemInfo::CreateTls(ThreadLocalKey &key, void *data) {
 #if HSHM_ENABLE_PROCFS_SYSINFO
-  key.pthread_key_ = pthread_key_create(&key.pthread_key_, nullptr);
-  return key.pthread_key_ == 0;
+  int ret = pthread_key_create(&key.pthread_key_, nullptr);
+  if (ret != 0) {
+    return false;
+  }
+  return SetTls(key, data);
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
   key.windows_key_ = TlsAlloc();
   if (key.windows_key_ == TLS_OUT_OF_INDEXES) {

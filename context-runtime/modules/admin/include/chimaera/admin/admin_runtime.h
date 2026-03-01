@@ -432,6 +432,13 @@ public:
    */
   void ScanSendMapTimeouts();
 
+  /**
+   * Flush stale retry-queue entries and send_map origins targeting a node
+   * that is about to be marked alive (restarted). Old tasks from the
+   * previous incarnation must not be resent to a fresh runtime.
+   */
+  void FlushStaleStateForNode(chi::u64 node_id);
+
 private:
   /**
    * Initiate runtime shutdown sequence

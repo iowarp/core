@@ -742,24 +742,41 @@ class IpcManager {
       auto info = shm_recv_transport_->Recv(archive, ctx);
       (void)info;
 
-      // Wait for FUTURE_COMPLETE
+      // Wait for FUTURE_COMPLETE, but bail if the server dies or times out
       hshm::abitfield32_t &flags = future_shm->flags_;
+      auto shm_start = std::chrono::steady_clock::now();
       while (!flags.Any(FutureShm::FUTURE_COMPLETE)) {
         HSHM_THREAD_MODEL->Yield();
+        if (!server_alive_.load()) {
+          HLOG(kWarning, "Recv(SHM): Server died while waiting for response");
+          break;
+        }
+        if (max_sec > 0) {
+          float elapsed = std::chrono::duration<float>(
+                              std::chrono::steady_clock::now() - shm_start)
+                              .count();
+          if (elapsed >= max_sec) {
+            HLOG(kWarning, "Recv(SHM): Timeout after {:.1f}s", elapsed);
+            return false;
+          }
+        }
       }
 
-      // Deserialize outputs
-      archive.ResetBulkIndex();
-      archive.msg_type_ = MsgType::kSerializeOut;
-      archive >> (*task_ptr);
-      return true;
+      if (flags.Any(FutureShm::FUTURE_COMPLETE)) {
+        // Deserialize outputs
+        archive.ResetBulkIndex();
+        archive.msg_type_ = MsgType::kSerializeOut;
+        archive >> (*task_ptr);
+        return true;
+      }
+      // Server died — fall through to reconnection path below
     }
 
     // === ZMQ path: covers TCP, IPC, and SHM-with-dead-server ===
     // If origin was SHM but server is dead, reconnect and resend via ZMQ
     if (origin == FutureShm::FUTURE_CLIENT_SHM) {
-      if (client_retry_timeout_ == 0) {
-        HLOG(kError, "Recv(SHM): Server dead, retry_timeout=0, failing");
+      if (client_retry_timeout_ == 0 && client_try_new_servers_ <= 0) {
+        HLOG(kError, "Recv(SHM): Server dead, no retry/failover configured, failing");
         return false;
       }
       HLOG(kWarning, "Recv(SHM): Server dead, attempting reconnect...");

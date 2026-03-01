@@ -148,14 +148,14 @@
         tbody.innerHTML = "";
         workers.forEach(function (w, i) {
             var tr = document.createElement("tr");
-            var q = w.queued || 0;
-            var b = w.blocked || 0;
+            var q = w.num_queued_tasks || 0;
+            var b = w.num_blocked_tasks || 0;
             tr.className = (q + b > 0) ? "row-busy" : "row-idle";
             tr.innerHTML =
                 "<td>Worker " + i + "</td>" +
                 "<td>" + q + "</td>" +
                 "<td>" + b + "</td>" +
-                "<td>" + (w.processed || 0) + "</td>";
+                "<td>" + (w.num_tasks_processed || 0) + "</td>";
             tbody.appendChild(tr);
         });
     }
@@ -186,8 +186,8 @@
 
                 workers.forEach(function (w, i) {
                     var key = "W" + i;
-                    pushRingMap(processedHistory, key, w.processed || 0);
-                    pushRingMap(queueHistory, key, w.queued || 0);
+                    pushRingMap(processedHistory, key, w.num_tasks_processed || 0);
+                    pushRingMap(queueHistory, key, w.num_queued_tasks || 0);
                 });
 
                 processedChart.data.labels = workerTimestamps.slice();

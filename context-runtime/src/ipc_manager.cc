@@ -242,12 +242,9 @@ bool IpcManager::ClientInit() {
     this_host_ = Host();  // Default constructor gives node_id = 0
   }
 
-  // Initialize HSHM TLS key for task counter
-  HSHM_THREAD_MODEL->CreateTls<TaskCounter>(chi_task_counter_key_, nullptr);
-
-  // Initialize thread-local task counter for this client thread
-  auto *counter = new TaskCounter();
-  HSHM_THREAD_MODEL->SetTls(chi_task_counter_key_, counter);
+  // Task counter TLS key was already created before WaitForLocalServer (above).
+  // Do NOT create it again here — doing so leaks the previous pthread key and
+  // causes all TLS operations to collide on key 0.
 
   // Create scheduler using factory
   auto *config = CHI_CONFIG_MANAGER;
@@ -767,17 +764,25 @@ bool IpcManager::WaitForLocalServer() {
     client_generation_ = task->server_generation_;
     HLOG(kInfo, "Successfully connected to runtime (generation={})",
          client_generation_);
-    DelTask(task);
+    // Task cleanup is handled by ~Future() since Wait() marked it consumed.
     return true;
   }
 
   HLOG(kError, "Runtime responded with error code: {}", task->response_);
-  DelTask(task);
+  // Task cleanup is handled by ~Future() since Wait() marked it consumed.
   return false;
 }
 
 bool IpcManager::WaitForLocalRuntimeStop(u32 timeout_sec) {
   HLOG(kInfo, "Waiting for runtime to stop (timeout={}s)", timeout_sec);
+
+  // Temporarily disable reconnection so that Recv() returns false
+  // immediately when the heartbeat detects the server is dead, instead
+  // of blocking in WaitForServerAndReconnect for up to 60 seconds.
+  float saved_retry = client_retry_timeout_;
+  int saved_try_new = client_try_new_servers_;
+  client_retry_timeout_ = 0;
+  client_try_new_servers_ = 0;
 
   for (u32 elapsed = 0; elapsed < timeout_sec; ++elapsed) {
     // Send a ClientConnectTask with a 1-second timeout
@@ -786,7 +791,9 @@ bool IpcManager::WaitForLocalRuntimeStop(u32 timeout_sec) {
     auto future = SendZmq(task, ipc_mode_);
 
     if (!future.Wait(1.0f)) {
-      // Timeout: runtime is no longer responding
+      // Timeout or server dead: runtime is no longer responding
+      client_retry_timeout_ = saved_retry;
+      client_try_new_servers_ = saved_try_new;
       HLOG(kInfo, "Runtime stopped (no response after {}s)", elapsed + 1);
       return true;
     }
@@ -795,6 +802,8 @@ bool IpcManager::WaitForLocalRuntimeStop(u32 timeout_sec) {
     HLOG(kDebug, "Runtime still alive after {}s, retrying...", elapsed + 1);
   }
 
+  client_retry_timeout_ = saved_retry;
+  client_try_new_servers_ = saved_try_new;
   HLOG(kError, "Runtime still running after {}s timeout", timeout_sec);
   return false;
 }
@@ -987,6 +996,7 @@ u64 IpcManager::AddNode(const std::string &ip_address, u32 port) {
     if (pair.second.ip_address == ip_address) {
       HLOG(kInfo, "AddNode: Node {} already registered as node_id={}",
            ip_address, pair.first);
+      SetAlive(pair.first);
       return pair.first;
     }
   }
@@ -1865,9 +1875,10 @@ bool IpcManager::ReconnectToNewHost(const std::string &new_addr) {
   zmq_recv_running_.store(true);
   zmq_recv_thread_ = std::thread([this]() { RecvZmqClientThread(); });
 
-  // Verify connectivity with short timeout
+  // Verify connectivity — the server should respond almost instantly
+  // if it's alive.  No long timer; just a quick round-trip check.
   float saved_timeout = wait_server_timeout_;
-  wait_server_timeout_ = 5.0f;
+  wait_server_timeout_ = 0.5f;
   bool ok = WaitForLocalServer();
   wait_server_timeout_ = saved_timeout;
   if (!ok) {

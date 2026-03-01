@@ -263,6 +263,22 @@ tr.row-idle { background: rgba(76, 175, 80, 0.08); }
     background: rgba(233, 69, 96, 0.2);
     color: var(--accent);
 }
+.leader-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: rgba(255, 193, 7, 0.2);
+    color: #ffc107;
+}
+.node-card-badges {
+    display: flex;
+    gap: 0.35rem;
+    align-items: center;
+}
 
 /* Utilization bars */
 .utilization-row {

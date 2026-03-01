@@ -1,7 +1,7 @@
 #!/bin/bash
 # Interactive Dashboard Cluster
 #
-# Starts a 4-node Chimaera runtime cluster in Docker with the dashboard
+# Starts a 8-node Chimaera runtime cluster in Docker with the dashboard
 # running on node 1. A local port-forward (socat) makes port 5000
 # available on this devcontainer so VS Code auto-forwards it to the host.
 #
@@ -96,19 +96,6 @@ stop_port_forward() {
     pkill -f "dashboard_portfwd" 2>/dev/null || true
 }
 
-wait_for_dashboard() {
-    echo "Waiting for dashboard to become ready..."
-    for i in $(seq 1 30); do
-        if curl -sf "http://${NODE1_IP}:${DASHBOARD_PORT}/api/topology" >/dev/null 2>&1; then
-            echo "Dashboard is ready."
-            return 0
-        fi
-        sleep 2
-    done
-    echo "Warning: dashboard did not become ready within 60s (may still be initializing)"
-    return 0
-}
-
 stop_all() {
     echo ""
     echo "Stopping port forward..."
@@ -126,13 +113,10 @@ stop_all() {
 
 case "${1:-foreground}" in
     start)
-        echo "Starting 4-node runtime cluster with dashboard..."
+        echo "Starting 8-node runtime cluster with dashboard..."
         docker compose up -d
 
-        echo "Waiting for cluster to initialize..."
         connect_network
-        wait_for_dashboard
-
         start_port_forward
 
         echo ""
@@ -153,13 +137,10 @@ case "${1:-foreground}" in
         ;;
 
     foreground)
-        echo "Starting 4-node runtime cluster with dashboard..."
+        echo "Starting 8-node runtime cluster with dashboard..."
         docker compose up -d
 
-        echo "Waiting for cluster to initialize..."
         connect_network
-        wait_for_dashboard
-
         start_port_forward
 
         echo ""

@@ -76,9 +76,9 @@ def get_node_workers(node_id):
         "workers": workers,
         "summary": {
             "count": len(workers),
-            "queued": sum(w.get("queued", 0) for w in workers),
-            "blocked": sum(w.get("blocked", 0) for w in workers),
-            "processed": sum(w.get("processed", 0) for w in workers),
+            "queued": sum(w.get("num_queued_tasks", 0) for w in workers),
+            "blocked": sum(w.get("num_blocked_tasks", 0) for w in workers),
+            "processed": sum(w.get("num_tasks_processed", 0) for w in workers),
         },
     })
 

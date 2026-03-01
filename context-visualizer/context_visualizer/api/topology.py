@@ -96,6 +96,7 @@ def get_topology():
                     "gpu_count": entry.get("gpu_count", 0),
                     "gpu_usage_pct": entry.get("gpu_usage_pct", 0),
                     "hbm_usage_pct": entry.get("hbm_usage_pct", 0),
+                    "is_leader": entry.get("is_leader", False),
                     "alive": True,
                 })
             elif tcp_alive:
@@ -109,6 +110,7 @@ def get_topology():
                     "gpu_count": 0,
                     "gpu_usage_pct": 0,
                     "hbm_usage_pct": 0,
+                    "is_leader": False,
                     "alive": True,
                 })
             else:
@@ -121,6 +123,7 @@ def get_topology():
                     "gpu_count": 0,
                     "gpu_usage_pct": 0,
                     "hbm_usage_pct": 0,
+                    "is_leader": False,
                     "alive": False,
                 })
     else:
@@ -135,6 +138,7 @@ def get_topology():
                 "gpu_count": entry.get("gpu_count", 0),
                 "gpu_usage_pct": entry.get("gpu_usage_pct", 0),
                 "hbm_usage_pct": entry.get("hbm_usage_pct", 0),
+                "is_leader": entry.get("is_leader", False),
                 "alive": True,
             })
 
@@ -143,12 +147,8 @@ def get_topology():
 
 @bp.route("/topology/node/<node_id>/shutdown", methods=["POST"])
 def shutdown_node(node_id):
-    ip = _get_node_ip(node_id)
-    if ip is None:
-        return jsonify({"error": f"Node {node_id} not found or has no IP"}), 404
-
     try:
-        result = chimaera_client.shutdown_node(ip)
+        result = chimaera_client.shutdown_node(int(node_id))
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
