@@ -96,19 +96,6 @@ stop_port_forward() {
     pkill -f "dashboard_portfwd" 2>/dev/null || true
 }
 
-wait_for_dashboard() {
-    echo "Waiting for dashboard to become ready..."
-    for i in $(seq 1 30); do
-        if curl -sf "http://${NODE1_IP}:${DASHBOARD_PORT}/api/topology" >/dev/null 2>&1; then
-            echo "Dashboard is ready."
-            return 0
-        fi
-        sleep 2
-    done
-    echo "Warning: dashboard did not become ready within 60s (may still be initializing)"
-    return 0
-}
-
 stop_all() {
     echo ""
     echo "Stopping port forward..."
@@ -129,10 +116,7 @@ case "${1:-foreground}" in
         echo "Starting 8-node runtime cluster with dashboard..."
         docker compose up -d
 
-        echo "Waiting for cluster to initialize..."
         connect_network
-        wait_for_dashboard
-
         start_port_forward
 
         echo ""
@@ -156,10 +140,7 @@ case "${1:-foreground}" in
         echo "Starting 8-node runtime cluster with dashboard..."
         docker compose up -d
 
-        echo "Waiting for cluster to initialize..."
         connect_network
-        wait_for_dashboard
-
         start_port_forward
 
         echo ""
