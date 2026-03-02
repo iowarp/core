@@ -6,8 +6,7 @@
   },
   "metadata": {
     "description": "Official IOWarp plugin marketplace for the Clio ecosystem — dev environment setup, contributing guidelines, and team workflow consistency.",
-    "version": "1.0.0",
-    "pluginRoot": "./plugins"
+    "version": "1.0.0"
   },
   "plugins": [
     {

@@ -136,11 +136,25 @@ if mp and "plugins" in mp:
             pj_path = os.path.join(resolved, ".claude-plugin", "plugin.json")
             pj = check_json(pj_path, f"{pname}/plugin.json")
             if pj:
-                for field in ["name", "description", "version"]:
+                for field in ["name", "description"]:
                     if field in pj:
                         ok(f"{pname}/plugin.json has '{field}'")
                     else:
                         error(f"{pname}/plugin.json missing '{field}'")
+
+                # Version: for relative-path plugins, should be in
+                # marketplace entry only (per docs). Warn if in both.
+                mp_has_ver = bool(plugin.get("version"))
+                pj_has_ver = bool(pj.get("version"))
+                if pj_has_ver and mp_has_ver:
+                    warn(
+                        f"{pname}: version in both plugin.json and "
+                        f"marketplace entry — plugin.json wins silently"
+                    )
+                elif not pj_has_ver and not mp_has_ver:
+                    warn(f"{pname}: no version in plugin.json or marketplace entry")
+                else:
+                    ok(f"{pname} version set correctly")
 
                 # Verify name consistency
                 if pj.get("name") != pname:
