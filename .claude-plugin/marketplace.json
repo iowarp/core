@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "iowarp-dev-setup",
-      "source": "./plugins/iowarp-dev-setup",
+      "source": "./.claude-plugin/plugins/iowarp-dev-setup",
       "description": "Complete development environment setup for IOWarp Core — Docker devcontainers, builds, debugging, and IDE configuration. Gets any team member from zero to a running dev environment.",
       "version": "1.0.0",
       "author": {
@@ -23,7 +23,7 @@
     },
     {
       "name": "iowarp-contributing",
-      "source": "./plugins/iowarp-contributing",
+      "source": "./.claude-plugin/plugins/iowarp-contributing",
       "description": "Uniform contributing guidelines for the IOWarp/Clio ecosystem — git etiquette, code style, project architecture awareness, and development workflow standards.",
       "version": "1.0.0",
       "author": {

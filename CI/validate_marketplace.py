@@ -132,7 +132,7 @@ if mp and "plugins" in mp:
         source = plugin.get("source", "")
 
         if isinstance(source, str) and source.startswith("./"):
-            resolved = os.path.join(".claude-plugin", source[2:])
+            resolved = source[2:]  # strip leading ./
             pj_path = os.path.join(resolved, ".claude-plugin", "plugin.json")
             pj = check_json(pj_path, f"{pname}/plugin.json")
             if pj:
@@ -171,7 +171,7 @@ if mp and "plugins" in mp:
         pname = plugin.get("name", "UNKNOWN")
         source = plugin.get("source", "")
         if isinstance(source, str) and source.startswith("./"):
-            resolved = os.path.join(".claude-plugin", source[2:])
+            resolved = source[2:]  # strip leading ./
             skills_dir = os.path.join(ROOT, resolved, "skills")
             if os.path.isdir(skills_dir):
                 for skill in os.listdir(skills_dir):
@@ -188,7 +188,7 @@ if mp and "plugins" in mp:
         pname = plugin.get("name", "UNKNOWN")
         source = plugin.get("source", "")
         if isinstance(source, str) and source.startswith("./"):
-            resolved = os.path.join(".claude-plugin", source[2:])
+            resolved = source[2:]  # strip leading ./
             agents_dir = os.path.join(ROOT, resolved, "agents")
             if os.path.isdir(agents_dir):
                 for agent_file in os.listdir(agents_dir):
