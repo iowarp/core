@@ -1,0 +1,7 @@
+{
+  "name": "iowarp-dev-setup",
+  "description": "Complete development environment setup for IOWarp Core — Docker devcontainers, builds, debugging, and IDE configuration.",
+  "author": {
+    "name": "Gnosis Research Center"
+  }
+}
