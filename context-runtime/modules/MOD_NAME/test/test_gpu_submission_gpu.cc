@@ -105,20 +105,26 @@ extern "C" int run_gpu_kernel_task_submission_test(chi::PoolId pool_id,
   // Create IpcManagerGpu for kernel
   chi::IpcManagerGpu gpu_info(gpu_backend, nullptr);
 
-  // Launch kernel with 1 thread, 1 block
-  gpu_submit_task_kernel<<<1, 1>>>(gpu_info, pool_id, test_value, d_result);
+  // Launch kernel on a dedicated stream (cudaDeviceSynchronize would block
+  // on the persistent megakernel running on another stream)
+  void *stream = hshm::GpuApi::CreateStream();
+  gpu_submit_task_kernel<<<1, 1, 0, static_cast<cudaStream_t>(stream)>>>(
+      gpu_info, pool_id, test_value, d_result);
 
   // Check for kernel launch errors
   cudaError_t launch_err = cudaGetLastError();
   if (launch_err != cudaSuccess) {
     hshm::GpuApi::Free(d_result);
+    hshm::GpuApi::DestroyStream(stream);
     return -201;  // Kernel launch error
   }
 
-  // Synchronize and check for errors
-  cudaError_t err = cudaDeviceSynchronize();
+  // Synchronize only this stream
+  hshm::GpuApi::Synchronize(stream);
+  cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     hshm::GpuApi::Free(d_result);
+    hshm::GpuApi::DestroyStream(stream);
     return -200;  // CUDA error
   }
 
@@ -127,6 +133,7 @@ extern "C" int run_gpu_kernel_task_submission_test(chi::PoolId pool_id,
 
   // Cleanup
   hshm::GpuApi::Free(d_result);
+  hshm::GpuApi::DestroyStream(stream);
 
   return h_result;
 }
@@ -201,20 +208,24 @@ extern "C" int run_gpu_full_runtime_test(chi::PoolId pool_id,
   hshm::GpuApi::Memcpy(d_result, &h_result, sizeof(int));
   hshm::GpuApi::Memcpy(d_rv, &h_rv, sizeof(chi::u32));
 
-  gpu_full_runtime_kernel<<<1, 1>>>(gpu_info, pool_id, test_value, d_result,
-                                     d_rv);
+  void *stream = hshm::GpuApi::CreateStream();
+  gpu_full_runtime_kernel<<<1, 1, 0, static_cast<cudaStream_t>(stream)>>>(
+      gpu_info, pool_id, test_value, d_result, d_rv);
 
   cudaError_t launch_err = cudaGetLastError();
   if (launch_err != cudaSuccess) {
     hshm::GpuApi::Free(d_result);
     hshm::GpuApi::Free(d_rv);
+    hshm::GpuApi::DestroyStream(stream);
     return -201;
   }
 
-  cudaError_t err = cudaDeviceSynchronize();
+  hshm::GpuApi::Synchronize(stream);
+  cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     hshm::GpuApi::Free(d_result);
     hshm::GpuApi::Free(d_rv);
+    hshm::GpuApi::DestroyStream(stream);
     return -200;
   }
 
@@ -224,6 +235,7 @@ extern "C" int run_gpu_full_runtime_test(chi::PoolId pool_id,
   *out_result_value = h_rv;
   hshm::GpuApi::Free(d_result);
   hshm::GpuApi::Free(d_rv);
+  hshm::GpuApi::DestroyStream(stream);
   return h_result;
 }
 
@@ -343,19 +355,24 @@ extern "C" int run_gpu_to_cpu_test(chi::PoolId pool_id,
   hshm::GpuApi::Memcpy(d_result, &h_result, sizeof(int));
   hshm::GpuApi::Memcpy(d_rv, &h_rv, sizeof(chi::u32));
 
-  gpu_to_cpu_kernel<<<1, 1>>>(gpu_info, pool_id, test_value, d_result, d_rv);
+  void *stream = hshm::GpuApi::CreateStream();
+  gpu_to_cpu_kernel<<<1, 1, 0, static_cast<cudaStream_t>(stream)>>>(
+      gpu_info, pool_id, test_value, d_result, d_rv);
 
   cudaError_t launch_err = cudaGetLastError();
   if (launch_err != cudaSuccess) {
     hshm::GpuApi::Free(d_result);
     hshm::GpuApi::Free(d_rv);
+    hshm::GpuApi::DestroyStream(stream);
     return -201;
   }
 
-  cudaError_t err = cudaDeviceSynchronize();
+  hshm::GpuApi::Synchronize(stream);
+  cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     hshm::GpuApi::Free(d_result);
     hshm::GpuApi::Free(d_rv);
+    hshm::GpuApi::DestroyStream(stream);
     return -200;
   }
 
@@ -365,6 +382,7 @@ extern "C" int run_gpu_to_cpu_test(chi::PoolId pool_id,
   *out_result_value = h_rv;
   hshm::GpuApi::Free(d_result);
   hshm::GpuApi::Free(d_rv);
+  hshm::GpuApi::DestroyStream(stream);
   return h_result;
 }
 

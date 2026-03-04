@@ -35,6 +35,7 @@
 #define CHIMAERA_INCLUDE_CHIMAERA_MEGAKERNEL_H_
 
 #include "chimaera/types.h"
+#include <string>
 
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 
@@ -96,11 +97,18 @@ class MegakernelLauncher {
   void Resume(const IpcManagerGpuInfo &gpu_info);
 
   /**
-   * Register a GPU container with the device-side PoolManager
+   * Register a GPU container with the device-side PoolManager.
+   * Also fixes up the container's function pointer dispatch table with
+   * addresses from the megakernel's CUDA module context (required because
+   * device function pointers from companion .so libraries are not callable
+   * from the megakernel's persistent kernel).
+   *
    * @param pool_id Pool identifier
    * @param gpu_container_ptr Device pointer to gpu::Container
+   * @param chimod_name Name of the ChiMod (e.g., "chimaera_admin")
    */
-  void RegisterGpuContainer(const PoolId &pool_id, void *gpu_container_ptr);
+  void RegisterGpuContainer(const PoolId &pool_id, void *gpu_container_ptr,
+                             const std::string &chimod_name);
 };
 
 }  // namespace chi

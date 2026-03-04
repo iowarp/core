@@ -263,9 +263,15 @@ TEST_CASE("gpu_kernel_task_submission", "[gpu][kernel_submit]") {
   // Give container time to initialize
   std::this_thread::sleep_for(100ms);
 
+  // Pause megakernel to free SMs for the test kernel
+  CHI_IPC->PauseMegakernel();
+
   // Run GPU kernel test via wrapper function (defined in GPU file)
   chi::u32 test_value = 999;
   int result = run_gpu_kernel_task_submission_test(pool_id, test_value);
+
+  // Resume megakernel
+  CHI_IPC->ResumeMegakernel();
 
   // Show result for debugging
   INFO("GPU kernel test result: " + std::to_string(result));
@@ -317,10 +323,16 @@ TEST_CASE("gpu_full_runtime_roundtrip", "[gpu][runtime][roundtrip]") {
   REQUIRE(create_task->return_code_ == 0);
   std::this_thread::sleep_for(100ms);
 
+  // Pause megakernel to free SMs for the test kernel
+  CHI_IPC->PauseMegakernel();
+
   // Run GPU kernel test (wrapper gets GPU queue internally)
   chi::u32 test_value = 42;
   chi::u32 result_value = 0;
   int result = run_gpu_full_runtime_test(pool_id, test_value, &result_value);
+
+  // Resume megakernel
+  CHI_IPC->ResumeMegakernel();
 
   INFO("GPU full runtime test result: " + std::to_string(result));
   INFO("Result value: " + std::to_string(result_value));
@@ -396,10 +408,16 @@ TEST_CASE("gpu_to_cpu_local", "[gpu][gpu_to_cpu]") {
   REQUIRE(create_task->return_code_ == 0);
   std::this_thread::sleep_for(200ms);
 
+  // Pause megakernel to free SMs for the test kernel
+  CHI_IPC->PauseMegakernel();
+
   // Run the GPU→CPU test via wrapper
   chi::u32 test_value = 88;
   chi::u32 result_value = 0;
   int result = run_gpu_to_cpu_test(pool_id, test_value, &result_value);
+
+  // Resume megakernel
+  CHI_IPC->ResumeMegakernel();
 
   INFO("GPU→CPU test result: " + std::to_string(result));
   INFO("Result value: " + std::to_string(result_value));

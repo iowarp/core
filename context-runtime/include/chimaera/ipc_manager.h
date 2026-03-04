@@ -2012,14 +2012,15 @@ class IpcManager {
 
   /** Register a GPU container with the megakernel's pool manager */
   void RegisterMegakernelContainer(const PoolId &pool_id,
-                                   void *gpu_container_ptr);
+                                   void *gpu_container_ptr,
+                                   const std::string &chimod_name);
+#endif
 
-  /** Pause the megakernel to free SMs for GPU container allocation */
+  /** Pause the megakernel to free SMs for other GPU kernels */
   void PauseMegakernel();
 
-  /** Resume the megakernel after GPU container allocation */
+  /** Resume the megakernel after other GPU kernels complete */
   void ResumeMegakernel();
-#endif
 
  private:
 #if HSHM_IS_HOST

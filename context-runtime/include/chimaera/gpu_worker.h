@@ -198,7 +198,7 @@ class Worker {
     auto *ipc = CHI_IPC;
     auto *alloc = ipc->gpu_alloc_table_[ipc->GetGpuThreadId()];
 
-    // Set allocator on container so cross-library virtual calls don't need CHI_IPC
+    // Set allocator on container for cross-library calls
     container->gpu_alloc_ = alloc;
 
     LocalLoadTaskArchive load_ar(alloc);

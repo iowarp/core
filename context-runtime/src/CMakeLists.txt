@@ -31,6 +31,7 @@ if(CHIMAERA_GPU_SOURCES)
     target_include_directories(${CHIMAERA_LIB_NAME}_gpu PUBLIC
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../modules/admin/include>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../modules/MOD_NAME/include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../context-transport-primitives/include>
     )
     target_link_libraries(${CHIMAERA_LIB_NAME}_gpu PUBLIC hshm::cuda_cxx)

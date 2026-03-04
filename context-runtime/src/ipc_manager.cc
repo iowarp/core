@@ -767,30 +767,36 @@ hipc::FullPtr<char> IpcManager::AllocateGpuBuffer(size_t size, u32 gpu_id) {
 }
 
 void IpcManager::RegisterMegakernelContainer(const PoolId &pool_id,
-                                              void *gpu_container_ptr) {
+                                              void *gpu_container_ptr,
+                                              const std::string &chimod_name) {
   if (!megakernel_launcher_) {
     return;
   }
   auto *launcher = static_cast<MegakernelLauncher *>(megakernel_launcher_);
-  launcher->RegisterGpuContainer(pool_id, gpu_container_ptr);
+  launcher->RegisterGpuContainer(pool_id, gpu_container_ptr, chimod_name);
 }
 
+#endif
+
 void IpcManager::PauseMegakernel() {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
   if (!megakernel_launcher_) {
     return;
   }
   auto *launcher = static_cast<MegakernelLauncher *>(megakernel_launcher_);
   launcher->Pause();
+#endif
 }
 
 void IpcManager::ResumeMegakernel() {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
   if (!megakernel_launcher_) {
     return;
   }
   auto *launcher = static_cast<MegakernelLauncher *>(megakernel_launcher_);
   launcher->Resume(gpu_megakernel_info_);
-}
 #endif
+}
 
 bool IpcManager::ClientInitQueues() {
   if (!main_allocator_) {

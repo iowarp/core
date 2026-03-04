@@ -34,9 +34,20 @@
 /**
  * GPU Megakernel implementation
  *
- * A persistent GPU kernel that polls CPU→GPU and GPU→GPU queues for tasks,
+ * A persistent GPU kernel that polls CPU->GPU and GPU->GPU queues for tasks,
  * dispatches them to GPU-side containers via gpu::Worker / gpu::PoolManager,
  * and communicates results back through FutureShm completion flags.
+ *
+ * IMPORTANT: Device function pointers are NOT valid across CUDA shared
+ * libraries. The companion _runtime_gpu.so libraries allocate GPU containers,
+ * but the function pointers they set on those containers point to device
+ * functions in the companion library's CUDA module — which are not callable
+ * from the megakernel's persistent kernel (different CUDA module).
+ *
+ * Solution: This file includes all GPU container class definitions and
+ * defines its own dispatch wrappers. After container allocation, a fixup
+ * kernel overwrites the container's function pointers with addresses from
+ * THIS compilation unit's CUDA module.
  */
 
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
@@ -48,23 +59,104 @@
 #include "chimaera/gpu_worker.h"
 #include "chimaera/config_manager.h"
 
+// Include GPU container class definitions so their methods compile in
+// this CUDA module's device code context
+#include "chimaera/admin/admin_gpu_runtime.h"
+#include "chimaera/MOD_NAME/MOD_NAME_gpu_runtime.h"
+
 namespace chi {
+
+//==============================================================================
+// Megakernel-local dispatch wrappers
+//
+// These __device__ functions are compiled in this CUDA module's device code
+// context. When called from the megakernel's persistent kernel, they resolve
+// to valid device addresses (same module). The fixup kernel below overwrites
+// container function pointers with these addresses after allocation.
+//==============================================================================
+
+namespace mk_admin {
+__device__ void dispatch_run(
+    gpu::Container *self, u32 method,
+    hipc::FullPtr<Task> task_ptr, gpu::GpuRunContext &rctx) {
+  static_cast<chimaera::admin::GpuRuntime *>(self)->RunImpl(
+      method, task_ptr, rctx);
+}
+__device__ hipc::FullPtr<Task> dispatch_alloc_load(
+    gpu::Container *self, u32 method,
+    LocalLoadTaskArchive &archive) {
+  return static_cast<chimaera::admin::GpuRuntime *>(self)->AllocLoadImpl(
+      method, archive);
+}
+__device__ void dispatch_save(
+    gpu::Container *self, u32 method,
+    LocalSaveTaskArchive &archive, const hipc::FullPtr<Task> &task) {
+  static_cast<chimaera::admin::GpuRuntime *>(self)->SaveImpl(
+      method, archive, task);
+}
+}  // namespace mk_admin
+
+namespace mk_mod_name {
+__device__ void dispatch_run(
+    gpu::Container *self, u32 method,
+    hipc::FullPtr<Task> task_ptr, gpu::GpuRunContext &rctx) {
+  static_cast<chimaera::MOD_NAME::GpuRuntime *>(self)->RunImpl(
+      method, task_ptr, rctx);
+}
+__device__ hipc::FullPtr<Task> dispatch_alloc_load(
+    gpu::Container *self, u32 method,
+    LocalLoadTaskArchive &archive) {
+  return static_cast<chimaera::MOD_NAME::GpuRuntime *>(self)->AllocLoadImpl(
+      method, archive);
+}
+__device__ void dispatch_save(
+    gpu::Container *self, u32 method,
+    LocalSaveTaskArchive &archive, const hipc::FullPtr<Task> &task) {
+  static_cast<chimaera::MOD_NAME::GpuRuntime *>(self)->SaveImpl(
+      method, archive, task);
+}
+}  // namespace mk_mod_name
+
+/**
+ * Module ID enum for megakernel dispatch table.
+ * Must match the values used by FixupContainerDispatch.
+ */
+enum GpuModuleId : u32 {
+  kGpuModAdmin = 0,
+  kGpuModModName = 1,
+};
+
+/**
+ * Fixup kernel: overwrites a container's function pointer dispatch table
+ * with addresses from this CUDA module's device code context.
+ *
+ * Must be called after companion library allocates the container but before
+ * the megakernel dispatches tasks to it.
+ *
+ * @param container Device pointer to the gpu::Container
+ * @param module_id GpuModuleId identifying which dispatch wrappers to use
+ */
+__global__ void _mk_fixup_dispatch(gpu::Container *container,
+                                    u32 module_id) {
+  switch (module_id) {
+    case kGpuModAdmin:
+      container->run_fn_ = mk_admin::dispatch_run;
+      container->alloc_load_fn_ = mk_admin::dispatch_alloc_load;
+      container->save_fn_ = mk_admin::dispatch_save;
+      break;
+    case kGpuModModName:
+      container->run_fn_ = mk_mod_name::dispatch_run;
+      container->alloc_load_fn_ = mk_mod_name::dispatch_alloc_load;
+      container->save_fn_ = mk_mod_name::dispatch_save;
+      break;
+    default:
+      // Unknown module — leave function pointers as-is
+      break;
+  }
+}
 
 /**
  * GPU Megakernel - persistent kernel for GPU task execution.
- *
- * All threads in all blocks initialize per-block IpcManagers (ArenaAllocators).
- * Block 0, thread 0 runs the gpu::Worker poll loop that:
- * 1. Polls to_gpu_queue (CPU→GPU) and gpu_to_gpu_queue (GPU→GPU)
- * 2. Deserializes task inputs via ShmTransport
- * 3. Looks up the target container via gpu::PoolManager
- * 4. Dispatches container->Run()
- * 5. Serializes output and marks FUTURE_COMPLETE
- *
- * @param pool_mgr Device-side pool manager for container lookup
- * @param control Pinned host memory control structure for lifecycle signaling
- * @param gpu_info IPC info with backend, queues, and queue_backend_base
- * @param num_blocks Total number of blocks in the grid
  */
 __global__ void chimaera_megakernel(gpu::PoolManager *pool_mgr,
                                      MegakernelControl *control,
@@ -93,7 +185,6 @@ __global__ void chimaera_megakernel(gpu::PoolManager *pool_mgr,
   }
 
   // Other blocks/threads: wait for exit signal
-  // Future: additional blocks could run their own worker loops
   if (blockIdx.x != 0 || threadIdx.x != 0) {
     while (!control->exit_flag) {
       // Spin-wait
@@ -107,9 +198,6 @@ __global__ void chimaera_megakernel(gpu::PoolManager *pool_mgr,
 
 /**
  * Launch the persistent megakernel on the GPU.
- *
- * Allocates control structure and PoolManager, then launches the kernel
- * with the provided gpu_info for queue and backend pointers.
  */
 bool MegakernelLauncher::Launch(const IpcManagerGpuInfo &gpu_info, u32 blocks,
                                  u32 threads_per_block) {
@@ -140,21 +228,20 @@ bool MegakernelLauncher::Launch(const IpcManagerGpuInfo &gpu_info, u32 blocks,
   d_pool_mgr_ = d_pm;
 
   // Initialize PoolManager on device (zero-initialize)
-  gpu::PoolManager host_pm;  // Default constructor zeros slots
+  gpu::PoolManager host_pm;
   hshm::GpuApi::Memcpy(d_pm, &host_pm, sizeof(gpu::PoolManager));
 
   // Increase GPU stack size for deep template call chains
   cudaDeviceSetLimit(cudaLimitStackSize, 131072);
 
-  // Create dedicated stream so the persistent megakernel doesn't block
-  // other kernel launches (e.g. GPU container allocation kernels)
+  // Create dedicated stream
   stream_ = hshm::GpuApi::CreateStream();
 
   // Save launch parameters for Pause/Resume
   blocks_ = blocks;
   threads_per_block_ = threads_per_block;
 
-  // Launch persistent megakernel with queue and backend info
+  // Launch persistent megakernel
   HLOG(kInfo, "Launching megakernel with {} blocks, {} threads/block",
        blocks, threads_per_block);
   chimaera_megakernel<<<blocks, threads_per_block, 0,
@@ -166,20 +253,16 @@ bool MegakernelLauncher::Launch(const IpcManagerGpuInfo &gpu_info, u32 blocks,
   return true;
 }
 
-/**
- * Stop the megakernel and free resources.
- */
+/** Stop the megakernel and free resources. */
 void MegakernelLauncher::Finalize() {
   if (!is_launched_) {
     return;
   }
 
-  // Signal megakernel to exit
   if (control_) {
     control_->exit_flag = 1;
   }
 
-  // Wait for kernel to finish on its dedicated stream
   if (stream_) {
     hshm::GpuApi::Synchronize(stream_);
     hshm::GpuApi::DestroyStream(stream_);
@@ -188,7 +271,6 @@ void MegakernelLauncher::Finalize() {
     hshm::GpuApi::Synchronize();
   }
 
-  // Free resources
   if (d_pool_mgr_) {
     hshm::GpuApi::Free(d_pool_mgr_);
     d_pool_mgr_ = nullptr;
@@ -202,40 +284,25 @@ void MegakernelLauncher::Finalize() {
   HLOG(kInfo, "Megakernel finalized");
 }
 
-/**
- * Pause the megakernel by signaling exit and waiting for completion.
- * Frees SMs so other kernels (e.g., GPU container allocation) can run.
- * The device-side PoolManager, control structure, and stream are preserved.
- */
+/** Pause the megakernel. */
 void MegakernelLauncher::Pause() {
   if (!is_launched_) {
     return;
   }
-
-  // Signal megakernel to exit
   control_->exit_flag = 1;
-
-  // Wait for kernel to finish on its dedicated stream
   hshm::GpuApi::Synchronize(stream_);
-
   is_launched_ = false;
   HLOG(kInfo, "Megakernel paused");
 }
 
-/**
- * Resume a paused megakernel with the same parameters.
- * Re-launches the persistent kernel on the existing stream.
- */
+/** Resume a paused megakernel. */
 void MegakernelLauncher::Resume(const IpcManagerGpuInfo &gpu_info) {
   if (is_launched_) {
     return;
   }
-
-  // Reset control flags for new launch
   control_->exit_flag = 0;
   control_->running_flag = 0;
 
-  // Re-launch megakernel on the existing stream
   auto *d_pm = static_cast<gpu::PoolManager *>(d_pool_mgr_);
   chimaera_megakernel<<<blocks_, threads_per_block_, 0,
       static_cast<cudaStream_t>(stream_)>>>(
@@ -247,22 +314,48 @@ void MegakernelLauncher::Resume(const IpcManagerGpuInfo &gpu_info) {
 }
 
 /**
- * Register a GPU container with the device-side PoolManager.
- *
- * Copies PoolManager state to host, updates the container mapping,
- * then copies back. Safe because the megakernel only reads between tasks.
+ * Register a GPU container with the device-side PoolManager, then fix up
+ * the container's function pointer dispatch table with megakernel-local
+ * device addresses.
  */
 void MegakernelLauncher::RegisterGpuContainer(const PoolId &pool_id,
-                                               void *gpu_container_ptr) {
+                                               void *gpu_container_ptr,
+                                               const std::string &chimod_name) {
   if (!d_pool_mgr_ || !gpu_container_ptr) {
     return;
   }
+
+  // Step 1: Register container with PoolManager
   auto *d_pm = static_cast<gpu::PoolManager *>(d_pool_mgr_);
   gpu::PoolManager host_pm;
   hshm::GpuApi::Memcpy(&host_pm, d_pm, sizeof(gpu::PoolManager));
   host_pm.RegisterContainer(pool_id,
                              static_cast<gpu::Container *>(gpu_container_ptr));
   hshm::GpuApi::Memcpy(d_pm, &host_pm, sizeof(gpu::PoolManager));
+
+  // Step 2: Determine module ID from ChiMod name
+  u32 module_id = 0xFFFFFFFF;  // Unknown
+  if (chimod_name == "chimaera_admin") {
+    module_id = kGpuModAdmin;
+  } else if (chimod_name == "chimaera_MOD_NAME") {
+    module_id = kGpuModModName;
+  }
+
+  // Step 3: Fix up function pointers with megakernel-local device addresses
+  if (module_id != 0xFFFFFFFF) {
+    auto *container = static_cast<gpu::Container *>(gpu_container_ptr);
+    void *fixup_stream = hshm::GpuApi::CreateStream();
+    _mk_fixup_dispatch<<<1, 1, 0,
+        static_cast<cudaStream_t>(fixup_stream)>>>(container, module_id);
+    hshm::GpuApi::Synchronize(fixup_stream);
+    hshm::GpuApi::DestroyStream(fixup_stream);
+    HLOG(kInfo, "Fixed up dispatch for pool {} (module={})",
+         pool_id, chimod_name);
+  } else {
+    HLOG(kWarning, "Unknown GPU module: {} — dispatch not fixed up",
+         chimod_name);
+  }
+
   HLOG(kInfo, "Registered GPU container for pool {}", pool_id);
 }
 

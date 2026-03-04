@@ -605,7 +605,8 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
         // Register with the megakernel's gpu::PoolManager
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
         ipc_manager2->RegisterMegakernelContainer(target_pool_id,
-                                                   gpu_container_ptr);
+                                                   gpu_container_ptr,
+                                                   chimod_name);
 #endif
       } else {
         HLOG(kWarning,

@@ -56,14 +56,33 @@ struct GpuRunContext {
       : block_id_(block_id), thread_id_(thread_id) {}
 };
 
+class Container;
+
+/**
+ * Function pointer types for GPU container method dispatch.
+ *
+ * These replace virtual functions to avoid cross-library vtable
+ * resolution issues with CUDA shared libraries. Each GPU companion
+ * library (.so) captures device function addresses in its allocation
+ * kernel, which are globally valid device addresses.
+ */
+using RunFn = void (*)(Container *, u32, hipc::FullPtr<Task>,
+                        GpuRunContext &);
+using AllocLoadFn = hipc::FullPtr<Task> (*)(Container *, u32,
+                                             LocalLoadTaskArchive &);
+using SaveFn = void (*)(Container *, u32, LocalSaveTaskArchive &,
+                         const hipc::FullPtr<Task> &);
+
 /**
  * GPU-side container base class
  *
- * Unlike CPU containers, GPU containers:
- * - Use no STL members (must be device-compatible)
- * - Have no coroutine support
- * - Use HSHM_GPU_FUN for all methods
- * - Use DynamicSchedule instead of ScheduleTask for routing
+ * Uses function pointer dispatch instead of virtual functions to support
+ * cross-library dispatch from the megakernel. Each concrete container's
+ * CHI_TASK_GPU_CC macro generates __device__ wrapper functions and sets
+ * the function pointers during GPU-side allocation.
+ *
+ * Concrete containers implement RunImpl, AllocLoadImpl, SaveImpl methods
+ * which are called through the function pointer dispatch table.
  */
 class Container {
  public:
@@ -71,69 +90,63 @@ class Container {
   u32 container_id_;
   HSHM_DEFAULT_ALLOC_GPU_T *gpu_alloc_ = nullptr;  /**< Set by worker before dispatch */
 
+  /** Function pointer dispatch table (set by CHI_TASK_GPU_CC macro) */
+  RunFn run_fn_ = nullptr;
+  AllocLoadFn alloc_load_fn_ = nullptr;
+  SaveFn save_fn_ = nullptr;
+
   HSHM_GPU_FUN Container() : container_id_(0), gpu_alloc_(nullptr) {}
-  HSHM_GPU_FUN virtual ~Container() = default;
+  HSHM_GPU_FUN ~Container() = default;
 
   /**
    * Initialize the GPU container
    * @param pool_id Pool identifier
    * @param container_id Container ID (typically node_id)
    */
-  HSHM_GPU_FUN virtual void Init(const PoolId &pool_id, u32 container_id) {
+  HSHM_GPU_FUN void Init(const PoolId &pool_id, u32 container_id) {
     pool_id_ = pool_id;
     container_id_ = container_id;
   }
 
   /**
-   * Execute a task method on the GPU
+   * Execute a task method on the GPU via function pointer dispatch.
    * @param method Method ID to execute
    * @param task_ptr Full pointer to the task
    * @param rctx GPU run context
    */
-  HSHM_GPU_FUN virtual void Run(u32 method, hipc::FullPtr<Task> task_ptr,
-                                 GpuRunContext &rctx) = 0;
-
-  /**
-   * Dynamic scheduling for GPU tasks
-   * Returns a PoolQuery indicating where the task should be routed.
-   * Default: use the task's existing pool_query_ (local execution)
-   * @param method Method ID
-   * @param task_ptr Full pointer to the task
-   * @return PoolQuery for routing decision
-   */
-  HSHM_GPU_FUN virtual PoolQuery DynamicSchedule(
-      u32 method, hipc::FullPtr<Task> task_ptr) {
-    return task_ptr->pool_query_;
+  HSHM_GPU_FUN void Run(u32 method, hipc::FullPtr<Task> task_ptr,
+                         GpuRunContext &rctx) {
+    run_fn_(this, method, task_ptr, rctx);
   }
 
   /**
-   * Allocate and deserialize a task from a local archive.
-   * Called by gpu::Worker after ShmTransport::Recv populates the archive.
-   *
+   * Allocate and deserialize a task via function pointer dispatch.
    * @param method Method ID identifying the task type
    * @param archive LocalLoadTaskArchive containing serialized input
    * @return FullPtr to the deserialized task, or null on failure
    */
-  HSHM_GPU_FUN virtual hipc::FullPtr<Task> LocalAllocLoadTask(
-      u32 method, LocalLoadTaskArchive &archive) = 0;
+  HSHM_GPU_FUN hipc::FullPtr<Task> LocalAllocLoadTask(
+      u32 method, LocalLoadTaskArchive &archive) {
+    return alloc_load_fn_(this, method, archive);
+  }
 
   /**
-   * Serialize task output into a local archive.
-   * Called by gpu::Worker before ShmTransport::Send writes to the ring buffer.
-   *
+   * Serialize task output via function pointer dispatch.
    * @param method Method ID identifying the task type
    * @param archive LocalSaveTaskArchive to write output into
    * @param task FullPtr to the completed task
    */
-  HSHM_GPU_FUN virtual void LocalSaveTask(
+  HSHM_GPU_FUN void LocalSaveTask(
       u32 method, LocalSaveTaskArchive &archive,
-      const hipc::FullPtr<Task> &task) = 0;
+      const hipc::FullPtr<Task> &task) {
+    save_fn_(this, method, archive, task);
+  }
 
   /**
    * Get remaining work for load balancing
    * @return Amount of work remaining (0 = idle)
    */
-  HSHM_GPU_FUN virtual u64 GetWorkRemaining() const { return 0; }
+  HSHM_GPU_FUN u64 GetWorkRemaining() const { return 0; }
 };
 
 }  // namespace gpu
@@ -141,24 +154,56 @@ class Container {
 
 /**
  * CHI_TASK_GPU_CC macro - Generates GPU container allocation/construction kernels
+ * and function pointer dispatch wrappers.
  *
- * Defines:
- * - Device kernel to allocate container via placement new
- * - Device kernel to allocate + Init container
+ * Generates:
+ * - __device__ dispatch wrappers that static_cast to the concrete type
+ * - Device kernel to allocate container and set function pointers
+ * - Device kernel to allocate + Init container with function pointers
  * - Host functions callable from CPU to create GPU containers
+ *
+ * The concrete class T must implement:
+ * - HSHM_GPU_FUN void RunImpl(u32 method, FullPtr<Task> task, GpuRunContext &rctx)
+ * - HSHM_GPU_FUN FullPtr<Task> AllocLoadImpl(u32 method, LocalLoadTaskArchive &ar)
+ * - HSHM_GPU_FUN void SaveImpl(u32 method, LocalSaveTaskArchive &ar, const FullPtr<Task> &task)
  *
  * @param T Fully-qualified GPU container class name
  */
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 
 #define CHI_TASK_GPU_CC(T)                                                     \
+  /* Device-side dispatch wrappers with addresses valid in this library */      \
+  __device__ void _chimod_dispatch_run(                                        \
+      chi::gpu::Container *self, chi::u32 method,                              \
+      hipc::FullPtr<chi::Task> task_ptr, chi::gpu::GpuRunContext &rctx) {      \
+    static_cast<T *>(self)->RunImpl(method, task_ptr, rctx);                   \
+  }                                                                            \
+  __device__ hipc::FullPtr<chi::Task> _chimod_dispatch_alloc_load(             \
+      chi::gpu::Container *self, chi::u32 method,                              \
+      chi::LocalLoadTaskArchive &archive) {                                    \
+    return static_cast<T *>(self)->AllocLoadImpl(method, archive);             \
+  }                                                                            \
+  __device__ void _chimod_dispatch_save(                                       \
+      chi::gpu::Container *self, chi::u32 method,                              \
+      chi::LocalSaveTaskArchive &archive,                                      \
+      const hipc::FullPtr<chi::Task> &task) {                                  \
+    static_cast<T *>(self)->SaveImpl(method, archive, task);                   \
+  }                                                                            \
+                                                                               \
   __global__ void _chimod_gpu_alloc_kernel(T **out) {                          \
-    *out = new T();                                                            \
+    auto *obj = new T();                                                       \
+    obj->run_fn_ = _chimod_dispatch_run;                                       \
+    obj->alloc_load_fn_ = _chimod_dispatch_alloc_load;                         \
+    obj->save_fn_ = _chimod_dispatch_save;                                     \
+    *out = obj;                                                                \
   }                                                                            \
                                                                                \
   __global__ void _chimod_gpu_new_kernel(T **out, const chi::PoolId *pid,      \
                                           chi::u32 cid) {                      \
     T *obj = new T();                                                          \
+    obj->run_fn_ = _chimod_dispatch_run;                                       \
+    obj->alloc_load_fn_ = _chimod_dispatch_alloc_load;                         \
+    obj->save_fn_ = _chimod_dispatch_save;                                     \
     obj->Init(*pid, cid);                                                      \
     *out = obj;                                                                \
   }                                                                            \
