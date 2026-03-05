@@ -208,11 +208,12 @@ class WrpRuntime(Service):
 
         # Wait for the runtime to be ready (port accepting connections)
         port = self.config['port']
-        self.log(f'Waiting for runtime to accept connections on port {port}', color=Color.YELLOW)
+        host = self.jarvis.hostfile.hosts[0] if self.jarvis.hostfile.hosts else '127.0.0.1'
+        self.log(f'Waiting for runtime to accept connections on {host}:{port}', color=Color.YELLOW)
         for i in range(30):
             try:
                 ret = subprocess.run(
-                    ['bash', '-c', f'echo > /dev/tcp/127.0.0.1/{port}'],
+                    ['bash', '-c', f'echo > /dev/tcp/{host}/{port}'],
                     capture_output=True, timeout=2)
                 if ret.returncode == 0:
                     break
@@ -220,7 +221,7 @@ class WrpRuntime(Service):
                 pass
             time.sleep(1)
         else:
-            self.log(f'WARNING: Runtime did not respond on port {port} after 30s', color=Color.RED)
+            self.log(f'WARNING: Runtime did not respond on {host}:{port} after 30s', color=Color.RED)
 
         self.log("IOWarp runtime started successfully on all nodes")
 
@@ -243,10 +244,11 @@ class WrpRuntime(Service):
 
         # Wait for the port to be free before returning
         port = self.config['port']
+        host = self.jarvis.hostfile.hosts[0] if self.jarvis.hostfile.hosts else '127.0.0.1'
         for i in range(10):
             try:
                 ret = subprocess.run(
-                    ['bash', '-c', f'echo > /dev/tcp/127.0.0.1/{port}'],
+                    ['bash', '-c', f'echo > /dev/tcp/{host}/{port}'],
                     capture_output=True, timeout=2)
                 if ret.returncode != 0:
                     break
