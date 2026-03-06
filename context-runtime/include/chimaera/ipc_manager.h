@@ -815,6 +815,12 @@ class IpcManager {
   void RouteToGpu(const hipc::FullPtr<Task> &task_ptr, Container *container,
                   u32 gpu_id = 0);
 #endif
+  /** Launch the GPU megakernel. Returns true on success (or no GPUs present). */
+  bool LaunchMegakernel();
+  /** Pause the running GPU megakernel (no-op if no GPU support). */
+  void PauseMegakernel();
+  /** Resume a paused GPU megakernel (no-op if no GPU support). */
+  void ResumeMegakernel();
 
   /**
    * Send a task via SHM lightbeam transport
