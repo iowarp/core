@@ -282,6 +282,7 @@ class ShmTransport
 #endif
   }
 
+ public:
   // SPSC ring buffer write (system-scope atomics for GPU/CPU visibility)
   HSHM_CROSS_FUN
   static void WriteTransfer(const char* data, size_t size, const LbmContext& ctx) {

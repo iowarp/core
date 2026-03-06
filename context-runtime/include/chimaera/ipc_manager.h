@@ -84,6 +84,12 @@ enum class NetQueuePriority : u32 {
   kClientSendIpc = 3,  ///< Priority 3: Client response via IPC
 };
 
+/** Result of RouteTask: whether task stays local (GPU/CPU) or goes over network */
+enum class RouteResult : u32 {
+  Local = 0,    ///< Task stays on the current processor (GPU stays on GPU)
+  Network = 1,  ///< Task must be sent over the network or CPU↔GPU boundary
+};
+
 /**
  * Network queue for storing Future<SendTask> objects
  * One lane with two priorities (SendIn and SendOut)
@@ -780,8 +786,9 @@ class IpcManager {
 
   /** Route a task: resolve pool query, determine local vs global.
    * If force_enqueue is true, always enqueue to the destination worker's lane
-   * (used by SendRuntime which cannot execute tasks directly). */
-  RouteResult RouteTask(Future<Task> &future, bool force_enqueue = false);
+   * (used by SendRuntime which cannot execute tasks directly).
+   * Returns true if the task was routed locally, false if sent over network. */
+  bool RouteTask(Future<Task> &future, bool force_enqueue = false);
 
   /** Resolve a pool query into concrete physical addresses */
   std::vector<PoolQuery> ResolvePoolQuery(const PoolQuery &query,
@@ -793,11 +800,13 @@ class IpcManager {
                    const std::vector<PoolQuery> &pool_queries);
 
   /** Route task locally.
-   * If force_enqueue is true, always enqueue even if dest == current worker. */
-  RouteResult RouteLocal(Future<Task> &future, bool force_enqueue = false);
+   * If force_enqueue is true, always enqueue even if dest == current worker.
+   * Returns true if the task was routed locally. */
+  bool RouteLocal(Future<Task> &future, bool force_enqueue = false);
 
-  /** Route task globally via network */
-  RouteResult RouteGlobal(Future<Task> &future,
+  /** Route task globally via network.
+   * Returns false (task was sent to network, not local). */
+  bool RouteGlobal(Future<Task> &future,
                    const std::vector<PoolQuery> &pool_queries);
 
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
@@ -806,6 +815,12 @@ class IpcManager {
   void RouteToGpu(const hipc::FullPtr<Task> &task_ptr, Container *container,
                   u32 gpu_id = 0);
 #endif
+  /** Launch the GPU megakernel. Returns true on success (or no GPUs present). */
+  bool LaunchMegakernel();
+  /** Pause the running GPU megakernel (no-op if no GPU support). */
+  void PauseMegakernel();
+  /** Resume a paused GPU megakernel (no-op if no GPU support). */
+  void ResumeMegakernel();
 
   /**
    * Send a task via SHM lightbeam transport
@@ -2240,8 +2255,7 @@ HSHM_CROSS_FUN Future<TaskT, AllocT>::~Future() {
       CHI_IPC->FreeBuffer(buffer_shm);
       future_shm_.SetNull();
     }
-    // Auto-free the task (only when consumed to avoid double-free
-    // from runtime-internal Future copies in event queues / RunContext)
+    // Free the heap-allocated task object
     DelTask();
   }
 }
