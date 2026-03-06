@@ -147,6 +147,8 @@ option(CAE_ENABLE_GLOBUS "Enable Globus transfer support in CAE" OFF)
 # External Examples and Applications
 #------------------------------------------------------------------------------
 option(WRP_CORE_ENABLE_GRAY_SCOTT "Enable Gray-Scott ADIOS2 example (requires ADIOS2)" OFF)
+option(WRP_CORE_ENABLE_LLAMA "Enable llama.cpp LLM inference integration (iowarp-llm)" OFF)
+option(WRP_CORE_ENABLE_LLAMA_SERVER "Add external/llama.cpp to the build (requires WRP_CORE_ENABLE_LLAMA=ON)" OFF)
 
 #==============================================================================
 # END BUILD CONFIGURATION OPTIONS
@@ -969,6 +971,75 @@ if(WRP_CORE_ENABLE_TESTS)
                 "${_lsan_opts}")
         endif()
     endforeach()
+endif()
+
+# IOWarp KV Cache + Weight Offload libraries (wrp_llm_kvcache, wrp_llm_weights).
+# These can be built independently of llama.cpp so they can be tested without
+# the full llama.cpp integration (which causes a CUDA platform conflict when
+# llama.cpp's project("llama.cpp" C CXX) resets the CUDA compiler state).
+if(WRP_CORE_ENABLE_LLAMA)
+    if(NOT WRP_CORE_ENABLE_CTE)
+        message(FATAL_ERROR "WRP_CORE_ENABLE_LLAMA requires WRP_CORE_ENABLE_CTE=ON")
+    endif()
+    message(STATUS "Building iowarp-llm KV cache + weight offload libraries")
+    add_subdirectory(iowarp-llm)
+
+    # llama.cpp full integration: add the llama.cpp subdirectory so that the
+    # server patches and ggml backend are available for linking.
+    # NOTE: external/llama.cpp calls project("llama.cpp" C CXX) which resets
+    # CMake's CUDA platform variables.  Add it LAST so it cannot corrupt the
+    # IOWarp CUDA targets already defined above.
+    if(WRP_CORE_ENABLE_LLAMA_SERVER)
+        # GGML_CUDA controls llama.cpp's own GPU inference backend independently
+        # from WRP_CORE_ENABLE_CUDA (IOWarp's own CUDA targets).
+        # Pass -DGGML_CUDA=ON on the command line to enable GPU inference.
+        add_subdirectory(external/llama.cpp)
+        message(STATUS "llama.cpp server integration enabled")
+
+        # llama.cpp's project("llama.cpp" C CXX) call may partially reset CMake's
+        # CUDA platform variables (_CMAKE_CUDA_WHOLE_FLAG etc.).  Re-enabling CUDA
+        # at the top level forces CMake to re-run CMakeCUDAInformation.cmake and
+        # restore all required device-link variables before generating build rules.
+        if(WRP_CORE_ENABLE_CUDA)
+            enable_language(CUDA)
+        endif()
+
+        # Patch llama.cpp targets with IOWarp KV-cache definitions NOW — after
+        # add_subdirectory(external/llama.cpp) so that server-context and llama
+        # targets actually exist.  The if(TARGET ...) guards in iowarp-llm/
+        # CMakeLists.txt run before this point (ordering issue), so we do the
+        # patching here instead.
+        if(TARGET server-context)
+            target_compile_definitions(server-context PRIVATE IOWARP_LLM_KVCACHE)
+            target_link_libraries(server-context PRIVATE wrp_llm_kvcache)
+            message(STATUS "iowarp-llm: patched server-context with IOWARP_LLM_KVCACHE")
+        endif()
+        if(TARGET llama)
+            target_compile_definitions(llama PRIVATE IOWARP_LLM_KVCACHE)
+            target_link_libraries(llama PRIVATE wrp_llm_kvcache)
+            message(STATUS "iowarp-llm: patched llama with IOWARP_LLM_KVCACHE")
+        endif()
+
+        # IOWarp weight offloading via GpuVmm — requires CUDA and wrp_llm_weights.
+        # wrp_llm_weights is only built when WRP_CORE_ENABLE_CUDA=ON (it depends
+        # on wrp_cte_uvm which needs CUDA driver API).
+        if(WRP_CORE_ENABLE_CUDA AND TARGET wrp_llm_weights)
+            if(TARGET server-context)
+                target_compile_definitions(server-context PRIVATE IOWARP_LLM_WEIGHTS)
+                target_link_libraries(server-context PRIVATE wrp_llm_weights)
+                message(STATUS "iowarp-llm: patched server-context with IOWARP_LLM_WEIGHTS")
+            endif()
+            if(TARGET llama)
+                target_compile_definitions(llama PRIVATE IOWARP_LLM_WEIGHTS)
+                target_link_libraries(llama PRIVATE wrp_llm_weights)
+                message(STATUS "iowarp-llm: patched llama with IOWARP_LLM_WEIGHTS")
+            endif()
+        endif()
+    else()
+        message(STATUS "llama.cpp server integration skipped (set WRP_CORE_ENABLE_LLAMA_SERVER=ON)")
+    endif()
+else()
+    message(STATUS "iowarp-llm disabled (set WRP_CORE_ENABLE_LLAMA=ON to enable)")
 endif()
 
 #------------------------------------------------------------------------------

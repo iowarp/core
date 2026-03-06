@@ -137,5 +137,8 @@ external/boost-*.tar.gz
 external/boost-*/
 external/boost/
 
+# Model weights (large binaries)
+models/
+
 # Submodules managed by .gitmodules
 #external/libzmq/
