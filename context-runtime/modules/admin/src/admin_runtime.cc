@@ -635,11 +635,11 @@ void Runtime::SendOut(hipc::FullPtr<chi::Task> origin_task) {
 
   HLOG(kDebug, "[SendOut] Task {}", origin_task->task_id_);
 
-  // Clear TASK_DATA_OWNER before deferred deletion so the destructor
-  // doesn't try to FreeBuffer on transport-allocated data
-  origin_task->ClearFlags(TASK_DATA_OWNER);
-
-  // Defer task deletion to next invocation for zero-copy send safety
+  // Defer task deletion to next invocation for zero-copy send safety.
+  // TASK_DATA_OWNER is intentionally left set so that task destructors
+  // (e.g. ~ReadTask) can free BULK_EXPOSE-allocated buffers.  The
+  // MallocAllocator magic-guard in FreeOffsetNoNullCheck makes FreeBuffer
+  // a safe no-op for any ZMQ zero-copy pointer that lacks the header.
   deferred_deletes.push_back(origin_task);
 }
 
@@ -1231,11 +1231,10 @@ chi::TaskResume Runtime::ClientSend(hipc::FullPtr<ClientSendTask> task,
         HLOG(kError, "ClientSend: lightbeam Send failed: {}", rc);
       }
 
-      // Clear TASK_DATA_OWNER before deferred deletion so the destructor
-      // doesn't try to FreeBuffer on transport-allocated data
-      origin_task->ClearFlags(TASK_DATA_OWNER);
-
-      // Defer task deletion to next invocation for zero-copy send safety
+      // TASK_DATA_OWNER is intentionally left set so that task destructors
+      // (e.g. ~ReadTask) can free BULK_EXPOSE-allocated buffers.  The
+      // MallocAllocator magic-guard makes FreeBuffer a safe no-op for any
+      // non-HSHM pointer.
       deferred_deletes.push_back(origin_task);
 
       did_work = true;
