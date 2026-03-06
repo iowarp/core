@@ -169,6 +169,7 @@ if [ "$DO_BUILD" = true ]; then
     print_info "Configuring build with coverage enabled..."
     cmake --preset=debug \
         -DWRP_CORE_ENABLE_COVERAGE=ON \
+        -DWRP_CORE_ENABLE_CONDA=ON \
         -DWRP_CORE_ENABLE_DOCKER_CI=OFF \
         -DWRP_CTE_ENABLE_ADIOS2_ADAPTER=OFF \
         -DWRP_CTE_ENABLE_COMPRESS=OFF \
@@ -351,7 +352,7 @@ lcov --capture \
      --output-file coverage_combined.info \
      --rc lcov_branch_coverage=0 \
      --rc geninfo_unexecuted_blocks=1 \
-     --ignore-errors graph,mismatch,negative,inconsistent,unused,empty,gcov,source \
+     --ignore-errors source,graph \
      2>&1 | grep -E "Found [0-9]+ data files|Finished" || true
 
 if [ ! -f coverage_combined.info ] || [ ! -s coverage_combined.info ]; then
@@ -380,7 +381,6 @@ lcov --remove coverage_all.info \
      '*/catch2/*' \
      '*/nanobind/*' \
      --output-file coverage_filtered.info \
-     --ignore-errors mismatch,negative,unused \
      2>&1 | grep -E "Removed|Summary|lines|functions" | tail -5 || true
 
 if [ ! -f coverage_filtered.info ] || [ ! -s coverage_filtered.info ]; then
@@ -399,7 +399,6 @@ print_header "Step 6: Generating HTML Coverage Report"
 print_info "Generating HTML report..."
 genhtml coverage_filtered.info \
         --output-directory coverage_report \
-        --ignore-errors mismatch,negative \
         --title "IOWarp Core Coverage Report" \
         --legend \
         2>&1 | grep -E "Overall|Processing|Writing" | tail -10 || true
@@ -425,36 +424,36 @@ print_info "Extracting component coverage..."
 
 # CTP is mostly header-only, so include both src/ and include/
 lcov --extract coverage_filtered.info \
-     '/workspace/context-transport-primitives/src/*' \
-     '/workspace/context-transport-primitives/include/*' \
+     "${REPO_ROOT}/context-transport-primitives/src/*" \
+     "${REPO_ROOT}/context-transport-primitives/include/*" \
      --output-file "${TMP_DIR}/ctp.info" \
-     --ignore-errors mismatch,negative,unused >/dev/null 2>&1 || true
+     >/dev/null 2>&1 || true
 
 lcov --extract coverage_filtered.info \
-     '/workspace/context-runtime/src/*' \
-     '/workspace/context-runtime/include/*' \
-     '/workspace/context-runtime/modules/*/src/*' \
-     '/workspace/context-runtime/modules/*/include/*' \
+     "${REPO_ROOT}/context-runtime/src/*" \
+     "${REPO_ROOT}/context-runtime/include/*" \
+     "${REPO_ROOT}/context-runtime/modules/*/src/*" \
+     "${REPO_ROOT}/context-runtime/modules/*/include/*" \
      --output-file "${TMP_DIR}/runtime.info" \
-     --ignore-errors mismatch,negative,unused >/dev/null 2>&1 || true
+     >/dev/null 2>&1 || true
 
 lcov --extract coverage_filtered.info \
-     '/workspace/context-transfer-engine/core/src/*' \
-     '/workspace/context-transfer-engine/core/include/*' \
+     "${REPO_ROOT}/context-transfer-engine/core/src/*" \
+     "${REPO_ROOT}/context-transfer-engine/core/include/*" \
      --output-file "${TMP_DIR}/cte.info" \
-     --ignore-errors mismatch,negative,unused >/dev/null 2>&1 || true
+     >/dev/null 2>&1 || true
 
 lcov --extract coverage_filtered.info \
-     '/workspace/context-assimilation-engine/core/src/*' \
-     '/workspace/context-assimilation-engine/core/include/*' \
+     "${REPO_ROOT}/context-assimilation-engine/core/src/*" \
+     "${REPO_ROOT}/context-assimilation-engine/core/include/*" \
      --output-file "${TMP_DIR}/cae.info" \
-     --ignore-errors mismatch,negative,unused >/dev/null 2>&1 || true
+     >/dev/null 2>&1 || true
 
 lcov --extract coverage_filtered.info \
-     '/workspace/context-exploration-engine/api/src/*' \
-     '/workspace/context-exploration-engine/api/include/*' \
+     "${REPO_ROOT}/context-exploration-engine/api/src/*" \
+     "${REPO_ROOT}/context-exploration-engine/api/include/*" \
      --output-file "${TMP_DIR}/cee.info" \
-     --ignore-errors mismatch,negative,unused >/dev/null 2>&1 || true
+     >/dev/null 2>&1 || true
 
 ################################################################################
 # Step 9: Generate summary report
@@ -474,7 +473,7 @@ EOFSUM
 
 echo "" >> "${BUILD_DIR}/COVERAGE_SUMMARY.txt"
 echo "=== Overall Coverage ===" >> "${BUILD_DIR}/COVERAGE_SUMMARY.txt"
-lcov --summary coverage_filtered.info --ignore-errors mismatch,negative 2>&1 | \
+lcov --summary coverage_filtered.info 2>&1 | \
     grep -E "lines|functions" >> "${BUILD_DIR}/COVERAGE_SUMMARY.txt"
 
 echo "" >> "${BUILD_DIR}/COVERAGE_SUMMARY.txt"
@@ -502,7 +501,7 @@ for COMPONENT in ctp runtime cte cae cee; do
     if [ -f "${TMP_DIR}/${COMPONENT}.info" ] && [ -s "${TMP_DIR}/${COMPONENT}.info" ]; then
         echo "" >> "${BUILD_DIR}/COVERAGE_SUMMARY.txt"
         echo "${NAME}:" >> "${BUILD_DIR}/COVERAGE_SUMMARY.txt"
-        lcov --summary "${TMP_DIR}/${COMPONENT}.info" --ignore-errors mismatch,negative 2>&1 | \
+        lcov --summary "${TMP_DIR}/${COMPONENT}.info" 2>&1 | \
             grep -E "lines|functions" | sed 's/^/  /' >> "${BUILD_DIR}/COVERAGE_SUMMARY.txt"
     fi
 done
