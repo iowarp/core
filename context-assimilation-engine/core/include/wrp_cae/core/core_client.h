@@ -110,6 +110,25 @@ class Client : public chi::ContainerClient {
    * @param dataset_path Path to the dataset within the HDF5 file
    * @param tag_prefix Tag prefix for CTE storage
    */
+  /**
+   * Asynchronous ExportData - export all blobs in a CTE tag to a file
+   * @param tag_name  Name of the CTE tag to export
+   * @param output_path  Destination file path
+   * @param format  Export format: "hdf5" or "binary"
+   * @param pool_query  Pool query for routing (default: Local)
+   */
+  chi::Future<ExportDataTask> AsyncExportData(
+      const std::string &tag_name,
+      const std::string &output_path,
+      const std::string &format,
+      const chi::PoolQuery &pool_query = chi::PoolQuery::Local()) {
+    auto *ipc_manager = CHI_IPC;
+    auto task = ipc_manager->NewTask<ExportDataTask>(
+        chi::CreateTaskId(), pool_id_, pool_query,
+        tag_name, output_path, format);
+    return ipc_manager->Send(task);
+  }
+
   chi::Future<ProcessHdf5DatasetTask> AsyncProcessHdf5Dataset(
       const chi::PoolQuery& pool_query,
       const std::string& file_path,

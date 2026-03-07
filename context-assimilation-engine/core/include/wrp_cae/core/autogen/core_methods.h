@@ -18,8 +18,9 @@ GLOBAL_CONST chi::u32 kMonitor = 9;
 // core-specific methods
 GLOBAL_CONST chi::u32 kParseOmni = 10;
 GLOBAL_CONST chi::u32 kProcessHdf5Dataset = 11;
+GLOBAL_CONST chi::u32 kExportData = 12;
 
-GLOBAL_CONST chi::u32 kMaxMethodId = 12;
+GLOBAL_CONST chi::u32 kMaxMethodId = 13;
 }  // namespace Method
 
 }  // namespace wrp_cae::core
