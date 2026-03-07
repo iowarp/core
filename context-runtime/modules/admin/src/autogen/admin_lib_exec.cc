@@ -202,132 +202,132 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
   switch (method) {
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetOrCreatePool: {
       auto typed_task = task_ptr.template Cast<admin::GetOrCreatePoolTask<admin::CreateParams>>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDestroyPool: {
       auto typed_task = task_ptr.template Cast<DestroyPoolTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kStopRuntime: {
       auto typed_task = task_ptr.template Cast<StopRuntimeTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kFlush: {
       auto typed_task = task_ptr.template Cast<FlushTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kSend: {
       auto typed_task = task_ptr.template Cast<SendTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRecv: {
       auto typed_task = task_ptr.template Cast<RecvTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kClientConnect: {
       auto typed_task = task_ptr.template Cast<ClientConnectTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kSubmitBatch: {
       auto typed_task = task_ptr.template Cast<SubmitBatchTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kWreapDeadIpcs: {
       auto typed_task = task_ptr.template Cast<WreapDeadIpcsTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kClientRecv: {
       auto typed_task = task_ptr.template Cast<ClientRecvTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kClientSend: {
       auto typed_task = task_ptr.template Cast<ClientSendTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRegisterMemory: {
       auto typed_task = task_ptr.template Cast<RegisterMemoryTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRestartContainers: {
       auto typed_task = task_ptr.template Cast<RestartContainersTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kAddNode: {
       auto typed_task = task_ptr.template Cast<AddNodeTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kChangeAddressTable: {
       auto typed_task = task_ptr.template Cast<ChangeAddressTableTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kMigrateContainers: {
       auto typed_task = task_ptr.template Cast<MigrateContainersTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kHeartbeat: {
       auto typed_task = task_ptr.template Cast<HeartbeatTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kHeartbeatProbe: {
       auto typed_task = task_ptr.template Cast<HeartbeatProbeTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kProbeRequest: {
       auto typed_task = task_ptr.template Cast<ProbeRequestTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRecoverContainers: {
       auto typed_task = task_ptr.template Cast<RecoverContainersTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kSystemMonitor: {
       auto typed_task = task_ptr.template Cast<SystemMonitorTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kAnnounceShutdown: {
       auto typed_task = task_ptr.template Cast<AnnounceShutdownTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRegisterGpuContainer: {
       auto typed_task = task_ptr.template Cast<RegisterGpuContainerTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     default: {
@@ -342,132 +342,132 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
   switch (method) {
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetOrCreatePool: {
       auto typed_task = task_ptr.template Cast<admin::GetOrCreatePoolTask<admin::CreateParams>>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDestroyPool: {
       auto typed_task = task_ptr.template Cast<DestroyPoolTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kStopRuntime: {
       auto typed_task = task_ptr.template Cast<StopRuntimeTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kFlush: {
       auto typed_task = task_ptr.template Cast<FlushTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kSend: {
       auto typed_task = task_ptr.template Cast<SendTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRecv: {
       auto typed_task = task_ptr.template Cast<RecvTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kClientConnect: {
       auto typed_task = task_ptr.template Cast<ClientConnectTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kSubmitBatch: {
       auto typed_task = task_ptr.template Cast<SubmitBatchTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kWreapDeadIpcs: {
       auto typed_task = task_ptr.template Cast<WreapDeadIpcsTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kClientRecv: {
       auto typed_task = task_ptr.template Cast<ClientRecvTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kClientSend: {
       auto typed_task = task_ptr.template Cast<ClientSendTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRegisterMemory: {
       auto typed_task = task_ptr.template Cast<RegisterMemoryTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRestartContainers: {
       auto typed_task = task_ptr.template Cast<RestartContainersTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kAddNode: {
       auto typed_task = task_ptr.template Cast<AddNodeTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kChangeAddressTable: {
       auto typed_task = task_ptr.template Cast<ChangeAddressTableTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kMigrateContainers: {
       auto typed_task = task_ptr.template Cast<MigrateContainersTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kHeartbeat: {
       auto typed_task = task_ptr.template Cast<HeartbeatTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kHeartbeatProbe: {
       auto typed_task = task_ptr.template Cast<HeartbeatProbeTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kProbeRequest: {
       auto typed_task = task_ptr.template Cast<ProbeRequestTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRecoverContainers: {
       auto typed_task = task_ptr.template Cast<RecoverContainersTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kSystemMonitor: {
       auto typed_task = task_ptr.template Cast<SystemMonitorTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kAnnounceShutdown: {
       auto typed_task = task_ptr.template Cast<AnnounceShutdownTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRegisterGpuContainer: {
       auto typed_task = task_ptr.template Cast<RegisterGpuContainerTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     default: {
@@ -491,156 +491,156 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetOrCreatePool: {
       auto typed_task = task_ptr.template Cast<admin::GetOrCreatePoolTask<admin::CreateParams>>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDestroyPool: {
       auto typed_task = task_ptr.template Cast<DestroyPoolTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kStopRuntime: {
       auto typed_task = task_ptr.template Cast<StopRuntimeTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kFlush: {
       auto typed_task = task_ptr.template Cast<FlushTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kSend: {
       auto typed_task = task_ptr.template Cast<SendTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRecv: {
       auto typed_task = task_ptr.template Cast<RecvTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kClientConnect: {
       auto typed_task = task_ptr.template Cast<ClientConnectTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kSubmitBatch: {
       auto typed_task = task_ptr.template Cast<SubmitBatchTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kWreapDeadIpcs: {
       auto typed_task = task_ptr.template Cast<WreapDeadIpcsTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kClientRecv: {
       auto typed_task = task_ptr.template Cast<ClientRecvTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kClientSend: {
       auto typed_task = task_ptr.template Cast<ClientSendTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRegisterMemory: {
       auto typed_task = task_ptr.template Cast<RegisterMemoryTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRestartContainers: {
       auto typed_task = task_ptr.template Cast<RestartContainersTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kAddNode: {
       auto typed_task = task_ptr.template Cast<AddNodeTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kChangeAddressTable: {
       auto typed_task = task_ptr.template Cast<ChangeAddressTableTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kMigrateContainers: {
       auto typed_task = task_ptr.template Cast<MigrateContainersTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kHeartbeat: {
       auto typed_task = task_ptr.template Cast<HeartbeatTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kHeartbeatProbe: {
       auto typed_task = task_ptr.template Cast<HeartbeatProbeTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kProbeRequest: {
       auto typed_task = task_ptr.template Cast<ProbeRequestTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRecoverContainers: {
       auto typed_task = task_ptr.template Cast<RecoverContainersTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kSystemMonitor: {
       auto typed_task = task_ptr.template Cast<SystemMonitorTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kAnnounceShutdown: {
       auto typed_task = task_ptr.template Cast<AnnounceShutdownTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRegisterGpuContainer: {
       auto typed_task = task_ptr.template Cast<RegisterGpuContainerTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     default: {
@@ -664,156 +664,156 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetOrCreatePool: {
       auto typed_task = task_ptr.template Cast<admin::GetOrCreatePoolTask<admin::CreateParams>>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDestroyPool: {
       auto typed_task = task_ptr.template Cast<DestroyPoolTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kStopRuntime: {
       auto typed_task = task_ptr.template Cast<StopRuntimeTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kFlush: {
       auto typed_task = task_ptr.template Cast<FlushTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kSend: {
       auto typed_task = task_ptr.template Cast<SendTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRecv: {
       auto typed_task = task_ptr.template Cast<RecvTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kClientConnect: {
       auto typed_task = task_ptr.template Cast<ClientConnectTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kSubmitBatch: {
       auto typed_task = task_ptr.template Cast<SubmitBatchTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kWreapDeadIpcs: {
       auto typed_task = task_ptr.template Cast<WreapDeadIpcsTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kClientRecv: {
       auto typed_task = task_ptr.template Cast<ClientRecvTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kClientSend: {
       auto typed_task = task_ptr.template Cast<ClientSendTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRegisterMemory: {
       auto typed_task = task_ptr.template Cast<RegisterMemoryTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRestartContainers: {
       auto typed_task = task_ptr.template Cast<RestartContainersTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kAddNode: {
       auto typed_task = task_ptr.template Cast<AddNodeTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kChangeAddressTable: {
       auto typed_task = task_ptr.template Cast<ChangeAddressTableTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kMigrateContainers: {
       auto typed_task = task_ptr.template Cast<MigrateContainersTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kHeartbeat: {
       auto typed_task = task_ptr.template Cast<HeartbeatTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kHeartbeatProbe: {
       auto typed_task = task_ptr.template Cast<HeartbeatProbeTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kProbeRequest: {
       auto typed_task = task_ptr.template Cast<ProbeRequestTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRecoverContainers: {
       auto typed_task = task_ptr.template Cast<RecoverContainersTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kSystemMonitor: {
       auto typed_task = task_ptr.template Cast<SystemMonitorTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kAnnounceShutdown: {
       auto typed_task = task_ptr.template Cast<AnnounceShutdownTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRegisterGpuContainer: {
       auto typed_task = task_ptr.template Cast<RegisterGpuContainerTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     default: {

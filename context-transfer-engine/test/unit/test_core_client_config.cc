@@ -429,7 +429,7 @@ TEST_CASE("Client - AsyncPutBlob Direct", "[core][client][blob]") {
   auto *ipc = CHI_IPC;
   hipc::FullPtr<char> shm_ptr = ipc->AllocateBuffer(data.size());
   REQUIRE(!shm_ptr.IsNull());
-  memcpy(shm_ptr.ptr_, data.data(), data.size());
+  memcpy(shm_ptr.get(), data.data(), data.size());
 
   // Put blob
   hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
@@ -457,7 +457,7 @@ TEST_CASE("Client - AsyncGetBlob Direct", "[core][client][blob]") {
   auto data = fixture.CreateTestData(fixture.kTestDataSize);
   auto *ipc = CHI_IPC;
   hipc::FullPtr<char> put_ptr = ipc->AllocateBuffer(data.size());
-  memcpy(put_ptr.ptr_, data.data(), data.size());
+  memcpy(put_ptr.get(), data.data(), data.size());
   hipc::ShmPtr<> put_ref(put_ptr.shm_);
 
   auto put_task = client->AsyncPutBlob(tag_task->tag_id_, "get_test_blob", 0,
@@ -495,7 +495,7 @@ TEST_CASE("Client - AsyncDelBlob", "[core][client][blob]") {
   auto data = fixture.CreateTestData(fixture.kTestDataSize);
   auto *ipc = CHI_IPC;
   hipc::FullPtr<char> shm_ptr = ipc->AllocateBuffer(data.size());
-  memcpy(shm_ptr.ptr_, data.data(), data.size());
+  memcpy(shm_ptr.get(), data.data(), data.size());
   hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
 
   auto put_task = client->AsyncPutBlob(tag_task->tag_id_, "blob_to_delete", 0,
@@ -526,7 +526,7 @@ TEST_CASE("Client - AsyncReorganizeBlob Direct", "[core][client][blob]") {
   auto data = fixture.CreateTestData(fixture.kTestDataSize);
   auto *ipc = CHI_IPC;
   hipc::FullPtr<char> shm_ptr = ipc->AllocateBuffer(data.size());
-  memcpy(shm_ptr.ptr_, data.data(), data.size());
+  memcpy(shm_ptr.get(), data.data(), data.size());
   hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
 
   auto put_task = client->AsyncPutBlob(tag_task->tag_id_, "reorg_blob", 0,
@@ -559,7 +559,7 @@ TEST_CASE("Client - AsyncGetBlobScore Direct", "[core][client][blob]") {
   auto data = fixture.CreateTestData(fixture.kTestDataSize);
   auto *ipc = CHI_IPC;
   hipc::FullPtr<char> shm_ptr = ipc->AllocateBuffer(data.size());
-  memcpy(shm_ptr.ptr_, data.data(), data.size());
+  memcpy(shm_ptr.get(), data.data(), data.size());
   hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
 
   float expected_score = 0.35f;
@@ -593,7 +593,7 @@ TEST_CASE("Client - AsyncGetBlobSize Direct", "[core][client][blob]") {
   auto data = fixture.CreateTestData(fixture.kTestDataSize);
   auto *ipc = CHI_IPC;
   hipc::FullPtr<char> shm_ptr = ipc->AllocateBuffer(data.size());
-  memcpy(shm_ptr.ptr_, data.data(), data.size());
+  memcpy(shm_ptr.get(), data.data(), data.size());
   hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
 
   auto put_task = client->AsyncPutBlob(tag_task->tag_id_, "sized_blob", 0,
@@ -628,7 +628,7 @@ TEST_CASE("Client - AsyncGetContainedBlobs Direct", "[core][client][blob]") {
   for (int i = 0; i < 3; ++i) {
     auto data = fixture.CreateTestData(fixture.kTestDataSize);
     hipc::FullPtr<char> shm_ptr = ipc->AllocateBuffer(data.size());
-    memcpy(shm_ptr.ptr_, data.data(), data.size());
+    memcpy(shm_ptr.get(), data.data(), data.size());
     hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
 
     std::string blob_name = "blob_" + std::to_string(i);
@@ -688,7 +688,7 @@ TEST_CASE("Client - AsyncBlobQuery", "[core][client][query]") {
   auto data = fixture.CreateTestData(fixture.kTestDataSize);
   auto *ipc = CHI_IPC;
   hipc::FullPtr<char> shm_ptr = ipc->AllocateBuffer(data.size());
-  memcpy(shm_ptr.ptr_, data.data(), data.size());
+  memcpy(shm_ptr.get(), data.data(), data.size());
   hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
 
   auto put_task = client->AsyncPutBlob(tag_task->tag_id_, "queryable_blob", 0,

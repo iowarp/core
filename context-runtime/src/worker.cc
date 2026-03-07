@@ -112,7 +112,7 @@ bool Worker::Init() {
           ->template NewObj<hshm::ipc::mpsc_ring_buffer<
               Future<Task, CHI_MAIN_ALLOC_T>, hshm::ipc::MallocAllocator>>(
               HSHM_MALLOC, EVENT_QUEUE_DEPTH)
-          .ptr_;
+          .get();
 
   // Get scheduler from IpcManager (IpcManager is the single owner)
   scheduler_ = CHI_IPC->GetScheduler();

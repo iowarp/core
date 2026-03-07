@@ -399,7 +399,7 @@ void IpcManager::ServerFinalize() {
 // Template methods (NewTask, DelTask, AllocateBuffer, Enqueue) are implemented
 // inline in the header
 
-TaskQueue *IpcManager::GetTaskQueue() { return worker_queues_.ptr_; }
+TaskQueue *IpcManager::GetTaskQueue() { return worker_queues_.get(); }
 
 bool IpcManager::IsInitialized() const { return is_initialized_; }
 
@@ -711,9 +711,9 @@ bool IpcManager::ServerInitGpuQueues() {
     if (num_gpus > 0) {
       gpu_megakernel_info_.backend =
           static_cast<hipc::MemoryBackend &>(*megakernel_backends_[0]);
-      gpu_megakernel_info_.to_gpu_queue = to_gpu_queues_[0].ptr_;
-      gpu_megakernel_info_.from_gpu_queue = gpu_queues_[0].ptr_;
-      gpu_megakernel_info_.gpu_to_gpu_queue = gpu_to_gpu_queues_[0].ptr_;
+      gpu_megakernel_info_.to_gpu_queue = to_gpu_queues_[0].get();
+      gpu_megakernel_info_.from_gpu_queue = gpu_queues_[0].get();
+      gpu_megakernel_info_.gpu_to_gpu_queue = gpu_to_gpu_queues_[0].get();
       gpu_megakernel_info_.queue_backend_base = gpu_backends_[0]->data_;
       gpu_megakernel_info_.gpu_queue_depth = queue_depth;
     }

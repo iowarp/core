@@ -381,7 +381,7 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
 
   // Pre-allocate send_map_key using origin_task pointer
   // This ensures consistent net_key across all replicas
-  size_t send_map_key = size_t(origin_task.ptr_);
+  size_t send_map_key = size_t(origin_task.get());
 
   // Add the origin task to send_map before creating copies
   // Note: No lock needed - single net worker processes all Send/Recv tasks

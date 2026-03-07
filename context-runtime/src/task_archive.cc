@@ -111,10 +111,10 @@ void LoadTaskArchive::bulk(hipc::ShmPtr<> &ptr, size_t size, uint32_t flags) {
         // the ShmPtr (which checks offset) rather than alloc_id_.
         if (!ptr.IsNull()) {
           hipc::FullPtr<char> dst = CHI_IPC->ToFullPtr(ptr).template Cast<char>();
-          char *src = recv[current_bulk_index_].data.ptr_;
+          char *src = recv[current_bulk_index_].data.get();
           size_t copy_size = recv[current_bulk_index_].size;
-          if (dst.ptr_ && src) {
-            memcpy(dst.ptr_, src, copy_size);
+          if (dst.get() && src) {
+            memcpy(dst.get(), src, copy_size);
           }
         } else {
           // No original buffer — zero-copy, point directly at recv buffer

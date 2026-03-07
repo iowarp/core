@@ -300,7 +300,7 @@ class CTEScoreBenchmark {
 
     // Allocate shared memory buffer for Put operations
     auto shm_buffer = CHI_IPC->AllocateBuffer(kBlobSize);
-    std::memset(shm_buffer.ptr_, rank_ & 0xFF, kBlobSize);
+    std::memset(shm_buffer.get(), rank_ & 0xFF, kBlobSize);
     hipc::ShmPtr<> shm_ptr = shm_buffer.shm_.template Cast<void>();
 
     auto *cte_client = WRP_CTE_CLIENT;

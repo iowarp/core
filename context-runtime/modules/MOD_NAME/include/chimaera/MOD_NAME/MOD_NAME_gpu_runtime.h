@@ -43,9 +43,9 @@ class GpuRuntime : public chi::gpu::Container {
       if (task.IsNull()) {
         return hipc::FullPtr<chi::Task>::GetNull();
       }
-      new (task.ptr_) GpuSubmitTask();
+      new (task.get()) GpuSubmitTask();
       archive.SetMsgType(chi::LocalMsgType::kSerializeIn);
-      task.ptr_->SerializeIn(archive);
+      task->SerializeIn(archive);
       return task.template Cast<chi::Task>();
     }
     return hipc::FullPtr<chi::Task>::GetNull();

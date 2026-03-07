@@ -156,7 +156,7 @@ TEST_CASE("LocalSerialize GPU", "[gpu][serialize]") {
 
     // Step 3: Allocate a priv::vector<char> from allocator
     using CharVector = hshm::priv::vector<char, AllocT>;
-    CharVector *vec_ptr = alloc_ptr->NewObj<CharVector>(alloc_ptr).ptr_;
+    CharVector *vec_ptr = alloc_ptr->NewObj<CharVector>(alloc_ptr).get();
     REQUIRE(vec_ptr != nullptr);
 
     // Reserve space for serialized data
@@ -240,7 +240,7 @@ TEST_CASE("LocalSerialize GPU", "[gpu][serialize]") {
     REQUIRE(alloc_ptr != nullptr);
 
     using CharVector = hshm::priv::vector<char, AllocT>;
-    CharVector *vec_ptr = alloc_ptr->NewObj<CharVector>(alloc_ptr).ptr_;
+    CharVector *vec_ptr = alloc_ptr->NewObj<CharVector>(alloc_ptr).get();
     REQUIRE(vec_ptr != nullptr);
 
     // Reserve space for larger data
@@ -314,7 +314,7 @@ TEST_CASE("LocalSerialize GPU", "[gpu][serialize]") {
     REQUIRE(alloc_ptr != nullptr);
 
     using CharVector = hshm::priv::vector<char, AllocT>;
-    CharVector *vec_ptr = alloc_ptr->NewObj<CharVector>(alloc_ptr).ptr_;
+    CharVector *vec_ptr = alloc_ptr->NewObj<CharVector>(alloc_ptr).get();
     REQUIRE(vec_ptr != nullptr);
     vec_ptr->reserve(4096);
 

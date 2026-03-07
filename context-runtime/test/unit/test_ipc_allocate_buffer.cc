@@ -67,13 +67,13 @@ TEST_CASE("CHI_IPC AllocateBuffer basic functionality",
         ipc_manager->AllocateBuffer(buffer_size);
 
     REQUIRE_FALSE(buffer_ptr.IsNull());
-    REQUIRE(buffer_ptr.ptr_ != nullptr);
+    REQUIRE(buffer_ptr.get() != nullptr);
 
     // Test basic memory access
-    memset(buffer_ptr.ptr_, 0xAA, buffer_size);
+    memset(buffer_ptr.get(), 0xAA, buffer_size);
 
     // Verify data was written
-    unsigned char* byte_ptr = reinterpret_cast<unsigned char*>(buffer_ptr.ptr_);
+    unsigned char* byte_ptr = reinterpret_cast<unsigned char*>(buffer_ptr.get());
     for (size_t i = 0; i < buffer_size; ++i) {
       REQUIRE(byte_ptr[i] == 0xAA);
     }
@@ -85,17 +85,17 @@ TEST_CASE("CHI_IPC AllocateBuffer basic functionality",
         ipc_manager->AllocateBuffer(buffer_size);
 
     REQUIRE_FALSE(char_buffer.IsNull());
-    REQUIRE(char_buffer.ptr_ != nullptr);
+    REQUIRE(char_buffer.get() != nullptr);
 
     // Test typed buffer access
     const char* test_string = "CHI_IPC AllocateBuffer test";
     size_t test_len = strlen(test_string);
     REQUIRE(test_len < buffer_size);
 
-    strncpy(char_buffer.ptr_, test_string, buffer_size - 1);
-    char_buffer.ptr_[buffer_size - 1] = '\0';
+    strncpy(char_buffer.get(), test_string, buffer_size - 1);
+    char_buffer[buffer_size - 1] = '\0';
 
-    REQUIRE(strcmp(char_buffer.ptr_, test_string) == 0);
+    REQUIRE(strcmp(char_buffer.get(), test_string) == 0);
   }
 
   SECTION("Allocate integer buffer") {
@@ -103,10 +103,10 @@ TEST_CASE("CHI_IPC AllocateBuffer basic functionality",
     hipc::FullPtr<char> buffer = ipc_manager->AllocateBuffer(num_ints);
 
     REQUIRE_FALSE(buffer.IsNull());
-    REQUIRE(buffer.ptr_ != nullptr);
+    REQUIRE(buffer.get() != nullptr);
 
     // Cast to int pointer for testing
-    int* int_buffer = reinterpret_cast<int*>(buffer.ptr_);
+    int* int_buffer = reinterpret_cast<int*>(buffer.get());
 
     // Test integer array operations
     for (size_t i = 0; i < 100; ++i) {
@@ -163,14 +163,14 @@ TEST_CASE("CHI_IPC AllocateBuffer size variations",
           ipc_manager->AllocateBuffer(size);
 
       REQUIRE_FALSE(buffer.IsNull());
-      REQUIRE(buffer.ptr_ != nullptr);
+      REQUIRE(buffer.get() != nullptr);
 
       // Test memory access at boundaries
-      buffer.ptr_[0] = 0x01;         // First byte
-      buffer.ptr_[size - 1] = static_cast<char>(0xFF);  // Last byte
+      buffer[0] = 0x01;         // First byte
+      buffer[size - 1] = static_cast<char>(0xFF);  // Last byte
 
-      REQUIRE(buffer.ptr_[0] == 0x01);
-      REQUIRE(static_cast<unsigned char>(buffer.ptr_[size - 1]) == 0xFF);
+      REQUIRE(buffer[0] == 0x01);
+      REQUIRE(static_cast<unsigned char>(buffer[size - 1]) == 0xFF);
     }
   }
 
@@ -208,20 +208,20 @@ TEST_CASE("CHI_IPC AllocateBuffer multiple allocations",
     // Write unique data to each buffer
     for (size_t i = 0; i < num_buffers; ++i) {
       std::string test_data = "Buffer " + std::to_string(i);
-      strncpy(buffers[i].ptr_, test_data.c_str(), buffer_size - 1);
-      buffers[i].ptr_[buffer_size - 1] = '\0';
+      strncpy(buffers[i].get(), test_data.c_str(), buffer_size - 1);
+      buffers[i][buffer_size - 1] = '\0';
     }
 
     // Verify data integrity
     for (size_t i = 0; i < num_buffers; ++i) {
       std::string expected = "Buffer " + std::to_string(i);
-      REQUIRE(strcmp(buffers[i].ptr_, expected.c_str()) == 0);
+      REQUIRE(strcmp(buffers[i].get(), expected.c_str()) == 0);
     }
 
     // Verify all buffers have different addresses
     for (size_t i = 0; i < num_buffers; ++i) {
       for (size_t j = i + 1; j < num_buffers; ++j) {
-        REQUIRE(buffers[i].ptr_ != buffers[j].ptr_);
+        REQUIRE(buffers[i].get() != buffers[j].get());
       }
     }
   }
@@ -245,14 +245,14 @@ TEST_CASE("CHI_IPC AllocateBuffer client vs runtime behavior",
 
     hipc::FullPtr<char> buffer = ipc_manager->AllocateBuffer(100);
     REQUIRE_FALSE(buffer.IsNull());
-    REQUIRE(buffer.ptr_ != nullptr);
+    REQUIRE(buffer.get() != nullptr);
 
     // Test basic functionality
-    buffer.ptr_[0] = 42;
-    buffer.ptr_[99] = 84;
+    buffer[0] = 42;
+    buffer[99] = 84;
 
-    REQUIRE(buffer.ptr_[0] == 42);
-    REQUIRE(buffer.ptr_[99] == 84);
+    REQUIRE(buffer[0] == 42);
+    REQUIRE(buffer[99] == 84);
   }
 }
 
@@ -274,9 +274,9 @@ TEST_CASE("CHI_IPC AllocateBuffer memory alignment",
     REQUIRE_FALSE(double_buffer.IsNull());
 
     // Check pointer alignment (implementation dependent)
-    uintptr_t char_addr = reinterpret_cast<uintptr_t>(char_buffer.ptr_);
-    uintptr_t int_addr = reinterpret_cast<uintptr_t>(int_buffer.ptr_);
-    uintptr_t double_addr = reinterpret_cast<uintptr_t>(double_buffer.ptr_);
+    uintptr_t char_addr = reinterpret_cast<uintptr_t>(char_buffer.get());
+    uintptr_t int_addr = reinterpret_cast<uintptr_t>(int_buffer.get());
+    uintptr_t double_addr = reinterpret_cast<uintptr_t>(double_buffer.get());
 
     // int should be aligned to at least 4 bytes
     REQUIRE((int_addr % alignof(int)) == 0);
@@ -308,14 +308,14 @@ TEST_CASE("CHI_IPC AllocateBuffer documentation examples",
         ipc_manager->AllocateBuffer(buffer_size);
 
     REQUIRE_FALSE(buffer_ptr.IsNull());
-    REQUIRE(buffer_ptr.ptr_ != nullptr);
+    REQUIRE(buffer_ptr.get() != nullptr);
 
     // Use the buffer (example: copy data into it)
     const char* source_data = "Documentation example data";
     size_t data_size = strlen(source_data) + 1;
     REQUIRE(data_size <= buffer_size);
 
-    void* buffer_data = buffer_ptr.ptr_;
+    void* buffer_data = buffer_ptr.get();
     memcpy(buffer_data, source_data, data_size);
 
     // Verify the copy
@@ -326,10 +326,10 @@ TEST_CASE("CHI_IPC AllocateBuffer documentation examples",
         ipc_manager->AllocateBuffer(buffer_size);
     REQUIRE_FALSE(char_buffer.IsNull());
 
-    strncpy(char_buffer.ptr_, "example data", buffer_size - 1);
-    char_buffer.ptr_[buffer_size - 1] = '\0';
+    strncpy(char_buffer.get(), "example data", buffer_size - 1);
+    char_buffer[buffer_size - 1] = '\0';
 
-    REQUIRE(strcmp(char_buffer.ptr_, "example data") == 0);
+    REQUIRE(strcmp(char_buffer.get(), "example data") == 0);
 
     // The buffer will be automatically freed when buffer_ptr goes out of scope
     // or when explicitly deallocated by the framework

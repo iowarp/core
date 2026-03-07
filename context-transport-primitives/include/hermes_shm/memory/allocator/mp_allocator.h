@@ -388,9 +388,9 @@ class _MultiProcessAllocator : public Allocator {
     }
 
     // Initialize ThreadBlock with the region size and store in TLS
-    tblock_ptr.ptr_->shm_init(GetBackend(), thread_unit_, pblock->tid_count_++);
-    HSHM_THREAD_MODEL->SetTls<void>(pblock->tblock_key_, reinterpret_cast<void*>(tblock_ptr.ptr_));
-    return tblock_ptr.ptr_;
+    tblock_ptr.get()->shm_init(GetBackend(), thread_unit_, pblock->tid_count_++);
+    HSHM_THREAD_MODEL->SetTls<void>(pblock->tblock_key_, reinterpret_cast<void*>(tblock_ptr.get()));
+    return tblock_ptr.get();
   }
 
   /**
@@ -470,7 +470,7 @@ class _MultiProcessAllocator : public Allocator {
       auto node = free_procs_.pop(&alloc_);
       if (!node.IsNull()) {
         pblock_ptr = node.Cast<ProcessBlock>();
-        pid = pblock_ptr.ptr_->pid_;  // Get the pid from the existing block
+        pid = pblock_ptr.get()->pid_;  // Get the pid from the existing block
       }
     }
 
@@ -486,7 +486,7 @@ class _MultiProcessAllocator : public Allocator {
       }
 
       // Step 3d: Call shm_init on the ProcessBlock with the region size
-      if (!pblock_ptr.ptr_->shm_init(GetBackend(), process_unit_, pid)) {
+      if (!pblock_ptr.get()->shm_init(GetBackend(), process_unit_, pid)) {
         alloc_.Free(pblock_ptr);  // Free the SINGLE allocation on error
         return FullPtr<ProcessBlock>::GetNull();
       }
@@ -496,7 +496,7 @@ class _MultiProcessAllocator : public Allocator {
     alloc_procs_.emplace(&alloc_, pblock_ptr);
 
     // Step 5: Call SetProcessBlock(pblock)
-    SetProcessBlock(pblock_ptr.ptr_);
+    SetProcessBlock(pblock_ptr.get());
 
     // Step 6: Return the ProcessBlock FullPtr
     return pblock_ptr;

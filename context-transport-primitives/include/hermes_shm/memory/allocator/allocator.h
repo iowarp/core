@@ -811,7 +811,7 @@ public:
 
   /** Ostream operator */
   friend std::ostream &operator<<(std::ostream &os, const FullPtr &ptr) {
-    os << (void *)ptr.ptr_ << " " << ptr.shm_;
+    os << (void *)ptr.get() << " " << ptr.shm_;
     return os;
   }
 
@@ -840,7 +840,7 @@ public:
       shm_.off_ = shm.load();
       shm_.alloc_id_ = alloc->GetId();
       char *backend_data = alloc->GetBackendData();
-      ptr_ = reinterpret_cast<T *>(backend_data + shm.load());
+      set_ptr(reinterpret_cast<T*>(backend_data + shm.load()));
     } else {
       SetNull();
     }
@@ -851,7 +851,7 @@ public:
   HSHM_CROSS_FUN explicit FullPtr(AllocT *alloc, size_t offset) {
     shm_.off_ = offset;
     shm_.alloc_id_ = alloc->GetId();
-    ptr_ = reinterpret_cast<T *>(alloc->GetBackendData() + offset);
+    set_ptr(reinterpret_cast<T*>(alloc->GetBackendData() + offset));
   }
 
   /** Shared half + alloc constructor for ShmPtr */
@@ -861,7 +861,7 @@ public:
     if (alloc->ContainsPtr(shm)) {
       shm_.off_ = shm.off_.load();
       shm_.alloc_id_ = shm.alloc_id_;
-      ptr_ = reinterpret_cast<T *>(alloc->GetBackendData() + shm.off_.load());
+      set_ptr(reinterpret_cast<T*>(alloc->GetBackendData() + shm.off_.load()));
     } else {
       SetNull();
     }
@@ -874,7 +874,7 @@ public:
       shm_.off_ = (size_t)(reinterpret_cast<const char *>(ptr) -
                            alloc->GetBackendData());
       shm_.alloc_id_ = alloc->GetId();
-      ptr_ = const_cast<T *>(ptr);
+      set_ptr(const_cast<T *>(ptr));
     } else {
       SetNull();
     }
@@ -882,18 +882,18 @@ public:
 
   /** Copy constructor */
   HSHM_INLINE_CROSS_FUN FullPtr(const FullPtr &other)
-      : ptr_(other.ptr_), shm_(other.shm_) {}
+      : ptr_(other.get()), shm_(other.shm_) {}
 
   /** Move constructor */
   HSHM_INLINE_CROSS_FUN FullPtr(FullPtr &&other) noexcept
-      : ptr_(other.ptr_), shm_(other.shm_) {
+      : ptr_(other.get()), shm_(other.shm_) {
     other.SetNull();
   }
 
   /** Copy assignment operator */
   HSHM_INLINE_CROSS_FUN FullPtr &operator=(const FullPtr &other) {
     if (this != &other) {
-      ptr_ = other.ptr_;
+      set_ptr(other.get());
       shm_ = other.shm_;
     }
     return *this;
@@ -902,7 +902,7 @@ public:
   /** Move assignment operator */
   HSHM_INLINE_CROSS_FUN FullPtr &operator=(FullPtr &&other) {
     if (this != &other) {
-      ptr_ = other.ptr_;
+      set_ptr(other.get());
       shm_ = other.shm_;
       other.SetNull();
     }
@@ -947,48 +947,48 @@ public:
 
   /** Equality operator */
   HSHM_INLINE_CROSS_FUN bool operator==(const FullPtr &other) const {
-    return ptr_ == other.ptr_ && shm_ == other.shm_;
+    return get() == other.get() && shm_ == other.shm_;
   }
 
   /** Inequality operator */
   HSHM_INLINE_CROSS_FUN bool operator!=(const FullPtr &other) const {
-    return ptr_ != other.ptr_ || shm_ != other.shm_;
+    return get() != other.get() || shm_ != other.shm_;
   }
 
   /** Addition operator */
   HSHM_INLINE_CROSS_FUN FullPtr operator+(size_t size) const {
-    return FullPtr(ptr_ + size, shm_ + size);
+    return FullPtr(get() + size, shm_ + size);
   }
 
   /** Subtraction operator */
   HSHM_INLINE_CROSS_FUN FullPtr operator-(size_t size) const {
-    return FullPtr(ptr_ - size, shm_ - size);
+    return FullPtr(get() - size, shm_ - size);
   }
 
   /** Addition assignment operator */
   HSHM_INLINE_CROSS_FUN FullPtr &operator+=(size_t size) {
-    ptr_ += size;
+    set_ptr(get() + size);
     shm_ += size;
     return *this;
   }
 
   /** Subtraction assignment operator */
   HSHM_INLINE_CROSS_FUN FullPtr &operator-=(size_t size) {
-    ptr_ -= size;
+    set_ptr(get() - size);
     shm_ -= size;
     return *this;
   }
 
   /** Increment operator (pre) */
   HSHM_INLINE_CROSS_FUN FullPtr &operator++() {
-    ptr_++;
+    set_ptr(get() + 1);
     shm_++;
     return *this;
   }
 
   /** Decrement operator (pre) */
   HSHM_INLINE_CROSS_FUN FullPtr &operator--() {
-    ptr_--;
+    set_ptr(get() - 1);
     shm_--;
     return *this;
   }
@@ -1009,7 +1009,7 @@ public:
 
   /** Check if null */
   HSHM_INLINE_CROSS_FUN bool IsNull() const {
-    return ptr_ == nullptr || shm_.IsNull();
+    return get() == nullptr || shm_.IsNull();
   }
 
   /** Validate that ptr_ and shm_ are consistent with allocator backend
@@ -1023,7 +1023,7 @@ public:
       return true;  // Null pointers are always valid
     }
     size_t calculated_offset =
-        reinterpret_cast<size_t>(ptr_) -
+        reinterpret_cast<size_t>(get()) -
         reinterpret_cast<size_t>(alloc->GetBackendData());
     size_t stored_offset = shm_.off_.load();
     return calculated_offset == stored_offset;
@@ -1036,7 +1036,7 @@ public:
 
   /** Set to null */
   HSHM_INLINE_CROSS_FUN void SetNull() {
-    ptr_ = nullptr;
+    set_ptr(nullptr);
     shm_.SetNull();
   }
 
@@ -1066,7 +1066,7 @@ public:
 
   /** Mark first bit */
   HSHM_INLINE_CROSS_FUN FullPtr Mark() const {
-    return FullPtr(ptr_, shm_.Mark());
+    return FullPtr(get(), shm_.Mark());
   }
 
   /** Check if first bit is marked */
@@ -1074,7 +1074,7 @@ public:
 
   /** Unmark first bit */
   HSHM_INLINE_CROSS_FUN FullPtr Unmark() const {
-    return FullPtr(ptr_, shm_.Unmark());
+    return FullPtr(get(), shm_.Unmark());
   }
 
   /** Set to 0 */
@@ -1268,7 +1268,7 @@ class BaseAllocator : public CoreAllocT {
     size_t total_size = sizeof(T) + size;
     auto region = Allocate<T>(total_size);
     if (!region.IsNull()) {
-      new (region.ptr_) T();  // Construct T at the region start
+      new (region.get()) T();  // Construct T at the region start
     }
     return region;
   }
@@ -1277,7 +1277,7 @@ class BaseAllocator : public CoreAllocT {
   template <typename T, typename... Args>
   HSHM_INLINE_CROSS_FUN FullPtr<T> NewObjs(size_t count, Args &&...args) {
     auto alloc_result = AllocateObjs<T>(count);
-    ConstructObjs<T>(alloc_result.ptr_, 0, count, std::forward<Args>(args)...);
+    ConstructObjs<T>(alloc_result.get(), 0, count, std::forward<Args>(args)...);
     return alloc_result;
   }
 
@@ -1299,16 +1299,16 @@ class BaseAllocator : public CoreAllocT {
   HSHM_INLINE_CROSS_FUN FullPtr<T> ReallocateObjs(FullPtr<T> &p,
                                                   size_t new_count) {
     auto *alloc = this;
-    FullPtr<void> old_full_ptr(alloc, reinterpret_cast<void *>(p.ptr_));
+    FullPtr<void> old_full_ptr(alloc, reinterpret_cast<void *>(p.get()));
     auto new_full_ptr = Reallocate<void>(old_full_ptr, new_count * sizeof(T));
-    p = FullPtr<T>(alloc, reinterpret_cast<T *>(new_full_ptr.ptr_));
+    p = FullPtr<T>(alloc, reinterpret_cast<T *>(new_full_ptr.get()));
     return p;
   }
 
   /** Free a region */
   template <typename T>
   HSHM_INLINE_CROSS_FUN void FreeRegion(const FullPtr<T> &p) {
-    DestructObj(p.ptr_);
+    DestructObj(p.get());
     FreeOffsetNoNullCheck(p.shm_.off_.template Cast<void>());
   }
 
@@ -1317,9 +1317,9 @@ class BaseAllocator : public CoreAllocT {
    * */
   template <typename T>
   HSHM_INLINE_CROSS_FUN void DelObjs(FullPtr<T> &p, size_t count) {
-    DestructObjs<T>(p.ptr_, count);
+    DestructObjs<T>(p.get(), count);
     auto *alloc = this;
-    FullPtr<void> void_ptr(alloc, reinterpret_cast<void *>(p.ptr_));
+    FullPtr<void> void_ptr(alloc, reinterpret_cast<void *>(p.get()));
     Free<void>(void_ptr);
   }
 

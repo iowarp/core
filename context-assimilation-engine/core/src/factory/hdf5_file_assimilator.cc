@@ -490,7 +490,7 @@ chi::TaskResume Hdf5FileAssimilator::ProcessDataset(
   HLOG(kDebug, "ProcessDataset: Tensor description: '{}'", description);
   size_t desc_size = description.size();
   auto desc_buffer = CHI_IPC->AllocateBuffer(desc_size);
-  std::memcpy(desc_buffer.ptr_, description.c_str(), desc_size);
+  std::memcpy(desc_buffer.get(), description.c_str(), desc_size);
 
   HLOG(kDebug,
        "ProcessDataset: Submitting description blob (size: {} bytes)...",
@@ -592,7 +592,7 @@ chi::TaskResume Hdf5FileAssimilator::ProcessDataset(
 
       // Allocate IPC buffer for this chunk and copy data
       auto chunk_buffer = CHI_IPC->AllocateBuffer(current_chunk_size);
-      std::memcpy(chunk_buffer.ptr_, dataset_buffer + bytes_processed,
+      std::memcpy(chunk_buffer.get(), dataset_buffer + bytes_processed,
                   current_chunk_size);
 
       // Submit PutBlob task asynchronously

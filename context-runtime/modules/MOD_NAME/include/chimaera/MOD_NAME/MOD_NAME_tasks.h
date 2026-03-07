@@ -141,7 +141,7 @@ struct CustomTask : public chi::Task {
    */
   void Copy(const hipc::FullPtr<CustomTask> &other) {
     HLOG(kInfo, "CustomTask::Copy() - ENTRY, this={}, other={}, this.data_.data()={}, other.data_.data()={}",
-         (void*)this, (void*)other.ptr_, (void*)data_.data(), (void*)other->data_.data());
+         (void*)this, (void*)other.get(), (void*)data_.data(), (void*)other->data_.data());
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     // Copy CustomTask-specific fields

@@ -330,7 +330,7 @@ class ZeroMqTransport : public Transport {
       }
 
       zmq_msg_t msg;
-      zmq_msg_init_data(&msg, meta.send[i].data.ptr_, meta.send[i].size,
+      zmq_msg_init_data(&msg, meta.send[i].data.get(), meta.send[i].size,
                          zmq_noop_free, nullptr);
       rc = zmq_msg_send(&msg, socket_, flags);
       if (rc == -1) {
@@ -443,7 +443,7 @@ class ZeroMqTransport : public Transport {
       recv_count++;
       int flags = (recv_count < meta.send_bulks) ? ZMQ_RCVMORE : 0;
 
-      if (meta.recv[i].data.ptr_) {
+      if (meta.recv[i].data.get()) {
         zmq_msg_t zmq_msg;
         zmq_msg_init(&zmq_msg);
         int rc = zmq_msg_recv(&zmq_msg, socket_, flags);
@@ -452,7 +452,7 @@ class ZeroMqTransport : public Transport {
           zmq_msg_close(&zmq_msg);
           return err;
         }
-        memcpy(meta.recv[i].data.ptr_,
+        memcpy(meta.recv[i].data.get(),
                zmq_msg_data(&zmq_msg), meta.recv[i].size);
         zmq_msg_close(&zmq_msg);
       } else {
@@ -466,7 +466,7 @@ class ZeroMqTransport : public Transport {
           return err;
         }
         char *zmq_data = static_cast<char*>(zmq_msg_data(zmq_msg));
-        meta.recv[i].data.ptr_ = zmq_data;
+        meta.recv[i].data.set_ptr(zmq_data);
         meta.recv[i].data.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
         meta.recv[i].data.shm_.off_ = reinterpret_cast<size_t>(zmq_data);
         meta.recv[i].desc = zmq_msg;

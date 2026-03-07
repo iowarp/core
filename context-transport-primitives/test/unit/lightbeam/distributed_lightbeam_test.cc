@@ -114,8 +114,8 @@ void ServerThread(Transport& server, size_t num_clients,
     std::cout << "[Server] Received message " << i << ", rc=" << rc
               << std::endl;
 
-    std::string received(meta.recv[0].data.ptr_,
-                         meta.recv[0].data.ptr_ + meta.recv[0].size);
+    std::string received(meta.recv[0].data.get(),
+                         meta.recv[0].data.get() + meta.recv[0].size);
     std::cout << "[Server] Received: " << received << std::endl;
     assert(received == magic);
   }

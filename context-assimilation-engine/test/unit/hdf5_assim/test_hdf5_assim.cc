@@ -338,7 +338,7 @@ bool VerifyDatasetData(const std::string& file_path,
     }
 
     // Copy from shared memory to our local buffer
-    std::memcpy(cte_data.data() + bytes_read, blob_buffer.ptr_, blob_size);
+    std::memcpy(cte_data.data() + bytes_read, blob_buffer.get(), blob_size);
 
     // Free the shared memory buffer
     CHI_IPC->FreeBuffer(blob_buffer);

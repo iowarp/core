@@ -431,7 +431,7 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
   // Cast generic Task to BaseCreateTask to access pool operation parameters
   auto* create_task = reinterpret_cast<
       chimaera::admin::BaseCreateTask<chimaera::admin::CreateParams>*>(
-      task.ptr_);
+      task.get());
 
   // Debug: Log do_compose_ value after cast
   HLOG(kDebug, "PoolManager::CreatePool: After cast, do_compose_={}, is_admin_={}",

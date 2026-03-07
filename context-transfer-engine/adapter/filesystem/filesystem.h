@@ -420,7 +420,7 @@ public:
         // For now, just use the requested size
         get_size += task.orig_size_;
         // TODO: CTE may handle data copying differently
-        // memcpy(task.orig_data_, data.ptr_, task.orig_size_);
+        // memcpy(task.orig_data_, data.get(), task.orig_size_);
         CHI_IPC->DelTask(task.task_);
       }
       fstask->io_status_.size_ = get_size;

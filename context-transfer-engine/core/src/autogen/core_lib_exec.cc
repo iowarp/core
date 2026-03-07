@@ -197,122 +197,122 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
   switch (method) {
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRegisterTarget: {
       auto typed_task = task_ptr.template Cast<RegisterTargetTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kUnregisterTarget: {
       auto typed_task = task_ptr.template Cast<UnregisterTargetTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kListTargets: {
       auto typed_task = task_ptr.template Cast<ListTargetsTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kStatTargets: {
       auto typed_task = task_ptr.template Cast<StatTargetsTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetOrCreateTag: {
       auto typed_task = task_ptr.template Cast<core::GetOrCreateTagTask<core::CreateParams>>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kPutBlob: {
       auto typed_task = task_ptr.template Cast<PutBlobTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetBlob: {
       auto typed_task = task_ptr.template Cast<GetBlobTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kReorganizeBlob: {
       auto typed_task = task_ptr.template Cast<ReorganizeBlobTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDelBlob: {
       auto typed_task = task_ptr.template Cast<DelBlobTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDelTag: {
       auto typed_task = task_ptr.template Cast<DelTagTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetTagSize: {
       auto typed_task = task_ptr.template Cast<GetTagSizeTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kPollTelemetryLog: {
       auto typed_task = task_ptr.template Cast<PollTelemetryLogTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetBlobScore: {
       auto typed_task = task_ptr.template Cast<GetBlobScoreTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetBlobSize: {
       auto typed_task = task_ptr.template Cast<GetBlobSizeTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetContainedBlobs: {
       auto typed_task = task_ptr.template Cast<GetContainedBlobsTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetBlobInfo: {
       auto typed_task = task_ptr.template Cast<GetBlobInfoTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kTagQuery: {
       auto typed_task = task_ptr.template Cast<TagQueryTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kBlobQuery: {
       auto typed_task = task_ptr.template Cast<BlobQueryTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetTargetInfo: {
       auto typed_task = task_ptr.template Cast<GetTargetInfoTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kFlushMetadata: {
       auto typed_task = task_ptr.template Cast<FlushMetadataTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kFlushData: {
       auto typed_task = task_ptr.template Cast<FlushDataTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     default: {
@@ -327,122 +327,122 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
   switch (method) {
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRegisterTarget: {
       auto typed_task = task_ptr.template Cast<RegisterTargetTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kUnregisterTarget: {
       auto typed_task = task_ptr.template Cast<UnregisterTargetTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kListTargets: {
       auto typed_task = task_ptr.template Cast<ListTargetsTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kStatTargets: {
       auto typed_task = task_ptr.template Cast<StatTargetsTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetOrCreateTag: {
       auto typed_task = task_ptr.template Cast<core::GetOrCreateTagTask<core::CreateParams>>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kPutBlob: {
       auto typed_task = task_ptr.template Cast<PutBlobTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetBlob: {
       auto typed_task = task_ptr.template Cast<GetBlobTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kReorganizeBlob: {
       auto typed_task = task_ptr.template Cast<ReorganizeBlobTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDelBlob: {
       auto typed_task = task_ptr.template Cast<DelBlobTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDelTag: {
       auto typed_task = task_ptr.template Cast<DelTagTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetTagSize: {
       auto typed_task = task_ptr.template Cast<GetTagSizeTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kPollTelemetryLog: {
       auto typed_task = task_ptr.template Cast<PollTelemetryLogTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetBlobScore: {
       auto typed_task = task_ptr.template Cast<GetBlobScoreTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetBlobSize: {
       auto typed_task = task_ptr.template Cast<GetBlobSizeTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetContainedBlobs: {
       auto typed_task = task_ptr.template Cast<GetContainedBlobsTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetBlobInfo: {
       auto typed_task = task_ptr.template Cast<GetBlobInfoTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kTagQuery: {
       auto typed_task = task_ptr.template Cast<TagQueryTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kBlobQuery: {
       auto typed_task = task_ptr.template Cast<BlobQueryTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetTargetInfo: {
       auto typed_task = task_ptr.template Cast<GetTargetInfoTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kFlushMetadata: {
       auto typed_task = task_ptr.template Cast<FlushMetadataTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kFlushData: {
       auto typed_task = task_ptr.template Cast<FlushDataTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     default: {
@@ -466,145 +466,145 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRegisterTarget: {
       auto typed_task = task_ptr.template Cast<RegisterTargetTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kUnregisterTarget: {
       auto typed_task = task_ptr.template Cast<UnregisterTargetTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kListTargets: {
       auto typed_task = task_ptr.template Cast<ListTargetsTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kStatTargets: {
       auto typed_task = task_ptr.template Cast<StatTargetsTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetOrCreateTag: {
       auto typed_task = task_ptr.template Cast<core::GetOrCreateTagTask<core::CreateParams>>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kPutBlob: {
       auto typed_task = task_ptr.template Cast<PutBlobTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetBlob: {
       auto typed_task = task_ptr.template Cast<GetBlobTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kReorganizeBlob: {
       auto typed_task = task_ptr.template Cast<ReorganizeBlobTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDelBlob: {
       auto typed_task = task_ptr.template Cast<DelBlobTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDelTag: {
       auto typed_task = task_ptr.template Cast<DelTagTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetTagSize: {
       auto typed_task = task_ptr.template Cast<GetTagSizeTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kPollTelemetryLog: {
       auto typed_task = task_ptr.template Cast<PollTelemetryLogTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetBlobScore: {
       auto typed_task = task_ptr.template Cast<GetBlobScoreTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetBlobSize: {
       auto typed_task = task_ptr.template Cast<GetBlobSizeTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetContainedBlobs: {
       auto typed_task = task_ptr.template Cast<GetContainedBlobsTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetBlobInfo: {
       auto typed_task = task_ptr.template Cast<GetBlobInfoTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kTagQuery: {
       auto typed_task = task_ptr.template Cast<TagQueryTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kBlobQuery: {
       auto typed_task = task_ptr.template Cast<BlobQueryTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetTargetInfo: {
       auto typed_task = task_ptr.template Cast<GetTargetInfoTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kFlushMetadata: {
       auto typed_task = task_ptr.template Cast<FlushMetadataTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kFlushData: {
       auto typed_task = task_ptr.template Cast<FlushDataTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     default: {
@@ -628,145 +628,145 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRegisterTarget: {
       auto typed_task = task_ptr.template Cast<RegisterTargetTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kUnregisterTarget: {
       auto typed_task = task_ptr.template Cast<UnregisterTargetTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kListTargets: {
       auto typed_task = task_ptr.template Cast<ListTargetsTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kStatTargets: {
       auto typed_task = task_ptr.template Cast<StatTargetsTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetOrCreateTag: {
       auto typed_task = task_ptr.template Cast<core::GetOrCreateTagTask<core::CreateParams>>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kPutBlob: {
       auto typed_task = task_ptr.template Cast<PutBlobTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetBlob: {
       auto typed_task = task_ptr.template Cast<GetBlobTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kReorganizeBlob: {
       auto typed_task = task_ptr.template Cast<ReorganizeBlobTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDelBlob: {
       auto typed_task = task_ptr.template Cast<DelBlobTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDelTag: {
       auto typed_task = task_ptr.template Cast<DelTagTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetTagSize: {
       auto typed_task = task_ptr.template Cast<GetTagSizeTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kPollTelemetryLog: {
       auto typed_task = task_ptr.template Cast<PollTelemetryLogTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetBlobScore: {
       auto typed_task = task_ptr.template Cast<GetBlobScoreTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetBlobSize: {
       auto typed_task = task_ptr.template Cast<GetBlobSizeTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetContainedBlobs: {
       auto typed_task = task_ptr.template Cast<GetContainedBlobsTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetBlobInfo: {
       auto typed_task = task_ptr.template Cast<GetBlobInfoTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kTagQuery: {
       auto typed_task = task_ptr.template Cast<TagQueryTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kBlobQuery: {
       auto typed_task = task_ptr.template Cast<BlobQueryTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetTargetInfo: {
       auto typed_task = task_ptr.template Cast<GetTargetInfoTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kFlushMetadata: {
       auto typed_task = task_ptr.template Cast<FlushMetadataTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kFlushData: {
       auto typed_task = task_ptr.template Cast<FlushDataTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     default: {

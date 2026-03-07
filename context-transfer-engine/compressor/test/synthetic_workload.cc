@@ -374,7 +374,7 @@ int main(int argc, char** argv) {
       // Copy data to shared memory
       const char* chunk_ptr = reinterpret_cast<const char*>(
           data_buffer.data() + bytes_written / sizeof(float));
-      std::memcpy(shm_buffer.ptr_, chunk_ptr, chunk_size);
+      std::memcpy(shm_buffer.get(), chunk_ptr, chunk_size);
 
       // Convert ShmPtr<char> to ShmPtr<void> for async put
       hipc::ShmPtr<> shm_ptr(shm_buffer.shm_);

@@ -155,7 +155,7 @@ TEST_CASE("BULK_EXPOSE buffer freed after ReadTask (TASK_FORCE_NET)",
   {
     auto write_buffer = CHI_IPC->AllocateBuffer(kIoSize);
     REQUIRE_FALSE(write_buffer.IsNull());
-    memset(write_buffer.ptr_, 0xAB, kIoSize);
+    memset(write_buffer.get(), 0xAB, kIoSize);
     auto *ipc = CHI_IPC;
     auto write_task_ptr = ipc->NewTask<chimaera::bdev::WriteTask>(
         chi::CreateTaskId(), client.pool_id_, chi::PoolQuery::Local(),

@@ -115,10 +115,10 @@ void TestBasicTcpTransfer() {
   std::cout << "Server received bulk data successfully\n";
 
   // Verify data from transport-allocated recv buffers
-  std::string received1(recv_meta.recv[0].data.ptr_,
-                         recv_meta.recv[0].data.ptr_ + recv_meta.recv[0].size);
-  std::string received2(recv_meta.recv[1].data.ptr_,
-                         recv_meta.recv[1].data.ptr_ + recv_meta.recv[1].size);
+  std::string received1(recv_meta.recv[0].data.get(),
+                         recv_meta.recv[0].data.get() + recv_meta.recv[0].size);
+  std::string received2(recv_meta.recv[1].data.get(),
+                         recv_meta.recv[1].data.get() + recv_meta.recv[1].size);
   std::cout << "Bulk 1: " << received1 << "\n";
   std::cout << "Bulk 2: " << received2 << "\n";
   assert(received1 == data1);
@@ -171,8 +171,8 @@ void TestMultipleBulks() {
   assert(recv_meta.send.size() == data_chunks.size());
 
   for (size_t i = 0; i < data_chunks.size(); ++i) {
-    std::string received(recv_meta.recv[i].data.ptr_,
-                         recv_meta.recv[i].data.ptr_ + recv_meta.recv[i].size);
+    std::string received(recv_meta.recv[i].data.get(),
+                         recv_meta.recv[i].data.get() + recv_meta.recv[i].size);
     std::cout << "Chunk " << i << ": " << received << "\n";
     assert(received == data_chunks[i]);
   }
@@ -224,8 +224,8 @@ void TestUnixDomainSocket() {
   assert(recv_meta.request_id == 99);
   assert(recv_meta.operation == "ipc_test");
 
-  std::string received(recv_meta.recv[0].data.ptr_,
-                       recv_meta.recv[0].data.ptr_ + recv_meta.recv[0].size);
+  std::string received(recv_meta.recv[0].data.get(),
+                       recv_meta.recv[0].data.get() + recv_meta.recv[0].size);
   std::cout << "Received: " << received << "\n";
   assert(received == data);
 

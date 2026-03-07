@@ -240,7 +240,7 @@ TEST_CASE("BuddyAllocator Regression - Fix1: AllocateLarge searches higher size 
   REQUIRE_FALSE(ptr.IsNull());
 
   // Write to the memory to verify it is usable
-  std::memset(ptr.ptr_, 0xAB, k300KB);
+  std::memset(ptr.get(), 0xAB, k300KB);
 
   // Cleanup
   alloc->Free(ptr);
@@ -291,7 +291,7 @@ TEST_CASE("BuddyAllocator Regression - Fix2: Heap rollback on failed allocation"
     // The fixed Heap::Allocate rolls back its pointer on failure.
     auto recovery_ptr = alloc->template Allocate<char>(1024);
     REQUIRE_FALSE(recovery_ptr.IsNull());
-    std::memset(recovery_ptr.ptr_, 0xCD, 1024);
+    std::memset(recovery_ptr.get(), 0xCD, 1024);
     alloc->Free(recovery_ptr);
   }
 
@@ -355,7 +355,7 @@ TEST_CASE("BuddyAllocator Regression - Fix3: Small remainder does not corrupt st
 
   auto big_ptr = alloc->template Allocate<char>(kLargeData);
   REQUIRE_FALSE(big_ptr.IsNull());
-  std::memset(big_ptr.ptr_, 0xAA, kLargeData);
+  std::memset(big_ptr.get(), 0xAA, kLargeData);
   alloc->Free(big_ptr);  // goes to large_pages_ with size_ == kLargeData
 
   // Request k128KB — the remainder is exactly kBuddyPageHdr bytes total.
@@ -363,13 +363,13 @@ TEST_CASE("BuddyAllocator Regression - Fix3: Small remainder does not corrupt st
   // Fixed code: guard returns early, no corruption.
   auto small_ptr = alloc->template Allocate<char>(k128KB);
   REQUIRE_FALSE(small_ptr.IsNull());
-  std::memset(small_ptr.ptr_, 0xBB, k128KB);
+  std::memset(small_ptr.get(), 0xBB, k128KB);
   alloc->Free(small_ptr);
 
   // Verify subsequent allocations work correctly after the boundary case.
   auto verify_ptr = alloc->template Allocate<char>(4096);
   REQUIRE_FALSE(verify_ptr.IsNull());
-  std::memset(verify_ptr.ptr_, 0xCC, 4096);
+  std::memset(verify_ptr.get(), 0xCC, 4096);
   alloc->Free(verify_ptr);
 }
 
@@ -421,7 +421,7 @@ TEST_CASE("BuddyAllocator Regression - Fix4: RepopulateSmallArena does not leak 
     auto p = alloc->template Allocate<char>(kSmall);
     // Must succeed — memory was returned via the freed large blocks.
     REQUIRE_FALSE(p.IsNull());
-    std::memset(p.ptr_, static_cast<unsigned char>(i & 0xFF), kSmall);
+    std::memset(p.get(), static_cast<unsigned char>(i & 0xFF), kSmall);
     small_ptrs.push_back(p);
   }
 
@@ -548,7 +548,7 @@ TEST_CASE("BuddyAllocator Regression - Fix7and8: AllocateSmall finds larger free
   constexpr size_t k512B = 512;
   auto saved = alloc->template Allocate<char>(k512B);
   REQUIRE_FALSE(saved.IsNull());
-  std::memset(saved.ptr_, 0x11, k512B);
+  std::memset(saved.get(), 0x11, k512B);
 
   // Step 2: Exhaust the heap and arena with 64-byte allocations.
   constexpr size_t k64B = 64;
@@ -570,7 +570,7 @@ TEST_CASE("BuddyAllocator Regression - Fix7and8: AllocateSmall finds larger free
   // The old code would return null here.
   auto result = alloc->template Allocate<char>(k64B);
   REQUIRE_FALSE(result.IsNull());
-  std::memset(result.ptr_, 0x22, k64B);
+  std::memset(result.get(), 0x22, k64B);
   alloc->Free(result);
 
   // Cleanup

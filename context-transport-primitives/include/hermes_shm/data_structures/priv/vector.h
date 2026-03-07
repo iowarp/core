@@ -590,9 +590,9 @@ class vector {
   HSHM_INLINE_CROSS_FUN
   void ConstructMove(size_type pos, T&& val) {
     if constexpr (kIsPod) {
-      data_.ptr_[pos] = static_cast<T&&>(val);
+      data_[pos] = static_cast<T&&>(val);
     } else {
-      new (&data_.ptr_[pos]) T(static_cast<T&&>(val));
+      new (&data_[pos]) T(static_cast<T&&>(val));
     }
   }
 
@@ -606,9 +606,9 @@ class vector {
   HSHM_INLINE_CROSS_FUN
   void ConstructCopy(size_type pos, const T& val) {
     if constexpr (kIsPod) {
-      data_.ptr_[pos] = val;
+      data_[pos] = val;
     } else {
-      new (&data_.ptr_[pos]) T(val);
+      new (&data_[pos]) T(val);
     }
   }
 
@@ -621,7 +621,7 @@ class vector {
   HSHM_INLINE_CROSS_FUN
   void Destroy(size_type pos) {
     if constexpr (!kIsPod) {
-      data_.ptr_[pos].~T();
+      data_[pos].~T();
     }
   }
 
@@ -679,9 +679,9 @@ class vector {
     reserve(count);
     for (size_type i = 0; i < count; ++i) {
       if constexpr (kIsPod) {
-        data_.ptr_[size_] = T();
+        data_[size_] = T();
       } else {
-        new (&data_.ptr_[size_]) T();
+        new (&data_[size_]) T();
       }
       ++size_;
     }
@@ -830,7 +830,7 @@ class vector {
     if (pos >= size_) {
       throw std::out_of_range("Vector index out of bounds");
     }
-    return data_.ptr_[pos];
+    return data_[pos];
   }
 
   /**
@@ -846,7 +846,7 @@ class vector {
     if (pos >= size_) {
       throw std::out_of_range("Vector index out of bounds");
     }
-    return data_.ptr_[pos];
+    return data_[pos];
   }
 
   /**
@@ -858,7 +858,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   T& operator[](size_type pos) {
-    return data_.ptr_[pos];
+    return data_[pos];
   }
 
   /**
@@ -870,7 +870,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   const T& operator[](size_type pos) const {
-    return data_.ptr_[pos];
+    return data_[pos];
   }
 
   /**
@@ -881,7 +881,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   T& front() {
-    return data_.ptr_[0];
+    return data_[0];
   }
 
   /**
@@ -892,7 +892,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   const T& front() const {
-    return data_.ptr_[0];
+    return data_[0];
   }
 
   /**
@@ -903,7 +903,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   T& back() {
-    return data_.ptr_[size_ - 1];
+    return data_[size_ - 1];
   }
 
   /**
@@ -914,7 +914,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   const T& back() const {
-    return data_.ptr_[size_ - 1];
+    return data_[size_ - 1];
   }
 
   /**
@@ -925,7 +925,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   T* data() {
-    return data_.ptr_;
+    return data_.get();
   }
 
   /**
@@ -936,7 +936,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   const T* data() const {
-    return data_.ptr_;
+    return data_.get();
   }
 
   /**
@@ -947,7 +947,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   iterator begin() {
-    return iterator(data_.ptr_);
+    return iterator(data_.get());
   }
 
   /**
@@ -958,7 +958,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   const_iterator begin() const {
-    return const_iterator(data_.ptr_);
+    return const_iterator(data_.get());
   }
 
   /**
@@ -969,7 +969,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   const_iterator cbegin() const {
-    return const_iterator(data_.ptr_);
+    return const_iterator(data_.get());
   }
 
   /**
@@ -980,7 +980,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   iterator end() {
-    return iterator(data_.ptr_ + size_);
+    return iterator(data_.get() + size_);
   }
 
   /**
@@ -991,7 +991,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   const_iterator end() const {
-    return const_iterator(data_.ptr_ + size_);
+    return const_iterator(data_.get() + size_);
   }
 
   /**
@@ -1002,7 +1002,7 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   const_iterator cend() const {
-    return const_iterator(data_.ptr_ + size_);
+    return const_iterator(data_.get() + size_);
   }
 
   /**
@@ -1112,10 +1112,10 @@ class vector {
 
     if (!data_.IsNull()) {
       if constexpr (kIsPod) {
-        std::memcpy(new_data.ptr_, data_.ptr_, size_ * sizeof(T));
+        std::memcpy(new_data.get(), data_.get(), size_ * sizeof(T));
       } else {
         for (size_type i = 0; i < size_; ++i) {
-          new (&new_data.ptr_[i]) T(std::move(data_.ptr_[i]));
+          new (&new_data[i]) T(std::move(data_[i]));
           Destroy(i);
         }
       }
@@ -1144,10 +1144,10 @@ class vector {
         auto new_data = alloc_->template AllocateObjs<T>(size_);
 
         if constexpr (kIsPod) {
-          std::memcpy(new_data.ptr_, data_.ptr_, size_ * sizeof(T));
+          std::memcpy(new_data.get(), data_.get(), size_ * sizeof(T));
         } else {
           for (size_type i = 0; i < size_; ++i) {
-            new (&new_data.ptr_[i]) T(std::move(data_.ptr_[i]));
+            new (&new_data[i]) T(std::move(data_[i]));
             Destroy(i);
           }
         }
@@ -1217,24 +1217,24 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   iterator insert(const_iterator pos, const T& val) {
-    size_type idx = pos.get() - data_.ptr_;
+    size_type idx = pos.get() - data_.get();
     if (size_ >= capacity_) {
       Grow(size_ + 1);
     }
 
     if constexpr (kIsPod) {
-      std::memmove(&data_.ptr_[idx + 1], &data_.ptr_[idx], (size_ - idx) * sizeof(T));
-      data_.ptr_[idx] = val;
+      std::memmove(&data_[idx + 1], &data_[idx], (size_ - idx) * sizeof(T));
+      data_[idx] = val;
     } else {
       for (size_type i = size_; i > idx; --i) {
-        new (&data_.ptr_[i]) T(std::move(data_.ptr_[i - 1]));
+        new (&data_[i]) T(std::move(data_[i - 1]));
         Destroy(i - 1);
       }
-      new (&data_.ptr_[idx]) T(val);
+      new (&data_[idx]) T(val);
     }
 
     ++size_;
-    return iterator(&data_.ptr_[idx]);
+    return iterator(&data_[idx]);
   }
 
   /**
@@ -1247,24 +1247,24 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   iterator insert(const_iterator pos, T&& val) {
-    size_type idx = pos.get() - data_.ptr_;
+    size_type idx = pos.get() - data_.get();
     if (size_ >= capacity_) {
       Grow(size_ + 1);
     }
 
     if constexpr (kIsPod) {
-      std::memmove(&data_.ptr_[idx + 1], &data_.ptr_[idx], (size_ - idx) * sizeof(T));
-      data_.ptr_[idx] = std::move(val);
+      std::memmove(&data_[idx + 1], &data_[idx], (size_ - idx) * sizeof(T));
+      data_[idx] = std::move(val);
     } else {
       for (size_type i = size_; i > idx; --i) {
-        new (&data_.ptr_[i]) T(std::move(data_.ptr_[i - 1]));
+        new (&data_[i]) T(std::move(data_[i - 1]));
         Destroy(i - 1);
       }
-      new (&data_.ptr_[idx]) T(std::move(val));
+      new (&data_[idx]) T(std::move(val));
     }
 
     ++size_;
-    return iterator(&data_.ptr_[idx]);
+    return iterator(&data_[idx]);
   }
 
   /**
@@ -1279,7 +1279,7 @@ class vector {
   HSHM_INLINE_CROSS_FUN
   iterator insert(const_iterator pos, const_iterator first,
                   const_iterator last) {
-    size_type idx = pos.get() - data_.ptr_;
+    size_type idx = pos.get() - data_.get();
     size_type count = last.get() - first.get();
 
     if (size_ + count > capacity_) {
@@ -1287,21 +1287,21 @@ class vector {
     }
 
     if constexpr (kIsPod) {
-      std::memmove(&data_.ptr_[idx + count], &data_.ptr_[idx], (size_ - idx) * sizeof(T));
-      std::memcpy(&data_.ptr_[idx], first.get(), count * sizeof(T));
+      std::memmove(&data_[idx + count], &data_[idx], (size_ - idx) * sizeof(T));
+      std::memcpy(&data_[idx], first.get(), count * sizeof(T));
     } else {
       for (size_type i = size_ + count - 1; i >= idx + count; --i) {
-        new (&data_.ptr_[i]) T(std::move(data_.ptr_[i - count]));
+        new (&data_[i]) T(std::move(data_[i - count]));
         Destroy(i - count);
       }
       size_type src_idx = 0;
       for (size_type i = idx; i < idx + count; ++i, ++src_idx) {
-        new (&data_.ptr_[i]) T(*(first.get() + src_idx));
+        new (&data_[i]) T(*(first.get() + src_idx));
       }
     }
 
     size_ += count;
-    return iterator(&data_.ptr_[idx]);
+    return iterator(&data_[idx]);
   }
 
   /**
@@ -1313,20 +1313,20 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   iterator erase(const_iterator pos) {
-    size_type idx = pos.get() - data_.ptr_;
+    size_type idx = pos.get() - data_.get();
 
     if constexpr (kIsPod) {
-      std::memmove(&data_.ptr_[idx], &data_.ptr_[idx + 1], (size_ - idx - 1) * sizeof(T));
+      std::memmove(&data_[idx], &data_[idx + 1], (size_ - idx - 1) * sizeof(T));
     } else {
       Destroy(idx);
       for (size_type i = idx; i < size_ - 1; ++i) {
-        new (&data_.ptr_[i]) T(std::move(data_.ptr_[i + 1]));
+        new (&data_[i]) T(std::move(data_[i + 1]));
         Destroy(i + 1);
       }
     }
 
     --size_;
-    return iterator(&data_.ptr_[idx]);
+    return iterator(&data_[idx]);
   }
 
   /**
@@ -1339,23 +1339,23 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   iterator erase(const_iterator first, const_iterator last) {
-    size_type first_idx = first.get() - data_.ptr_;
-    size_type last_idx = last.get() - data_.ptr_;
+    size_type first_idx = first.get() - data_.get();
+    size_type last_idx = last.get() - data_.get();
     size_type count = last_idx - first_idx;
 
     if constexpr (kIsPod) {
-      std::memmove(&data_.ptr_[first_idx], &data_.ptr_[last_idx],
+      std::memmove(&data_[first_idx], &data_[last_idx],
                    (size_ - last_idx) * sizeof(T));
     } else {
       DestroyRange(first_idx, last_idx);
       for (size_type i = first_idx; i < size_ - count; ++i) {
-        new (&data_.ptr_[i]) T(std::move(data_.ptr_[i + count]));
+        new (&data_[i]) T(std::move(data_[i + count]));
         Destroy(i + count);
       }
     }
 
     size_ -= count;
-    return iterator(&data_.ptr_[first_idx]);
+    return iterator(&data_[first_idx]);
   }
 
   /**
@@ -1372,9 +1372,9 @@ class vector {
       }
       for (size_type i = size_; i < new_size; ++i) {
         if constexpr (kIsPod) {
-          data_.ptr_[i] = T();
+          data_[i] = T();
         } else {
-          new (&data_.ptr_[i]) T();
+          new (&data_[i]) T();
         }
       }
       size_ = new_size;

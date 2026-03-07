@@ -295,7 +295,7 @@ void IOWorkerThread(size_t thread_id, const BenchmarkConfig &config,
 
   // Allocate data buffer in shared memory for writes (full io_size)
   auto write_buffer = CHI_IPC->AllocateBuffer(config.io_size);
-  std::memset(write_buffer.ptr_, static_cast<int>(thread_id), config.io_size);
+  std::memset(write_buffer.get(), static_cast<int>(thread_id), config.io_size);
   HLOG(kInfo, "Allocate write buffer for thread {}", config.io_size);
 
   size_t local_ops = 0;

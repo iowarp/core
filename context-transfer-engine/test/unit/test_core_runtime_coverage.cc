@@ -257,7 +257,7 @@ TEST_CASE("Runtime - DelBlob Success Path", "[runtime][blob]") {
   auto data = fixture.CreateTestData(fixture.kTestDataSize);
   auto *ipc = CHI_IPC;
   hipc::FullPtr<char> shm_ptr = ipc->AllocateBuffer(data.size());
-  memcpy(shm_ptr.ptr_, data.data(), data.size());
+  memcpy(shm_ptr.get(), data.data(), data.size());
   hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
 
   auto put_task = client->AsyncPutBlob(
@@ -331,7 +331,7 @@ TEST_CASE("Runtime - GetBlobScore Success", "[runtime][blob]") {
   auto data = fixture.CreateTestData(fixture.kTestDataSize);
   auto *ipc = CHI_IPC;
   hipc::FullPtr<char> shm_ptr = ipc->AllocateBuffer(data.size());
-  memcpy(shm_ptr.ptr_, data.data(), data.size());
+  memcpy(shm_ptr.get(), data.data(), data.size());
   hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
 
   float expected_score = 0.475f;
@@ -408,7 +408,7 @@ TEST_CASE("Runtime - GetBlobSize Success", "[runtime][blob]") {
   auto data = fixture.CreateTestData(expected_size);
   auto *ipc = CHI_IPC;
   hipc::FullPtr<char> shm_ptr = ipc->AllocateBuffer(data.size());
-  memcpy(shm_ptr.ptr_, data.data(), data.size());
+  memcpy(shm_ptr.get(), data.data(), data.size());
   hipc::ShmPtr<> shm_ref(shm_ptr.shm_);
 
   auto put_task = client->AsyncPutBlob(
@@ -467,7 +467,7 @@ TEST_CASE("Runtime - GetTagSize Success", "[runtime][tag]") {
   size_t size1 = 1024;
   auto data1 = fixture.CreateTestData(size1);
   hipc::FullPtr<char> shm1 = ipc->AllocateBuffer(data1.size());
-  memcpy(shm1.ptr_, data1.data(), data1.size());
+  memcpy(shm1.get(), data1.data(), data1.size());
   hipc::ShmPtr<> ref1(shm1.shm_);
 
   auto put1 = client->AsyncPutBlob(tag_task->tag_id_, "blob1", 0, size1, ref1, 1.0f);
@@ -479,7 +479,7 @@ TEST_CASE("Runtime - GetTagSize Success", "[runtime][tag]") {
   size_t size2 = 512;
   auto data2 = fixture.CreateTestData(size2);
   hipc::FullPtr<char> shm2 = ipc->AllocateBuffer(data2.size());
-  memcpy(shm2.ptr_, data2.data(), data2.size());
+  memcpy(shm2.get(), data2.data(), data2.size());
   hipc::ShmPtr<> ref2(shm2.shm_);
 
   auto put2 = client->AsyncPutBlob(tag_task->tag_id_, "blob2", 0, size2, ref2, 1.0f);
@@ -560,7 +560,7 @@ TEST_CASE("Runtime - GetContainedBlobs Success", "[runtime][blob]") {
   for (int i = 0; i < 3; ++i) {
     std::string blob_name = "blob_" + std::to_string(i);
     hipc::FullPtr<char> shm = ipc->AllocateBuffer(data.size());
-    memcpy(shm.ptr_, data.data(), data.size());
+    memcpy(shm.get(), data.data(), data.size());
     hipc::ShmPtr<> ref(shm.shm_);
 
     auto put = client->AsyncPutBlob(tag_task->tag_id_, blob_name, 0, data.size(), ref, 1.0f);

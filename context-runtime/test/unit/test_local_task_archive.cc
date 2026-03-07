@@ -119,7 +119,7 @@ TEST_CASE("LocalTaskArchive: Serialize FullPtr with bulk()", "[local_task_archiv
   hipc::FullPtr<char> full_ptr;
   full_ptr.shm_.off_ = 54321;
   full_ptr.shm_.alloc_id_ = hipc::AllocatorId(3, 4);
-  full_ptr.ptr_ = reinterpret_cast<char *>(0xDEADBEEF);
+  full_ptr.set_ptr(reinterpret_cast<char *>(0xDEADBEEF));
 
   size_t data_size = 2048;
   uint32_t flags = 1;
