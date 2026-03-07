@@ -113,6 +113,13 @@ class Runtime : public chi::Container {
    */
   chi::TaskResume ProcessHdf5Dataset(hipc::FullPtr<ProcessHdf5DatasetTask> task, chi::RunContext& ctx);
 
+  /**
+   * ExportData - Export all blobs in a CTE tag to a file (Method::kExportData)
+   * Supports "hdf5" and "binary" formats.
+   * @return TaskResume for coroutine suspension/resumption
+   */
+  chi::TaskResume ExportData(hipc::FullPtr<ExportDataTask> task, chi::RunContext& ctx);
+
  private:
   Client client_;
   std::shared_ptr<wrp_cte::core::Client> cte_client_;

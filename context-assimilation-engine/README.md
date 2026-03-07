@@ -1,117 +1,131 @@
-# Content Assimilation Engine
+# Context Assimilation Engine (CAE)
 
-A high-performance data ingestion and processing engine designed for heterogeneous storage systems and scientific workflows.
+A Chimaera module (ChiMod) for high-performance data ingestion into the IOWarp
+ecosystem. CAE assimilates data from external sources — local binary files,
+HDF5 datasets, and Globus endpoints — into the Context Transfer Engine (CTE)
+for distributed storage and retrieval.
 
-[![win omni r](https://github.com/iowarp/content-assimilation-engine/actions/workflows/win-omni-r.yml/badge.svg)](https://github.com/iowarp/content-assimilation-engine/actions/workflows/win-omni-r.yml)
-[![mac omni r](https://github.com/iowarp/content-assimilation-engine/actions/workflows/mac-omni-r.yml/badge.svg)](https://github.com/iowarp/content-assimilation-engine/actions/workflows/mac-omni-r.yml)
-[![ubu omni r](https://github.com/iowarp/content-assimilation-engine/actions/workflows/ubu-omni-r.yml/badge.svg)](https://github.com/iowarp/content-assimilation-engine/actions/workflows/ubu-omni-r.yml)
-[![docker](https://github.com/iowarp/content-assimilation-engine/actions/workflows/docker.yml/badge.svg)](https://github.com/iowarp/content-assimilation-engine/actions/workflows/docker.yml)
-[![synology](https://github.com/iowarp/content-assimilation-engine/actions/workflows/synology.yml/badge.svg)](https://github.com/iowarp/content-assimilation-engine/actions/workflows/synology.yml)
+## Overview
 
-## Quick Start with OMNI
+CAE runs as a pool inside the Chimaera runtime alongside CTE. Clients submit
+OMNI YAML files to describe data transfers; CAE parses them and dispatches
+assimilation tasks to the appropriate backend (binary, HDF5, or Globus).
 
-### IOWarp
-
-**Ubuntu/Debian:**
-```bash
-spack install iowarp
+```
+External Source          CAE ChiMod              CTE ChiMod
+(file, HDF5, Globus) --> ParseOmni task -------> Tag + Blob storage
 ```
 
-### Building OMNI (manually)
+**Supported formats:** `binary`, `hdf5`, `globus`
+
+## Building
+
+CAE is built as part of the IOWarp Core monorepo:
 
 ```bash
-git clone https://github.com/iowarp/content-assimilation-engine.git
-cd content-assimilation-engine
+git clone https://github.com/iowarp/clio-core.git
+cd clio-core
 mkdir build && cd build
-cmake ..
-make
-make install
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j$(nproc)
 ```
 
-This builds and installs two executables:
-- `wrp` - Main YAML job orchestrator
-- `wrp_binary_format_mpi` - MPI binary format processor
-
-### Running an Example
-
-The repository includes a simple example configuration at `omni/config/example_simple.yaml`:
-
-```yaml
-# Simple OMNI example using repository data files
-name: example_data_ingestion
-max_scale: 4  # Maximum number of processes
-
-data:
-  - path: data/A46_xx.parquet
-    offset: 0
-    size: 31744
-    description:
-      - parquet
-      - structured_data
-
-  - path: data/datahub.csv
-    range: [0, 671]
-    description:
-      - csv
-      - tabular
+To enable HDF5 support:
+```bash
+cmake -DCMAKE_BUILD_TYPE=Release -DWRP_CORE_ENABLE_HDF5=ON ..
 ```
 
-Run it from the repository root:
+## Running
+
+### 1. Start the Chimaera runtime with CTE and CAE
 
 ```bash
-mpirun -np 4 wrp omni/config/example_simple.yaml
+export CHI_SERVER_CONF=/path/to/wrp_config.yaml
+chimaera runtime start
 ```
 
-### OMNI Format Specification
-
-The OMNI format uses YAML to describe data ingestion jobs:
+An example configuration deploying both CTE and CAE is provided in
+`config/wrp_config_example.yaml`:
 
 ```yaml
-name: job_name              # Job identifier (required)
-max_scale: 100              # Max number of MPI processes (required)
-
-data:                       # List of data sources
-  - path: /file/path        # File path (required)
-    offset: 0               # Starting byte offset (optional)
-    size: 1024              # Bytes to read from offset (optional)
-    range: [0, 1024]        # Alternative: [start, end] byte range (optional)
-    description:            # Tags describing the data (optional)
-      - binary
-      - structured
-    hash: sha256_value      # Integrity verification (optional)
+compose:
+  - mod_name: wrp_cte_core
+    pool_name: cte_main
+    pool_query: local
+    pool_id: "512.0"
+  - mod_name: wrp_cae_core
+    pool_name: cae_main
+    pool_query: local
+    pool_id: "400.0"
 ```
 
-**Key Fields:**
-- `path`: Absolute or relative file path
-- `offset` + `size`: Read `size` bytes starting at `offset`
-- `range`: Alternative to offset/size, specifies [start, end] bytes
-- `description`: List of tags for metadata/categorization
-- `hash`: SHA256 hash for data verification
+### 2. Submit an OMNI file
 
-### Example Configurations
-
-The repository includes several example configurations in `omni/config/`:
-- `quick_test.yaml` - Simple test case
-- `demo_job.yaml` - Demonstration job
-- `example_job.yaml` - Annotated example with all options
-- `wildcard_test.yaml` - Pattern matching examples
-
-Run examples:
 ```bash
-cd build/omni/config
-mpirun -np 2 ../../bin/wrp quick_test.yaml
+wrp_cae_omni /path/to/my_transfers.yaml
 ```
 
-## Development
+## OMNI File Format
 
-### Project Structure
+OMNI files describe data transfers in YAML using a `transfers` list:
 
-- `omni/` - OMNI module (job orchestration and format processing)
-  - `format/` - Binary format handlers
-  - `repo/` - Repository and storage backends
-  - `config/` - Example job configurations
-- `data/` - Sample datasets for testing
+```yaml
+name: my_ingestion_job
 
+transfers:
+  - src: file::/path/to/data.bin    # Source URL (required)
+    dst: iowarp::my_tag             # CTE destination tag (required)
+    format: binary                  # Format: binary, hdf5, globus (required)
+    depends_on: ""                  # Dependency identifier (optional)
+    range_off: 0                    # Byte offset in source (optional)
+    range_size: 0                   # Bytes to read, 0 = full file (optional)
+    src_token: $GLOBUS_TOKEN        # Auth token, env vars expanded (optional)
+```
+
+**HDF5 with dataset filtering:**
+```yaml
+transfers:
+  - src: file::/data/experiment.h5
+    dst: iowarp::experiment
+    format: hdf5
+    dataset_filter:
+      include_patterns:
+        - "/sensors/*"
+      exclude_patterns:
+        - "/sensors/raw/*"
+```
+
+**Key fields:**
+| Field | Description |
+|---|---|
+| `src` | Source URL (`file::`, `globus::`) |
+| `dst` | CTE destination tag (`iowarp::tag_name`) |
+| `format` | `binary`, `hdf5`, or `globus` |
+| `range_off` / `range_size` | Byte range within source (0 = full file) |
+| `src_token` / `dst_token` | Auth tokens; environment variables are expanded |
+| `dataset_filter` | HDF5 dataset include/exclude glob patterns |
+
+## Project Structure
+
+```
+config/      - Example runtime configuration files
+core/        - ChiMod implementation
+  include/   - Public headers (tasks, assimilation context, factory)
+  src/        - Runtime and client implementation
+  util/       - wrp_cae_omni command-line tool
+data/        - Sample datasets for testing (HDF5, CSV, Parquet)
+test/
+  unit/      - Unit tests (binary, HDF5, range, error handling)
+  integration/globus_matsci/ - Globus integration test
+```
+
+## Pool ID Reference
+
+| Component | Pool ID | Module Name    |
+|-----------|---------|----------------|
+| Admin     | 1.0     | chimaera_admin |
+| CTE Core  | 512.0   | wrp_cte_core   |
+| CAE Core  | 400.0   | wrp_cae_core   |
 
 ## License
 
@@ -122,4 +136,4 @@ This project is licensed under the BSD-3-Clause License - see the [LICENSE](LICE
 ## Links
 
 - **IOWarp Organization**: [https://github.com/iowarp](https://github.com/iowarp)
-- **Issues**: [GitHub Issues](https://github.com/iowarp/content-assimilation-engine/issues)
+- **Issues**: [https://github.com/iowarp/clio-core/issues](https://github.com/iowarp/clio-core/issues)

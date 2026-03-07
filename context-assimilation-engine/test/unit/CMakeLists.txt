@@ -242,6 +242,83 @@ set_tests_properties(cae_range_assim PROPERTIES LABELS "core;advanced;msan_skip"
 set_tests_properties(cae_error_handling PROPERTIES LABELS "core;validation;msan_skip")
 
 #------------------------------------------------------------------------------
+# Test 6: ExportData Tests
+#------------------------------------------------------------------------------
+# Tests the ExportData feature (inverse of assimilation):
+# - ExportDataTask struct: default ctor, emplace ctor, Copy, Aggregate,
+#   SerializeIn, SerializeOut
+# - Runtime paths: empty tag, binary success/roundtrip, binary bad path,
+#   HDF5 success (if enabled) or HDF5-not-compiled, HDF5 bad path
+# - Autogen core_lib_exec.cc kExportData cases exercised via AsyncExportData
+#------------------------------------------------------------------------------
+add_executable(test_export_data
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_export_data.cc
+)
+
+target_include_directories(test_export_data
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/test  # For simple_test.h
+)
+
+target_link_libraries(test_export_data
+  PRIVATE
+    wrp_cae_core_client
+    wrp_cte_core_client
+    chimaera::admin_runtime
+    chimaera::bdev_runtime
+    hshm::cxx
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+
+if(HDF5_ENABLED)
+  target_compile_definitions(test_export_data PRIVATE WRP_CAE_ENABLE_HDF5)
+  target_link_libraries(test_export_data PRIVATE ${HDF5_LIBRARIES})
+  target_include_directories(test_export_data PRIVATE ${HDF5_INCLUDE_DIRS})
+endif()
+
+install(TARGETS test_export_data DESTINATION bin)
+
+# Register individual test cases with CTest
+add_test(NAME CAE_ExportData_TaskDefaultCtor
+  COMMAND test_export_data "[cae][export][task]")
+add_test(NAME CAE_ExportData_TaskEmplaceCtor
+  COMMAND test_export_data "[cae][export][task]")
+add_test(NAME CAE_ExportData_TaskCopy
+  COMMAND test_export_data "[cae][export][task]")
+add_test(NAME CAE_ExportData_TaskAggregate
+  COMMAND test_export_data "[cae][export][task]")
+add_test(NAME CAE_ExportData_TaskSerializeIn
+  COMMAND test_export_data "[cae][export][task]")
+add_test(NAME CAE_ExportData_TaskSerializeOut
+  COMMAND test_export_data "[cae][export][task]")
+add_test(NAME CAE_ExportData_EmptyTag
+  COMMAND test_export_data "[cae][export][runtime]")
+add_test(NAME CAE_ExportData_BinaryRoundtrip
+  COMMAND test_export_data "[cae][export][runtime][binary]")
+add_test(NAME CAE_ExportData_BinaryBadPath
+  COMMAND test_export_data "[cae][export][runtime][binary]")
+add_test(NAME CAE_ExportData_HDF5Path
+  COMMAND test_export_data "[cae][export][runtime][hdf5]")
+
+set_tests_properties(
+  CAE_ExportData_TaskDefaultCtor
+  CAE_ExportData_TaskEmplaceCtor
+  CAE_ExportData_TaskCopy
+  CAE_ExportData_TaskAggregate
+  CAE_ExportData_TaskSerializeIn
+  CAE_ExportData_TaskSerializeOut
+  CAE_ExportData_EmptyTag
+  CAE_ExportData_BinaryRoundtrip
+  CAE_ExportData_BinaryBadPath
+  CAE_ExportData_HDF5Path
+  PROPERTIES
+    TIMEOUT 120
+    LABELS "coverage;export;msan_skip"
+    ENVIRONMENT "CHI_WITH_RUNTIME=1;CHI_SERVER_CONF=${CMAKE_CURRENT_SOURCE_DIR}/wrp_config.yaml;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+)
+
+#------------------------------------------------------------------------------
 # Test Summary Target
 #------------------------------------------------------------------------------
 # Custom target to run all tests with verbose output
@@ -268,10 +345,13 @@ message(STATUS "CAE Unit Tests Configuration:")
 message(STATUS "  Binary Assimilation Test: ENABLED")
 message(STATUS "  Range Transfer Test:      ENABLED")
 message(STATUS "  Error Handling Test:      ENABLED")
+message(STATUS "  ExportData Tests:         ENABLED")
 if(HDF5_ENABLED)
   message(STATUS "  HDF5 Format Test:         ENABLED")
+  message(STATUS "  ExportData HDF5 Tests:    ENABLED")
 else()
   message(STATUS "  HDF5 Format Test:         DISABLED (set -DWRP_CORE_ENABLE_HDF5=ON to enable)")
+  message(STATUS "  ExportData HDF5 Tests:    ENABLED (tests not-compiled path)")
 endif()
 message(STATUS "")
 message(STATUS "Run tests with:")
