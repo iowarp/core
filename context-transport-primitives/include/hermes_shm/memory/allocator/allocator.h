@@ -36,6 +36,8 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <new>
 #include <type_traits>
 
 #include "hermes_shm/constants/macros.h"
@@ -783,7 +785,9 @@ using AtomicShmPtr = ShmPtrBase<T, true>;
 template <typename T = char, bool ATOMIC = false>
 struct FullPtr : public ShmPointer {
   typedef ShmPtrBase<T, ATOMIC> PointerT;
+private:
   T *ptr_;
+public:
   PointerT shm_;
 
   /** Serialize hipc::FullPtr */
@@ -905,12 +909,32 @@ struct FullPtr : public ShmPointer {
     return *this;
   }
 
+  /** Set raw pointer (for internal framework use) */
+  HSHM_INLINE_CROSS_FUN void set_ptr(T *p) { ptr_ = p; }
+
+  /** Get raw pointer with launder barrier (use at every dereference) */
+  HSHM_INLINE_CROSS_FUN T* get() const {
+    if constexpr (std::is_void_v<T>) {
+      return ptr_;
+    } else {
+      return std::launder(ptr_);
+    }
+  }
+
+  /** Overload subscript */
+  template <typename U = T>
+  HSHM_INLINE_CROSS_FUN
+      typename std::enable_if<!std::is_void<U>::value, U &>::type
+      operator[](size_t i) const {
+    return std::launder(ptr_)[i];
+  }
+
   /** Overload arrow */
   template <typename U = T>
   HSHM_INLINE_CROSS_FUN
       typename std::enable_if<!std::is_void<U>::value, U *>::type
       operator->() const {
-    return ptr_;
+    return std::launder(ptr_);
   }
 
   /** Overload dereference */
@@ -918,7 +942,7 @@ struct FullPtr : public ShmPointer {
   HSHM_INLINE_CROSS_FUN
       typename std::enable_if<!std::is_void<U>::value, U &>::type
       operator*() const {
-    return *ptr_;
+    return *std::launder(ptr_);
   }
 
   /** Equality operator */
