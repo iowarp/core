@@ -668,7 +668,7 @@ chi::TaskResume Runtime::WriteToFile(hipc::FullPtr<WriteTask> task,
     if (remaining == 0) break;
     chi::u64 block_write_size = std::min(remaining, block.size_);
 
-    void *block_data = data_ptr.ptr_ + data_offset;
+    void *block_data = data_ptr.get() + data_offset;
 
     if (io_ctx == nullptr || !io_ctx->is_initialized_ || !io_ctx->async_io_) {
       HLOG(kError, "WriteToFile called with invalid I/O context");
@@ -731,7 +731,7 @@ chi::TaskResume Runtime::ReadFromFile(hipc::FullPtr<ReadTask> task,
     if (remaining == 0) break;
     chi::u64 block_read_size = std::min(remaining, block.size_);
 
-    void *block_data = data_ptr.ptr_ + data_offset;
+    void *block_data = data_ptr.get() + data_offset;
 
     if (io_ctx == nullptr || !io_ctx->is_initialized_ || !io_ctx->async_io_) {
       HLOG(kError, "ReadFromFile called with invalid I/O context");
@@ -899,7 +899,7 @@ void Runtime::WriteToRam(hipc::FullPtr<WriteTask> task) {
     }
 
     // Simple memory copy
-    memcpy(ram_buffer_ + block.offset_, data_ptr.ptr_ + data_offset,
+    memcpy(ram_buffer_ + block.offset_, data_ptr.get() + data_offset,
            block_write_size);
 
     // Update counters
@@ -956,7 +956,7 @@ void Runtime::ReadFromRam(hipc::FullPtr<ReadTask> task) {
     }
 
     // Copy data from RAM buffer to task output
-    memcpy(data_ptr.ptr_ + data_offset, ram_buffer_ + block.offset_,
+    memcpy(data_ptr.get() + data_offset, ram_buffer_ + block.offset_,
            block_read_size);
 
     // Update counters

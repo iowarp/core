@@ -183,9 +183,9 @@ class SocketTransport : public Transport {
 
   void ClearRecvHandles(LbmMeta<>& meta) {
     for (auto& bulk : meta.recv) {
-      if (bulk.data.ptr_) {
-        std::free(bulk.data.ptr_);
-        bulk.data.ptr_ = nullptr;
+      if (bulk.data.get()) {
+        std::free(bulk.data.get());
+        bulk.data.set_ptr(nullptr);
       }
     }
   }
@@ -282,7 +282,7 @@ class SocketTransport : public Transport {
 
     for (size_t i = 0; i < meta.send.size(); ++i) {
       if (!meta.send[i].flags.Any(BULK_XFER)) continue;
-      iov[idx].base = meta.send[i].data.ptr_;
+      iov[idx].base = meta.send[i].data.get();
       iov[idx].len = meta.send[i].size;
       idx++;
     }
@@ -409,7 +409,7 @@ class SocketTransport : public Transport {
     for (size_t i = 0; i < meta.recv.size(); ++i) {
       if (!meta.recv[i].flags.Any(BULK_XFER)) continue;
 
-      char* buf = meta.recv[i].data.ptr_;
+      char* buf = meta.recv[i].data.get();
       bool allocated = false;
       if (!buf) {
         buf = static_cast<char*>(std::malloc(meta.recv[i].size));
@@ -432,7 +432,7 @@ class SocketTransport : public Transport {
       }
 
       if (allocated) {
-        meta.recv[i].data.ptr_ = buf;
+        meta.recv[i].data.set_ptr(buf);
         meta.recv[i].data.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
         meta.recv[i].data.shm_.off_ = reinterpret_cast<size_t>(buf);
       }

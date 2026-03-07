@@ -214,7 +214,7 @@ class slist {
       // Get the next pointer from current node
       auto current = FullPtr<NodeT>(static_cast<hipc::Allocator*>(alloc_),
                                     current_);
-      OffsetPtr<> next_off = current.ptr_->next_;
+      OffsetPtr<> next_off = current->next_;
 
       if (next_off.IsNull()) {
         // Update to null iterator for end
@@ -260,7 +260,7 @@ class slist {
   HSHM_CROSS_FUN
   void emplace(AllocT *alloc, FullPtr<NodeT> node) {
     // Set node's next to current head
-    node.ptr_->next_ = head_.template Cast<void>();
+    node->next_ = head_.template Cast<void>();
 
     // Update head to point to new node
     head_ = node.shm_.off_;
@@ -304,7 +304,7 @@ class slist {
     }
 
     // Update head to next node
-    head_ = OffsetPtr<NodeT>(head.ptr_->next_);
+    head_ = OffsetPtr<NodeT>(head->next_);
 
     // Decrement size
     size_.store(size_.load() - 1);
@@ -407,11 +407,11 @@ class slist {
 
     if (it.IsAtHead()) {
       // Removing head node - update head_ directly
-      head_ = OffsetPtr<NodeT>(current.ptr_->next_);
+      head_ = OffsetPtr<NodeT>(current->next_);
     } else {
       // Removing middle node - update prev's next pointer
       auto prev = FullPtr<NodeT>(alloc, it.GetPrev());
-      prev.ptr_->next_ = current.ptr_->next_;
+      prev->next_ = current->next_;
     }
 
     // Decrement size

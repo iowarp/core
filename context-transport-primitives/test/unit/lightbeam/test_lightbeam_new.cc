@@ -114,10 +114,10 @@ void TestBasicTransfer() {
   std::cout << "Server received bulk data successfully\n";
 
   // Verify received data from transport-allocated recv buffers
-  std::string received1(recv_meta.recv[0].data.ptr_,
-                         recv_meta.recv[0].data.ptr_ + recv_meta.recv[0].size);
-  std::string received2(recv_meta.recv[1].data.ptr_,
-                         recv_meta.recv[1].data.ptr_ + recv_meta.recv[1].size);
+  std::string received1(recv_meta.recv[0].data.get(),
+                         recv_meta.recv[0].data.get() + recv_meta.recv[0].size);
+  std::string received2(recv_meta.recv[1].data.get(),
+                         recv_meta.recv[1].data.get() + recv_meta.recv[1].size);
 
   std::cout << "Bulk 1: " << received1 << "\n";
   std::cout << "Bulk 2: " << received2 << "\n";
@@ -178,8 +178,8 @@ void TestMultipleBulks() {
 
   // Verify all chunks from transport-allocated recv buffers
   for (size_t i = 0; i < data_chunks.size(); ++i) {
-    std::string received(recv_meta.recv[i].data.ptr_,
-                         recv_meta.recv[i].data.ptr_ + recv_meta.recv[i].size);
+    std::string received(recv_meta.recv[i].data.get(),
+                         recv_meta.recv[i].data.get() + recv_meta.recv[i].size);
     std::cout << "Chunk " << i << ": " << received << "\n";
     assert(received == data_chunks[i]);
   }

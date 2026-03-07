@@ -374,7 +374,7 @@ class ChiModGenerator {
       std::string task_type = GetTaskTypeName(method.method_name, chimod_name);
       oss << "    case Method::" << method.constant_name << ": {\n";
       oss << "      auto typed_task = task_ptr.template Cast<" << task_type << ">();\n";
-      oss << "      archive << *typed_task.ptr_;\n";
+      oss << "      archive << *typed_task;\n";
       oss << "      break;\n";
       oss << "    }\n";
     }
@@ -395,7 +395,7 @@ class ChiModGenerator {
       std::string task_type = GetTaskTypeName(method.method_name, chimod_name);
       oss << "    case Method::" << method.constant_name << ": {\n";
       oss << "      auto typed_task = task_ptr.template Cast<" << task_type << ">();\n";
-      oss << "      archive >> *typed_task.ptr_;\n";
+      oss << "      archive >> *typed_task;\n";
       oss << "      break;\n";
       oss << "    }\n";
     }
@@ -425,7 +425,7 @@ class ChiModGenerator {
       oss << "    case Method::" << method.constant_name << ": {\n";
       oss << "      auto typed_task = task_ptr.template Cast<" << task_type << ">();\n";
       oss << "      // Use archive operator which respects msg_type\n";
-      oss << "      archive >> *typed_task.ptr_;\n";
+      oss << "      archive >> *typed_task;\n";
       oss << "      break;\n";
       oss << "    }\n";
     }
@@ -455,7 +455,7 @@ class ChiModGenerator {
       oss << "    case Method::" << method.constant_name << ": {\n";
       oss << "      auto typed_task = task_ptr.template Cast<" << task_type << ">();\n";
       oss << "      // Use archive operator which respects msg_type\n";
-      oss << "      archive << *typed_task.ptr_;\n";
+      oss << "      archive << *typed_task;\n";
       oss << "      break;\n";
       oss << "    }\n";
     }

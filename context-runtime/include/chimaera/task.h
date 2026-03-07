@@ -559,7 +559,7 @@ class Future {
     // Manually initialize task_ptr_ to avoid FullPtr copy constructor bug on GPU
     // Copy shm_ directly, then reconstruct ptr_ from it
     task_ptr_.shm_ = task_ptr.shm_;
-    task_ptr_.ptr_ = task_ptr.ptr_;
+    task_ptr_.set_ptr(task_ptr.get());
   }
 
   /**
@@ -607,7 +607,7 @@ class Future {
         consumed_(false) {  // Copy is not consumed
     // Manually copy task_ptr_ to avoid FullPtr copy constructor bug on GPU
     task_ptr_.shm_ = other.task_ptr_.shm_;
-    task_ptr_.ptr_ = other.task_ptr_.ptr_;
+    task_ptr_.set_ptr(other.task_ptr_.get());
   }
 
   /**
@@ -619,7 +619,7 @@ class Future {
     if (this != &other) {
       // Manually copy task_ptr_ to avoid FullPtr copy assignment bug on GPU
       task_ptr_.shm_ = other.task_ptr_.shm_;
-      task_ptr_.ptr_ = other.task_ptr_.ptr_;
+      task_ptr_.set_ptr(other.task_ptr_.get());
       future_shm_ = other.future_shm_;
       parent_task_ = other.parent_task_;
       consumed_ = false;  // Copy is not consumed
@@ -637,7 +637,7 @@ class Future {
         consumed_(other.consumed_) {
     // Manually move task_ptr_ to avoid FullPtr move constructor bug on GPU
     task_ptr_.shm_ = other.task_ptr_.shm_;
-    task_ptr_.ptr_ = other.task_ptr_.ptr_;
+    task_ptr_.set_ptr(other.task_ptr_.get());
     other.task_ptr_.SetNull();
     other.parent_task_ = nullptr;
     other.consumed_ = false;
@@ -652,7 +652,7 @@ class Future {
     if (this != &other) {
       // Manually move task_ptr_ to avoid FullPtr move assignment bug on GPU
       task_ptr_.shm_ = other.task_ptr_.shm_;
-      task_ptr_.ptr_ = other.task_ptr_.ptr_;
+      task_ptr_.set_ptr(other.task_ptr_.get());
       future_shm_ = std::move(other.future_shm_);
       parent_task_ = other.parent_task_;
       consumed_ = other.consumed_;
@@ -668,7 +668,7 @@ class Future {
    * Get raw pointer to the task
    * @return Pointer to the task object
    */
-  HSHM_CROSS_FUN TaskT* get() const { return task_ptr_.ptr_; }
+  HSHM_CROSS_FUN TaskT* get() const { return task_ptr_.get(); }
 
   /**
    * Get the FullPtr to the task (non-const version)
@@ -686,13 +686,13 @@ class Future {
    * Dereference operator - access task members
    * @return Reference to the task object
    */
-  HSHM_CROSS_FUN TaskT& operator*() const { return *task_ptr_.ptr_; }
+  HSHM_CROSS_FUN TaskT& operator*() const { return *task_ptr_.get(); }
 
   /**
    * Arrow operator - access task members
    * @return Pointer to the task object
    */
-  HSHM_CROSS_FUN TaskT* operator->() const { return task_ptr_.ptr_; }
+  HSHM_CROSS_FUN TaskT* operator->() const { return task_ptr_.get(); }
 
   /**
    * Check if the task is complete

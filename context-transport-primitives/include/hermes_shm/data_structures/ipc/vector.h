@@ -656,7 +656,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   T& at(size_t idx) {
-    auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.ptr_;
+    auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.get();
     return ptr[idx];
   }
 
@@ -669,7 +669,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   const T& at(size_t idx) const {
-    const auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.ptr_;
+    const auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.get();
     return ptr[idx];
   }
 
@@ -681,7 +681,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   T& operator[](size_t idx) {
-    auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.ptr_;
+    auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.get();
     return ptr[idx];
   }
 
@@ -693,7 +693,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   const T& operator[](size_t idx) const {
-    const auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.ptr_;
+    const auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.get();
     return ptr[idx];
   }
 
@@ -704,7 +704,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   T& front() {
-    auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.ptr_;
+    auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.get();
     return *ptr;
   }
 
@@ -715,7 +715,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   const T& front() const {
-    const auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.ptr_;
+    const auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.get();
     return *ptr;
   }
 
@@ -726,7 +726,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   T& back() {
-    auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.ptr_;
+    auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.get();
     return ptr[size_ - 1];
   }
 
@@ -737,7 +737,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   const T& back() const {
-    const auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.ptr_;
+    const auto fp = FullPtr(this->GetAllocator(), data_); T *ptr = fp.get();
     return ptr[size_ - 1];
   }
 
@@ -749,7 +749,7 @@ class vector : public ShmContainer<AllocT> {
   HSHM_INLINE_CROSS_FUN
   T* data() {
     if (data_.IsNull()) return nullptr;
-    return FullPtr(this->GetAllocator(), data_).ptr_;
+    return FullPtr(this->GetAllocator(), data_).get();
   }
 
   /**
@@ -760,7 +760,7 @@ class vector : public ShmContainer<AllocT> {
   HSHM_INLINE_CROSS_FUN
   const T* data() const {
     if (data_.IsNull()) return nullptr;
-    return FullPtr(this->GetAllocator(), data_).ptr_;
+    return FullPtr(this->GetAllocator(), data_).get();
   }
 
   /**
@@ -770,7 +770,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   iterator begin() {
-    T *ptr = data_.IsNull() ? nullptr : FullPtr(this->GetAllocator(), data_).ptr_;
+    T *ptr = data_.IsNull() ? nullptr : FullPtr(this->GetAllocator(), data_).get();
     return iterator(ptr);
   }
 
@@ -781,7 +781,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   const_iterator begin() const {
-    const T *ptr = data_.IsNull() ? nullptr : FullPtr(this->GetAllocator(), data_).ptr_;
+    const T *ptr = data_.IsNull() ? nullptr : FullPtr(this->GetAllocator(), data_).get();
     return const_iterator(ptr);
   }
 
@@ -792,7 +792,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   iterator end() {
-    T *ptr = data_.IsNull() ? nullptr : FullPtr(this->GetAllocator(), data_).ptr_;
+    T *ptr = data_.IsNull() ? nullptr : FullPtr(this->GetAllocator(), data_).get();
     return iterator(ptr + size_);
   }
 
@@ -803,7 +803,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   const_iterator end() const {
-    const T *ptr = data_.IsNull() ? nullptr : FullPtr(this->GetAllocator(), data_).ptr_;
+    const T *ptr = data_.IsNull() ? nullptr : FullPtr(this->GetAllocator(), data_).get();
     return const_iterator(ptr + size_);
   }
 
@@ -814,7 +814,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   const_iterator cbegin() const {
-    const T *ptr = data_.IsNull() ? nullptr : FullPtr(this->GetAllocator(), data_).ptr_;
+    const T *ptr = data_.IsNull() ? nullptr : FullPtr(this->GetAllocator(), data_).get();
     return const_iterator(ptr);
   }
 
@@ -825,7 +825,7 @@ class vector : public ShmContainer<AllocT> {
    */
   HSHM_INLINE_CROSS_FUN
   const_iterator cend() const {
-    const T *ptr = data_.IsNull() ? nullptr : FullPtr(this->GetAllocator(), data_).ptr_;
+    const T *ptr = data_.IsNull() ? nullptr : FullPtr(this->GetAllocator(), data_).get();
     return const_iterator(ptr + size_);
   }
 
@@ -1041,12 +1041,12 @@ HSHM_CROSS_FUN vector<T, AllocT>::vector(AllocT *alloc, size_t size, Args&&... a
     AllocateStorage(size);
     // Initialize elements with provided arguments
     auto fp = FullPtr(this->GetAllocator(), data_);
-    if (fp.ptr_) {
+    if (fp.get()) {
       for (size_t i = 0; i < size; ++i) {
         if constexpr (IS_SHM_CONTAINER(T)) {
-          new (fp.ptr_ + i) T(alloc, std::forward<Args>(args)...);
+          new (&fp[i]) T(alloc, std::forward<Args>(args)...);
         } else {
-          new (fp.ptr_ + i) T(std::forward<Args>(args)...);
+          new (&fp[i]) T(std::forward<Args>(args)...);
         }
       }
       size_ = size;
@@ -1104,10 +1104,10 @@ HSHM_CROSS_FUN vector<T, AllocT>::vector(AllocT *alloc, IterT first, IterT last)
   if (count > 0) {
     AllocateStorage(count);
     auto fp = FullPtr(this->GetAllocator(), data_);
-    if (fp.ptr_) {
+    if (fp.get()) {
       size_t idx = 0;
       for (IterT it = first; it != last; ++it, ++idx) {
-        new (fp.ptr_ + idx) T(*it);
+        new (&fp[idx]) T(*it);
       }
       size_ = count;
     }
@@ -1246,13 +1246,13 @@ HSHM_CROSS_FUN void vector<T, AllocT>::DestroyElements() {
   }
 
   auto fp = FullPtr(alloc, data_);
-  if (!fp.ptr_) {
+  if (!fp.get()) {
     return;
   }
 
   // Call destructor on each element
   for (size_t i = 0; i < size_; ++i) {
-    fp.ptr_[i].~T();
+    fp[i].~T();
   }
 }
 
@@ -1280,7 +1280,7 @@ HSHM_CROSS_FUN void vector<T, AllocT>::CopyElements(const T *src, size_t count) 
     return;
   }
 
-  T *dest = FullPtr(alloc, data_).ptr_;
+  T *dest = FullPtr(alloc, data_).get();
   if (!dest) {
     size_ = 0;
     return;
@@ -1323,7 +1323,7 @@ HSHM_CROSS_FUN void vector<T, AllocT>::MoveElements(T *src, size_t count) {
     return;
   }
 
-  T *dest = FullPtr(alloc, data_).ptr_;
+  T *dest = FullPtr(alloc, data_).get();
   if (!dest) {
     size_ = 0;
     return;
@@ -1368,9 +1368,9 @@ HSHM_CROSS_FUN void vector<T, AllocT>::emplace_back(Args&&... args) {
   }
 
   auto fp = FullPtr(alloc, data_);
-  if (fp.ptr_) {
+  if (fp.get()) {
     // Construct element in-place at current size position
-    new (fp.ptr_ + size_) T(std::forward<Args>(args)...);
+    new (&fp[size_]) T(std::forward<Args>(args)...);
     size_++;
   }
 }
@@ -1422,12 +1422,12 @@ vector<T, AllocT>::emplace(const_iterator pos, Args&&... args) {
   }
 
   auto fp = FullPtr(alloc, data_);
-  if (!fp.ptr_) {
+  if (!fp.get()) {
     return iterator(nullptr);
   }
 
   // Calculate index from iterator
-  size_t idx = &(*pos) - fp.ptr_;
+  size_t idx = &(*pos) - fp.get();
 
   // Check if we need to grow
   if (size_ >= capacity_) {
@@ -1438,15 +1438,15 @@ vector<T, AllocT>::emplace(const_iterator pos, Args&&... args) {
 
   // Shift elements to the right
   for (size_t i = size_; i > idx; --i) {
-    new (fp.ptr_ + i) T(std::move(fp.ptr_[i - 1]));
-    fp.ptr_[i - 1].~T();
+    new (&fp[i]) T(std::move(fp[i - 1]));
+    fp[i - 1].~T();
   }
 
   // Construct new element
-  new (fp.ptr_ + idx) T(std::forward<Args>(args)...);
+  new (&fp[idx]) T(std::forward<Args>(args)...);
   size_++;
 
-  return iterator(fp.ptr_ + idx);
+  return iterator(&fp[idx]);
 }
 
 /**
@@ -1499,25 +1499,25 @@ vector<T, AllocT>::erase(const_iterator pos) {
   }
 
   auto fp = FullPtr(alloc, data_);
-  if (!fp.ptr_) {
+  if (!fp.get()) {
     return iterator(nullptr);
   }
 
   // Calculate index from iterator
-  size_t idx = &(*pos) - fp.ptr_;
+  size_t idx = &(*pos) - fp.get();
 
   // Call destructor on the element
-  fp.ptr_[idx].~T();
+  fp[idx].~T();
 
   // Shift elements to the left
   for (size_t i = idx; i < size_ - 1; ++i) {
-    new (fp.ptr_ + i) T(std::move(fp.ptr_[i + 1]));
-    fp.ptr_[i + 1].~T();
+    new (&fp[i]) T(std::move(fp[i + 1]));
+    fp[i + 1].~T();
   }
 
   size_--;
 
-  return iterator(fp.ptr_ + idx);
+  return iterator(&fp[idx]);
 }
 
 /**
@@ -1541,33 +1541,33 @@ vector<T, AllocT>::erase(const_iterator first, const_iterator last) {
   }
 
   auto fp = FullPtr(alloc, data_);
-  if (!fp.ptr_) {
+  if (!fp.get()) {
     return iterator(nullptr);
   }
 
   // Calculate indices from iterators
-  size_t first_idx = &(*first) - fp.ptr_;
-  size_t last_idx = &(*last) - fp.ptr_;
+  size_t first_idx = &(*first) - fp.get();
+  size_t last_idx = &(*last) - fp.get();
   size_t count = last_idx - first_idx;
 
   if (count == 0) {
-    return iterator(fp.ptr_ + first_idx);
+    return iterator(&fp[first_idx]);
   }
 
   // Destroy elements in range
   for (size_t i = first_idx; i < last_idx; ++i) {
-    fp.ptr_[i].~T();
+    fp[i].~T();
   }
 
   // Shift remaining elements to the left
   for (size_t i = first_idx; i < size_ - count; ++i) {
-    new (fp.ptr_ + i) T(std::move(fp.ptr_[i + count]));
-    fp.ptr_[i + count].~T();
+    new (&fp[i]) T(std::move(fp[i + count]));
+    fp[i + count].~T();
   }
 
   size_ -= count;
 
-  return iterator(fp.ptr_ + first_idx);
+  return iterator(&fp[first_idx]);
 }
 
 /**
@@ -1618,7 +1618,7 @@ HSHM_CROSS_FUN void vector<T, AllocT>::reserve(size_t new_capacity) {
 
   // Copy elements to new storage
   if (old_size > 0 && !old_data.IsNull()) {
-    T *old_ptr = FullPtr(alloc, old_data).ptr_;
+    T *old_ptr = FullPtr(alloc, old_data).get();
     CopyElements(old_ptr, old_size);
 
     // Deallocate old storage
@@ -1666,7 +1666,7 @@ HSHM_CROSS_FUN void vector<T, AllocT>::shrink_to_fit() {
 
     // Copy elements to new storage
     if (!old_data.IsNull()) {
-      T *old_ptr = FullPtr(alloc, old_data).ptr_;
+      T *old_ptr = FullPtr(alloc, old_data).get();
       CopyElements(old_ptr, current_size);
 
       // Deallocate old storage
@@ -1711,12 +1711,12 @@ HSHM_CROSS_FUN void vector<T, AllocT>::resize(size_t new_size) {
 
     // Default-initialize new elements
     auto fp = FullPtr(alloc, data_);
-    if (fp.ptr_) {
+    if (fp.get()) {
       for (size_t i = size_; i < new_size; ++i) {
         if constexpr (IS_SHM_CONTAINER(T)) {
-          new (fp.ptr_ + i) T(alloc);
+          new (&fp[i]) T(alloc);
         } else {
-          new (fp.ptr_ + i) T();
+          new (&fp[i]) T();
         }
       }
     }
@@ -1724,9 +1724,9 @@ HSHM_CROSS_FUN void vector<T, AllocT>::resize(size_t new_size) {
   } else {
     // Need to shrink
     auto fp = FullPtr(alloc, data_);
-    if (fp.ptr_ && !std::is_trivially_destructible<T>::value) {
+    if (fp.get() && !std::is_trivially_destructible<T>::value) {
       for (size_t i = new_size; i < size_; ++i) {
-        fp.ptr_[i].~T();
+        fp[i].~T();
       }
     }
     size_ = new_size;
@@ -1763,18 +1763,18 @@ HSHM_CROSS_FUN void vector<T, AllocT>::resize(size_t new_size, const T &value) {
 
     // Fill new elements with value
     auto fp = FullPtr(alloc, data_);
-    if (fp.ptr_) {
+    if (fp.get()) {
       for (size_t i = size_; i < new_size; ++i) {
-        new (fp.ptr_ + i) T(value);
+        new (&fp[i]) T(value);
       }
     }
     size_ = new_size;
   } else {
     // Need to shrink
     auto fp = FullPtr(alloc, data_);
-    if (fp.ptr_ && !std::is_trivially_destructible<T>::value) {
+    if (fp.get() && !std::is_trivially_destructible<T>::value) {
       for (size_t i = new_size; i < size_; ++i) {
-        fp.ptr_[i].~T();
+        fp[i].~T();
       }
     }
     size_ = new_size;
@@ -1874,17 +1874,17 @@ vector<T, AllocT>::operator==(const vector &other) const {
   auto fp = FullPtr(alloc, data_);
   auto other_fp = FullPtr(other.GetAllocator(), other.data_);
 
-  if (!fp.ptr_ && !other_fp.ptr_) {
+  if (!fp.get() && !other_fp.get()) {
     return true;
   }
 
-  if (!fp.ptr_ || !other_fp.ptr_) {
+  if (!fp.get() || !other_fp.get()) {
     return false;
   }
 
   // Compare elements
   for (size_t i = 0; i < size_; ++i) {
-    if (!(fp.ptr_[i] == other_fp.ptr_[i])) {
+    if (!(fp[i] == other_fp[i])) {
       return false;
     }
   }

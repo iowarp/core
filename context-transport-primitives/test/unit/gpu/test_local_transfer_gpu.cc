@@ -123,11 +123,11 @@ TEST_CASE("ShmTransfer GPU", "[gpu][transfer]") {
 
     // Step 3: Allocate copy space and ShmTransferInfo from pinned memory
     auto copy_space_ptr = alloc_ptr->AllocateObjs<char>(kCopySpaceSize);
-    char *copy_space = copy_space_ptr.ptr_;
+    char *copy_space = copy_space_ptr.get();
     REQUIRE(copy_space != nullptr);
 
     auto shm_info_ptr = alloc_ptr->AllocateObjs<ShmTransferInfo>(1);
-    ShmTransferInfo *shm_info = shm_info_ptr.ptr_;
+    ShmTransferInfo *shm_info = shm_info_ptr.get();
     REQUIRE(shm_info != nullptr);
     new (shm_info) ShmTransferInfo();
     shm_info->copy_space_size_ = kCopySpaceSize;
@@ -189,11 +189,11 @@ TEST_CASE("ShmTransfer GPU", "[gpu][transfer]") {
     REQUIRE(alloc_ptr != nullptr);
 
     auto copy_space_ptr = alloc_ptr->AllocateObjs<char>(kCopySpaceSize);
-    char *copy_space = copy_space_ptr.ptr_;
+    char *copy_space = copy_space_ptr.get();
     REQUIRE(copy_space != nullptr);
 
     auto shm_info_ptr = alloc_ptr->AllocateObjs<ShmTransferInfo>(1);
-    ShmTransferInfo *shm_info = shm_info_ptr.ptr_;
+    ShmTransferInfo *shm_info = shm_info_ptr.get();
     REQUIRE(shm_info != nullptr);
     new (shm_info) ShmTransferInfo();
     shm_info->copy_space_size_ = kCopySpaceSize;
@@ -249,7 +249,7 @@ TEST_CASE("ShmTransfer GPU", "[gpu][transfer]") {
 
     // Allocate buffer directly from GpuShmMmap
     auto buffer_ptr = alloc_ptr->AllocateObjs<char>(1024);
-    char *buffer = buffer_ptr.ptr_;
+    char *buffer = buffer_ptr.get();
     REQUIRE(buffer != nullptr);
 
     // Initialize on CPU
@@ -291,11 +291,11 @@ TEST_CASE("ShmTransfer GPU", "[gpu][transfer]") {
     REQUIRE(alloc_ptr != nullptr);
 
     auto copy_space_ptr = alloc_ptr->AllocateObjs<char>(kCopySpaceSize);
-    char *copy_space = copy_space_ptr.ptr_;
+    char *copy_space = copy_space_ptr.get();
     REQUIRE(copy_space != nullptr);
 
     auto shm_info_ptr = alloc_ptr->AllocateObjs<ShmTransferInfo>(1);
-    ShmTransferInfo *shm_info = shm_info_ptr.ptr_;
+    ShmTransferInfo *shm_info = shm_info_ptr.get();
     REQUIRE(shm_info != nullptr);
     new (shm_info) ShmTransferInfo();
     shm_info->copy_space_size_ = kCopySpaceSize;
@@ -365,7 +365,7 @@ __global__ void GpuSendKernel(GpuAllocT *alloc, char *data_buf,
 
     // Create bulk descriptor for the data buffer (private memory)
     Bulk bulk;
-    bulk.data.ptr_ = data_buf;
+    bulk.data.set_ptr(data_buf);
     bulk.data.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
     bulk.data.shm_.off_ = 0;
     bulk.size = data_size;
@@ -411,7 +411,7 @@ __global__ void GpuRecvKernel(GpuAllocT *alloc, char *output_buf,
       *recv_size = meta.recv[0].size;
       size_t copy_size = meta.recv[0].size;
       if (copy_size > max_size) copy_size = max_size;
-      ShmTransport::MemCopy(output_buf, meta.recv[0].data.ptr_, copy_size);
+      ShmTransport::MemCopy(output_buf, meta.recv[0].data.get(), copy_size);
     }
   }
 }
@@ -443,18 +443,18 @@ TEST_CASE("ShmTransport Send/Recv GPU", "[gpu][transport]") {
 
     // Step 3: Allocate copy space and ShmTransferInfo from pinned memory
     auto copy_space_ptr = alloc_ptr->AllocateObjs<char>(kCopySpaceSize);
-    char *copy_space = copy_space_ptr.ptr_;
+    char *copy_space = copy_space_ptr.get();
     REQUIRE(copy_space != nullptr);
 
     auto shm_info_ptr = alloc_ptr->AllocateObjs<ShmTransferInfo>(1);
-    ShmTransferInfo *shm_info = shm_info_ptr.ptr_;
+    ShmTransferInfo *shm_info = shm_info_ptr.get();
     REQUIRE(shm_info != nullptr);
     new (shm_info) ShmTransferInfo();
     shm_info->copy_space_size_ = kCopySpaceSize;
 
     // Step 4: Allocate send result in pinned memory (GPU writes to it)
     auto result_ptr = alloc_ptr->AllocateObjs<int>(1);
-    int *send_result = result_ptr.ptr_;
+    int *send_result = result_ptr.get();
     REQUIRE(send_result != nullptr);
     *send_result = -1;
 
@@ -489,12 +489,12 @@ TEST_CASE("ShmTransport Send/Recv GPU", "[gpu][transport]") {
     REQUIRE(recv_meta.send_bulks == 1);
     REQUIRE(recv_meta.recv.size() == 1);
     REQUIRE(recv_meta.recv[0].size == kDataSize);
-    REQUIRE(recv_meta.recv[0].data.ptr_ != nullptr);
+    REQUIRE(recv_meta.recv[0].data.get() != nullptr);
 
     // Verify received bulk data matches the pattern
     bool data_correct = true;
     for (size_t i = 0; i < kDataSize; ++i) {
-      if (recv_meta.recv[0].data.ptr_[i] != static_cast<char>(i % 251)) {
+      if (recv_meta.recv[0].data.get()[i] != static_cast<char>(i % 251)) {
         data_correct = false;
         break;
       }
@@ -502,7 +502,7 @@ TEST_CASE("ShmTransport Send/Recv GPU", "[gpu][transport]") {
     REQUIRE(data_correct);
 
     // Cleanup
-    std::free(recv_meta.recv[0].data.ptr_);
+    std::free(recv_meta.recv[0].data.get());
     cudaFreeHost(data_buf);
   }
 
@@ -520,17 +520,17 @@ TEST_CASE("ShmTransport Send/Recv GPU", "[gpu][transport]") {
     REQUIRE(alloc_ptr != nullptr);
 
     auto copy_space_ptr = alloc_ptr->AllocateObjs<char>(kCopySpaceSize);
-    char *copy_space = copy_space_ptr.ptr_;
+    char *copy_space = copy_space_ptr.get();
     REQUIRE(copy_space != nullptr);
 
     auto shm_info_ptr = alloc_ptr->AllocateObjs<ShmTransferInfo>(1);
-    ShmTransferInfo *shm_info = shm_info_ptr.ptr_;
+    ShmTransferInfo *shm_info = shm_info_ptr.get();
     REQUIRE(shm_info != nullptr);
     new (shm_info) ShmTransferInfo();
     shm_info->copy_space_size_ = kCopySpaceSize;
 
     auto result_ptr = alloc_ptr->AllocateObjs<int>(1);
-    int *send_result = result_ptr.ptr_;
+    int *send_result = result_ptr.get();
     REQUIRE(send_result != nullptr);
     *send_result = -1;
 
@@ -562,19 +562,19 @@ TEST_CASE("ShmTransport Send/Recv GPU", "[gpu][transport]") {
     REQUIRE(recv_rc == 0);
     REQUIRE(recv_meta.recv.size() == 1);
     REQUIRE(recv_meta.recv[0].size == kLargeDataSize);
-    REQUIRE(recv_meta.recv[0].data.ptr_ != nullptr);
+    REQUIRE(recv_meta.recv[0].data.get() != nullptr);
 
     // Verify all data is correct
     bool data_correct = true;
     for (size_t i = 0; i < kLargeDataSize; ++i) {
-      if (recv_meta.recv[0].data.ptr_[i] != kPattern) {
+      if (recv_meta.recv[0].data.get()[i] != kPattern) {
         data_correct = false;
         break;
       }
     }
     REQUIRE(data_correct);
 
-    std::free(recv_meta.recv[0].data.ptr_);
+    std::free(recv_meta.recv[0].data.get());
     cudaFreeHost(data_buf);
   }
 
@@ -603,28 +603,28 @@ TEST_CASE("ShmTransport Send/Recv GPU", "[gpu][transport]") {
 
     // Step 3: Allocate shared copy space and ShmTransferInfo
     auto copy_space_ptr = shared_alloc->AllocateObjs<char>(kCopySpaceSize);
-    char *copy_space = copy_space_ptr.ptr_;
+    char *copy_space = copy_space_ptr.get();
     REQUIRE(copy_space != nullptr);
 
     auto shm_info_ptr = shared_alloc->AllocateObjs<ShmTransferInfo>(1);
-    ShmTransferInfo *shm_info = shm_info_ptr.ptr_;
+    ShmTransferInfo *shm_info = shm_info_ptr.get();
     REQUIRE(shm_info != nullptr);
     new (shm_info) ShmTransferInfo();
     shm_info->copy_space_size_ = kCopySpaceSize;
 
     // Step 4: Allocate results in shared pinned memory
     auto send_result_ptr = shared_alloc->AllocateObjs<int>(1);
-    int *send_result = send_result_ptr.ptr_;
+    int *send_result = send_result_ptr.get();
     REQUIRE(send_result != nullptr);
     *send_result = -1;
 
     auto recv_result_ptr = shared_alloc->AllocateObjs<int>(1);
-    int *recv_result = recv_result_ptr.ptr_;
+    int *recv_result = recv_result_ptr.get();
     REQUIRE(recv_result != nullptr);
     *recv_result = -1;
 
     auto recv_size_ptr = shared_alloc->AllocateObjs<size_t>(1);
-    size_t *recv_size = recv_size_ptr.ptr_;
+    size_t *recv_size = recv_size_ptr.get();
     REQUIRE(recv_size != nullptr);
     *recv_size = 0;
 

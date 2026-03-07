@@ -275,7 +275,7 @@ class NixlTransport : public Transport {
       }
       nixl_xfer_dlist_t src(DRAM_SEG);
       src.addDesc(nixlBasicDesc(
-          reinterpret_cast<uintptr_t>(b.data.ptr_), b.size, /*devId=*/0));
+          reinterpret_cast<uintptr_t>(b.data.get()), b.size, /*devId=*/0));
 
       nixl_xfer_dlist_t dst(FILE_SEG);
       dst.addDesc(nixlBasicDesc(
@@ -335,7 +335,7 @@ class NixlTransport : public Transport {
         continue;
       }
       Bulk& rb = meta.recv[i];
-      std::memcpy(rb.data.ptr_, sb.data.ptr_, sb.size);
+      std::memcpy(rb.data.get(), sb.data.get(), sb.size);
     }
     return 0;
   }

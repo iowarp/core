@@ -607,7 +607,7 @@ class CTECompressBenchmark {
 
       // Generate data
       generator.FillBuffer(data.data(), transfer_size_);
-      std::memcpy(shm_buffer.ptr_, data.data(), transfer_size_);
+      std::memcpy(shm_buffer.get(), data.data(), transfer_size_);
 
       // Create tag and blob names
       std::string tag_name = "compress_tag_t" + std::to_string(thread_id) +
@@ -801,7 +801,7 @@ class CTECompressBenchmark {
 
       // Generate data
       generator.FillBuffer(data.data(), transfer_size_);
-      std::memcpy(shm_buffer.ptr_, data.data(), transfer_size_);
+      std::memcpy(shm_buffer.get(), data.data(), transfer_size_);
 
       std::string tag_name = "compress_putget_tag_t" + std::to_string(thread_id) +
                              "_i" + std::to_string(i);

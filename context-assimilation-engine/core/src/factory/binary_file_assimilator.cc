@@ -170,7 +170,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
                             ", offset=" + std::to_string(chunk_offset) + ">";
   size_t desc_size = description.size();
   auto desc_buffer = CHI_IPC->AllocateBuffer(desc_size);
-  std::memcpy(desc_buffer.ptr_, description.c_str(), desc_size);
+  std::memcpy(desc_buffer.get(), description.c_str(), desc_size);
 
   HLOG(kDebug, "BinaryFileAssimilator: Storing description blob: '{}'",
        description);
@@ -237,7 +237,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
 
       // Allocate buffer in shared memory
       auto buffer_ptr = CHI_IPC->AllocateBuffer(current_chunk_size);
-      char* buffer = buffer_ptr.ptr_;
+      char* buffer = buffer_ptr.get();
 
       // Read chunk from file
       HLOG(kDebug,

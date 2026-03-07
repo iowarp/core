@@ -302,8 +302,8 @@ void TestSocketTransportWithEM() {
 
   assert(recv_meta.request_id == 55);
   assert(recv_meta.operation == "em_test");
-  std::string received(recv_meta.recv[0].data.ptr_,
-                       recv_meta.recv[0].data.ptr_ + recv_meta.recv[0].size);
+  std::string received(recv_meta.recv[0].data.get(),
+                       recv_meta.recv[0].data.get() + recv_meta.recv[0].size);
   assert(received == data);
 
   server->ClearRecvHandles(recv_meta);
@@ -359,8 +359,8 @@ void TestZmqTransportWithEM() {
   assert(recv_meta.request_id == 66);
   assert(recv_meta.operation == "zmq_em");
 
-  std::string received(recv_meta.recv[0].data.ptr_,
-                       recv_meta.recv[0].data.ptr_ + recv_meta.recv[0].size);
+  std::string received(recv_meta.recv[0].data.get(),
+                       recv_meta.recv[0].data.get() + recv_meta.recv[0].size);
   assert(received == data);
 
   server->ClearRecvHandles(recv_meta);

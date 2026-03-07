@@ -100,9 +100,9 @@ class ShmTransport
 
   void ClearRecvHandles(LbmMeta<>& meta) {
     for (auto& bulk : meta.recv) {
-      if (bulk.data.ptr_ && !bulk.desc) {
-        std::free(bulk.data.ptr_);
-        bulk.data.ptr_ = nullptr;
+      if (bulk.data.get() && !bulk.desc) {
+        std::free(bulk.data.get());
+        bulk.data.set_ptr(nullptr);
       }
     }
   }
@@ -150,7 +150,7 @@ class ShmTransport
             sizeof(meta.send[i].data.shm_), ctx);
         if (meta.send[i].data.shm_.alloc_id_.IsNull()) {
           // Private memory — also send full data bytes
-          WriteTransfer(meta.send[i].data.ptr_, meta.send[i].size, ctx);
+          WriteTransfer(meta.send[i].data.get(), meta.send[i].size, ctx);
         }
       }
     }
@@ -216,7 +216,7 @@ class ShmTransport
         hipc::ShmPtr<char> shm;
         ReadTransfer(reinterpret_cast<char*>(&shm), sizeof(shm), ctx);
         meta.recv[i].data.shm_ = shm;
-        meta.recv[i].data.ptr_ = nullptr;
+        meta.recv[i].data.set_ptr(nullptr);
       } else if (meta.recv[i].flags.Any(BULK_XFER)) {
         // BULK_XFER: Read ShmPtr first, then data if private memory
         hipc::ShmPtr<char> shm;
@@ -225,10 +225,10 @@ class ShmTransport
         if (!shm.alloc_id_.IsNull()) {
           // Shared memory — ShmPtr passthrough, no data transfer
           meta.recv[i].data.shm_ = shm;
-          meta.recv[i].data.ptr_ = nullptr;
+          meta.recv[i].data.set_ptr(nullptr);
         } else {
           // Private memory — read full data bytes
-          char* buf = meta.recv[i].data.ptr_;
+          char* buf = meta.recv[i].data.get();
           bool allocated = false;
           if (!buf) {
 #if HSHM_IS_HOST
@@ -236,7 +236,7 @@ class ShmTransport
 #else
             auto alloc_ptr =
                 meta.alloc_->template AllocateObjs<char>(meta.recv[i].size);
-            buf = alloc_ptr.ptr_;
+            buf = alloc_ptr.get();
 #endif
             allocated = true;
           }
@@ -244,7 +244,7 @@ class ShmTransport
           ReadTransfer(buf, meta.recv[i].size, ctx);
 
           if (allocated) {
-            meta.recv[i].data.ptr_ = buf;
+            meta.recv[i].data.set_ptr(buf);
             meta.recv[i].data.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
             meta.recv[i].data.shm_.off_ = reinterpret_cast<size_t>(buf);
           }
@@ -282,6 +282,7 @@ class ShmTransport
 #endif
   }
 
+ public:
   // SPSC ring buffer write (system-scope atomics for GPU/CPU visibility)
   HSHM_CROSS_FUN
   static void WriteTransfer(const char* data, size_t size, const LbmContext& ctx) {

@@ -187,14 +187,14 @@ TEST_CASE("Per-process shared memory AllocateBuffer medium sizes",
     hipc::FullPtr<char> buffer = ipc_manager->AllocateBuffer(k100MB);
 
     REQUIRE_FALSE(buffer.IsNull());
-    REQUIRE(buffer.ptr_ != nullptr);
+    REQUIRE(buffer.get() != nullptr);
 
     // Test memory access at boundaries
-    buffer.ptr_[0] = 0x01;
-    buffer.ptr_[k100MB - 1] = static_cast<char>(0xFF);
+    buffer[0] = 0x01;
+    buffer[k100MB - 1] = static_cast<char>(0xFF);
 
-    REQUIRE(buffer.ptr_[0] == 0x01);
-    REQUIRE(static_cast<unsigned char>(buffer.ptr_[k100MB - 1]) == 0xFF);
+    REQUIRE(buffer[0] == 0x01);
+    REQUIRE(static_cast<unsigned char>(buffer[k100MB - 1]) == 0xFF);
 
     INFO("Successfully allocated 100MB buffer");
   }
@@ -203,14 +203,14 @@ TEST_CASE("Per-process shared memory AllocateBuffer medium sizes",
     hipc::FullPtr<char> buffer = ipc_manager->AllocateBuffer(k500MB);
 
     REQUIRE_FALSE(buffer.IsNull());
-    REQUIRE(buffer.ptr_ != nullptr);
+    REQUIRE(buffer.get() != nullptr);
 
     // Test memory access at boundaries
-    buffer.ptr_[0] = static_cast<char>(0xAA);
-    buffer.ptr_[k500MB - 1] = static_cast<char>(0xBB);
+    buffer[0] = static_cast<char>(0xAA);
+    buffer[k500MB - 1] = static_cast<char>(0xBB);
 
-    REQUIRE(static_cast<unsigned char>(buffer.ptr_[0]) == 0xAA);
-    REQUIRE(static_cast<unsigned char>(buffer.ptr_[k500MB - 1]) == 0xBB);
+    REQUIRE(static_cast<unsigned char>(buffer[0]) == 0xAA);
+    REQUIRE(static_cast<unsigned char>(buffer[k500MB - 1]) == 0xBB);
 
     INFO("Successfully allocated 500MB buffer");
   }
@@ -240,16 +240,16 @@ TEST_CASE("Per-process shared memory AllocateBuffer exceeding 1GB",
     INFO("Allocation took " << duration.count() << " ms");
 
     REQUIRE_FALSE(buffer.IsNull());
-    REQUIRE(buffer.ptr_ != nullptr);
+    REQUIRE(buffer.get() != nullptr);
 
     // Test memory access at multiple points in the buffer
-    buffer.ptr_[0] = 'A';
-    buffer.ptr_[k1GB] = 'B';  // Past the 1GB mark
-    buffer.ptr_[k1_5GB - 1] = 'Z';
+    buffer[0] = 'A';
+    buffer[k1GB] = 'B';  // Past the 1GB mark
+    buffer[k1_5GB - 1] = 'Z';
 
-    REQUIRE(buffer.ptr_[0] == 'A');
-    REQUIRE(buffer.ptr_[k1GB] == 'B');
-    REQUIRE(buffer.ptr_[k1_5GB - 1] == 'Z');
+    REQUIRE(buffer[0] == 'A');
+    REQUIRE(buffer[k1GB] == 'B');
+    REQUIRE(buffer[k1_5GB - 1] == 'Z');
 
     INFO("Successfully allocated and accessed 1.5GB buffer");
   }
@@ -280,20 +280,20 @@ TEST_CASE("Per-process shared memory multiple large allocations",
 
     // Verify all buffers are usable and have different addresses
     for (size_t i = 0; i < buffers.size(); ++i) {
-      buffers[i].ptr_[0] = static_cast<char>(i);
-      buffers[i].ptr_[600ULL * k1MB - 1] = static_cast<char>(i + 100);
+      buffers[i][0] = static_cast<char>(i);
+      buffers[i][600ULL * k1MB - 1] = static_cast<char>(i + 100);
     }
 
     // Verify data integrity
     for (size_t i = 0; i < buffers.size(); ++i) {
-      REQUIRE(buffers[i].ptr_[0] == static_cast<char>(i));
-      REQUIRE(buffers[i].ptr_[600ULL * k1MB - 1] == static_cast<char>(i + 100));
+      REQUIRE(buffers[i][0] == static_cast<char>(i));
+      REQUIRE(buffers[i][600ULL * k1MB - 1] == static_cast<char>(i + 100));
     }
 
     // Verify all buffers have different addresses
     for (size_t i = 0; i < buffers.size(); ++i) {
       for (size_t j = i + 1; j < buffers.size(); ++j) {
-        REQUIRE(buffers[i].ptr_ != buffers[j].ptr_);
+        REQUIRE(buffers[i].get() != buffers[j].get());
       }
     }
 
@@ -338,20 +338,20 @@ TEST_CASE("Per-process shared memory allocation patterns",
 
     // Verify all small buffers
     for (size_t i = 0; i < small_buffers.size(); ++i) {
-      small_buffers[i].ptr_[0] = static_cast<char>(i);
-      REQUIRE(small_buffers[i].ptr_[0] == static_cast<char>(i));
+      small_buffers[i][0] = static_cast<char>(i);
+      REQUIRE(small_buffers[i][0] == static_cast<char>(i));
     }
 
     // Verify large buffers
-    large_buffers[0].ptr_[0] = 'X';
-    large_buffers[0].ptr_[k500MB - 1] = 'Y';
-    large_buffers[1].ptr_[0] = 'A';
-    large_buffers[1].ptr_[k500MB - 1] = 'B';
+    large_buffers[0][0] = 'X';
+    large_buffers[0][k500MB - 1] = 'Y';
+    large_buffers[1][0] = 'A';
+    large_buffers[1][k500MB - 1] = 'B';
 
-    REQUIRE(large_buffers[0].ptr_[0] == 'X');
-    REQUIRE(large_buffers[0].ptr_[k500MB - 1] == 'Y');
-    REQUIRE(large_buffers[1].ptr_[0] == 'A');
-    REQUIRE(large_buffers[1].ptr_[k500MB - 1] == 'B');
+    REQUIRE(large_buffers[0][0] == 'X');
+    REQUIRE(large_buffers[0][k500MB - 1] == 'Y');
+    REQUIRE(large_buffers[1][0] == 'A');
+    REQUIRE(large_buffers[1][k500MB - 1] == 'B');
 
     INFO("Mixed allocation pattern test passed");
   }
@@ -370,8 +370,8 @@ TEST_CASE("Per-process shared memory FreeBuffer",
     REQUIRE_FALSE(buffer.IsNull());
 
     // Write some data
-    buffer.ptr_[0] = 'T';
-    buffer.ptr_[k100MB - 1] = 'E';
+    buffer[0] = 'T';
+    buffer[k100MB - 1] = 'E';
 
     // Free the buffer
     ipc_manager->FreeBuffer(buffer);
@@ -394,8 +394,8 @@ TEST_CASE("Per-process shared memory FreeBuffer",
     REQUIRE_FALSE(buffer2.IsNull());
 
     // Verify new buffer is usable
-    buffer2.ptr_[0] = 'R';
-    REQUIRE(buffer2.ptr_[0] == 'R');
+    buffer2[0] = 'R';
+    REQUIRE(buffer2[0] == 'R');
 
     INFO("Allocate-free-allocate cycle passed");
   }
@@ -414,22 +414,22 @@ TEST_CASE("Per-process shared memory ToFullPtr conversion",
     REQUIRE_FALSE(original.IsNull());
 
     // Get the raw pointer
-    char* raw_ptr = original.ptr_;
+    char* raw_ptr = original.get();
 
     // Convert back to FullPtr
     hipc::FullPtr<char> converted = ipc_manager->ToFullPtr(raw_ptr);
 
     // Should get the same pointer back
     REQUIRE_FALSE(converted.IsNull());
-    REQUIRE(converted.ptr_ == raw_ptr);
+    REQUIRE(converted.get() == raw_ptr);
 
     // Write via original, read via converted
-    original.ptr_[0] = 'X';
-    REQUIRE(converted.ptr_[0] == 'X');
+    original[0] = 'X';
+    REQUIRE(converted[0] == 'X');
 
     // Write via converted, read via original
-    converted.ptr_[100] = 'Y';
-    REQUIRE(original.ptr_[100] == 'Y');
+    converted[100] = 'Y';
+    REQUIRE(original[100] == 'Y');
 
     INFO("ToFullPtr conversion test passed");
   }
@@ -456,8 +456,8 @@ TEST_CASE("Per-process shared memory stress test",
       REQUIRE_FALSE(buffer.IsNull());
 
       // Touch the buffer to ensure it's really allocated
-      buffer.ptr_[0] = static_cast<char>(i & 0xFF);
-      buffer.ptr_[alloc_size - 1] = static_cast<char>((i + 1) & 0xFF);
+      buffer[0] = static_cast<char>(i & 0xFF);
+      buffer[alloc_size - 1] = static_cast<char>((i + 1) & 0xFF);
 
       buffers.push_back(buffer);
     }
@@ -470,8 +470,8 @@ TEST_CASE("Per-process shared memory stress test",
 
     // Verify all data is intact
     for (size_t i = 0; i < num_allocs; ++i) {
-      REQUIRE(static_cast<unsigned char>(buffers[i].ptr_[0]) == (i & 0xFF));
-      REQUIRE(static_cast<unsigned char>(buffers[i].ptr_[alloc_size - 1]) == ((i + 1) & 0xFF));
+      REQUIRE(static_cast<unsigned char>(buffers[i][0]) == (i & 0xFF));
+      REQUIRE(static_cast<unsigned char>(buffers[i][alloc_size - 1]) == ((i + 1) & 0xFF));
     }
 
     INFO("Stress test with " << num_allocs << " allocations passed");

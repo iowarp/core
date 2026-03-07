@@ -348,7 +348,7 @@ public:
     } else if (flags & BULK_XFER) {
       uint8_t mode = 1;
       serializer_ << mode;
-      serializer_.write_binary(reinterpret_cast<const char *>(ptr.ptr_), size);
+      serializer_.write_binary(reinterpret_cast<const char *>(ptr.get()), size);
     } else {
       uint8_t mode = 2;
       serializer_ << mode;
@@ -656,7 +656,7 @@ public:
     deserializer_ >> mode;
     if (mode == 1) {
       hipc::FullPtr<char> buf = HSHM_MALLOC->AllocateObjs<char>(size);
-      deserializer_.read_binary(buf.ptr_, size);
+      deserializer_.read_binary(buf.get(), size);
       ptr.off_ = buf.shm_.off_.load();
       ptr.alloc_id_ = buf.shm_.alloc_id_;
     } else if (mode == 2) {
@@ -687,15 +687,15 @@ public:
     deserializer_ >> mode;
     if (mode == 1) {
       hipc::FullPtr<char> buf = HSHM_MALLOC->AllocateObjs<char>(size);
-      deserializer_.read_binary(buf.ptr_, size);
+      deserializer_.read_binary(buf.get(), size);
       ptr.shm_.off_ = buf.shm_.off_.load();
       ptr.shm_.alloc_id_ = buf.shm_.alloc_id_;
-      ptr.ptr_ = reinterpret_cast<T *>(buf.ptr_);
+      ptr.set_ptr(reinterpret_cast<T *>(buf.get()));
     } else if (mode == 2) {
       hipc::FullPtr<char> buf = HSHM_MALLOC->AllocateObjs<char>(size);
       ptr.shm_.off_ = buf.shm_.off_.load();
       ptr.shm_.alloc_id_ = buf.shm_.alloc_id_;
-      ptr.ptr_ = reinterpret_cast<T *>(buf.ptr_);
+      ptr.set_ptr(reinterpret_cast<T *>(buf.get()));
     } else {
       size_t off = 0;
       u32 major = 0, minor = 0;

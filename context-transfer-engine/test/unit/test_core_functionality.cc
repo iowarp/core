@@ -245,15 +245,15 @@ class CTECoreFunctionalTestFixture {
       return false;
     }
 
-    // Access data directly through .ptr_ as specified in
+    // Access data directly through .get() as specified in
     // MODULE_DEVELOPMENT_GUIDE.md
-    if (ptr.ptr_ == nullptr) {
+    if (ptr.get() == nullptr) {
       INFO("Failed to get buffer data from hipc::FullPtr<char>");
       return false;
     }
 
     // Copy the data into the shared memory buffer
-    memcpy(ptr.ptr_, data.data(), data.size());
+    memcpy(ptr.get(), data.data(), data.size());
     INFO("Successfully copied " << data.size()
                                 << " bytes to shared memory buffer");
 
@@ -277,11 +277,11 @@ class CTECoreFunctionalTestFixture {
     // Cast to char first, then use ToFullPtr to get proper FullPtr with ptr_ set
     auto char_ptr = ptr.template Cast<char>();
     hipc::FullPtr<char> buffer_fullptr = CHI_IPC->ToFullPtr<char>(char_ptr);
-    if (buffer_fullptr.ptr_ == nullptr) {
+    if (buffer_fullptr.get() == nullptr) {
       INFO("Failed to get buffer data from hipc::ShmPtr<>");
       return result;
     }
-    char *buffer_data = buffer_fullptr.ptr_;
+    char *buffer_data = buffer_fullptr.get();
 
     // Copy the data from the shared memory buffer
     result.resize(size);
@@ -303,16 +303,16 @@ class CTECoreFunctionalTestFixture {
       return result;
     }
 
-    // Access data directly through .ptr_ as specified in
+    // Access data directly through .get() as specified in
     // MODULE_DEVELOPMENT_GUIDE.md
-    if (ptr.ptr_ == nullptr) {
+    if (ptr.get() == nullptr) {
       INFO("Failed to get buffer data from hipc::FullPtr<char>");
       return result;
     }
 
     // Copy the data from the shared memory buffer
     result.resize(size);
-    memcpy(result.data(), ptr.ptr_, size);
+    memcpy(result.data(), ptr.get(), size);
     INFO("Successfully copied " << size << " bytes from shared memory buffer");
 
     return result;

@@ -67,7 +67,7 @@ LockOwnerId GetCurrentLockOwnerId() {
   Worker *worker = CHI_CUR_WORKER;
   if (!worker) return id;
   FullPtr<Task> task = worker->GetCurrentTask();
-  if (task.ptr_ == nullptr) return id;
+  if (task.get() == nullptr) return id;
   id.worker_id_ = worker->GetId();
   id.pid_ = task->task_id_.pid_;
   id.tid_ = task->task_id_.tid_;

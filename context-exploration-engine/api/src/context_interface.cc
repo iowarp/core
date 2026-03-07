@@ -293,7 +293,7 @@ std::vector<std::string> ContextInterface::ContextRetrieve(
     // Convert buffer to std::string
     std::string packed_context;
     if (buffer_offset > 0) {
-      packed_context.assign(context_buffer.ptr_, buffer_offset);
+      packed_context.assign(context_buffer.get(), buffer_offset);
       HLOG(kSuccess, "ContextRetrieve: Retrieved {} bytes of packed context", buffer_offset);
     }
 

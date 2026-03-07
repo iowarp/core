@@ -319,7 +319,7 @@ void IowarpEngine::DoPutDeferred_(const adios2::core::Variable<T> &variable,
 
     // Allocate shared memory buffer and copy data
     auto buffer = ipc_manager->AllocateBuffer(data_size);
-    if (buffer.ptr_ == nullptr) {
+    if (buffer.get() == nullptr) {
       throw std::runtime_error(
           "IowarpEngine::DoPutDeferred_: Failed to allocate buffer");
     }
@@ -330,7 +330,7 @@ void IowarpEngine::DoPutDeferred_(const adios2::core::Variable<T> &variable,
           "IowarpEngine::DoPutDeferred_: values pointer is null");
     }
 
-    std::memcpy(buffer.ptr_, values, data_size);
+    std::memcpy(buffer.get(), values, data_size);
 
     auto task = current_tag_->AsyncPutBlob(
         blob_name, buffer.shm_.template Cast<void>(), data_size, 0, 1.0f);

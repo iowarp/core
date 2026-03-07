@@ -74,7 +74,7 @@ __global__ void gpu_submit_task_kernel(chi::IpcManagerGpu gpu_info,
   task = CHI_IPC->NewTask<chimaera::MOD_NAME::GpuSubmitTask>(
                       task_id, pool_id, query, 0, test_value);
 
-  if (task.ptr_ == nullptr) {
+  if (task.get() == nullptr) {
     *result = -1;  // NewTask failed
     return;
   }
@@ -268,7 +268,7 @@ extern "C" int run_cpu_to_gpu_test(chi::PoolId pool_id,
 
   // Poll for FUTURE_COMPLETE
   auto fshm_full = future.GetFutureShm();
-  chi::FutureShm *fshm = fshm_full.ptr_;
+  chi::FutureShm *fshm = fshm_full.get();
   int attempts = 0;
   while (!fshm->flags_.Any(chi::FutureShm::FUTURE_COMPLETE)) {
     std::this_thread::sleep_for(std::chrono::microseconds(100));
@@ -286,7 +286,7 @@ extern "C" int run_cpu_to_gpu_test(chi::PoolId pool_id,
   chi::LocalLoadTaskArchive load_ar;
   hshm::lbm::ShmTransport::Recv(load_ar, ctx);
   load_ar.SetMsgType(chi::LocalMsgType::kSerializeOut);
-  task.ptr_->SerializeOut(load_ar);
+  task->SerializeOut(load_ar);
 
   *out_result_value = task->result_value_;
   return 1;  // Success
@@ -349,7 +349,7 @@ extern "C" int run_gpu_to_cpu_test(chi::PoolId pool_id,
   CHI_IPC->RegisterGpuAllocator(backend_id, gpu_backend.data_,
                                  gpu_backend.data_capacity_);
 
-  chi::IpcManagerGpu gpu_info(gpu_backend, gpu_queue_ptr.ptr_);
+  chi::IpcManagerGpu gpu_info(gpu_backend, gpu_queue_ptr.get());
 
   int *d_result = hshm::GpuApi::Malloc<int>(sizeof(int));
   chi::u32 *d_rv = hshm::GpuApi::Malloc<chi::u32>(sizeof(chi::u32));
@@ -474,7 +474,7 @@ extern "C" int run_async_gpu_submit_to_local_cpu_test(
   CHI_IPC->RegisterGpuAllocator(backend_id, gpu_backend.data_,
                                  gpu_backend.data_capacity_);
 
-  chi::IpcManagerGpu gpu_info(gpu_backend, gpu_queue_ptr.ptr_);
+  chi::IpcManagerGpu gpu_info(gpu_backend, gpu_queue_ptr.get());
 
   int *d_result = hshm::GpuApi::Malloc<int>(sizeof(int));
   chi::u32 *d_rv = hshm::GpuApi::Malloc<chi::u32>(sizeof(chi::u32));

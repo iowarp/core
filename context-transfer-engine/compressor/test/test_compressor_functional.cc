@@ -202,7 +202,7 @@ struct CTETestFixture {
   hipc::FullPtr<char> AllocateAndCopyData(const std::vector<char>& data) {
     auto shm_buffer = CHI_IPC->AllocateBuffer(data.size());
     if (!shm_buffer.IsNull()) {
-      std::memcpy(shm_buffer.ptr_, data.data(), data.size());
+      std::memcpy(shm_buffer.get(), data.data(), data.size());
     }
     return shm_buffer;
   }
@@ -213,7 +213,7 @@ struct CTETestFixture {
   std::vector<char> ReadFromSharedMemory(hipc::FullPtr<char>& buffer, size_t size) {
     std::vector<char> data(size);
     if (!buffer.IsNull()) {
-      std::memcpy(data.data(), buffer.ptr_, size);
+      std::memcpy(data.data(), buffer.get(), size);
     }
     return data;
   }

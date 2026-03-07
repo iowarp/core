@@ -76,7 +76,7 @@ class AllocatorTest {
         throw std::runtime_error("Allocation failed in TestAllocFreeImmediate");
       }
       // Verify allocator correctness by writing to all allocated memory
-      std::memset(ptr.ptr_, static_cast<unsigned char>(i & 0xFF), alloc_size);
+      std::memset(ptr.get(), static_cast<unsigned char>(i & 0xFF), alloc_size);
       alloc_->Free(ptr);
     }
   }
@@ -105,7 +105,7 @@ class AllocatorTest {
           throw std::runtime_error("Allocation failed in TestAllocFreeBatch");
         }
         // Verify allocator correctness by writing to all allocated memory
-        std::memset(ptr.ptr_, static_cast<unsigned char>((iter * 100 + i) & 0xFF), alloc_size);
+        std::memset(ptr.get(), static_cast<unsigned char>((iter * 100 + i) & 0xFF), alloc_size);
         ptrs.push_back(ptr);
       }
 
@@ -157,7 +157,7 @@ class AllocatorTest {
         if (!ptr.Validate(alloc_)) {
           throw std::runtime_error("Allocation failed in TestRandomAllocation");
         }
-        std::memset(ptr.ptr_, static_cast<unsigned char>((iter + ptrs.size()) & 0xFF), alloc_size);
+        std::memset(ptr.get(), static_cast<unsigned char>((iter + ptrs.size()) & 0xFF), alloc_size);
         ptrs.push_back({ptr, alloc_size});
         total_allocated += alloc_size;
       }
@@ -208,7 +208,7 @@ class AllocatorTest {
         }
 
         // Verify allocator correctness by writing to all allocated memory
-        std::memset(ptr.ptr_,
+        std::memset(ptr.get(),
                     static_cast<unsigned char>((iter + ptrs.size()) & 0xFF),
                     alloc_size);
         
@@ -301,7 +301,7 @@ class AllocatorTest {
           throw std::runtime_error("Large allocation failed in TestLargeThenSmall");
         }
         // Verify allocator correctness by writing to all allocated memory
-        std::memset(ptr.ptr_, static_cast<unsigned char>((iter + i) & 0xFF), large_size);
+        std::memset(ptr.get(), static_cast<unsigned char>((iter + i) & 0xFF), large_size);
         large_ptrs.push_back(ptr);
       }
 
@@ -322,7 +322,7 @@ class AllocatorTest {
           throw std::runtime_error("Small allocation failed in TestLargeThenSmall");
         }
         // Verify allocator correctness by writing to all allocated memory
-        std::memset(ptr.ptr_, static_cast<unsigned char>((iter + i + 128) & 0xFF), small_size);
+        std::memset(ptr.get(), static_cast<unsigned char>((iter + i + 128) & 0xFF), small_size);
         small_ptrs.push_back(ptr);
       }
 

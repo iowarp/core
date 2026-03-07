@@ -314,7 +314,7 @@ TEST_CASE("ShmTransfer - Send/Recv Basic", "[shm_transfer][sendrecv]") {
   LbmMeta<> send_meta;
   std::vector<char> bulk_data = GenerateTestData(DATA_SIZE);
   Bulk bulk;
-  bulk.data.ptr_ = bulk_data.data();
+  bulk.data.set_ptr(bulk_data.data());
   bulk.data.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
   bulk.data.shm_.off_ = 0;
   bulk.size = DATA_SIZE;
@@ -345,19 +345,19 @@ TEST_CASE("ShmTransfer - Send/Recv Basic", "[shm_transfer][sendrecv]") {
   REQUIRE(recv_meta.send.size() == 1);
   REQUIRE(recv_meta.recv.size() == 1);
   REQUIRE(recv_meta.recv[0].size == DATA_SIZE);
-  REQUIRE(recv_meta.recv[0].data.ptr_ != nullptr);
+  REQUIRE(recv_meta.recv[0].data.get() != nullptr);
 
   // Verify received data matches
   bool data_correct = true;
   for (size_t i = 0; i < DATA_SIZE; ++i) {
-    if (recv_meta.recv[0].data.ptr_[i] != static_cast<char>(i % 256)) {
+    if (recv_meta.recv[0].data.get()[i] != static_cast<char>(i % 256)) {
       data_correct = false;
       break;
     }
   }
   REQUIRE(data_correct);
 
-  std::free(recv_meta.recv[0].data.ptr_);
+  std::free(recv_meta.recv[0].data.get());
 }
 
 TEST_CASE("ShmTransfer - Send/Recv Large Multi-Chunk", "[shm_transfer][sendrecv]") {
@@ -369,7 +369,7 @@ TEST_CASE("ShmTransfer - Send/Recv Large Multi-Chunk", "[shm_transfer][sendrecv]
   LbmMeta<> send_meta;
   std::vector<char> bulk_data = GenerateTestData(DATA_SIZE);
   Bulk bulk;
-  bulk.data.ptr_ = bulk_data.data();
+  bulk.data.set_ptr(bulk_data.data());
   bulk.data.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
   bulk.data.shm_.off_ = 0;
   bulk.size = DATA_SIZE;
@@ -402,14 +402,14 @@ TEST_CASE("ShmTransfer - Send/Recv Large Multi-Chunk", "[shm_transfer][sendrecv]
 
   bool data_correct = true;
   for (size_t i = 0; i < DATA_SIZE; ++i) {
-    if (recv_meta.recv[0].data.ptr_[i] != static_cast<char>(i % 256)) {
+    if (recv_meta.recv[0].data.get()[i] != static_cast<char>(i % 256)) {
       data_correct = false;
       break;
     }
   }
   REQUIRE(data_correct);
 
-  std::free(recv_meta.recv[0].data.ptr_);
+  std::free(recv_meta.recv[0].data.get());
 }
 
 TEST_CASE("ShmTransfer - Send/Recv Metadata Only", "[shm_transfer][sendrecv]") {

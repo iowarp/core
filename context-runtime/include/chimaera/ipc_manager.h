@@ -84,6 +84,12 @@ enum class NetQueuePriority : u32 {
   kClientSendIpc = 3,  ///< Priority 3: Client response via IPC
 };
 
+/** Result of RouteTask: whether task stays local (GPU/CPU) or goes over network */
+enum class RouteResult : u32 {
+  Local = 0,    ///< Task stays on the current processor (GPU stays on GPU)
+  Network = 1,  ///< Task must be sent over the network or CPU↔GPU boundary
+};
+
 /**
  * Network queue for storing Future<SendTask> objects
  * One lane with two priorities (SendIn and SendOut)
@@ -322,13 +328,13 @@ class IpcManager {
     // and generate a C++14 globally-sized deallocation call (operator delete
     // (void*, size_t)) — which would still trigger the ASan mismatch when the
     // object is a larger derived type.
-    task_ptr.ptr_->~TaskT();
-    void* raw = static_cast<void*>(task_ptr.ptr_);
+    task_ptr->~TaskT();
+    void* raw = static_cast<void*>(task_ptr.get());
     ::operator delete(raw);
 #else
     // GPU path: call destructor and free buffer
-    task_ptr.ptr_->~TaskT();
-    FreeBuffer(hipc::FullPtr<char>(reinterpret_cast<char *>(task_ptr.ptr_)));
+    task_ptr->~TaskT();
+    FreeBuffer(hipc::FullPtr<char>(reinterpret_cast<char *>(task_ptr.get())));
 #endif
   }
 
@@ -387,7 +393,7 @@ class IpcManager {
     }
 
     // Construct object using placement new
-    T *obj = new (buffer.ptr_) T(std::forward<Args>(args)...);
+    T *obj = new (buffer.get()) T(std::forward<Args>(args)...);
 
     // Return FullPtr<T> by reinterpreting the buffer's ptr and shm
     return buffer.Cast<T>();
@@ -418,12 +424,12 @@ class IpcManager {
     }
 
     // Construct FutureShm in-place
-    FutureShm *future_shm_ptr = new (buffer.ptr_) FutureShm();
+    FutureShm *future_shm_ptr = new (buffer.get()) FutureShm();
     future_shm_ptr->pool_id_ = task_ptr->pool_id_;
     future_shm_ptr->method_id_ = task_ptr->method_;
     future_shm_ptr->origin_ = FutureShm::FUTURE_CLIENT_SHM;
     future_shm_ptr->client_task_vaddr_ =
-        reinterpret_cast<uintptr_t>(task_ptr.ptr_);
+        reinterpret_cast<uintptr_t>(task_ptr.get());
     future_shm_ptr->input_.copy_space_size_ = copy_space_size;
     future_shm_ptr->flags_.SetBits(FutureShm::FUTURE_COPY_FROM_CLIENT);
 
@@ -459,7 +465,7 @@ class IpcManager {
     }
 
     // 2. Construct FutureShm — origin is SHM (worker treats identically)
-    FutureShm *future_shm = new (buffer.ptr_) FutureShm();
+    FutureShm *future_shm = new (buffer.get()) FutureShm();
     future_shm->pool_id_ = task_ptr->pool_id_;
     future_shm->method_id_ = task_ptr->method_;
     future_shm->origin_ = FutureShm::FUTURE_CLIENT_SHM;
@@ -513,7 +519,7 @@ class IpcManager {
       future_shm = reinterpret_cast<FutureShm *>(sptr.off_.load());
     } else {
       hipc::FullPtr<FutureShm> fshm = future.GetFutureShm();
-      future_shm = fshm.ptr_;
+      future_shm = fshm.get();
     }
 
     // Build LbmContext for output ring buffer
@@ -567,7 +573,7 @@ class IpcManager {
     }
 
     // 2. Construct FutureShm
-    FutureShm *future_shm = new (buffer.ptr_) FutureShm();
+    FutureShm *future_shm = new (buffer.get()) FutureShm();
     future_shm->pool_id_ = task_ptr->pool_id_;
     future_shm->method_id_ = task_ptr->method_;
     future_shm->origin_ = FutureShm::FUTURE_CLIENT_SHM;
@@ -582,7 +588,7 @@ class IpcManager {
     //    gpu::Worker resolves GPU→GPU FutureShm directly without base
     //    arithmetic.
     hipc::ShmPtr<FutureShm> fshmptr;
-    fshmptr.off_ = reinterpret_cast<size_t>(buffer.ptr_);
+    fshmptr.off_ = reinterpret_cast<size_t>(buffer.get());
     Future<TaskT> future(fshmptr, task_ptr);
     hshm::lbm::LbmContext ctx;
     ctx.copy_space = future_shm->copy_space;
@@ -642,10 +648,10 @@ class IpcManager {
     }
 
     // Initialize FutureShm fields
-    future_shm.ptr_->pool_id_ = task_ptr->pool_id_;
-    future_shm.ptr_->method_id_ = task_ptr->method_;
-    future_shm.ptr_->origin_ = FutureShm::FUTURE_CLIENT_SHM;
-    future_shm.ptr_->client_task_vaddr_ = 0;
+    future_shm->pool_id_ = task_ptr->pool_id_;
+    future_shm->method_id_ = task_ptr->method_;
+    future_shm->origin_ = FutureShm::FUTURE_CLIENT_SHM;
+    future_shm->client_task_vaddr_ = 0;
     // No copy_space in runtime path — ShmTransferInfo defaults are fine
 
     // Create Future with ShmPtr and task_ptr (no serialization)
@@ -780,8 +786,9 @@ class IpcManager {
 
   /** Route a task: resolve pool query, determine local vs global.
    * If force_enqueue is true, always enqueue to the destination worker's lane
-   * (used by SendRuntime which cannot execute tasks directly). */
-  RouteResult RouteTask(Future<Task> &future, bool force_enqueue = false);
+   * (used by SendRuntime which cannot execute tasks directly).
+   * Returns true if the task was routed locally, false if sent over network. */
+  bool RouteTask(Future<Task> &future, bool force_enqueue = false);
 
   /** Resolve a pool query into concrete physical addresses */
   std::vector<PoolQuery> ResolvePoolQuery(const PoolQuery &query,
@@ -793,11 +800,13 @@ class IpcManager {
                    const std::vector<PoolQuery> &pool_queries);
 
   /** Route task locally.
-   * If force_enqueue is true, always enqueue even if dest == current worker. */
-  RouteResult RouteLocal(Future<Task> &future, bool force_enqueue = false);
+   * If force_enqueue is true, always enqueue even if dest == current worker.
+   * Returns true if the task was routed locally. */
+  bool RouteLocal(Future<Task> &future, bool force_enqueue = false);
 
-  /** Route task globally via network */
-  RouteResult RouteGlobal(Future<Task> &future,
+  /** Route task globally via network.
+   * Returns false (task was sent to network, not local). */
+  bool RouteGlobal(Future<Task> &future,
                    const std::vector<PoolQuery> &pool_queries);
 
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
@@ -806,6 +815,12 @@ class IpcManager {
   void RouteToGpu(const hipc::FullPtr<Task> &task_ptr, Container *container,
                   u32 gpu_id = 0);
 #endif
+  /** Launch the GPU megakernel. Returns true on success (or no GPUs present). */
+  bool LaunchMegakernel();
+  /** Pause the running GPU megakernel (no-op if no GPU support). */
+  void PauseMegakernel();
+  /** Resume a paused GPU megakernel (no-op if no GPU support). */
+  void ResumeMegakernel();
 
   /**
    * Send a task via SHM lightbeam transport
@@ -825,11 +840,11 @@ class IpcManager {
     auto buffer = AllocateBuffer(alloc_size);
     if (buffer.IsNull()) return Future<TaskT>();
 
-    FutureShm *future_shm = new (buffer.ptr_) FutureShm();
+    FutureShm *future_shm = new (buffer.get()) FutureShm();
     future_shm->pool_id_ = task_ptr->pool_id_;
     future_shm->method_id_ = task_ptr->method_;
     future_shm->origin_ = FutureShm::FUTURE_CLIENT_SHM;
-    future_shm->client_task_vaddr_ = reinterpret_cast<uintptr_t>(task_ptr.ptr_);
+    future_shm->client_task_vaddr_ = reinterpret_cast<uintptr_t>(task_ptr.get());
     future_shm->input_.copy_space_size_ = copy_space_size;
     future_shm->flags_.SetBits(FutureShm::FUTURE_COPY_FROM_CLIENT);
 
@@ -853,7 +868,7 @@ class IpcManager {
     }
 
     SaveTaskArchive archive(MsgType::kSerializeIn, shm_send_transport_.get());
-    archive << (*task_ptr.ptr_);
+    archive << (*task_ptr.get());
     shm_send_transport_->Send(archive, ctx);
 
     return future;
@@ -874,12 +889,12 @@ class IpcManager {
     }
 
     // Set net_key for response routing (use task's address as unique key)
-    size_t net_key = reinterpret_cast<size_t>(task_ptr.ptr_);
+    size_t net_key = reinterpret_cast<size_t>(task_ptr.get());
     task_ptr->task_id_.net_key_ = net_key;
 
     // Serialize the task inputs using network archive
     SaveTaskArchive archive(MsgType::kSerializeIn, zmq_transport_.get());
-    archive << (*task_ptr.ptr_);
+    archive << (*task_ptr.get());
 
     // Allocate FutureShm via HSHM_MALLOC (no copy_space needed)
     size_t alloc_size = sizeof(FutureShm);
@@ -889,7 +904,7 @@ class IpcManager {
            alloc_size);
       return Future<TaskT>();
     }
-    FutureShm *future_shm = new (buffer.ptr_) FutureShm();
+    FutureShm *future_shm = new (buffer.get()) FutureShm();
 
     // Initialize FutureShm fields
     future_shm->pool_id_ = task_ptr->pool_id_;
@@ -1088,7 +1103,7 @@ class IpcManager {
     // Re-register in pending futures
     {
       std::lock_guard<std::mutex> lock(pending_futures_mutex_);
-      pending_zmq_futures_[net_key] = future_shm.ptr_;
+      pending_zmq_futures_[net_key] = future_shm.get();
     }
 
     // Re-send
@@ -1434,7 +1449,7 @@ class IpcManager {
       if (git != gpu_alloc_map_.end()) {
         size_t off = shm_ptr.off_.load();
         if (off < git->second.capacity) {
-          result.ptr_ = reinterpret_cast<T *>(git->second.data + off);
+          result.set_ptr(reinterpret_cast<T *>(git->second.data + off));
           result.shm_ = shm_ptr;
         }
       }
@@ -1541,7 +1556,7 @@ class IpcManager {
    * Get the network queue for direct access
    * @return Pointer to the network queue or nullptr if not initialized
    */
-  NetQueue *GetNetQueue() { return net_queue_.ptr_; }
+  NetQueue *GetNetQueue() { return net_queue_.get(); }
 
   /**
    * Get number of GPU queues
@@ -1556,7 +1571,7 @@ class IpcManager {
    */
   TaskQueue *GetGpuQueue(size_t gpu_id) {
     if (gpu_id < gpu_queues_.size()) {
-      return gpu_queues_[gpu_id].ptr_;
+      return gpu_queues_[gpu_id].get();
     }
     return nullptr;
   }
@@ -1583,7 +1598,7 @@ class IpcManager {
    */
   TaskQueue *GetToGpuQueue(size_t gpu_id) {
     if (gpu_id < to_gpu_queues_.size()) {
-      return to_gpu_queues_[gpu_id].ptr_;
+      return to_gpu_queues_[gpu_id].get();
     }
     return nullptr;
   }
@@ -1601,7 +1616,7 @@ class IpcManager {
    */
   TaskQueue *GetGpuToGpuQueue(size_t gpu_id) {
     if (gpu_id < gpu_to_gpu_queues_.size()) {
-      return gpu_to_gpu_queues_[gpu_id].ptr_;
+      return gpu_to_gpu_queues_[gpu_id].get();
     }
     return nullptr;
   }
@@ -1646,7 +1661,7 @@ class IpcManager {
     }
 
     // Construct FutureShm
-    FutureShm *future_shm = new (buffer.ptr_) FutureShm();
+    FutureShm *future_shm = new (buffer.get()) FutureShm();
     future_shm->pool_id_ = task_ptr->pool_id_;
     future_shm->method_id_ = task_ptr->method_;
     future_shm->origin_ = FutureShm::FUTURE_CLIENT_SHM;
@@ -1669,7 +1684,7 @@ class IpcManager {
     hshm::lbm::ShmTransport::Send(save_ar, ctx);
 
     // Push to CPU→GPU queue
-    auto &lane = to_gpu_queues_[gpu_id].ptr_->GetLane(0, 0);
+    auto &lane = to_gpu_queues_[gpu_id]->GetLane(0, 0);
     Future<Task> task_future(future.GetFutureShmPtr());
     lane.Push(task_future);
 
@@ -2240,8 +2255,7 @@ HSHM_CROSS_FUN Future<TaskT, AllocT>::~Future() {
       CHI_IPC->FreeBuffer(buffer_shm);
       future_shm_.SetNull();
     }
-    // Auto-free the task (only when consumed to avoid double-free
-    // from runtime-internal Future copies in event queues / RunContext)
+    // Free the heap-allocated task object
     DelTask();
   }
 }
@@ -2264,7 +2278,7 @@ HSHM_CROSS_FUN bool Future<TaskT, AllocT>::Wait(float max_sec) {
   if (future_shm_.IsNull()) {
     return true;
   }
-  CHI_IPC->RecvGpu(*this, task_ptr_.ptr_);
+  CHI_IPC->RecvGpu(*this, task_ptr_.get());
   Destroy(true);
   return true;
 #else

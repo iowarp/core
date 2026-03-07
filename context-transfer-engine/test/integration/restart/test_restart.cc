@@ -91,7 +91,7 @@ int PutBlobs() {
 
     // Fill with pattern: each blob gets a different base character
     char pattern = static_cast<char>('A' + i);
-    memset(buf.ptr_, pattern, kBlobSize);
+    memset(buf.get(), pattern, kBlobSize);
 
     // Convert to ShmPtr for API
     hipc::ShmPtr<> shm_ptr = buf.shm_.template Cast<void>();
@@ -188,7 +188,7 @@ int VerifyBlobs() {
       ++failed;
       continue;
     }
-    memset(buf.ptr_, 0, kBlobSize);
+    memset(buf.get(), 0, kBlobSize);
     hipc::ShmPtr<> shm_ptr = buf.shm_.template Cast<void>();
 
     auto get_task = cte_client.AsyncGetBlob(
@@ -203,7 +203,7 @@ int VerifyBlobs() {
     // Verify data pattern
     bool data_ok = true;
     for (chi::u64 j = 0; j < kBlobSize; ++j) {
-      if (buf.ptr_[j] != expected_pattern) {
+      if (buf[j] != expected_pattern) {
         data_ok = false;
         break;
       }

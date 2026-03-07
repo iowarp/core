@@ -189,7 +189,7 @@ private:
             }
 
             // Copy data to shared memory
-            memcpy(shared_data.ptr_, test_data.data(), kTestDataSize);
+            memcpy(shared_data.get(), test_data.data(), kTestDataSize);
 
             // Create or get tag
             wrp_cte::core::TagId tag_id = cte_client_->GetOrCreateTag(
@@ -257,7 +257,7 @@ private:
 
             if (get_result) {
                 // Verify data integrity
-                const char* read_data = static_cast<const char*>(read_buffer.ptr_);
+                const char* read_data = static_cast<const char*>(read_buffer.get());
                 bool data_matches = true;
 
                 for (size_t i = 0; i < kTestDataSize; ++i) {

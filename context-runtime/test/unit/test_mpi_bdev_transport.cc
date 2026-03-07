@@ -150,7 +150,7 @@ bool RunBdevIoTest(int rank, const std::string& mode_name, size_t io_size) {
     HLOG(kError, "[Rank {}] AllocateBuffer for write failed", rank);
     return false;
   }
-  memcpy(write_buffer.ptr_, write_data.data(), write_data.size());
+  memcpy(write_buffer.get(), write_data.data(), write_data.size());
   auto write_task = client.AsyncWrite(
       chi::PoolQuery::Local(), WrapBlock(block),
       write_buffer.shm_.template Cast<void>().template Cast<void>(),
@@ -196,11 +196,11 @@ bool RunBdevIoTest(int rank, const std::string& mode_name, size_t io_size) {
 
   int mismatches = 0;
   for (size_t i = 0; i < verify_size; ++i) {
-    if (static_cast<hshm::u8>(data_ptr.ptr_[i]) != write_data[i]) {
+    if (static_cast<hshm::u8>(data_ptr[i]) != write_data[i]) {
       mismatches++;
       if (mismatches <= 3) {
         HLOG(kError, "[Rank {}] Mismatch at byte {}: got {} expected {}", rank, i,
-             (int)(hshm::u8)data_ptr.ptr_[i], (int)write_data[i]);
+             (int)(hshm::u8)data_ptr[i], (int)write_data[i]);
       }
     }
   }

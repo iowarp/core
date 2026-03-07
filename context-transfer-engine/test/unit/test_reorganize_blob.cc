@@ -229,7 +229,7 @@ TEST_CASE("ReorganizeBlob - PutBlob to DRAM", "[reorganize][put][dram]") {
 
   // Fill buffer with pattern
   auto test_data = g_fixture->CreateTestData(kBlobSize, 'D');  // 'D' for DRAM
-  std::memcpy(shm_buffer.ptr_, test_data.data(), kBlobSize);
+  std::memcpy(shm_buffer.get(), test_data.data(), kBlobSize);
 
   // Put blob with high score (1.0) - should go to DRAM
   std::string blob_name = "test_blob_dram";
@@ -335,7 +335,7 @@ TEST_CASE("ReorganizeBlob - Verify Data Integrity", "[reorganize][integrity]") {
 
   // Verify data pattern
   std::vector<char> read_data(kBlobSize);
-  std::memcpy(read_data.data(), read_buffer.ptr_, kBlobSize);
+  std::memcpy(read_data.data(), read_buffer.get(), kBlobSize);
 
   bool data_valid = g_fixture->VerifyTestData(read_data, 'D');  // 'D' pattern from put
   REQUIRE(data_valid);
@@ -394,7 +394,7 @@ TEST_CASE("ReorganizeBlob - Promote to DRAM", "[reorganize][promote][dram]") {
   tag.GetBlob(blob_name, read_buffer.shm_.template Cast<void>(), kBlobSize, 0);
 
   std::vector<char> read_data(kBlobSize);
-  std::memcpy(read_data.data(), read_buffer.ptr_, kBlobSize);
+  std::memcpy(read_data.data(), read_buffer.get(), kBlobSize);
 
   bool data_valid = g_fixture->VerifyTestData(read_data, 'D');
   REQUIRE(data_valid);

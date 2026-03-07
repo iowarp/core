@@ -106,10 +106,10 @@ void TestBasicTransfer() {
   assert(recv_meta.operation == "zmq_test");
   assert(recv_meta.send.size() == 2);
 
-  std::string received1(recv_meta.recv[0].data.ptr_,
-                         recv_meta.recv[0].data.ptr_ + recv_meta.recv[0].size);
-  std::string received2(recv_meta.recv[1].data.ptr_,
-                         recv_meta.recv[1].data.ptr_ + recv_meta.recv[1].size);
+  std::string received1(recv_meta.recv[0].data.get(),
+                         recv_meta.recv[0].data.get() + recv_meta.recv[0].size);
+  std::string received2(recv_meta.recv[1].data.get(),
+                         recv_meta.recv[1].data.get() + recv_meta.recv[1].size);
   assert(received1 == data1);
   assert(received2 == data2);
 
@@ -148,8 +148,8 @@ void TestMultipleBulks() {
   assert(recv_meta.send.size() == data_chunks.size());
 
   for (size_t i = 0; i < data_chunks.size(); ++i) {
-    std::string received(recv_meta.recv[i].data.ptr_,
-                         recv_meta.recv[i].data.ptr_ + recv_meta.recv[i].size);
+    std::string received(recv_meta.recv[i].data.get(),
+                         recv_meta.recv[i].data.get() + recv_meta.recv[i].size);
     assert(received == data_chunks[i]);
   }
 
@@ -257,7 +257,7 @@ void TestLargeTransfer() {
   // Verify data integrity
   int mismatches = 0;
   for (size_t i = 0; i < large_size; ++i) {
-    if (recv_meta.recv[0].data.ptr_[i] != large_data[i]) {
+    if (recv_meta.recv[0].data.get()[i] != large_data[i]) {
       mismatches++;
     }
   }
@@ -350,8 +350,8 @@ void TestBidirectional() {
   assert(recv_meta.request_id == 1);
   assert(!info.identity_.empty());
 
-  std::string received(recv_meta.recv[0].data.ptr_,
-                       recv_meta.recv[0].data.ptr_ + recv_meta.recv[0].size);
+  std::string received(recv_meta.recv[0].data.get(),
+                       recv_meta.recv[0].data.get() + recv_meta.recv[0].size);
   assert(received == request_data);
   server->ClearRecvHandles(recv_meta);
 
@@ -375,8 +375,8 @@ void TestBidirectional() {
   assert(client_recv.request_id == 2);
   assert(client_recv.operation == "response");
 
-  std::string resp_received(client_recv.recv[0].data.ptr_,
-                            client_recv.recv[0].data.ptr_ + client_recv.recv[0].size);
+  std::string resp_received(client_recv.recv[0].data.get(),
+                            client_recv.recv[0].data.get() + client_recv.recv[0].size);
   assert(resp_received == response_data);
   client->ClearRecvHandles(client_recv);
 

@@ -208,7 +208,7 @@ class AllocatorBenchmarkWorker {
 
         if (!ptr.IsNull()) {
           // Write to the allocation to ensure it's valid
-          std::memset(ptr.ptr_, static_cast<unsigned char>(ptrs.size() & 0xFF), alloc_size);
+          std::memset(ptr.get(), static_cast<unsigned char>(ptrs.size() & 0xFF), alloc_size);
           ptrs.push_back(ptr);
           counter_->RecordAlloc();
         }

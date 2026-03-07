@@ -522,7 +522,7 @@ chi::TaskResume Runtime::DynamicSchedule(
     // Convert ShmPtr to raw pointer via FullPtr
     auto blob_fullptr =
         CHI_IPC->ToFullPtr<char>(task->blob_data_.template Cast<char>());
-    void* chunk_data = blob_fullptr.ptr_;
+    void* chunk_data = blob_fullptr.get();
     Context& context = task->context_;
 
     // Initialize tracing if enabled
@@ -688,7 +688,7 @@ chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
     // Convert ShmPtr to raw pointer via FullPtr
     auto input_fullptr =
         CHI_IPC->ToFullPtr<char>(task->blob_data_.template Cast<char>());
-    char* input_ptr = input_fullptr.ptr_;
+    char* input_ptr = input_fullptr.get();
     bool success = compressor->Compress(compressed_buffer.data(),
                                         compressed_size, input_ptr, input_size);
 
@@ -725,10 +725,10 @@ chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
       // Write compression header
       CompressionHeader header(context.compress_lib_, context.compress_preset_,
                                input_size);
-      std::memcpy(compressed_shm.ptr_, &header, header_size);
+      std::memcpy(compressed_shm.get(), &header, header_size);
 
       // Write compressed data after header
-      std::memcpy(compressed_shm.ptr_ + header_size, compressed_buffer.data(),
+      std::memcpy(compressed_shm.get() + header_size, compressed_buffer.data(),
                   compressed_size);
 
       // Call PutBlob with header + compressed data
@@ -823,7 +823,7 @@ chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
     }
 
     // Check for compression header
-    auto* header = reinterpret_cast<CompressionHeader*>(temp_buffer.ptr_);
+    auto* header = reinterpret_cast<CompressionHeader*>(temp_buffer.get());
     size_t header_size = sizeof(CompressionHeader);
 
     if (header->IsValid()) {
@@ -862,7 +862,7 @@ chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
       auto decompress_start = std::chrono::high_resolution_clock::now();
 
       // Get compressed data (after header)
-      char* compressed_data = temp_buffer.ptr_ + header_size;
+      char* compressed_data = temp_buffer.get() + header_size;
       size_t compressed_size = expected_size - header_size;
 
       // Decompress to output buffer
@@ -870,7 +870,7 @@ chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
           CHI_IPC->ToFullPtr<char>(task->blob_data_.template Cast<char>());
       size_t decompressed_size = original_size;
       bool success =
-          decompressor->Decompress(output_fullptr.ptr_, decompressed_size,
+          decompressor->Decompress(output_fullptr.get(), decompressed_size,
                                    compressed_data, compressed_size);
 
       auto decompress_end = std::chrono::high_resolution_clock::now();
@@ -906,7 +906,7 @@ chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
       // Copy directly to output buffer
       auto output_fullptr =
           CHI_IPC->ToFullPtr<char>(task->blob_data_.template Cast<char>());
-      std::memcpy(output_fullptr.ptr_, temp_buffer.ptr_, expected_size);
+      std::memcpy(output_fullptr.get(), temp_buffer.get(), expected_size);
       CHI_IPC->FreeBuffer(temp_buffer);
 
       task->output_size_ = expected_size;

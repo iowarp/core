@@ -48,22 +48,22 @@ TEST_CASE("HSHM_MALLOC: basic allocate and free", "[hshm_malloc][basic]") {
   auto buffer = HSHM_MALLOC->AllocateObjs<char>(size);
 
   std::cout << "Allocated " << size << " bytes" << std::endl;
-  std::cout << "  ptr_ = " << (void*)buffer.ptr_ << std::endl;
+  std::cout << "  ptr_ = " << (void*)buffer.get() << std::endl;
   std::cout << "  off_ = " << buffer.shm_.off_.load() << std::endl;
   std::cout << "  alloc_id = (" << buffer.shm_.alloc_id_.major_
             << "." << buffer.shm_.alloc_id_.minor_ << ")" << std::endl;
 
   REQUIRE(!buffer.IsNull());
-  REQUIRE(buffer.ptr_ != nullptr);
+  REQUIRE(buffer.get() != nullptr);
 
   // Write to the buffer to ensure it's valid
   for (size_t i = 0; i < size; i++) {
-    buffer.ptr_[i] = static_cast<char>(i % 256);
+    buffer[i] = static_cast<char>(i % 256);
   }
 
   // Verify the data
   for (size_t i = 0; i < size; i++) {
-    REQUIRE(buffer.ptr_[i] == static_cast<char>(i % 256));
+    REQUIRE(buffer[i] == static_cast<char>(i % 256));
   }
 
   std::cout << "Buffer is valid and writable" << std::endl;
@@ -89,14 +89,14 @@ TEST_CASE("HSHM_MALLOC: multiple allocations", "[hshm_malloc][multiple]") {
     auto buffer = HSHM_MALLOC->AllocateObjs<char>(size);
 
     std::cout << "Allocated buffer " << i << ": " << size << " bytes at ptr_="
-              << (void*)buffer.ptr_ << std::endl;
+              << (void*)buffer.get() << std::endl;
 
     REQUIRE(!buffer.IsNull());
-    REQUIRE(buffer.ptr_ != nullptr);
+    REQUIRE(buffer.get() != nullptr);
 
     // Write unique pattern
     for (size_t j = 0; j < size; j++) {
-      buffer.ptr_[j] = static_cast<char>((i * 100 + j) % 256);
+      buffer[j] = static_cast<char>((i * 100 + j) % 256);
     }
 
     buffers.push_back(buffer);
@@ -106,7 +106,7 @@ TEST_CASE("HSHM_MALLOC: multiple allocations", "[hshm_malloc][multiple]") {
   for (int i = 0; i < num_buffers; i++) {
     size_t size = 512 + i * 128;
     for (size_t j = 0; j < size; j++) {
-      REQUIRE(buffers[i].ptr_[j] == static_cast<char>((i * 100 + j) % 256));
+      REQUIRE(buffers[i][j] == static_cast<char>((i * 100 + j) % 256));
     }
   }
 
@@ -114,7 +114,7 @@ TEST_CASE("HSHM_MALLOC: multiple allocations", "[hshm_malloc][multiple]") {
 
   // Free all buffers
   for (int i = 0; i < num_buffers; i++) {
-    std::cout << "Freeing buffer " << i << " at ptr_=" << (void*)buffers[i].ptr_ << std::endl;
+    std::cout << "Freeing buffer " << i << " at ptr_=" << (void*)buffers[i].get() << std::endl;
     HSHM_MALLOC->Free(buffers[i]);
   }
 
@@ -155,7 +155,7 @@ TEST_CASE("HSHM_MALLOC: ptr and offset relationship", "[hshm_malloc][ptr_offset]
 
   REQUIRE(!buffer.IsNull());
 
-  std::cout << "ptr_ = " << (void*)buffer.ptr_ << std::endl;
+  std::cout << "ptr_ = " << (void*)buffer.get() << std::endl;
   std::cout << "off_ = " << buffer.shm_.off_.load() << std::endl;
 
   // For HSHM_MALLOC with MallocPage header:
@@ -163,7 +163,7 @@ TEST_CASE("HSHM_MALLOC: ptr and offset relationship", "[hshm_malloc][ptr_offset]
   // - The ptr_ should also point to the data
   // - They should be the same value
 
-  uintptr_t ptr_value = reinterpret_cast<uintptr_t>(buffer.ptr_);
+  uintptr_t ptr_value = reinterpret_cast<uintptr_t>(buffer.get());
   size_t off_value = buffer.shm_.off_.load();
 
   std::cout << "ptr_ as uintptr_t = " << ptr_value << std::endl;
@@ -189,20 +189,20 @@ TEST_CASE("HSHM_MALLOC: simulate IpcManager allocation", "[hshm_malloc][ipc_mana
   FullPtr<char> buffer = HSHM_MALLOC->AllocateObjs<char>(size);
 
   REQUIRE(!buffer.IsNull());
-  REQUIRE(buffer.ptr_ != nullptr);
+  REQUIRE(buffer.get() != nullptr);
   REQUIRE(buffer.shm_.alloc_id_ == AllocatorId::GetNull());
 
   std::cout << "Allocation successful:" << std::endl;
-  std::cout << "  ptr_ = " << (void*)buffer.ptr_ << std::endl;
+  std::cout << "  ptr_ = " << (void*)buffer.get() << std::endl;
   std::cout << "  off_ = " << buffer.shm_.off_.load() << std::endl;
   std::cout << "  alloc_id = NULL (as expected)" << std::endl;
 
   // Write some data
-  std::memset(buffer.ptr_, 0xAB, size);
+  std::memset(buffer.get(), 0xAB, size);
 
   // Verify
   for (size_t i = 0; i < size; i++) {
-    REQUIRE(buffer.ptr_[i] == static_cast<char>(0xAB));
+    REQUIRE(buffer[i] == static_cast<char>(0xAB));
   }
 
   std::cout << "Data written and verified" << std::endl;
@@ -225,7 +225,7 @@ TEST_CASE("HSHM_MALLOC: verify single free only", "[hshm_malloc][single_free]") 
   auto buffer = HSHM_MALLOC->AllocateObjs<char>(512);
   REQUIRE(!buffer.IsNull());
 
-  std::cout << "Allocated buffer at ptr_=" << (void*)buffer.ptr_ << std::endl;
+  std::cout << "Allocated buffer at ptr_=" << (void*)buffer.get() << std::endl;
 
   // Free once (should work)
   std::cout << "Freeing buffer (first time)..." << std::endl;
@@ -249,11 +249,11 @@ TEST_CASE("HSHM_MALLOC: reallocation", "[hshm_malloc][realloc]") {
   auto buffer = HSHM_MALLOC->AllocateObjs<char>(initial_size);
   REQUIRE(!buffer.IsNull());
 
-  std::cout << "Initial allocation: " << initial_size << " bytes at ptr_=" << (void*)buffer.ptr_ << std::endl;
+  std::cout << "Initial allocation: " << initial_size << " bytes at ptr_=" << (void*)buffer.get() << std::endl;
 
   // Write unique pattern
   for (size_t i = 0; i < initial_size; i++) {
-    buffer.ptr_[i] = static_cast<char>(i % 256);
+    buffer[i] = static_cast<char>(i % 256);
   }
 
   // Reallocate to larger size
@@ -261,22 +261,22 @@ TEST_CASE("HSHM_MALLOC: reallocation", "[hshm_malloc][realloc]") {
   auto new_buffer = HSHM_MALLOC->ReallocateObjs<char>(buffer, new_size);
   REQUIRE(!new_buffer.IsNull());
 
-  std::cout << "Reallocated to " << new_size << " bytes at ptr_=" << (void*)new_buffer.ptr_ << std::endl;
+  std::cout << "Reallocated to " << new_size << " bytes at ptr_=" << (void*)new_buffer.get() << std::endl;
 
   // Verify original data is preserved
   for (size_t i = 0; i < initial_size; i++) {
-    REQUIRE(new_buffer.ptr_[i] == static_cast<char>(i % 256));
+    REQUIRE(new_buffer[i] == static_cast<char>(i % 256));
   }
   std::cout << "Original data preserved after reallocation" << std::endl;
 
   // Write to the new space
   for (size_t i = initial_size; i < new_size; i++) {
-    new_buffer.ptr_[i] = static_cast<char>((i + 100) % 256);
+    new_buffer[i] = static_cast<char>((i + 100) % 256);
   }
 
   // Verify all data
   for (size_t i = initial_size; i < new_size; i++) {
-    REQUIRE(new_buffer.ptr_[i] == static_cast<char>((i + 100) % 256));
+    REQUIRE(new_buffer[i] == static_cast<char>((i + 100) % 256));
   }
   std::cout << "New space is accessible" << std::endl;
 
@@ -300,7 +300,7 @@ TEST_CASE("HSHM_MALLOC: realloc smaller", "[hshm_malloc][realloc_small]") {
 
   // Write pattern
   for (size_t i = 0; i < initial_size; i++) {
-    buffer.ptr_[i] = static_cast<char>(i % 256);
+    buffer[i] = static_cast<char>(i % 256);
   }
 
   // Reallocate to smaller size
@@ -312,7 +312,7 @@ TEST_CASE("HSHM_MALLOC: realloc smaller", "[hshm_malloc][realloc_small]") {
 
   // Verify data in smaller region is preserved
   for (size_t i = 0; i < new_size; i++) {
-    REQUIRE(new_buffer.ptr_[i] == static_cast<char>(i % 256));
+    REQUIRE(new_buffer[i] == static_cast<char>(i % 256));
   }
   std::cout << "Data preserved in smaller buffer" << std::endl;
 
@@ -363,9 +363,9 @@ TEST_CASE("HSHM_MALLOC: various sizes", "[hshm_malloc][sizes]") {
     REQUIRE(!buffer.IsNull());
 
     // Write and verify
-    std::memset(buffer.ptr_, 0xAB, size);
+    std::memset(buffer.get(), 0xAB, size);
     for (size_t i = 0; i < size; i++) {
-      REQUIRE(buffer.ptr_[i] == static_cast<char>(0xAB));
+      REQUIRE(buffer[i] == static_cast<char>(0xAB));
     }
 
     HSHM_MALLOC->Free(buffer);
@@ -389,8 +389,8 @@ TEST_CASE("HSHM_MALLOC: stress test", "[hshm_malloc][stress]") {
     REQUIRE(!buffer.IsNull());
 
     // Quick write
-    buffer.ptr_[0] = static_cast<char>(i % 256);
-    buffer.ptr_[size - 1] = static_cast<char>(i % 256);
+    buffer[0] = static_cast<char>(i % 256);
+    buffer[size - 1] = static_cast<char>(i % 256);
 
     HSHM_MALLOC->Free(buffer);
   }

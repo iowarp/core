@@ -310,7 +310,7 @@ TEST_CASE("Tag - PutBlob SHM Version", "[cte][tag][putblob]") {
   REQUIRE(!shm_fullptr.IsNull());
 
   // Copy data to shared memory
-  memcpy(shm_fullptr.ptr_, data.data(), data.size());
+  memcpy(shm_fullptr.get(), data.data(), data.size());
 
   // Convert to ShmPtr and call SHM version
   hipc::ShmPtr<> shm_ptr(shm_fullptr.shm_);
@@ -601,7 +601,7 @@ TEST_CASE("Tag - AsyncPutBlob", "[cte][tag][async]") {
   auto *ipc = CHI_IPC;
   hipc::FullPtr<char> shm_fullptr = ipc->AllocateBuffer(data.size());
   REQUIRE(!shm_fullptr.IsNull());
-  memcpy(shm_fullptr.ptr_, data.data(), data.size());
+  memcpy(shm_fullptr.get(), data.data(), data.size());
 
   // Call async version
   hipc::ShmPtr<> shm_ptr(shm_fullptr.shm_);

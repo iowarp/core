@@ -76,9 +76,9 @@ __global__ void AllocateRingBufferKernel(AllocT *alloc, size_t capacity,
   auto ring_ptr =
       alloc->template NewObj<mpsc_ring_buffer<T, AllocT>>(alloc, capacity);
   printf("AllocateRingBufferKernel: Ring buffer created: %p %p\n", alloc,
-         ring_ptr.ptr_);
+         ring_ptr.get());
   // Return the ring buffer pointer
-  *result = ring_ptr.ptr_;
+  *result = ring_ptr.get();
 }
 
 /**

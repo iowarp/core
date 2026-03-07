@@ -233,7 +233,7 @@ TEST_CASE("TieredStorage - Put 128MB with 64MB DRAM", "[tiered][stress][put]") {
 
     // Fill buffer with pattern
     auto test_data = g_fixture->CreateTestData(kBlobSize, i);
-    std::memcpy(shm_buffer.ptr_, test_data.data(), kBlobSize);
+    std::memcpy(shm_buffer.get(), test_data.data(), kBlobSize);
 
     // Put blob with high score (prefer slow tier to leave DRAM space)
     // Using score 0.5 - system should place where there's capacity
@@ -342,7 +342,7 @@ TEST_CASE("TieredStorage - Verify data integrity",
 
     // Verify data pattern
     std::vector<char> read_data(kBlobSize);
-    std::memcpy(read_data.data(), read_buffer.ptr_, kBlobSize);
+    std::memcpy(read_data.data(), read_buffer.get(), kBlobSize);
 
     if (g_fixture->VerifyTestData(read_data, i)) {
       verified_count++;

@@ -82,8 +82,8 @@ void TestZeroMQ() {
   }
   assert(recv_meta.send.size() == 1);
 
-  std::string received(recv_meta.recv[0].data.ptr_,
-                       recv_meta.recv[0].data.ptr_ + recv_meta.recv[0].size);
+  std::string received(recv_meta.recv[0].data.get(),
+                       recv_meta.recv[0].data.get() + recv_meta.recv[0].size);
   std::cout << "Received: " << received << std::endl;
   assert(received == magic);
 

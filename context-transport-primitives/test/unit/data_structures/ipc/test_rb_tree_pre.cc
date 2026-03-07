@@ -83,7 +83,7 @@ bool VerifyRBProperties(AllocT *alloc, pre::rb_tree<NodeT, false> &tree) {
   FullPtr<NodeT> root(alloc, OffsetPtr<NodeT>(tree.GetRoot().load()));
 
   // Property 2: Root must be black
-  if (root.ptr_->color_ != pre::RBColor::BLACK) {
+  if (root->color_ != pre::RBColor::BLACK) {
     return false;
   }
 
@@ -97,30 +97,30 @@ bool VerifyRBProperties(AllocT *alloc, pre::rb_tree<NodeT, false> &tree) {
     FullPtr<NodeT> node(alloc, node_off);
 
     // Check BST property
-    if (min_key && node.ptr_->key <= *min_key) return -1;
-    if (max_key && node.ptr_->key >= *max_key) return -1;
+    if (min_key && node->key <= *min_key) return -1;
+    if (max_key && node->key >= *max_key) return -1;
 
     // Property 4: Red nodes have black children
-    if (node.ptr_->color_ == pre::RBColor::RED) {
-      if (!node.ptr_->left_.IsNull()) {
-        FullPtr<NodeT> left(alloc, OffsetPtr<NodeT>(node.ptr_->left_.load()));
-        if (left.ptr_->color_ == pre::RBColor::RED) return -1;
+    if (node->color_ == pre::RBColor::RED) {
+      if (!node->left_.IsNull()) {
+        FullPtr<NodeT> left(alloc, OffsetPtr<NodeT>(node->left_.load()));
+        if (left->color_ == pre::RBColor::RED) return -1;
       }
-      if (!node.ptr_->right_.IsNull()) {
-        FullPtr<NodeT> right(alloc, OffsetPtr<NodeT>(node.ptr_->right_.load()));
-        if (right.ptr_->color_ == pre::RBColor::RED) return -1;
+      if (!node->right_.IsNull()) {
+        FullPtr<NodeT> right(alloc, OffsetPtr<NodeT>(node->right_.load()));
+        if (right->color_ == pre::RBColor::RED) return -1;
       }
     }
 
     // Property 5: Same number of black nodes on all paths
-    int left_black = check_node(OffsetPtr<NodeT>(node.ptr_->left_), min_key, &node.ptr_->key);
-    int right_black = check_node(OffsetPtr<NodeT>(node.ptr_->right_), &node.ptr_->key, max_key);
+    int left_black = check_node(OffsetPtr<NodeT>(node->left_), min_key, &node->key);
+    int right_black = check_node(OffsetPtr<NodeT>(node->right_), &node->key, max_key);
 
     if (left_black == -1 || right_black == -1 || left_black != right_black) {
       return -1;
     }
 
-    return left_black + (node.ptr_->color_ == pre::RBColor::BLACK ? 1 : 0);
+    return left_black + (node->color_ == pre::RBColor::BLACK ? 1 : 0);
   };
 
   return check_node(OffsetPtr<NodeT>(tree.GetRoot().load()), nullptr, nullptr) != -1;
@@ -147,13 +147,13 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
 
     // Allocate a test node
     auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-    node_ptr.ptr_->key = 42;
-    node_ptr.ptr_->value_ = 100;
+    node_ptr->key = 42;
+    node_ptr->value_ = 100;
 
     // Insert the node (TestRBNode inherits from rb_node, so we can cast)
     hipc::ShmPtrBase<TestRBNode<int>> test_shm(node_ptr.shm_.alloc_id_, node_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr(alloc, test_shm);
-    test_ptr.ptr_ = node_ptr.ptr_;
+    test_ptr.set_ptr(node_ptr.get());
     tree.emplace(alloc, test_ptr);
 
     REQUIRE(tree.size() == 1);
@@ -163,7 +163,7 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
     // Find the node
     auto found = tree.find(alloc, 42);
     REQUIRE_FALSE(found.IsNull());
-    REQUIRE(found.ptr_->value_ == 100);
+    REQUIRE(found->value_ == 100);
   }
 
   SECTION("Multiple elements in order") {
@@ -173,12 +173,12 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
     // Insert nodes in ascending order
     for (int i = 0; i < 10; ++i) {
       auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-      node_ptr.ptr_->key = i;
-      node_ptr.ptr_->value_ = i * 10;
+      node_ptr->key = i;
+      node_ptr->value_ = i * 10;
 
       hipc::ShmPtrBase<TestRBNode<int>> test_shm(node_ptr.shm_.alloc_id_, node_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr(alloc, test_shm);
-    test_ptr.ptr_ = node_ptr.ptr_;
+    test_ptr.set_ptr(node_ptr.get());
       tree.emplace(alloc, test_ptr);
     }
 
@@ -189,7 +189,7 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
     for (int i = 0; i < 10; ++i) {
       auto found = tree.find(alloc, i);
       REQUIRE_FALSE(found.IsNull());
-      REQUIRE(found.ptr_->value_ == i * 10);
+      REQUIRE(found->value_ == i * 10);
     }
   }
 
@@ -200,12 +200,12 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
     // Insert nodes in descending order
     for (int i = 9; i >= 0; --i) {
       auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-      node_ptr.ptr_->key = i;
-      node_ptr.ptr_->value_ = i * 10;
+      node_ptr->key = i;
+      node_ptr->value_ = i * 10;
 
       hipc::ShmPtrBase<TestRBNode<int>> test_shm(node_ptr.shm_.alloc_id_, node_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr(alloc, test_shm);
-    test_ptr.ptr_ = node_ptr.ptr_;
+    test_ptr.set_ptr(node_ptr.get());
       tree.emplace(alloc, test_ptr);
     }
 
@@ -221,12 +221,12 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
 
     for (int key : keys) {
       auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-      node_ptr.ptr_->key = key;
-      node_ptr.ptr_->value_ = key;
+      node_ptr->key = key;
+      node_ptr->value_ = key;
 
       hipc::ShmPtrBase<TestRBNode<int>> test_shm(node_ptr.shm_.alloc_id_, node_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr(alloc, test_shm);
-    test_ptr.ptr_ = node_ptr.ptr_;
+    test_ptr.set_ptr(node_ptr.get());
       tree.emplace(alloc, test_ptr);
 
       REQUIRE(VerifyRBProperties(alloc, tree));
@@ -247,24 +247,24 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
 
     // Insert node with key 42
     auto node1_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-    node1_ptr.ptr_->key = 42;
-    node1_ptr.ptr_->value_ = 100;
+    node1_ptr->key = 42;
+    node1_ptr->value_ = 100;
 
     hipc::ShmPtrBase<TestRBNode<int>> test_shm1(node1_ptr.shm_.alloc_id_, node1_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr1(alloc, test_shm1);
-    test_ptr1.ptr_ = node1_ptr.ptr_;
+    test_ptr1.set_ptr(node1_ptr.get());
     tree.emplace(alloc, test_ptr1);
 
     REQUIRE(tree.size() == 1);
 
     // Try to insert another node with same key
     auto node2_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-    node2_ptr.ptr_->key = 42;
-    node2_ptr.ptr_->value_ = 200;
+    node2_ptr->key = 42;
+    node2_ptr->value_ = 200;
 
     hipc::ShmPtrBase<TestRBNode<int>> test_shm2(node2_ptr.shm_.alloc_id_, node2_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr2(alloc, test_shm2);
-    test_ptr2.ptr_ = node2_ptr.ptr_;
+    test_ptr2.set_ptr(node2_ptr.get());
     tree.emplace(alloc, test_ptr2);
 
     // Size should remain 1 (duplicate not inserted)
@@ -272,7 +272,7 @@ TEST_CASE("rb_tree_pre - Basic Operations", "[rb_tree_pre]") {
 
     // Original value should be preserved
     auto found = tree.find(alloc, 42);
-    REQUIRE(found.ptr_->value_ == 100);
+    REQUIRE(found->value_ == 100);
   }
 
 }
@@ -297,12 +297,12 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
     tree.Init();
 
     auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-    node_ptr.ptr_->key = 42;
-    node_ptr.ptr_->value_ = 100;
+    node_ptr->key = 42;
+    node_ptr->value_ = 100;
 
     hipc::ShmPtrBase<TestRBNode<int>> test_shm(node_ptr.shm_.alloc_id_, node_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr(alloc, test_shm);
-    test_ptr.ptr_ = node_ptr.ptr_;
+    test_ptr.set_ptr(node_ptr.get());
     tree.emplace(alloc, test_ptr);
 
     REQUIRE(tree.size() == 1);
@@ -312,7 +312,7 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
     REQUIRE(tree.size() == 0);
     REQUIRE(tree.empty());
 
-    REQUIRE(popped.ptr_->value_ == 100);
+    REQUIRE(popped->value_ == 100);
   }
 
   SECTION("Delete non-existent key") {
@@ -322,12 +322,12 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
     // Insert a few nodes
     for (int i = 0; i < 5; ++i) {
       auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-      node_ptr.ptr_->key = i * 10;
-      node_ptr.ptr_->value_ = i;
+      node_ptr->key = i * 10;
+      node_ptr->value_ = i;
 
       hipc::ShmPtrBase<TestRBNode<int>> test_shm(node_ptr.shm_.alloc_id_, node_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr(alloc, test_shm);
-    test_ptr.ptr_ = node_ptr.ptr_;
+    test_ptr.set_ptr(node_ptr.get());
       tree.emplace(alloc, test_ptr);
     }
 
@@ -348,12 +348,12 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
     // Insert all
     for (int key : keys) {
       auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-      node_ptr.ptr_->key = key;
-      node_ptr.ptr_->value_ = key;
+      node_ptr->key = key;
+      node_ptr->value_ = key;
 
       hipc::ShmPtrBase<TestRBNode<int>> test_shm(node_ptr.shm_.alloc_id_, node_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr(alloc, test_shm);
-    test_ptr.ptr_ = node_ptr.ptr_;
+    test_ptr.set_ptr(node_ptr.get());
       tree.emplace(alloc, test_ptr);
     }
 
@@ -383,12 +383,12 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
     // Insert 5 nodes
     for (int i = 0; i < 5; ++i) {
       auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-      node_ptr.ptr_->key = i;
-      node_ptr.ptr_->value_ = i;
+      node_ptr->key = i;
+      node_ptr->value_ = i;
 
       hipc::ShmPtrBase<TestRBNode<int>> test_shm(node_ptr.shm_.alloc_id_, node_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr(alloc, test_shm);
-    test_ptr.ptr_ = node_ptr.ptr_;
+    test_ptr.set_ptr(node_ptr.get());
       tree.emplace(alloc, test_ptr);
     }
 
@@ -401,12 +401,12 @@ TEST_CASE("rb_tree_pre - Deletion", "[rb_tree_pre]") {
     // Insert 3 more
     for (int i = 10; i < 13; ++i) {
       auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-      node_ptr.ptr_->key = i;
-      node_ptr.ptr_->value_ = i;
+      node_ptr->key = i;
+      node_ptr->value_ = i;
 
       hipc::ShmPtrBase<TestRBNode<int>> test_shm(node_ptr.shm_.alloc_id_, node_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr(alloc, test_shm);
-    test_ptr.ptr_ = node_ptr.ptr_;
+    test_ptr.set_ptr(node_ptr.get());
       tree.emplace(alloc, test_ptr);
     }
 
@@ -441,12 +441,12 @@ TEST_CASE("rb_tree_pre - Large Tree", "[rb_tree_pre]") {
     // Insert
     for (int i = 0; i < NUM_NODES; ++i) {
       auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-      node_ptr.ptr_->key = i;
-      node_ptr.ptr_->value_ = i;
+      node_ptr->key = i;
+      node_ptr->value_ = i;
 
       hipc::ShmPtrBase<TestRBNode<int>> test_shm(node_ptr.shm_.alloc_id_, node_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr(alloc, test_shm);
-    test_ptr.ptr_ = node_ptr.ptr_;
+    test_ptr.set_ptr(node_ptr.get());
       tree.emplace(alloc, test_ptr);
     }
 
@@ -482,12 +482,12 @@ TEST_CASE("rb_tree_pre - Atomic Version", "[rb_tree_pre][atomic]") {
     // Insert nodes
     for (int i = 0; i < 20; ++i) {
       auto node_ptr = alloc->Allocate<TestRBNode<int>>( sizeof(TestRBNode<int>));
-      node_ptr.ptr_->key = i;
-      node_ptr.ptr_->value_ = i * 2;
+      node_ptr->key = i;
+      node_ptr->value_ = i * 2;
 
       hipc::ShmPtrBase<TestRBNode<int>> test_shm(node_ptr.shm_.alloc_id_, node_ptr.shm_.off_.load());
     FullPtr<TestRBNode<int>> test_ptr(alloc, test_shm);
-    test_ptr.ptr_ = node_ptr.ptr_;
+    test_ptr.set_ptr(node_ptr.get());
       tree.emplace(alloc, test_ptr);
     }
 
@@ -515,24 +515,24 @@ TEST_CASE("rb_tree_pre - Deletion Edge Cases", "[rb_tree_pre][deletion]") {
 
     // Insert root and two children
     auto root = alloc->Allocate<TestRBNode<int>>(sizeof(TestRBNode<int>));
-    root.ptr_->key = 50;
+    root->key = 50;
     hipc::ShmPtrBase<TestRBNode<int>> root_shm(root.shm_.alloc_id_, root.shm_.off_.load());
     FullPtr<TestRBNode<int>> root_ptr(alloc, root_shm);
-    root_ptr.ptr_ = root.ptr_;
+    root_ptr.set_ptr(root.get());
     tree.emplace(alloc, root_ptr);
 
     auto left = alloc->Allocate<TestRBNode<int>>(sizeof(TestRBNode<int>));
-    left.ptr_->key = 25;
+    left->key = 25;
     hipc::ShmPtrBase<TestRBNode<int>> left_shm(left.shm_.alloc_id_, left.shm_.off_.load());
     FullPtr<TestRBNode<int>> left_ptr(alloc, left_shm);
-    left_ptr.ptr_ = left.ptr_;
+    left_ptr.set_ptr(left.get());
     tree.emplace(alloc, left_ptr);
 
     auto right = alloc->Allocate<TestRBNode<int>>(sizeof(TestRBNode<int>));
-    right.ptr_->key = 75;
+    right->key = 75;
     hipc::ShmPtrBase<TestRBNode<int>> right_shm(right.shm_.alloc_id_, right.shm_.off_.load());
     FullPtr<TestRBNode<int>> right_ptr(alloc, right_shm);
-    right_ptr.ptr_ = right.ptr_;
+    right_ptr.set_ptr(right.get());
     tree.emplace(alloc, right_ptr);
 
     REQUIRE(tree.size() == 3);
@@ -557,10 +557,10 @@ TEST_CASE("rb_tree_pre - Deletion Edge Cases", "[rb_tree_pre][deletion]") {
     std::vector<int> keys = {50, 25, 75, 10};
     for (int key : keys) {
       auto node = alloc->Allocate<TestRBNode<int>>(sizeof(TestRBNode<int>));
-      node.ptr_->key = key;
+      node->key = key;
       hipc::ShmPtrBase<TestRBNode<int>> shm(node.shm_.alloc_id_, node.shm_.off_.load());
       FullPtr<TestRBNode<int>> ptr(alloc, shm);
-      ptr.ptr_ = node.ptr_;
+      ptr.set_ptr(node.get());
       tree.emplace(alloc, ptr);
     }
 
@@ -582,10 +582,10 @@ TEST_CASE("rb_tree_pre - Deletion Edge Cases", "[rb_tree_pre][deletion]") {
     std::vector<int> keys = {50, 25, 75, 90};
     for (int key : keys) {
       auto node = alloc->Allocate<TestRBNode<int>>(sizeof(TestRBNode<int>));
-      node.ptr_->key = key;
+      node->key = key;
       hipc::ShmPtrBase<TestRBNode<int>> shm(node.shm_.alloc_id_, node.shm_.off_.load());
       FullPtr<TestRBNode<int>> ptr(alloc, shm);
-      ptr.ptr_ = node.ptr_;
+      ptr.set_ptr(node.get());
       tree.emplace(alloc, ptr);
     }
 
@@ -607,10 +607,10 @@ TEST_CASE("rb_tree_pre - Deletion Edge Cases", "[rb_tree_pre][deletion]") {
     std::vector<int> keys = {50, 25, 75, 60};
     for (int key : keys) {
       auto node = alloc->Allocate<TestRBNode<int>>(sizeof(TestRBNode<int>));
-      node.ptr_->key = key;
+      node->key = key;
       hipc::ShmPtrBase<TestRBNode<int>> shm(node.shm_.alloc_id_, node.shm_.off_.load());
       FullPtr<TestRBNode<int>> ptr(alloc, shm);
-      ptr.ptr_ = node.ptr_;
+      ptr.set_ptr(node.get());
       tree.emplace(alloc, ptr);
     }
 
@@ -628,10 +628,10 @@ TEST_CASE("rb_tree_pre - Deletion Edge Cases", "[rb_tree_pre][deletion]") {
     std::vector<int> keys = {50, 25, 75, 10, 30, 60, 90, 5};
     for (int key : keys) {
       auto node = alloc->Allocate<TestRBNode<int>>(sizeof(TestRBNode<int>));
-      node.ptr_->key = key;
+      node->key = key;
       hipc::ShmPtrBase<TestRBNode<int>> shm(node.shm_.alloc_id_, node.shm_.off_.load());
       FullPtr<TestRBNode<int>> ptr(alloc, shm);
-      ptr.ptr_ = node.ptr_;
+      ptr.set_ptr(node.get());
       tree.emplace(alloc, ptr);
     }
 
@@ -655,10 +655,10 @@ TEST_CASE("rb_tree_pre - Deletion Edge Cases", "[rb_tree_pre][deletion]") {
     for (int i = 0; i < NUM_NODES; ++i) {
       keys.push_back(i);
       auto node = alloc->Allocate<TestRBNode<int>>(sizeof(TestRBNode<int>));
-      node.ptr_->key = i;
+      node->key = i;
       hipc::ShmPtrBase<TestRBNode<int>> shm(node.shm_.alloc_id_, node.shm_.off_.load());
       FullPtr<TestRBNode<int>> ptr(alloc, shm);
-      ptr.ptr_ = node.ptr_;
+      ptr.set_ptr(node.get());
       tree.emplace(alloc, ptr);
     }
 
@@ -691,10 +691,10 @@ TEST_CASE("rb_tree_pre - String Keys", "[rb_tree_pre][string_keys]") {
 
     for (const auto& key : keys) {
       auto node = alloc->Allocate<TestRBNode<std::string>>(sizeof(TestRBNode<std::string>));
-      new (node.ptr_) TestRBNode<std::string>(key, 0);
+      new (node.get()) TestRBNode<std::string>(key, 0);
       hipc::ShmPtrBase<TestRBNode<std::string>> shm(node.shm_.alloc_id_, node.shm_.off_.load());
       FullPtr<TestRBNode<std::string>> ptr(alloc, shm);
-      ptr.ptr_ = node.ptr_;
+      ptr.set_ptr(node.get());
       tree.emplace(alloc, ptr);
     }
 

@@ -81,7 +81,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
 
     // Allocate a test node
     auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
-    node_ptr.ptr_->value_ = 42;
+    node_ptr->value_ = 42;
 
     // Emplace the node
     list.emplace(alloc, node_ptr);
@@ -97,7 +97,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
     REQUIRE(list.empty());
 
     // Verify the data
-    auto *popped_node = reinterpret_cast<TestNode*>(popped.ptr_);
+    auto *popped_node = reinterpret_cast<TestNode*>(popped.get());
     REQUIRE(popped_node->value_ == 42);
   }
 
@@ -109,7 +109,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
     const int NUM_NODES = 5;
     for (int i = 0; i < NUM_NODES; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
-      node_ptr.ptr_->value_ = i;
+      node_ptr->value_ = i;
 
       list.emplace(alloc, node_ptr);
     }
@@ -121,7 +121,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
       auto popped = list.pop(alloc);
       REQUIRE_FALSE(popped.IsNull());
 
-      auto *popped_node = reinterpret_cast<TestNode*>(popped.ptr_);
+      auto *popped_node = reinterpret_cast<TestNode*>(popped.get());
       REQUIRE(popped_node->value_ == i);
     }
 
@@ -148,7 +148,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
 
     // Add a node
     auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
-    node_ptr.ptr_->value_ = 100;
+    node_ptr->value_ = 100;
     list.emplace(alloc, node_ptr);
 
     // Peek should return the head without removing it
@@ -156,7 +156,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
     REQUIRE_FALSE(peeked.IsNull());
     REQUIRE(list.size() == 1);  // Size unchanged
 
-    auto *peeked_node = reinterpret_cast<TestNode*>(peeked.ptr_);
+    auto *peeked_node = reinterpret_cast<TestNode*>(peeked.get());
     REQUIRE(peeked_node->value_ == 100);
   }
 
@@ -167,7 +167,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
     // Emplace 3 nodes
     for (int i = 0; i < 3; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
-      node_ptr.ptr_->value_ = i;
+      node_ptr->value_ = i;
       list.emplace(alloc, node_ptr);
     }
     REQUIRE(list.size() == 3);
@@ -180,7 +180,7 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
     // Emplace 2 more nodes
     for (int i = 10; i < 12; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
-      node_ptr.ptr_->value_ = i;
+      node_ptr->value_ = i;
       list.emplace(alloc, node_ptr);
     }
     REQUIRE(list.size() == 3);
@@ -190,9 +190,9 @@ TEST_CASE("slist_pre - Basic Operations", "[slist_pre]") {
     auto n2 = list.pop(alloc);
     auto n3 = list.pop(alloc);
 
-    REQUIRE(reinterpret_cast<TestNode*>(n1.ptr_)->value_ == 11);
-    REQUIRE(reinterpret_cast<TestNode*>(n2.ptr_)->value_ == 10);
-    REQUIRE(reinterpret_cast<TestNode*>(n3.ptr_)->value_ == 0);
+    REQUIRE(reinterpret_cast<TestNode*>(n1.get())->value_ == 11);
+    REQUIRE(reinterpret_cast<TestNode*>(n2.get())->value_ == 10);
+    REQUIRE(reinterpret_cast<TestNode*>(n3.get())->value_ == 0);
   }
 
 }
@@ -211,7 +211,7 @@ TEST_CASE("slist_pre - Atomic Version", "[slist_pre][atomic]") {
     const int NUM_NODES = 10;
     for (int i = 0; i < NUM_NODES; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
-      node_ptr.ptr_->value_ = i;
+      node_ptr->value_ = i;
       list.emplace(alloc, node_ptr);
     }
 
@@ -221,7 +221,7 @@ TEST_CASE("slist_pre - Atomic Version", "[slist_pre][atomic]") {
     for (int i = NUM_NODES - 1; i >= 0; --i) {
       auto popped = list.pop(alloc);
       REQUIRE_FALSE(popped.IsNull());
-      REQUIRE(reinterpret_cast<TestNode*>(popped.ptr_)->value_ == i);
+      REQUIRE(reinterpret_cast<TestNode*>(popped.get())->value_ == i);
     }
 
     REQUIRE(list.size() == 0);
@@ -242,7 +242,7 @@ TEST_CASE("slist_pre - Node Reuse", "[slist_pre]") {
 
     // Allocate a node
     auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
-    node_ptr.ptr_->value_ = 1;
+    node_ptr->value_ = 1;
 
     // Emplace, pop, modify, and re-emplace
     list.emplace(alloc, node_ptr);
@@ -252,7 +252,7 @@ TEST_CASE("slist_pre - Node Reuse", "[slist_pre]") {
     REQUIRE(list.size() == 0);
 
     // Modify the node
-    auto *reused_node = reinterpret_cast<TestNode*>(popped.ptr_);
+    auto *reused_node = reinterpret_cast<TestNode*>(popped.get());
     reused_node->value_ = 999;
 
     // Re-emplace the same node
@@ -261,7 +261,7 @@ TEST_CASE("slist_pre - Node Reuse", "[slist_pre]") {
 
     // Pop and verify
     auto final = list.pop(alloc);
-    REQUIRE(reinterpret_cast<TestNode*>(final.ptr_)->value_ == 999);
+    REQUIRE(reinterpret_cast<TestNode*>(final.get())->value_ == 999);
   }
 
 }
@@ -281,7 +281,7 @@ TEST_CASE("slist_pre - Large List", "[slist_pre]") {
     // Emplace many nodes
     for (int i = 0; i < NUM_NODES; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>( sizeof(TestNode));
-      node_ptr.ptr_->value_ = i;
+      node_ptr->value_ = i;
       list.emplace(alloc, node_ptr);
     }
 
@@ -322,7 +322,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
 
     // Allocate and emplace a single node
     auto node_ptr = alloc->Allocate<TestNode>(sizeof(TestNode));
-    node_ptr.ptr_->value_ = 42;
+    node_ptr->value_ = 42;
     list.emplace(alloc, node_ptr);
 
     // Iterate and verify
@@ -331,7 +331,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
     REQUIRE(it != list.end());
 
     auto node = FullPtr<TestNode>(alloc, OffsetPtr<TestNode>(it.GetCurrent().load()));
-    REQUIRE(node.ptr_->value_ == 42);
+    REQUIRE(node->value_ == 42);
 
     // Advance to next (should be end)
     auto next_it_copy = it;
@@ -348,7 +348,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
     // Emplace nodes in order 0, 1, 2, 3, 4 (but LIFO means list order is 4, 3, 2, 1, 0)
     for (int i = 0; i < NUM_NODES; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>(sizeof(TestNode));
-      node_ptr.ptr_->value_ = i;
+      node_ptr->value_ = i;
       list.emplace(alloc, node_ptr);
     }
 
@@ -357,7 +357,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
     int idx = 0;
     for (auto it = list.begin(alloc); it != list.end(); ++it) {
       auto node = FullPtr<TestNode>(alloc, OffsetPtr<TestNode>(it.GetCurrent().load()));
-      REQUIRE(node.ptr_->value_ == expected_values[idx]);
+      REQUIRE(node->value_ == expected_values[idx]);
       idx++;
     }
     REQUIRE(idx == NUM_NODES);
@@ -370,7 +370,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
     // Allocate and emplace two nodes
     for (int i = 0; i < 2; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>(sizeof(TestNode));
-      node_ptr.ptr_->value_ = i;
+      node_ptr->value_ = i;
       list.emplace(alloc, node_ptr);
     }
 
@@ -393,7 +393,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
     // Emplace nodes
     for (int i = 0; i < NUM_NODES; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>(sizeof(TestNode));
-      node_ptr.ptr_->value_ = i;
+      node_ptr->value_ = i;
       list.emplace(alloc, node_ptr);
     }
 
@@ -432,7 +432,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
 
     // Allocate and emplace a single node
     auto node_ptr = alloc->Allocate<TestNode>(sizeof(TestNode));
-    node_ptr.ptr_->value_ = 100;
+    node_ptr->value_ = 100;
     list.emplace(alloc, node_ptr);
 
     auto it = list.begin(alloc);
@@ -458,7 +458,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
     // Emplace nodes
     for (int i = 0; i < NUM_NODES; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>(sizeof(TestNode));
-      node_ptr.ptr_->value_ = i;
+      node_ptr->value_ = i;
       list.emplace(alloc, node_ptr);
     }
 
@@ -481,7 +481,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
     // Emplace nodes with distinct values
     for (int i = 0; i < NUM_NODES; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>(sizeof(TestNode));
-      node_ptr.ptr_->value_ = i * 10;
+      node_ptr->value_ = i * 10;
       list.emplace(alloc, node_ptr);
     }
 
@@ -522,7 +522,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
 
     // Add a node
     auto node_ptr = alloc->Allocate<TestNode>(sizeof(TestNode));
-    node_ptr.ptr_->value_ = 1;
+    node_ptr->value_ = 1;
     list.emplace(alloc, node_ptr);
 
     auto it_begin = list.begin(alloc);
@@ -542,7 +542,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
     // Emplace many nodes
     for (int i = 0; i < NUM_NODES; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>(sizeof(TestNode));
-      node_ptr.ptr_->value_ = i;
+      node_ptr->value_ = i;
       list.emplace(alloc, node_ptr);
     }
 
@@ -551,7 +551,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
     int expected_value = NUM_NODES - 1;  // LIFO order
     for (auto it = list.begin(alloc); it != list.end(); ++it) {
       auto node = FullPtr<TestNode>(alloc, OffsetPtr<TestNode>(it.GetCurrent().load()));
-      REQUIRE(node.ptr_->value_ == expected_value);
+      REQUIRE(node->value_ == expected_value);
       expected_value--;
       count++;
     }
@@ -567,7 +567,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
     const int NUM_NODES = 5;
     for (int i = 0; i < NUM_NODES; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>(sizeof(TestNode));
-      node_ptr.ptr_->value_ = i;
+      node_ptr->value_ = i;
       list.emplace(alloc, node_ptr);
     }
 
@@ -593,7 +593,7 @@ TEST_CASE("slist_pre - Iterator Forward Traversal", "[slist_pre][iterator]") {
     // Add initial nodes
     for (int i = 0; i < 3; ++i) {
       auto node_ptr = alloc->Allocate<TestNode>(sizeof(TestNode));
-      node_ptr.ptr_->value_ = i;
+      node_ptr->value_ = i;
       list.emplace(alloc, node_ptr);
     }
 

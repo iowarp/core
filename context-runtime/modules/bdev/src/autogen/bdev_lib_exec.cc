@@ -95,42 +95,42 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
   switch (method) {
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kAllocateBlocks: {
       auto typed_task = task_ptr.template Cast<AllocateBlocksTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kFreeBlocks: {
       auto typed_task = task_ptr.template Cast<FreeBlocksTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kWrite: {
       auto typed_task = task_ptr.template Cast<WriteTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRead: {
       auto typed_task = task_ptr.template Cast<ReadTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetStats: {
       auto typed_task = task_ptr.template Cast<GetStatsTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     default: {
@@ -145,42 +145,42 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
   switch (method) {
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kAllocateBlocks: {
       auto typed_task = task_ptr.template Cast<AllocateBlocksTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kFreeBlocks: {
       auto typed_task = task_ptr.template Cast<FreeBlocksTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kWrite: {
       auto typed_task = task_ptr.template Cast<WriteTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRead: {
       auto typed_task = task_ptr.template Cast<ReadTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetStats: {
       auto typed_task = task_ptr.template Cast<GetStatsTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     default: {
@@ -204,49 +204,49 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kAllocateBlocks: {
       auto typed_task = task_ptr.template Cast<AllocateBlocksTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kFreeBlocks: {
       auto typed_task = task_ptr.template Cast<FreeBlocksTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kWrite: {
       auto typed_task = task_ptr.template Cast<WriteTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kRead: {
       auto typed_task = task_ptr.template Cast<ReadTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGetStats: {
       auto typed_task = task_ptr.template Cast<GetStatsTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     default: {
@@ -270,49 +270,49 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kAllocateBlocks: {
       auto typed_task = task_ptr.template Cast<AllocateBlocksTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kFreeBlocks: {
       auto typed_task = task_ptr.template Cast<FreeBlocksTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kWrite: {
       auto typed_task = task_ptr.template Cast<WriteTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kRead: {
       auto typed_task = task_ptr.template Cast<ReadTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGetStats: {
       auto typed_task = task_ptr.template Cast<GetStatsTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     default: {

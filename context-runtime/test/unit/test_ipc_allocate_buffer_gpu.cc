@@ -190,13 +190,13 @@ __global__ void test_gpu_allocate_buffer_kernel(
     // Write pattern to buffer
     char pattern = (char)(thread_id + 1);
     for (size_t i = 0; i < alloc_size; ++i) {
-      buffer.ptr_[i] = pattern;
+      buffer[i] = pattern;
     }
 
     // Verify pattern
     bool pattern_ok = true;
     for (size_t i = 0; i < alloc_size; ++i) {
-      if (buffer.ptr_[i] != pattern) {
+      if (buffer[i] != pattern) {
         pattern_ok = false;
         break;
       }
@@ -204,7 +204,7 @@ __global__ void test_gpu_allocate_buffer_kernel(
 
     results[thread_id] = pattern_ok ? 0 : 2;  // 2=verification failed
     allocated_sizes[thread_id] = alloc_size;
-    allocated_ptrs[thread_id] = buffer.ptr_;
+    allocated_ptrs[thread_id] = buffer.get();
   }
 
   __syncthreads();
@@ -232,7 +232,7 @@ __global__ void test_gpu_to_full_ptr_kernel(
   // Write test data
   char test_value = (char)(thread_id + 42);
   for (size_t i = 0; i < alloc_size; ++i) {
-    buffer.ptr_[i] = test_value;
+    buffer[i] = test_value;
   }
 
   // Get a ShmPtr and convert back to FullPtr
@@ -249,7 +249,7 @@ __global__ void test_gpu_to_full_ptr_kernel(
   // Verify the recovered pointer works
   bool data_ok = true;
   for (size_t i = 0; i < alloc_size; ++i) {
-    if (recovered.ptr_[i] != test_value) {
+    if (recovered[i] != test_value) {
       data_ok = false;
       break;
     }
@@ -284,7 +284,7 @@ __global__ void test_gpu_multiple_allocs_kernel(
       return;
     }
 
-    local_ptrs[i] = buffer.ptr_;
+    local_ptrs[i] = buffer.get();
 
     // Initialize with unique pattern
     char pattern = (char)(thread_id * num_allocs + i);
@@ -506,10 +506,10 @@ __global__ void test_gpu_ipc_manager_gpu_alloc_kernel(
   // Write and verify
   char pattern = (char)(thread_id + 1);
   for (int i = 0; i < 64; ++i) {
-    buffer.ptr_[i] = pattern;
+    buffer[i] = pattern;
   }
   for (int i = 0; i < 64; ++i) {
-    if (buffer.ptr_[i] != pattern) {
+    if (buffer[i] != pattern) {
       results[thread_id] = 2;
       __syncthreads();
       return;
@@ -608,7 +608,7 @@ __global__ void test_gpu_send_recv_roundtrip_kernel(
     }
 
     // Receive output via RecvGpu (reads ring buffer, then waits for FUTURE_COMPLETE)
-    CHI_IPC->RecvGpu(future, task.ptr_);
+    CHI_IPC->RecvGpu(future, task.get());
 
     // Check deserialized output (CPU should have set result_value_ = test_value * 2)
     if (task->result_value_ == test_value * 2) {
@@ -882,7 +882,7 @@ TEST_CASE("GPU IPC IpcManagerGpu per-thread allocators",
         queue_allocator, 1, 1, 256);
     REQUIRE(!gpu_queue.IsNull());
 
-    chi::IpcManagerGpu gpu_info(gpu_backend, gpu_queue.ptr_);
+    chi::IpcManagerGpu gpu_info(gpu_backend, gpu_queue.get());
 
     int *d_result = hshm::GpuApi::Malloc<int>(sizeof(int));
     int h_result_init = -999;
@@ -894,7 +894,7 @@ TEST_CASE("GPU IPC IpcManagerGpu per-thread allocators",
     test_gpu_send_serialization_kernel<<<1, 1>>>(gpu_info, d_result);
 
     // CPU polls queue until a Future is available
-    auto &lane = gpu_queue.ptr_->GetLane(0, 0);
+    auto &lane = gpu_queue->GetLane(0, 0);
     chi::Future<chi::Task> popped_future;
     while (!lane.Pop(popped_future)) {
       // Spin until GPU pushes the future
@@ -961,7 +961,7 @@ TEST_CASE("GPU IPC IpcManagerGpu per-thread allocators",
         queue_allocator, 1, 1, 256);
     REQUIRE(!gpu_queue.IsNull());
 
-    chi::IpcManagerGpu gpu_info(gpu_backend, gpu_queue.ptr_);
+    chi::IpcManagerGpu gpu_info(gpu_backend, gpu_queue.get());
 
     int *d_result = hshm::GpuApi::Malloc<int>(sizeof(int));
     int h_result_init = -999;
@@ -973,7 +973,7 @@ TEST_CASE("GPU IPC IpcManagerGpu per-thread allocators",
     test_gpu_send_recv_roundtrip_kernel<<<1, 1>>>(gpu_info, d_result);
 
     // CPU polls queue
-    auto &lane = gpu_queue.ptr_->GetLane(0, 0);
+    auto &lane = gpu_queue->GetLane(0, 0);
     chi::Future<chi::Task> popped_future;
     while (!lane.Pop(popped_future)) {}
 

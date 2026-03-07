@@ -101,47 +101,47 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
   switch (method) {
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kCustom: {
       auto typed_task = task_ptr.template Cast<CustomTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kCoMutexTest: {
       auto typed_task = task_ptr.template Cast<CoMutexTestTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kCoRwLockTest: {
       auto typed_task = task_ptr.template Cast<CoRwLockTestTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kWaitTest: {
       auto typed_task = task_ptr.template Cast<WaitTestTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kTestLargeOutput: {
       auto typed_task = task_ptr.template Cast<TestLargeOutputTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGpuSubmit: {
       auto typed_task = task_ptr.template Cast<GpuSubmitTask>();
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     default: {
@@ -156,47 +156,47 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
   switch (method) {
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kCustom: {
       auto typed_task = task_ptr.template Cast<CustomTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kCoMutexTest: {
       auto typed_task = task_ptr.template Cast<CoMutexTestTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kCoRwLockTest: {
       auto typed_task = task_ptr.template Cast<CoRwLockTestTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kWaitTest: {
       auto typed_task = task_ptr.template Cast<WaitTestTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kTestLargeOutput: {
       auto typed_task = task_ptr.template Cast<TestLargeOutputTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGpuSubmit: {
       auto typed_task = task_ptr.template Cast<GpuSubmitTask>();
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     default: {
@@ -220,55 +220,55 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kCustom: {
       auto typed_task = task_ptr.template Cast<CustomTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kCoMutexTest: {
       auto typed_task = task_ptr.template Cast<CoMutexTestTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kCoRwLockTest: {
       auto typed_task = task_ptr.template Cast<CoRwLockTestTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kWaitTest: {
       auto typed_task = task_ptr.template Cast<WaitTestTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kTestLargeOutput: {
       auto typed_task = task_ptr.template Cast<TestLargeOutputTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     case Method::kGpuSubmit: {
       auto typed_task = task_ptr.template Cast<GpuSubmitTask>();
       // Use archive operator which respects msg_type
-      archive >> *typed_task.ptr_;
+      archive >> *typed_task;
       break;
     }
     default: {
@@ -292,55 +292,55 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
     case Method::kCreate: {
       auto typed_task = task_ptr.template Cast<CreateTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kDestroy: {
       auto typed_task = task_ptr.template Cast<DestroyTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kMonitor: {
       auto typed_task = task_ptr.template Cast<MonitorTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kCustom: {
       auto typed_task = task_ptr.template Cast<CustomTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kCoMutexTest: {
       auto typed_task = task_ptr.template Cast<CoMutexTestTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kCoRwLockTest: {
       auto typed_task = task_ptr.template Cast<CoRwLockTestTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kWaitTest: {
       auto typed_task = task_ptr.template Cast<WaitTestTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kTestLargeOutput: {
       auto typed_task = task_ptr.template Cast<TestLargeOutputTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     case Method::kGpuSubmit: {
       auto typed_task = task_ptr.template Cast<GpuSubmitTask>();
       // Use archive operator which respects msg_type
-      archive << *typed_task.ptr_;
+      archive << *typed_task;
       break;
     }
     default: {

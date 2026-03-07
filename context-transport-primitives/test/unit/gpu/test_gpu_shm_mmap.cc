@@ -214,7 +214,7 @@ TEST_CASE("GpuShmMmap", "[gpu][backend]") {
     // and GPU
     using RingBuffer = mpsc_ring_buffer<int, AllocT>;
     RingBuffer *ring_ptr =
-        alloc_ptr->NewObj<RingBuffer>(alloc_ptr, kNumElements).ptr_;
+        alloc_ptr->NewObj<RingBuffer>(alloc_ptr, kNumElements).get();
     REQUIRE(ring_ptr != nullptr);
 
     // Step 4 & 5: Pass the ring_buffer to the kernel and push 10 elements
@@ -277,7 +277,7 @@ TEST_CASE("GpuShmMmap", "[gpu][backend]") {
 
     // Step 3: Allocate a hipc::vector<char> from allocator
     using CharVector = hipc::vector<char, AllocT>;
-    CharVector *vec_ptr = alloc_ptr->NewObj<CharVector>(alloc_ptr).ptr_;
+    CharVector *vec_ptr = alloc_ptr->NewObj<CharVector>(alloc_ptr).get();
     REQUIRE(vec_ptr != nullptr);
 
     // Step 4: Reserve 8192 bytes for the vector
@@ -338,7 +338,7 @@ TEST_CASE("GpuShmMmap", "[gpu][backend]") {
     // Allocate ring buffer for TestTransferStruct
     using RingBuffer = mpsc_ring_buffer<TestTransferStruct, AllocT>;
     RingBuffer *ring_ptr =
-        alloc_ptr->NewObj<RingBuffer>(alloc_ptr, kNumElements).ptr_;
+        alloc_ptr->NewObj<RingBuffer>(alloc_ptr, kNumElements).get();
     REQUIRE(ring_ptr != nullptr);
 
     // Launch kernel to push structs
@@ -372,7 +372,7 @@ TEST_CASE("GpuShmMmap", "[gpu][backend]") {
 
     using RingBuffer = mpsc_ring_buffer<TestTransferStruct, AllocT>;
     RingBuffer *ring_ptr =
-        alloc_ptr->NewObj<RingBuffer>(alloc_ptr, kNumElements).ptr_;
+        alloc_ptr->NewObj<RingBuffer>(alloc_ptr, kNumElements).get();
     REQUIRE(ring_ptr != nullptr);
 
     // Launch kernel (no sync -- CPU polls immediately)

@@ -119,10 +119,10 @@ void TestBasicShmTransfer() {
   sender.join();
   assert(send_rc == 0);
 
-  std::string received1(recv_meta.recv[0].data.ptr_,
-                         recv_meta.recv[0].data.ptr_ + recv_meta.recv[0].size);
-  std::string received2(recv_meta.recv[1].data.ptr_,
-                         recv_meta.recv[1].data.ptr_ + recv_meta.recv[1].size);
+  std::string received1(recv_meta.recv[0].data.get(),
+                         recv_meta.recv[0].data.get() + recv_meta.recv[0].size);
+  std::string received2(recv_meta.recv[1].data.get(),
+                         recv_meta.recv[1].data.get() + recv_meta.recv[1].size);
   std::cout << "Bulk 1: " << received1 << "\n";
   std::cout << "Bulk 2: " << received2 << "\n";
   assert(received1 == data1);
@@ -167,8 +167,8 @@ void TestMultipleBulks() {
   assert(send_rc == 0);
 
   for (size_t i = 0; i < data_chunks.size(); ++i) {
-    std::string received(recv_meta.recv[i].data.ptr_,
-                         recv_meta.recv[i].data.ptr_ + recv_meta.recv[i].size);
+    std::string received(recv_meta.recv[i].data.get(),
+                         recv_meta.recv[i].data.get() + recv_meta.recv[i].size);
     std::cout << "Chunk " << i << ": " << received << "\n";
     assert(received == data_chunks[i]);
   }
@@ -245,8 +245,8 @@ void TestLargeTransfer() {
   sender.join();
   assert(send_rc == 0);
 
-  std::string received(recv_meta.recv[0].data.ptr_,
-                       recv_meta.recv[0].data.ptr_ + recv_meta.recv[0].size);
+  std::string received(recv_meta.recv[0].data.get(),
+                       recv_meta.recv[0].data.get() + recv_meta.recv[0].size);
   assert(received == large_data);
   std::cout << "Transferred " << large_data.size()
             << " bytes through " << kCopySpaceSize
@@ -267,7 +267,7 @@ void TestShmPtrPassthrough() {
 
   // Simulate a bulk whose data lives in shared memory (non-null alloc_id)
   hipc::FullPtr<char> shm_ptr;
-  shm_ptr.ptr_ = reinterpret_cast<char*>(0xDEADBEEF);
+  shm_ptr.set_ptr(reinterpret_cast<char*>(0xDEADBEEF));
   shm_ptr.shm_.alloc_id_ = hipc::AllocatorId(1, 2);
   shm_ptr.shm_.off_ = 0x1234;
 
@@ -293,7 +293,7 @@ void TestShmPtrPassthrough() {
   assert(send_rc == 0);
 
   // Verify: ptr_ should be nullptr, shm_ should carry the original ShmPtr
-  assert(recv_meta.recv[0].data.ptr_ == nullptr);
+  assert(recv_meta.recv[0].data.get() == nullptr);
   assert(recv_meta.recv[0].data.shm_.alloc_id_ == hipc::AllocatorId(1, 2));
   assert(recv_meta.recv[0].data.shm_.off_.load() == 0x1234);
 
@@ -319,7 +319,7 @@ void TestMixedBulks() {
 
   // Bulk 1: shared memory (ShmPtr passthrough)
   hipc::FullPtr<char> shm_ptr;
-  shm_ptr.ptr_ = reinterpret_cast<char*>(0xCAFEBABE);
+  shm_ptr.set_ptr(reinterpret_cast<char*>(0xCAFEBABE));
   shm_ptr.shm_.alloc_id_ = hipc::AllocatorId(3, 4);
   shm_ptr.shm_.off_ = 0x5678;
 
@@ -352,13 +352,13 @@ void TestMixedBulks() {
   assert(send_rc == 0);
 
   // Verify bulk 0: full data copy
-  std::string received0(recv_meta.recv[0].data.ptr_,
-                         recv_meta.recv[0].data.ptr_ + recv_meta.recv[0].size);
+  std::string received0(recv_meta.recv[0].data.get(),
+                         recv_meta.recv[0].data.get() + recv_meta.recv[0].size);
   assert(received0 == private_data);
   std::cout << "Bulk 0 (data copy): " << received0 << "\n";
 
   // Verify bulk 1: ShmPtr passthrough
-  assert(recv_meta.recv[1].data.ptr_ == nullptr);
+  assert(recv_meta.recv[1].data.get() == nullptr);
   assert(recv_meta.recv[1].data.shm_.alloc_id_ == hipc::AllocatorId(3, 4));
   assert(recv_meta.recv[1].data.shm_.off_.load() == 0x5678);
   std::cout << "Bulk 1 (ShmPtr): alloc_id=("
@@ -409,8 +409,8 @@ void TestFactory() {
   sender.join();
   assert(send_rc == 0);
 
-  std::string received(recv_meta.recv[0].data.ptr_,
-                       recv_meta.recv[0].data.ptr_ + recv_meta.recv[0].size);
+  std::string received(recv_meta.recv[0].data.get(),
+                       recv_meta.recv[0].data.get() + recv_meta.recv[0].size);
   std::cout << "Received: " << received << "\n";
   assert(received == data);
 
@@ -461,7 +461,7 @@ void TestShmClearRecvHandles() {
   assert(send_rc == 0);
 
   // Verify data was received
-  assert(recv_meta.recv[0].data.ptr_ != nullptr);
+  assert(recv_meta.recv[0].data.get() != nullptr);
 
   // Clear should free the buffer
   server.ClearRecvHandles(recv_meta);
@@ -479,7 +479,7 @@ void TestShmBulkExposeFlag() {
 
   // Create a BULK_EXPOSE entry with a ShmPtr
   hipc::FullPtr<char> shm_ptr;
-  shm_ptr.ptr_ = reinterpret_cast<char*>(0xBAADF00D);
+  shm_ptr.set_ptr(reinterpret_cast<char*>(0xBAADF00D));
   shm_ptr.shm_.alloc_id_ = hipc::AllocatorId(5, 6);
   shm_ptr.shm_.off_ = 0xABCD;
 
@@ -505,7 +505,7 @@ void TestShmBulkExposeFlag() {
 
   // BULK_EXPOSE: only ShmPtr is sent, no data
   assert(recv_meta.recv.size() == 1);
-  assert(recv_meta.recv[0].data.ptr_ == nullptr);
+  assert(recv_meta.recv[0].data.get() == nullptr);
   assert(recv_meta.recv[0].data.shm_.alloc_id_ == hipc::AllocatorId(5, 6));
   assert(recv_meta.recv[0].data.shm_.off_.load() == 0xABCD);
   assert(recv_meta.recv[0].size == 2048);

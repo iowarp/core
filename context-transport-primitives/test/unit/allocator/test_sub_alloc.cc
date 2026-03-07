@@ -65,7 +65,7 @@ TEST_CASE("SubAllocator - Basic Creation and Destruction", "[SubAllocator]") {
         sub_alloc_size);
 
     REQUIRE(!sub_alloc.IsNull());
-    REQUIRE(sub_alloc.ptr_->GetId() == parent_alloc->GetId());
+    REQUIRE(sub_alloc->GetId() == parent_alloc->GetId());
 
     // Free the sub-allocator
     parent_alloc->FreeSubAllocator(sub_alloc);
@@ -109,9 +109,9 @@ TEST_CASE("SubAllocator - Allocations within SubAllocator", "[SubAllocator]") {
 
 
     for (size_t i = 0; i < 1000; ++i) {
-      auto ptr = sub_alloc.ptr_->template Allocate<void>(1024);
+      auto ptr = sub_alloc->template Allocate<void>(1024);
       REQUIRE_FALSE(ptr.IsNull());
-      sub_alloc.ptr_->Free(ptr);
+      sub_alloc->Free(ptr);
     }
   }
 
@@ -121,14 +121,14 @@ TEST_CASE("SubAllocator - Allocations within SubAllocator", "[SubAllocator]") {
 
     // Allocate batch
     for (size_t i = 0; i < 100; ++i) {
-      auto ptr = sub_alloc.ptr_->template Allocate<void>(4096);
+      auto ptr = sub_alloc->template Allocate<void>(4096);
       REQUIRE_FALSE(ptr.IsNull());
       ptrs.push_back(ptr);
     }
 
     // Free batch
     for (auto &ptr : ptrs) {
-      sub_alloc.ptr_->Free(ptr);
+      sub_alloc->Free(ptr);
     }
   }
 
@@ -149,7 +149,7 @@ TEST_CASE("SubAllocator - Random Allocation Test", "[SubAllocator]") {
   REQUIRE(!sub_alloc.IsNull());
 
   // Use the AllocatorTest framework to run random tests
-  AllocatorTest<hipc::ArenaAllocator<false>> tester(sub_alloc.ptr_);
+  AllocatorTest<hipc::ArenaAllocator<false>> tester(sub_alloc.get());
 
   SECTION("1 iteration of random allocations") {
     REQUIRE_NOTHROW(tester.TestRandomAllocation(1));
@@ -178,9 +178,9 @@ TEST_CASE("SubAllocator - Multiple SubAllocators with Random Tests", "[SubAlloca
   REQUIRE(!sub_alloc3.IsNull());
 
   SECTION("Run random tests on all three sub-allocators") {
-    AllocatorTest<hipc::ArenaAllocator<false>> tester1(sub_alloc1.ptr_);
-    AllocatorTest<hipc::ArenaAllocator<false>> tester2(sub_alloc2.ptr_);
-    AllocatorTest<hipc::ArenaAllocator<false>> tester3(sub_alloc3.ptr_);
+    AllocatorTest<hipc::ArenaAllocator<false>> tester1(sub_alloc1.get());
+    AllocatorTest<hipc::ArenaAllocator<false>> tester2(sub_alloc2.get());
+    AllocatorTest<hipc::ArenaAllocator<false>> tester3(sub_alloc3.get());
 
     REQUIRE_NOTHROW(tester1.TestRandomAllocation(1));
     REQUIRE_NOTHROW(tester2.TestRandomAllocation(1));
@@ -207,17 +207,17 @@ TEST_CASE("SubAllocator - Nested SubAllocators", "[SubAllocator][nested]") {
 
   // Create a nested sub-allocator from the first sub-allocator (32 MB)
   size_t sub_alloc2_size = 32 * 1024 * 1024;
-  auto sub_alloc2 = sub_alloc1.ptr_->CreateSubAllocator<hipc::ArenaAllocator<false>>(
+  auto sub_alloc2 = sub_alloc1->CreateSubAllocator<hipc::ArenaAllocator<false>>(
       sub_alloc2_size);
 
   REQUIRE(!sub_alloc2.IsNull());
 
   // Test allocations in the nested sub-allocator
-  AllocatorTest<hipc::ArenaAllocator<false>> tester(sub_alloc2.ptr_);
+  AllocatorTest<hipc::ArenaAllocator<false>> tester(sub_alloc2.get());
   REQUIRE_NOTHROW(tester.TestRandomAllocation(1));
 
   // Free nested sub-allocator first, then parent sub-allocator
-  sub_alloc1.ptr_->FreeSubAllocator(sub_alloc2);
+  sub_alloc1->FreeSubAllocator(sub_alloc2);
   parent_alloc->FreeSubAllocator(sub_alloc1);
 
 }

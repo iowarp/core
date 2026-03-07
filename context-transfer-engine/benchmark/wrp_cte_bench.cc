@@ -210,7 +210,7 @@ class CTEBenchmark {
 
     // Allocate shared memory buffer
     auto shm_buffer = CHI_IPC->AllocateBuffer(io_size_);
-    std::memset(shm_buffer.ptr_, thread_id & 0xFF, io_size_);
+    std::memset(shm_buffer.get(), thread_id & 0xFF, io_size_);
     hipc::ShmPtr<> shm_ptr = shm_buffer.shm_.template Cast<void>();
 
     // Create one tag per thread
@@ -289,7 +289,7 @@ class CTEBenchmark {
 
     // Populate data using Put operations
     for (int i = 0; i < io_count_; ++i) {
-      std::memset(put_shm.ptr_, (thread_id + i) & 0xFF, io_size_);
+      std::memset(put_shm.get(), (thread_id + i) & 0xFF, io_size_);
       std::string blob_name = "blob_" + std::to_string(i);
       auto task = cte_client->AsyncPutBlob(tag_id, blob_name, 0, io_size_,
                                            put_ptr, 0.8f);
@@ -352,7 +352,7 @@ class CTEBenchmark {
     // Allocate shared memory buffers
     auto put_shm = CHI_IPC->AllocateBuffer(io_size_);
     auto get_shm = CHI_IPC->AllocateBuffer(io_size_);
-    std::memset(put_shm.ptr_, thread_id & 0xFF, io_size_);
+    std::memset(put_shm.get(), thread_id & 0xFF, io_size_);
     hipc::ShmPtr<> put_ptr = put_shm.shm_.template Cast<void>();
     hipc::ShmPtr<> get_ptr = get_shm.shm_.template Cast<void>();
 

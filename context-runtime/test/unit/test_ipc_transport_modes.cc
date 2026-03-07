@@ -102,7 +102,7 @@ void SubmitTasksForMode(const std::string &mode_name) {
   // Write 1MB
   auto write_buffer = CHI_IPC->AllocateBuffer(write_data.size());
   REQUIRE_FALSE(write_buffer.IsNull());
-  memcpy(write_buffer.ptr_, write_data.data(), write_data.size());
+  memcpy(write_buffer.get(), write_data.data(), write_data.size());
   auto write_task = client.AsyncWrite(
       chi::PoolQuery::Local(), WrapBlock(block),
       write_buffer.shm_.template Cast<void>().template Cast<void>(),
@@ -129,7 +129,7 @@ void SubmitTasksForMode(const std::string &mode_name) {
   REQUIRE_FALSE(data_ptr.IsNull());
   size_t actual_read = read_task->bytes_read_;
   std::vector<hshm::u8> read_data(actual_read);
-  memcpy(read_data.data(), data_ptr.ptr_, actual_read);
+  memcpy(read_data.data(), data_ptr.get(), actual_read);
   size_t verify_size = std::min(actual_written, actual_read);
 
   for (size_t i = 0; i < verify_size; ++i) {

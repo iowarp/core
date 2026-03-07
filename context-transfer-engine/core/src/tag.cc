@@ -62,7 +62,7 @@ void Tag::PutBlob(const std::string &blob_name, const char *data, size_t data_si
   }
 
   // Copy data to shared memory
-  memcpy(shm_fullptr.ptr_, data, data_size);
+  memcpy(shm_fullptr.get(), data, data_size);
 
   // Convert to hipc::ShmPtr<> for API call
   hipc::ShmPtr<> shm_ptr(shm_fullptr.shm_);
@@ -90,7 +90,7 @@ void Tag::PutBlob(const std::string &blob_name, const hipc::ShmPtr<> &data, size
 // NOTE: AsyncPutBlob(const char*) overload removed due to memory management issues.
 // For async operations, the caller must manage shared memory lifecycle by:
 // 1. Allocating: hipc::FullPtr<char> shm_ptr = CHI_IPC->AllocateBuffer(data_size);
-// 2. Copying data: memcpy(shm_ptr.ptr_, data, data_size);
+// 2. Copying data: memcpy(shm_ptr.get(), data, data_size);
 // 3. Calling: AsyncPutBlob(blob_name, shm_ptr.shm_, data_size, off, score);
 // 4. Keeping shm_ptr alive until task completes
 
@@ -127,7 +127,7 @@ void Tag::GetBlob(const std::string &blob_name, char *data, size_t data_size, si
   GetBlob(blob_name, shm_ptr, data_size, off);
 
   // Copy data from shared memory to output buffer
-  memcpy(data, shm_fullptr.ptr_, data_size);
+  memcpy(data, shm_fullptr.get(), data_size);
 
   // Explicitly free shared memory buffer
   ipc_manager->FreeBuffer(shm_fullptr);

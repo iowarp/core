@@ -72,9 +72,9 @@ TEST_CASE("BitWidth - Non-powers of two") {
 }
 
 TEST_CASE("BitWidth - equals FloorLog2 plus one for positive values") {
-  hshm::size_t values[] = {1, 2, 3, 5, 7, 9, 15, 17, 63, 64, 100, 1000,
+  size_t values[] = {1, 2, 3, 5, 7, 9, 15, 17, 63, 64, 100, 1000,
                             1ULL << 20, 1ULL << 32};
-  for (hshm::size_t v : values) {
+  for (size_t v : values) {
     REQUIRE(hshm::BitWidth(v) == hshm::FloorLog2(v) + 1);
   }
 }
@@ -113,9 +113,9 @@ TEST_CASE("FloorLog2 - Non-powers of two") {
 }
 
 TEST_CASE("FloorLog2 - Equals CeilLog2 for powers of two") {
-  hshm::size_t powers[] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024,
+  size_t powers[] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024,
                             1ULL << 20, 1ULL << 32};
-  for (hshm::size_t p : powers) {
+  for (size_t p : powers) {
     REQUIRE(hshm::FloorLog2(p) == hshm::CeilLog2(p));
   }
 }
@@ -159,28 +159,28 @@ TEST_CASE("CeilLog2 - Non-powers of two") {
 }
 
 TEST_CASE("CeilLog2 - Ceil is at least Floor for all values") {
-  hshm::size_t values[] = {1, 2, 3, 5, 7, 9, 15, 17, 63, 64, 100, 1000,
+  size_t values[] = {1, 2, 3, 5, 7, 9, 15, 17, 63, 64, 100, 1000,
                             1ULL << 20, 1ULL << 32};
-  for (hshm::size_t v : values) {
+  for (size_t v : values) {
     REQUIRE(hshm::CeilLog2(v) >= hshm::FloorLog2(v));
   }
 }
 
 TEST_CASE("CeilLog2 - Ceil exceeds Floor only for non-powers-of-two") {
-  hshm::size_t non_powers[] = {3, 5, 6, 7, 9, 10, 15, 17, 100, 1000};
-  for (hshm::size_t v : non_powers) {
+  size_t non_powers[] = {3, 5, 6, 7, 9, 10, 15, 17, 100, 1000};
+  for (size_t v : non_powers) {
     REQUIRE(hshm::CeilLog2(v) == hshm::FloorLog2(v) + 1);
   }
 }
 
 TEST_CASE("CeilLog2 - Large value 1ULL << 20") {
-  hshm::size_t v = 1ULL << 20;
+  size_t v = 1ULL << 20;
   REQUIRE(hshm::CeilLog2(v) == 20);
   REQUIRE(hshm::FloorLog2(v) == 20);
 }
 
 TEST_CASE("CeilLog2 - Large value 1ULL << 32") {
-  hshm::size_t v = 1ULL << 32;
+  size_t v = 1ULL << 32;
   REQUIRE(hshm::CeilLog2(v) == 32);
   REQUIRE(hshm::FloorLog2(v) == 32);
 }

@@ -466,7 +466,7 @@ TEST_CASE("bdev_write_read_basic", "[bdev][io][basic]") {
       // Write data - allocate buffer and copy data
       auto write_buffer = CHI_IPC->AllocateBuffer(write_data.size());
       REQUIRE_FALSE(write_buffer.IsNull());
-      memcpy(write_buffer.ptr_, write_data.data(), write_data.size());
+      memcpy(write_buffer.get(), write_data.data(), write_data.size());
 
       auto write_task = client.AsyncWrite(
           pool_query, WrapBlock(block),
@@ -499,7 +499,7 @@ TEST_CASE("bdev_write_read_basic", "[bdev][io][basic]") {
 
       // Convert read data back to vector for verification
       std::vector<hshm::u8> read_data(read_task->bytes_read_);
-      memcpy(read_data.data(), read_buffer.ptr_, read_task->bytes_read_);
+      memcpy(read_data.data(), read_buffer.get(), read_task->bytes_read_);
 
       // Verify data matches
       for (size_t j = 0; j < write_data.size(); ++j) {
@@ -551,7 +551,7 @@ TEST_CASE("bdev_async_operations", "[bdev][async][io]") {
       // Async write - allocate buffer and copy data
       auto async_write_buffer = CHI_IPC->AllocateBuffer(write_data.size());
       REQUIRE_FALSE(async_write_buffer.IsNull());
-      memcpy(async_write_buffer.ptr_, write_data.data(), write_data.size());
+      memcpy(async_write_buffer.get(), write_data.data(), write_data.size());
 
       auto write_task = client.AsyncWrite(
           pool_query, WrapBlock(block),
@@ -575,7 +575,7 @@ TEST_CASE("bdev_async_operations", "[bdev][async][io]") {
 
       // Verify data - copy from buffer to check
       std::vector<hshm::u8> async_read_data(read_task->bytes_read_);
-      memcpy(async_read_data.data(), async_read_buffer.ptr_,
+      memcpy(async_read_data.data(), async_read_buffer.get(),
              read_task->bytes_read_);
 
       REQUIRE(async_read_data.size() == write_data.size());
@@ -653,7 +653,7 @@ TEST_CASE("bdev_performance_metrics", "[bdev][performance][metrics]") {
       // Allocate buffers for data1 write
       auto data1_write_buffer = CHI_IPC->AllocateBuffer(data1.size());
       REQUIRE_FALSE(data1_write_buffer.IsNull());
-      memcpy(data1_write_buffer.ptr_, data1.data(), data1.size());
+      memcpy(data1_write_buffer.get(), data1.data(), data1.size());
 
       auto write_task1 = client.AsyncWrite(
           pool_query, WrapBlock(block1),
@@ -665,7 +665,7 @@ TEST_CASE("bdev_performance_metrics", "[bdev][performance][metrics]") {
       // Allocate buffers for data2 write
       auto data2_write_buffer = CHI_IPC->AllocateBuffer(data2.size());
       REQUIRE_FALSE(data2_write_buffer.IsNull());
-      memcpy(data2_write_buffer.ptr_, data2.data(), data2.size());
+      memcpy(data2_write_buffer.get(), data2.data(), data2.size());
 
       auto write_task2 = client.AsyncWrite(
           pool_query, WrapBlock(block2),
@@ -826,7 +826,7 @@ TEST_CASE("bdev_ram_allocation_and_io", "[bdev][ram][io]") {
     // Write data to RAM - allocate buffer and copy data
     auto write_buffer = CHI_IPC->AllocateBuffer(write_data.size());
     REQUIRE_FALSE(write_buffer.IsNull());
-    memcpy(write_buffer.ptr_, write_data.data(), write_data.size());
+    memcpy(write_buffer.get(), write_data.data(), write_data.size());
 
     auto write_task = bdev_client.AsyncWrite(
         pool_query, WrapBlock(block),
@@ -849,7 +849,7 @@ TEST_CASE("bdev_ram_allocation_and_io", "[bdev][ram][io]") {
 
     // Convert read data back to vector for verification
     std::vector<hshm::u8> read_data(read_task->bytes_read_);
-    memcpy(read_data.data(), read_buffer.ptr_, read_task->bytes_read_);
+    memcpy(read_data.data(), read_buffer.get(), read_task->bytes_read_);
 
     // Verify data integrity
     bool data_matches =
@@ -928,7 +928,7 @@ TEST_CASE("bdev_ram_large_blocks", "[bdev][ram][large]") {
       // Write and read - allocate buffers
       auto test_write_buffer = CHI_IPC->AllocateBuffer(test_data.size());
       REQUIRE_FALSE(test_write_buffer.IsNull());
-      memcpy(test_write_buffer.ptr_, test_data.data(), test_data.size());
+      memcpy(test_write_buffer.get(), test_data.data(), test_data.size());
 
       // Pass all allocated blocks to Write
       auto write_task = bdev_client.AsyncWrite(
@@ -953,7 +953,7 @@ TEST_CASE("bdev_ram_large_blocks", "[bdev][ram][large]") {
 
       // Convert read data back to vector for verification
       std::vector<hshm::u8> read_data(read_task->bytes_read_);
-      memcpy(read_data.data(), test_read_buffer.ptr_, read_task->bytes_read_);
+      memcpy(read_data.data(), test_read_buffer.get(), read_task->bytes_read_);
 
       // Verify critical points in the data
       for (size_t j = 0; j < read_data.size(); j += 1024) {
@@ -1011,7 +1011,7 @@ TEST_CASE("bdev_ram_bounds_checking", "[bdev][ram][bounds]") {
     // Write should fail with bounds check - allocate buffer
     auto error_write_buffer = CHI_IPC->AllocateBuffer(test_data.size());
     REQUIRE_FALSE(error_write_buffer.IsNull());
-    memcpy(error_write_buffer.ptr_, test_data.data(), test_data.size());
+    memcpy(error_write_buffer.get(), test_data.data(), test_data.size());
 
     auto write_task = bdev_client.AsyncWrite(
         pool_query, WrapBlock(out_of_bounds_block),
@@ -1034,7 +1034,7 @@ TEST_CASE("bdev_ram_bounds_checking", "[bdev][ram][bounds]") {
     // Convert read data back to vector (should be empty due to error)
     std::vector<hshm::u8> read_data(read_task->bytes_read_);
     if (read_task->bytes_read_ > 0) {
-      memcpy(read_data.data(), error_read_buffer.ptr_, read_task->bytes_read_);
+      memcpy(read_data.data(), error_read_buffer.get(), read_task->bytes_read_);
     }
     REQUIRE(read_data.empty());  // Should fail
 
@@ -1118,7 +1118,7 @@ TEST_CASE("bdev_file_vs_ram_comparison", "[bdev][file][ram][comparison]") {
     // Allocate buffer for file write
     auto file_write_buffer = CHI_IPC->AllocateBuffer(test_data.size());
     REQUIRE_FALSE(file_write_buffer.IsNull());
-    memcpy(file_write_buffer.ptr_, test_data.data(), test_data.size());
+    memcpy(file_write_buffer.get(), test_data.data(), test_data.size());
 
     // Write to file backend and measure time
     auto file_write_start = std::chrono::high_resolution_clock::now();
@@ -1135,7 +1135,7 @@ TEST_CASE("bdev_file_vs_ram_comparison", "[bdev][file][ram][comparison]") {
     // Allocate buffer for ram write
     auto ram_write_buffer = CHI_IPC->AllocateBuffer(test_data.size());
     REQUIRE_FALSE(ram_write_buffer.IsNull());
-    memcpy(ram_write_buffer.ptr_, test_data.data(), test_data.size());
+    memcpy(ram_write_buffer.get(), test_data.data(), test_data.size());
 
     auto ram_write_start = std::chrono::high_resolution_clock::now();
     auto ram_write_task = ram_client.AsyncWrite(
@@ -1166,7 +1166,7 @@ TEST_CASE("bdev_file_vs_ram_comparison", "[bdev][file][ram][comparison]") {
 
     // Convert read data back to vector
     std::vector<hshm::u8> file_read_data(file_read_task->bytes_read_);
-    memcpy(file_read_data.data(), file_read_buffer.ptr_,
+    memcpy(file_read_data.data(), file_read_buffer.get(),
            file_read_task->bytes_read_);
 
     // Allocate buffer for ram read
@@ -1186,7 +1186,7 @@ TEST_CASE("bdev_file_vs_ram_comparison", "[bdev][file][ram][comparison]") {
 
     // Convert read data back to vector
     std::vector<hshm::u8> ram_read_data(ram_read_task->bytes_read_);
-    memcpy(ram_read_data.data(), ram_read_buffer.ptr_,
+    memcpy(ram_read_data.data(), ram_read_buffer.get(),
            ram_read_task->bytes_read_);
 
     REQUIRE(file_read_data.size() == test_size);
@@ -1293,7 +1293,7 @@ void run_bdev_file_explicit_backend_test(const char *mode_name) {
     std::vector<hshm::u8> test_data(k4KB, 0x42 + i);
     auto final_write_buffer = CHI_IPC->AllocateBuffer(test_data.size());
     REQUIRE_FALSE(final_write_buffer.IsNull());
-    memcpy(final_write_buffer.ptr_, test_data.data(), test_data.size());
+    memcpy(final_write_buffer.get(), test_data.data(), test_data.size());
 
     auto write_task = bdev_client.AsyncWrite(
         pool_query, WrapBlock(block),
@@ -1317,7 +1317,7 @@ void run_bdev_file_explicit_backend_test(const char *mode_name) {
 
     // Verify data
     std::vector<hshm::u8> read_data(read_task->bytes_read_);
-    memcpy(read_data.data(), final_read_buffer.ptr_, read_task->bytes_read_);
+    memcpy(read_data.data(), final_read_buffer.get(), read_task->bytes_read_);
     bool data_ok =
         std::equal(test_data.begin(), test_data.end(), read_data.begin());
     HLOG(kInfo,
@@ -1483,7 +1483,7 @@ TEST_CASE("bdev_parallel_io_operations", "[bdev][parallel][io]") {
 
       // Allocate write buffer in shared memory
       auto write_buffer = CHI_IPC->AllocateBuffer(io_size);
-      std::memset(write_buffer.ptr_, static_cast<int>(thread_id), io_size);
+      std::memset(write_buffer.get(), static_cast<int>(thread_id), io_size);
 
       // Perform I/O operations with DirectHash
       for (size_t i = 0; i < ops_per_thread; i++) {
@@ -1662,7 +1662,7 @@ TEST_CASE("bdev_force_net_flag", "[bdev][network][force_net]") {
            "[bdev_force_net_flag] Iteration {}: Allocating write buffer...", i);
       auto write_buffer = CHI_IPC->AllocateBuffer(write_data.size());
       REQUIRE_FALSE(write_buffer.IsNull());
-      memcpy(write_buffer.ptr_, write_data.data(), write_data.size());
+      memcpy(write_buffer.get(), write_data.data(), write_data.size());
       HLOG(kInfo,
            "[bdev_force_net_flag] Iteration {}: Write buffer allocated and "
            "filled",
@@ -1779,7 +1779,7 @@ TEST_CASE("bdev_force_net_flag", "[bdev][network][force_net]") {
 
       // Verify data integrity
       std::vector<hshm::u8> read_data(read_task->bytes_read_);
-      memcpy(read_data.data(), read_buffer.ptr_, read_task->bytes_read_);
+      memcpy(read_data.data(), read_buffer.get(), read_task->bytes_read_);
       REQUIRE(read_data.size() == write_data.size());
 
       for (size_t j = 0; j < write_data.size(); ++j) {

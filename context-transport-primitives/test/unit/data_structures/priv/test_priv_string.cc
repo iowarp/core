@@ -61,7 +61,7 @@ class SimpleHeapAllocator {
     size_t size = count * sizeof(T);
     T* ptr = static_cast<T*>(malloc(size));
     hipc::FullPtr<T> result;
-    result.ptr_ = ptr;
+    result.set_ptr(ptr);
     result.shm_.off_ = 0;
     result.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
     return result;
@@ -77,7 +77,7 @@ class SimpleHeapAllocator {
   hipc::FullPtr<T> Allocate(size_t size) {
     T* ptr = static_cast<T*>(malloc(size));
     hipc::FullPtr<T> result;
-    result.ptr_ = ptr;
+    result.set_ptr(ptr);
     result.shm_.off_ = 0;
     result.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
     return result;
@@ -91,8 +91,8 @@ class SimpleHeapAllocator {
    */
   template <typename T, bool ATOMIC = false>
   void Free(const hipc::FullPtr<T, ATOMIC>& ptr) {
-    if (ptr.ptr_ != nullptr) {
-      free(ptr.ptr_);
+    if (ptr.get() != nullptr) {
+      free(ptr.get());
     }
   }
 };
