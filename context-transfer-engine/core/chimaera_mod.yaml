@@ -37,3 +37,7 @@ kBlobQuery: 31         # Query blobs by tag and blob regex patterns
 kGetTargetInfo: 32     # Get target information (score, capacity, perf metrics)
 kFlushMetadata: 33     # Periodic task to flush tag/blob metadata to durable storage
 kFlushData: 34         # Periodic task to flush data from volatile to non-volatile targets
+
+# GPU support (no GPU methods yet; all are no-ops on GPU)
+has_gpu: true
+gpu_methods: []

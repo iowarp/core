@@ -41,7 +41,7 @@ macro(wrp_core_enable_cuda CXX_STANDARD)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
     if(NOT CMAKE_CUDA_ARCHITECTURES)
-        set(CMAKE_CUDA_ARCHITECTURES native)
+        set(CMAKE_CUDA_ARCHITECTURES native CACHE STRING "CUDA architectures to compile for" FORCE)
     endif()
 
     message(STATUS "USING CUDA ARCH: ${CMAKE_CUDA_ARCHITECTURES}")
@@ -162,7 +162,24 @@ function(add_cuda_library TARGET SHARED DO_COPY)
     set(SRC_FILES ${ARGN})
     set(CUDA_SOURCE_FILES "")
     set_cuda_sources("${DO_COPY}" "${SRC_FILES}" CUDA_SOURCE_FILES)
+
+    # Resolve "native" to the detected GPU architecture before add_library so
+    # CMake does not attempt to re-detect the GPU at configure time for targets
+    # created in subdirectories processed after the first enable_language(CUDA)
+    # call.  CMAKE_CUDA_ARCHITECTURES_NATIVE is set by CMake during that first
+    # language-enable pass (e.g. in context-transport-primitives or
+    # context-runtime) and contains the concrete arch list (e.g. "89-real").
+    # We must update the CACHE variable (not just a local variable) because
+    # add_library reads the global CMAKE_CUDA_ARCHITECTURES value.
+    if(CMAKE_CUDA_ARCHITECTURES STREQUAL "native" AND CMAKE_CUDA_ARCHITECTURES_NATIVE)
+        set(CMAKE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES_NATIVE}"
+            CACHE STRING "CUDA architectures to compile for" FORCE)
+    endif()
+
     add_library(${TARGET} ${SHARED} ${CUDA_SOURCE_FILES})
+
+    set_target_properties(${TARGET} PROPERTIES
+        CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
 
     target_compile_options(${TARGET} PUBLIC
         $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
