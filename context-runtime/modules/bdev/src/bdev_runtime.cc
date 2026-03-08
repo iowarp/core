@@ -58,7 +58,11 @@ bool WorkerIOContext::Init(const std::string &file_path, chi::u32 io_depth,
   }
 
   // Create async I/O backend via factory (io_depth passed at construction)
+#if HSHM_ENABLE_NIXL
+  async_io_ = hshm::AsyncIoFactory::Get(io_depth, hshm::AsyncIoBackend::kNixl);
+#else
   async_io_ = hshm::AsyncIoFactory::Get(io_depth);
+#endif
   if (!async_io_) {
     HLOG(kError, "Worker {} failed to create async I/O backend", worker_id);
     return false;
@@ -379,7 +383,11 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
     file_path_ = pool_name;
 
     // Use a temporary AsyncIO to set up the file (create/truncate)
+#if HSHM_ENABLE_NIXL
+    auto setup_io = hshm::AsyncIoFactory::Get(io_depth_, hshm::AsyncIoBackend::kNixl);
+#else
     auto setup_io = hshm::AsyncIoFactory::Get(io_depth_);
+#endif
     if (!setup_io) {
       HLOG(kError, "Failed to create setup async I/O backend");
       task->return_code_ = 1;
