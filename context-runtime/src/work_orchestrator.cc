@@ -41,6 +41,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <pthread.h>
+#include <unistd.h>
 
 #include "chimaera/container.h"
 #include "chimaera/pool_manager.h"
@@ -178,10 +179,9 @@ void WorkOrchestrator::StopWorkers() {
     }
   }
 
-  // Wait for worker threads with a hard 5-second deadline.
-  // We use pthread_timedjoin_np instead of a plain Join() so the timeout
-  // check can actually fire — Join() blocks indefinitely and the elapsed
-  // check at the top of the loop would never be reached.
+  // Wait for worker threads with a hard 5-second deadline per thread.
+  // We use pthread_timedjoin_np on std_thread_::native_handle() so the
+  // timeout actually fires — plain Join() blocks indefinitely.
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 
   size_t joined_count = 0;

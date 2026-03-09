@@ -242,6 +242,64 @@ set_tests_properties(cae_range_assim PROPERTIES LABELS "core;advanced;msan_skip"
 set_tests_properties(cae_error_handling PROPERTIES LABELS "core;validation;msan_skip")
 
 #------------------------------------------------------------------------------
+# Test 6: ExportData Tests
+#------------------------------------------------------------------------------
+# Tests the ExportData feature (inverse of assimilation):
+# - ExportDataTask struct: default ctor, emplace ctor, Copy, Aggregate,
+#   SerializeIn, SerializeOut
+# - Runtime paths: empty tag, binary success/roundtrip, binary bad path,
+#   HDF5 success (if enabled) or HDF5-not-compiled, HDF5 bad path
+# - Autogen core_lib_exec.cc kExportData cases exercised via AsyncExportData
+#
+# NOTE: All ExportData tests are consolidated into two CTest targets (task and
+# runtime) to avoid starting the Chimaera runtime multiple times on the same
+# port (which causes TIME_WAIT failures for subsequent processes).
+#------------------------------------------------------------------------------
+add_executable(test_export_data
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_export_data.cc
+)
+
+target_include_directories(test_export_data
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/test  # For simple_test.h
+)
+
+target_link_libraries(test_export_data
+  PRIVATE
+    wrp_cae_core_client
+    wrp_cte_core_client
+    chimaera::cxx
+    hshm::configure
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+
+if(HDF5_ENABLED)
+  target_compile_definitions(test_export_data PRIVATE WRP_CAE_ENABLE_HDF5)
+  target_link_libraries(test_export_data PRIVATE ${HDF5_LIBRARIES})
+  target_include_directories(test_export_data PRIVATE ${HDF5_INCLUDE_DIRS})
+endif()
+
+install(TARGETS test_export_data DESTINATION bin)
+
+# Register as two CTest targets: task struct tests and runtime integration tests.
+# Each target runs all its test cases in a single process (one runtime startup),
+# avoiding port 9413 TIME_WAIT conflicts that arise from repeated restarts.
+add_test(NAME CAE_ExportData_Task
+  COMMAND test_export_data "[cae][export][task]")
+add_test(NAME CAE_ExportData_Runtime
+  COMMAND test_export_data "[cae][export][runtime]")
+
+set_tests_properties(
+  CAE_ExportData_Task
+  CAE_ExportData_Runtime
+  PROPERTIES
+    TIMEOUT 300
+    LABELS "coverage;export;msan_skip"
+    ENVIRONMENT "CHI_WITH_RUNTIME=1;CHI_SERVER_CONF=${CMAKE_CURRENT_SOURCE_DIR}/wrp_config.yaml;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+)
+
+#------------------------------------------------------------------------------
 # Test Summary Target
 #------------------------------------------------------------------------------
 # Custom target to run all tests with verbose output
@@ -268,10 +326,13 @@ message(STATUS "CAE Unit Tests Configuration:")
 message(STATUS "  Binary Assimilation Test: ENABLED")
 message(STATUS "  Range Transfer Test:      ENABLED")
 message(STATUS "  Error Handling Test:      ENABLED")
+message(STATUS "  ExportData Tests:         ENABLED")
 if(HDF5_ENABLED)
   message(STATUS "  HDF5 Format Test:         ENABLED")
+  message(STATUS "  ExportData HDF5 Tests:    ENABLED")
 else()
   message(STATUS "  HDF5 Format Test:         DISABLED (set -DWRP_CORE_ENABLE_HDF5=ON to enable)")
+  message(STATUS "  ExportData HDF5 Tests:    ENABLED (tests not-compiled path)")
 endif()
 message(STATUS "")
 message(STATUS "Run tests with:")

@@ -167,6 +167,19 @@ leak:chi::LocalLoadTaskArchive::bulk
 leak:context-transfer-engine/core/src/autogen/core_lib_exec.cc
 
 # ---------------------------------------------------------------------------
+# CAE core module: coroutine frame / DefineModel allocations in autogen Init
+# wrp_cae::core::Runtime::Init() in context-assimilation-engine/core/src/
+# autogen/core_lib_exec.cc calls DefineModel() (and other Init-time methods)
+# through the Container vtable. When the vtable entry for DefineModel resolves
+# to the copy compiled into libchimaera_bdev_runtime.so (dynamic-linker
+# first-wins for weak inline symbols), the frame lacks a source path and
+# leak:chimaera/container.h cannot match it. Suppress by Init call-site: all
+# allocations during CAE pool creation are architectural (runtime-lifetime
+# containers not destroyed on server shutdown), identical to the CTE pattern.
+# ---------------------------------------------------------------------------
+leak:context-assimilation-engine/core/src/autogen/core_lib_exec.cc
+
+# ---------------------------------------------------------------------------
 # bdev / ZMQ transport: block-data vectors allocated during RecvBulks
 # hshm::lbm::ZeroMqTransport::RecvBulks<chi::LoadTaskArchive>() receives a
 # ZMQ multi-part message and deserialises bdev Block entries into heap vectors

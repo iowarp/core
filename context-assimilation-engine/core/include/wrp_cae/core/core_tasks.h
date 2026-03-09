@@ -246,6 +246,76 @@ struct ProcessHdf5DatasetTask : public chi::Task {
   }
 };
 
+/**
+ * ExportDataTask - Export blobs from CTE to a file
+ * Iterates over all blobs in a tag and writes them to the output path.
+ */
+struct ExportDataTask : public chi::Task {
+  IN chi::priv::string tag_name_;      // Tag to export from CTE
+  IN chi::priv::string output_path_;   // Destination file path
+  IN chi::priv::string format_;        // Export format: "hdf5" or "binary"
+  OUT chi::u32 result_code_;           // 0 = success
+  OUT chi::priv::string error_message_;
+  OUT chi::u64 bytes_exported_;
+
+  // SHM constructor
+  ExportDataTask()
+      : chi::Task(),
+        tag_name_(HSHM_MALLOC),
+        output_path_(HSHM_MALLOC),
+        format_(HSHM_MALLOC),
+        result_code_(0),
+        error_message_(HSHM_MALLOC),
+        bytes_exported_(0) {}
+
+  // Emplace constructor
+  explicit ExportDataTask(const chi::TaskId &task_node,
+                          const chi::PoolId &pool_id,
+                          const chi::PoolQuery &pool_query,
+                          const std::string &tag_name,
+                          const std::string &output_path,
+                          const std::string &format)
+      : chi::Task(task_node, pool_id, pool_query, Method::kExportData),
+        tag_name_(HSHM_MALLOC, tag_name),
+        output_path_(HSHM_MALLOC, output_path),
+        format_(HSHM_MALLOC, format),
+        result_code_(0),
+        error_message_(HSHM_MALLOC),
+        bytes_exported_(0) {
+    task_id_ = task_node;
+    method_ = Method::kExportData;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+    ar(tag_name_, output_path_, format_);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(result_code_, error_message_, bytes_exported_);
+  }
+
+  void Copy(const hipc::FullPtr<ExportDataTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    tag_name_ = other->tag_name_;
+    output_path_ = other->output_path_;
+    format_ = other->format_;
+    result_code_ = other->result_code_;
+    error_message_ = other->error_message_;
+    bytes_exported_ = other->bytes_exported_;
+  }
+
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<ExportDataTask>());
+  }
+};
+
 }  // namespace wrp_cae::core
 
 #endif  // WRP_CAE_CORE_TASKS_H_

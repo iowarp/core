@@ -52,6 +52,36 @@ macro(wrp_core_enable_cuda CXX_STANDARD)
     set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_INCLUDES 0)
     set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES 0)
     set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_OBJECTS 0)
+
+    # Cache critical CUDA platform variables so they survive any nested
+    # project() call (e.g. from external/llama.cpp) that may reset the
+    # CMake variable scope.  Without caching, _CMAKE_CUDA_WHOLE_FLAG and
+    # CMAKE_CUDA_COMPILE_OBJECT are silently lost and the generate step
+    # fails with "Error required internal CMake variable not set."
+    foreach(_cuda_var
+            CMAKE_INCLUDE_FLAG_CUDA
+            _CMAKE_CUDA_WHOLE_FLAG
+            _CMAKE_CUDA_RDC_FLAG
+            _CMAKE_CUDA_PTX_FLAG
+            _CMAKE_CUDA_EXTRA_FLAGS
+            _CMAKE_COMPILE_AS_CUDA_FLAG
+            CMAKE_CUDA_COMPILE_OBJECT
+            CMAKE_CUDA_COMPILE_WHOLE_COMPILATION
+            CMAKE_CUDA_LINK_EXECUTABLE
+            CMAKE_CUDA_DEVICE_LINK_COMPILE_WHOLE_COMPILATION
+            CMAKE_CUDA_COMPILER_HAS_DEVICE_LINK_PHASE
+            CMAKE_CUDA_CREATE_SHARED_LIBRARY
+            CMAKE_CUDA_CREATE_SHARED_MODULE
+            CMAKE_CUDA_DEVICE_LINK_LIBRARY
+            CMAKE_CUDA_DEVICE_LINK_EXECUTABLE
+            CMAKE_CUDA_DEVICE_LINK_COMPILE
+            CMAKE_CUDA_HOST_LINK_LAUNCHER
+            CMAKE_SHARED_LIBRARY_CUDA_FLAGS
+            CMAKE_SHARED_LIBRARY_CREATE_CUDA_FLAGS)
+        if(DEFINED ${_cuda_var})
+            set(${_cuda_var} "${${_cuda_var}}" CACHE INTERNAL "" FORCE)
+        endif()
+    endforeach()
 endmacro()
 
 # Enable rocm boilerplate

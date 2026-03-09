@@ -58,6 +58,9 @@ endif()
 # Add adapters
 add_subdirectory(adapter)
 
+# Add UVM (GPU virtual memory manager) -- requires CUDA
+add_subdirectory(uvm)
+
 # Enable testing
 # CTest is included by root CMakeLists.txt
 include(CTest)
