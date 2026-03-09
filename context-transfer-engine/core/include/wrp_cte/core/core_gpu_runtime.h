@@ -35,126 +35,228 @@
 #define WRP_CTE_CORE_GPU_RUNTIME_H_
 
 #include "chimaera/gpu_container.h"
+#include "autogen/core_methods.h"
+
+// Forward declarations of task types.
+// Full definitions are in core_tasks.h (CPU code only). Forward declarations
+// are sufficient here since method signatures only need pointer-compatible types.
+namespace wrp_cte::core {
+
+struct CreateParams;
+struct RegisterTargetTask;
+struct UnregisterTargetTask;
+struct ListTargetsTask;
+struct StatTargetsTask;
+template <typename CreateParamsT> struct GetOrCreateTagTask;
+struct GetTagSizeTask;
+struct DelTagTask;
+struct GetContainedBlobsTask;
+struct PutBlobTask;
+struct GetBlobTask;
+struct ReorganizeBlobTask;
+struct DelBlobTask;
+struct GetBlobScoreTask;
+struct GetBlobSizeTask;
+struct GetBlobInfoTask;
+struct PollTelemetryLogTask;
+struct TagQueryTask;
+struct BlobQueryTask;
+struct GetTargetInfoTask;
+struct FlushMetadataTask;
+struct FlushDataTask;
+
+}  // namespace wrp_cte::core (forward declarations)
 
 namespace wrp_cte::core {
 
 /**
  * GPU-side container for the CTE Core ChiMod.
  * All methods are no-ops on GPU (CPU-only data placement logic).
- * Task types are not included here to avoid CPU-only constructor
- * incompatibilities with CUDA compilation.
+ * PutBlob and GetBlob demonstrate the CHI_IPC->ToFullPtr pattern for
+ * converting ShmPtr references to GPU-accessible pointers.
  */
 class GpuRuntime : public chi::gpu::Container {
  public:
   HSHM_GPU_FUN GpuRuntime() = default;
   HSHM_GPU_FUN ~GpuRuntime() override = default;
 
-  HSHM_GPU_FUN void RegisterTarget(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for RegisterTarget.
+   * @param task RegisterTarget task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void RegisterTarget(hipc::FullPtr<RegisterTargetTask> task,
+                                    chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void UnregisterTarget(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for UnregisterTarget.
+   * @param task UnregisterTarget task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void UnregisterTarget(hipc::FullPtr<UnregisterTargetTask> task,
+                                      chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void ListTargets(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for ListTargets.
+   * @param task ListTargets task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void ListTargets(hipc::FullPtr<ListTargetsTask> task,
+                                 chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void StatTargets(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for StatTargets.
+   * @param task StatTargets task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void StatTargets(hipc::FullPtr<StatTargetsTask> task,
+                                 chi::gpu::GpuRunContext &rctx);
 
+  /**
+   * GPU handler for GetOrCreateTag.
+   * @param task GetOrCreateTag task (default template instantiation).
+   * @param rctx GPU run context.
+   */
   HSHM_GPU_FUN void GetOrCreateTag(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+      hipc::FullPtr<GetOrCreateTagTask<CreateParams>> task,
+      chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void GetTagSize(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for GetTagSize.
+   * @param task GetTagSize task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void GetTagSize(hipc::FullPtr<GetTagSizeTask> task,
+                                chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void DelTag(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for DelTag.
+   * @param task DelTag task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void DelTag(hipc::FullPtr<DelTagTask> task,
+                            chi::gpu::GpuRunContext &rctx);
 
+  /**
+   * GPU handler for GetContainedBlobs.
+   * @param task GetContainedBlobs task.
+   * @param rctx GPU run context.
+   */
   HSHM_GPU_FUN void GetContainedBlobs(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+      hipc::FullPtr<GetContainedBlobsTask> task,
+      chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void PutBlob(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for PutBlob.
+   * Converts blob_data_ ShmPtr to a GPU-accessible FullPtr via
+   * CHI_IPC->ToFullPtr. This demonstrates the correct pattern for
+   * accessing blob data from GPU runtime methods.
+   * @param task PutBlob task containing blob_data_ ShmPtr.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void PutBlob(hipc::FullPtr<PutBlobTask> task,
+                              chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void GetBlob(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for GetBlob.
+   * Converts blob_data_ ShmPtr to a GPU-accessible FullPtr via
+   * CHI_IPC->ToFullPtr. This demonstrates the correct pattern for
+   * accessing the output blob buffer from GPU runtime methods.
+   * @param task GetBlob task containing blob_data_ ShmPtr output buffer.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void GetBlob(hipc::FullPtr<GetBlobTask> task,
+                              chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void ReorganizeBlob(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for ReorganizeBlob.
+   * @param task ReorganizeBlob task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void ReorganizeBlob(hipc::FullPtr<ReorganizeBlobTask> task,
+                                    chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void DelBlob(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for DelBlob.
+   * @param task DelBlob task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void DelBlob(hipc::FullPtr<DelBlobTask> task,
+                              chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void GetBlobScore(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for GetBlobScore.
+   * @param task GetBlobScore task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void GetBlobScore(hipc::FullPtr<GetBlobScoreTask> task,
+                                  chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void GetBlobSize(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for GetBlobSize.
+   * @param task GetBlobSize task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void GetBlobSize(hipc::FullPtr<GetBlobSizeTask> task,
+                                 chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void GetBlobInfo(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for GetBlobInfo.
+   * @param task GetBlobInfo task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void GetBlobInfo(hipc::FullPtr<GetBlobInfoTask> task,
+                                 chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void PollTelemetryLog(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for PollTelemetryLog.
+   * @param task PollTelemetryLog task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void PollTelemetryLog(hipc::FullPtr<PollTelemetryLogTask> task,
+                                      chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void TagQuery(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for TagQuery.
+   * @param task TagQuery task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void TagQuery(hipc::FullPtr<TagQueryTask> task,
+                              chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void BlobQuery(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for BlobQuery.
+   * @param task BlobQuery task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void BlobQuery(hipc::FullPtr<BlobQueryTask> task,
+                               chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void GetTargetInfo(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for GetTargetInfo.
+   * @param task GetTargetInfo task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void GetTargetInfo(hipc::FullPtr<GetTargetInfoTask> task,
+                                   chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void FlushMetadata(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for FlushMetadata.
+   * @param task FlushMetadata task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void FlushMetadata(hipc::FullPtr<FlushMetadataTask> task,
+                                   chi::gpu::GpuRunContext &rctx);
 
-  HSHM_GPU_FUN void FlushData(
-      hipc::FullPtr<chi::Task> task, chi::gpu::GpuRunContext &rctx) {
-    (void)task; (void)rctx;
-  }
+  /**
+   * GPU handler for FlushData.
+   * @param task FlushData task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN void FlushData(hipc::FullPtr<FlushDataTask> task,
+                               chi::gpu::GpuRunContext &rctx);
 
-  // Autogenerated virtual method overrides (all no-ops for core)
+  // Autogenerated virtual method overrides (switch-case dispatch)
   #include "autogen/core_gpu_lib_exec.h"
 };
 

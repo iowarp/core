@@ -58,6 +58,11 @@ add_executable(test_reorganize_blob
     test_reorganize_blob.cc
 )
 
+# Create test_gpu_core executable for GPU client API tests (AsyncPutBlob/AsyncGetBlob)
+add_executable(test_gpu_core
+    test_gpu_core.cc
+)
+
 # Include directories for all tests - using unified simple_test.h framework
 target_include_directories(cte_core_unit_tests PRIVATE
   ${CMAKE_SOURCE_DIR}/test  # For unified simple_test.h
@@ -92,6 +97,10 @@ target_include_directories(test_tiered_storage_stress PRIVATE
 )
 
 target_include_directories(test_reorganize_blob PRIVATE
+  ${CMAKE_SOURCE_DIR}/test  # For unified simple_test.h
+)
+
+target_include_directories(test_gpu_core PRIVATE
   ${CMAKE_SOURCE_DIR}/test  # For unified simple_test.h
 )
 
@@ -193,6 +202,18 @@ target_link_libraries(test_tiered_storage_stress
 
 # Link test_reorganize_blob - using simple_test.h framework (NOT Catch2)
 target_link_libraries(test_reorganize_blob
+    wrp_cte_core_runtime         # CTE core runtime library
+    wrp_cte_core_client          # CTE core client library
+    chimaera::admin_runtime      # Admin module runtime (required for runtime mode)
+    chimaera::admin_client       # Admin module client
+    chimaera::bdev_runtime       # Bdev module runtime (required for runtime mode)
+    chimaera::bdev_client        # Bdev client for BdevType enum
+    hshm::cxx                    # HermesShm library
+    ${CMAKE_THREAD_LIBS_INIT}    # Threading support
+)
+
+# Link test_gpu_core - using simple_test.h framework (NOT Catch2)
+target_link_libraries(test_gpu_core
     wrp_cte_core_runtime         # CTE core runtime library
     wrp_cte_core_client          # CTE core client library
     chimaera::admin_runtime      # Admin module runtime (required for runtime mode)
@@ -643,11 +664,24 @@ set_tests_properties(
 add_test(NAME cte_reorganize_all
     COMMAND test_reorganize_blob)
 
+# GPU core tests run together in one process so Put and Get share the same
+# initialized fixture and the stored blob persists between test cases.
+add_test(NAME cte_gpu_core_all
+    COMMAND test_gpu_core)
+
 set_tests_properties(
     cte_reorganize_all
     PROPERTIES
         TIMEOUT 300  # 5 minute timeout
         LABELS "unit;reorganize;cte"
+        ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+)
+
+set_tests_properties(
+    cte_gpu_core_all
+    PROPERTIES
+        TIMEOUT 120
+        LABELS "gpu;cte;core;msan_skip"
         ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
@@ -746,6 +780,7 @@ set_tests_properties(
     cte_runtime_stat_targets
     cte_tiered_storage_all
     cte_reorganize_all
+    cte_gpu_core_all
     PROPERTIES LABELS "msan_skip"
 )
 
@@ -771,7 +806,7 @@ set_tests_properties(
 # ------------------------------------------------------------------------------
 # Install Targets
 # ------------------------------------------------------------------------------
-install(TARGETS cte_core_unit_tests test_core_functionality test_query test_cte_config_dpe test_tag_operations test_core_client_config test_core_runtime_coverage test_tiered_storage_stress test_reorganize_blob
+install(TARGETS cte_core_unit_tests test_core_functionality test_query test_cte_config_dpe test_tag_operations test_core_client_config test_core_runtime_coverage test_tiered_storage_stress test_reorganize_blob test_gpu_core
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin

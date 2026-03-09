@@ -9,6 +9,11 @@ file(GLOB_RECURSE CHIMAERA_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
 )
 
+# Collect GPU sources from modules (not picked up by the src/ glob above)
+file(GLOB_RECURSE CHIMAERA_MODULE_GPU_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/../modules/*_gpu.cc
+)
+
 # Separate GPU sources (_gpu.cc files) from CPU sources
 set(CHIMAERA_GPU_SOURCES "")
 set(CHIMAERA_CPU_SOURCES "")
@@ -18,6 +23,11 @@ foreach(src ${CHIMAERA_SOURCES})
   else()
     list(APPEND CHIMAERA_CPU_SOURCES ${src})
   endif()
+endforeach()
+
+# Module GPU sources are always GPU-only
+foreach(src ${CHIMAERA_MODULE_GPU_SOURCES})
+  list(APPEND CHIMAERA_GPU_SOURCES ${src})
 endforeach()
 
 # Create main library with namespace prefix to avoid conflicts

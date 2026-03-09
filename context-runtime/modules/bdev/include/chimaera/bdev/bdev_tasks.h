@@ -295,13 +295,13 @@ struct AllocateBlocksTask : public chi::Task {
   OUT chi::priv::vector<Block> blocks_;  // Allocated blocks information
 
   /** SHM default constructor */
-  AllocateBlocksTask() : chi::Task(), size_(0), blocks_(HSHM_MALLOC) {}
+  AllocateBlocksTask() : chi::Task(), size_(0), blocks_(CHI_PRIV_ALLOC) {}
 
   /** Emplace constructor */
   explicit AllocateBlocksTask(const chi::TaskId &task_node,
                               const chi::PoolId &pool_id,
                               const chi::PoolQuery &pool_query, chi::u64 size)
-      : chi::Task(task_node, pool_id, pool_query, 10), size_(size), blocks_(HSHM_MALLOC) {
+      : chi::Task(task_node, pool_id, pool_query, 10), size_(size), blocks_(CHI_PRIV_ALLOC) {
     // Initialize task
     task_id_ = task_node;
     pool_id_ = pool_id;
@@ -352,14 +352,14 @@ struct FreeBlocksTask : public chi::Task {
   IN chi::priv::vector<Block> blocks_;  // Blocks to free
 
   /** SHM default constructor */
-  FreeBlocksTask() : chi::Task(), blocks_(HSHM_MALLOC) {}
+  FreeBlocksTask() : chi::Task(), blocks_(CHI_PRIV_ALLOC) {}
 
   /** Emplace constructor for multiple blocks */
   explicit FreeBlocksTask(const chi::TaskId &task_node,
                           const chi::PoolId &pool_id,
                           const chi::PoolQuery &pool_query,
                           const std::vector<Block> &blocks)
-      : chi::Task(task_node, pool_id, pool_query, 10), blocks_(HSHM_MALLOC) {
+      : chi::Task(task_node, pool_id, pool_query, 10), blocks_(CHI_PRIV_ALLOC) {
     // Initialize task
     task_id_ = task_node;
     pool_id_ = pool_id;
@@ -416,7 +416,7 @@ struct WriteTask : public chi::Task {
   OUT chi::u64 bytes_written_;          // Number of bytes actually written
 
   /** SHM default constructor */
-  WriteTask() : chi::Task(), blocks_(HSHM_MALLOC), length_(0), bytes_written_(0) {}
+  WriteTask() : chi::Task(), blocks_(CHI_PRIV_ALLOC), length_(0), bytes_written_(0) {}
 
   /** Emplace constructor */
   explicit WriteTask(const chi::TaskId &task_node, const chi::PoolId &pool_id,
@@ -496,7 +496,7 @@ struct ReadTask : public chi::Task {
   OUT chi::u64 bytes_read_;  // Number of bytes actually read
 
   /** SHM default constructor */
-  ReadTask() : chi::Task(), blocks_(HSHM_MALLOC), length_(0), bytes_read_(0) {}
+  ReadTask() : chi::Task(), blocks_(CHI_PRIV_ALLOC), length_(0), bytes_read_(0) {}
 
   /** Emplace constructor */
   explicit ReadTask(const chi::TaskId &task_node, const chi::PoolId &pool_id,

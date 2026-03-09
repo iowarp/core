@@ -186,7 +186,7 @@ struct RegisterTargetTask : public chi::Task {
   // SHM constructor
   RegisterTargetTask()
       : chi::Task(),
-        target_name_(HSHM_MALLOC),
+        target_name_(CHI_PRIV_ALLOC),
         bdev_type_(chimaera::bdev::BdevType::kFile),
         total_size_(0),
         bdev_id_(chi::PoolId::GetNull()) {}
@@ -198,7 +198,7 @@ struct RegisterTargetTask : public chi::Task {
       chimaera::bdev::BdevType bdev_type, chi::u64 total_size,
       const chi::PoolQuery &target_query, const chi::PoolId &bdev_id)
       : chi::Task(task_id, pool_id, pool_query, Method::kRegisterTarget),
-        target_name_(HSHM_MALLOC, target_name),
+        target_name_(CHI_PRIV_ALLOC, target_name),
         bdev_type_(bdev_type),
         total_size_(total_size),
         target_query_(target_query),
@@ -260,7 +260,7 @@ struct UnregisterTargetTask : public chi::Task {
   IN chi::priv::string target_name_;  // Name of the target to unregister
 
   // SHM constructor
-  UnregisterTargetTask() : chi::Task(), target_name_(HSHM_MALLOC) {}
+  UnregisterTargetTask() : chi::Task(), target_name_(CHI_PRIV_ALLOC) {}
 
   // Emplace constructor
   HSHM_CROSS_FUN explicit UnregisterTargetTask(const chi::TaskId &task_id,
@@ -268,7 +268,7 @@ struct UnregisterTargetTask : public chi::Task {
                                 const chi::PoolQuery &pool_query,
                                 const std::string &target_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kUnregisterTarget),
-        target_name_(HSHM_MALLOC, target_name) {
+        target_name_(CHI_PRIV_ALLOC, target_name) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kUnregisterTarget;
@@ -448,7 +448,7 @@ struct GetTargetInfoTask : public chi::Task {
   // SHM constructor
   GetTargetInfoTask()
       : chi::Task(),
-        target_name_(HSHM_MALLOC),
+        target_name_(CHI_PRIV_ALLOC),
         target_score_(0.0f),
         remaining_space_(0),
         bytes_read_(0),
@@ -462,7 +462,7 @@ struct GetTargetInfoTask : public chi::Task {
                              const chi::PoolQuery &pool_query,
                              const std::string &target_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetTargetInfo),
-        target_name_(HSHM_MALLOC, target_name),
+        target_name_(CHI_PRIV_ALLOC, target_name),
         target_score_(0.0f),
         remaining_space_(0),
         bytes_read_(0),
@@ -784,7 +784,7 @@ struct GetOrCreateTagTask : public chi::Task {
 
   // SHM constructor
   GetOrCreateTagTask()
-      : chi::Task(), tag_name_(HSHM_MALLOC), tag_id_(TagId::GetNull()) {}
+      : chi::Task(), tag_name_(CHI_PRIV_ALLOC), tag_id_(TagId::GetNull()) {}
 
   // Emplace constructor
   HSHM_CROSS_FUN explicit GetOrCreateTagTask(const chi::TaskId &task_id,
@@ -793,7 +793,7 @@ struct GetOrCreateTagTask : public chi::Task {
                               const std::string &tag_name,
                               const TagId &tag_id = TagId::GetNull())
       : chi::Task(task_id, pool_id, pool_query, Method::kGetOrCreateTag),
-        tag_name_(HSHM_MALLOC, tag_name),
+        tag_name_(CHI_PRIV_ALLOC, tag_name),
         tag_id_(tag_id) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -860,7 +860,7 @@ struct PutBlobTask : public chi::Task {
   PutBlobTask()
       : chi::Task(),
         tag_id_(TagId::GetNull()),
-        blob_name_(HSHM_MALLOC),
+        blob_name_(CHI_PRIV_ALLOC),
         offset_(0),
         size_(0),
         blob_data_(hipc::ShmPtr<>::GetNull()),
@@ -876,7 +876,7 @@ struct PutBlobTask : public chi::Task {
                        const Context &context, chi::u32 flags)
       : chi::Task(task_id, pool_id, pool_query, Method::kPutBlob),
         tag_id_(tag_id),
-        blob_name_(HSHM_MALLOC, blob_name),
+        blob_name_(CHI_PRIV_ALLOC, blob_name),
         offset_(offset),
         size_(size),
         blob_data_(blob_data),
@@ -954,7 +954,7 @@ struct GetBlobTask : public chi::Task {
   GetBlobTask()
       : chi::Task(),
         tag_id_(TagId::GetNull()),
-        blob_name_(HSHM_MALLOC),
+        blob_name_(CHI_PRIV_ALLOC),
         offset_(0),
         size_(0),
         flags_(0),
@@ -967,7 +967,7 @@ struct GetBlobTask : public chi::Task {
                        chi::u64 size, chi::u32 flags, hipc::ShmPtr<> blob_data)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetBlob),
         tag_id_(tag_id),
-        blob_name_(HSHM_MALLOC, blob_name),
+        blob_name_(CHI_PRIV_ALLOC, blob_name),
         offset_(offset),
         size_(size),
         flags_(flags),
@@ -1038,7 +1038,7 @@ struct ReorganizeBlobTask : public chi::Task {
   ReorganizeBlobTask()
       : chi::Task(),
         tag_id_(TagId::GetNull()),
-        blob_name_(HSHM_MALLOC),
+        blob_name_(CHI_PRIV_ALLOC),
         new_score_(0.0f) {}
 
   // Emplace constructor
@@ -1049,7 +1049,7 @@ struct ReorganizeBlobTask : public chi::Task {
                               float new_score)
       : chi::Task(task_id, pool_id, pool_query, Method::kReorganizeBlob),
         tag_id_(tag_id),
-        blob_name_(HSHM_MALLOC, blob_name),
+        blob_name_(CHI_PRIV_ALLOC, blob_name),
         new_score_(new_score) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -1106,7 +1106,7 @@ struct DelBlobTask : public chi::Task {
 
   // SHM constructor
   DelBlobTask()
-      : chi::Task(), tag_id_(TagId::GetNull()), blob_name_(HSHM_MALLOC) {}
+      : chi::Task(), tag_id_(TagId::GetNull()), blob_name_(CHI_PRIV_ALLOC) {}
 
   // Emplace constructor
   HSHM_CROSS_FUN explicit DelBlobTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
@@ -1114,7 +1114,7 @@ struct DelBlobTask : public chi::Task {
                        const std::string &blob_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kDelBlob),
         tag_id_(tag_id),
-        blob_name_(HSHM_MALLOC, blob_name) {
+        blob_name_(CHI_PRIV_ALLOC, blob_name) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kDelBlob;
@@ -1170,14 +1170,14 @@ struct DelTagTask : public chi::Task {
 
   // SHM constructor
   DelTagTask()
-      : chi::Task(), tag_id_(TagId::GetNull()), tag_name_(HSHM_MALLOC) {}
+      : chi::Task(), tag_id_(TagId::GetNull()), tag_name_(CHI_PRIV_ALLOC) {}
 
   // Emplace constructor with tag ID
   HSHM_CROSS_FUN explicit DelTagTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
                       const chi::PoolQuery &pool_query, const TagId &tag_id)
       : chi::Task(task_id, pool_id, pool_query, Method::kDelTag),
         tag_id_(tag_id),
-        tag_name_(HSHM_MALLOC) {
+        tag_name_(CHI_PRIV_ALLOC) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kDelTag;
@@ -1191,7 +1191,7 @@ struct DelTagTask : public chi::Task {
                       const std::string &tag_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kDelTag),
         tag_id_(TagId::GetNull()),
-        tag_name_(HSHM_MALLOC, tag_name) {
+        tag_name_(CHI_PRIV_ALLOC, tag_name) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kDelTag;
@@ -1313,7 +1313,7 @@ struct PollTelemetryLogTask : public chi::Task {
       : chi::Task(),
         minimum_logical_time_(0),
         last_logical_time_(0),
-        entries_(HSHM_MALLOC) {}
+        entries_(CHI_PRIV_ALLOC) {}
 
   // Emplace constructor
   HSHM_CROSS_FUN explicit PollTelemetryLogTask(const chi::TaskId &task_id,
@@ -1323,7 +1323,7 @@ struct PollTelemetryLogTask : public chi::Task {
       : chi::Task(task_id, pool_id, pool_query, Method::kPollTelemetryLog),
         minimum_logical_time_(minimum_logical_time),
         last_logical_time_(0),
-        entries_(HSHM_MALLOC) {
+        entries_(CHI_PRIV_ALLOC) {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kPollTelemetryLog;
@@ -1382,7 +1382,7 @@ struct GetBlobScoreTask : public chi::Task {
   GetBlobScoreTask()
       : chi::Task(),
         tag_id_(TagId::GetNull()),
-        blob_name_(HSHM_MALLOC),
+        blob_name_(CHI_PRIV_ALLOC),
         score_(0.0f) {}
 
   // Emplace constructor
@@ -1392,7 +1392,7 @@ struct GetBlobScoreTask : public chi::Task {
                             const TagId &tag_id, const std::string &blob_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetBlobScore),
         tag_id_(tag_id),
-        blob_name_(HSHM_MALLOC, blob_name),
+        blob_name_(CHI_PRIV_ALLOC, blob_name),
         score_(0.0f) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -1452,7 +1452,7 @@ struct GetBlobSizeTask : public chi::Task {
   GetBlobSizeTask()
       : chi::Task(),
         tag_id_(TagId::GetNull()),
-        blob_name_(HSHM_MALLOC),
+        blob_name_(CHI_PRIV_ALLOC),
         size_(0) {}
 
   // Emplace constructor
@@ -1462,7 +1462,7 @@ struct GetBlobSizeTask : public chi::Task {
                            const TagId &tag_id, const std::string &blob_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetBlobSize),
         tag_id_(tag_id),
-        blob_name_(HSHM_MALLOC, blob_name),
+        blob_name_(CHI_PRIV_ALLOC, blob_name),
         size_(0) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -1549,7 +1549,7 @@ struct GetBlobInfoTask : public chi::Task {
   GetBlobInfoTask()
       : chi::Task(),
         tag_id_(TagId::GetNull()),
-        blob_name_(HSHM_MALLOC),
+        blob_name_(CHI_PRIV_ALLOC),
         score_(0.0f),
         total_size_(0),
         blocks_() {}
@@ -1561,7 +1561,7 @@ struct GetBlobInfoTask : public chi::Task {
                            const TagId &tag_id, const std::string &blob_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetBlobInfo),
         tag_id_(tag_id),
-        blob_name_(HSHM_MALLOC, blob_name),
+        blob_name_(CHI_PRIV_ALLOC, blob_name),
         score_(0.0f),
         total_size_(0) {
     task_id_ = task_id;
@@ -1695,7 +1695,7 @@ struct TagQueryTask : public chi::Task {
   // SHM constructor
   TagQueryTask()
       : chi::Task(),
-        tag_regex_(HSHM_MALLOC),
+        tag_regex_(CHI_PRIV_ALLOC),
         max_tags_(0),
         total_tags_matched_(0) {}
 
@@ -1704,7 +1704,7 @@ struct TagQueryTask : public chi::Task {
                         const chi::PoolQuery &pool_query,
                         const std::string &tag_regex, chi::u32 max_tags = 0)
       : chi::Task(task_id, pool_id, pool_query, Method::kTagQuery),
-        tag_regex_(HSHM_MALLOC, tag_regex),
+        tag_regex_(CHI_PRIV_ALLOC, tag_regex),
         max_tags_(max_tags),
         total_tags_matched_(0) {
     task_id_ = task_id;
@@ -1783,8 +1783,8 @@ struct BlobQueryTask : public chi::Task {
   // SHM constructor
   BlobQueryTask()
       : chi::Task(),
-        tag_regex_(HSHM_MALLOC),
-        blob_regex_(HSHM_MALLOC),
+        tag_regex_(CHI_PRIV_ALLOC),
+        blob_regex_(CHI_PRIV_ALLOC),
         max_blobs_(0),
         total_blobs_matched_(0) {}
 
@@ -1794,8 +1794,8 @@ struct BlobQueryTask : public chi::Task {
                          const std::string &tag_regex,
                          const std::string &blob_regex, chi::u32 max_blobs = 0)
       : chi::Task(task_id, pool_id, pool_query, Method::kBlobQuery),
-        tag_regex_(HSHM_MALLOC, tag_regex),
-        blob_regex_(HSHM_MALLOC, blob_regex),
+        tag_regex_(CHI_PRIV_ALLOC, tag_regex),
+        blob_regex_(CHI_PRIV_ALLOC, blob_regex),
         max_blobs_(max_blobs),
         total_blobs_matched_(0) {
     task_id_ = task_id;
