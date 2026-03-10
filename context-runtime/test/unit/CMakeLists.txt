@@ -484,6 +484,22 @@ if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
   )
 endif()
 
+# GPU Coroutine test executable
+if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
+  set(GPU_COROUTINE_TEST_TARGET test_gpu_coroutine)
+  add_cuda_executable(${GPU_COROUTINE_TEST_TARGET} FALSE test_gpu_coroutine.cu
+    INCLUDE_DIRS ${CHIMAERA_ROOT}/compiler/include
+  )
+  set_target_properties(${GPU_COROUTINE_TEST_TARGET} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  add_test(NAME cr_gpu_coroutine_tests COMMAND ${GPU_COROUTINE_TEST_TARGET})
+  set_tests_properties(cr_gpu_coroutine_tests PROPERTIES
+    TIMEOUT 60
+    LABELS "gpu;msan_skip"
+  )
+endif()
+
 # Enable CTest integration if testing is enabled
 if(WRP_CORE_ENABLE_TESTS)
   # Core Runtime Tests

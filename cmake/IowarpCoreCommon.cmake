@@ -188,10 +188,19 @@ function(add_rocm_gpu_executable TARGET DO_COPY)
 endfunction()
 
 # Function for adding a CUDA library
+#
+# When WRP_CORE_CLANG_CUDA_COMPILER is set (via wrp_core_find_clang_cuda()),
+# compiles with Clang (C++20, coroutines in device code).  Otherwise uses
+# NVCC via CMake's native CUDA language support.  The choice is transparent
+# to callers -- source code should be portable across both compilers.
+#
+# Usage:
+#   add_cuda_library(TARGET SHARED|STATIC DO_COPY source1.cu ...
+#       [INCLUDE_DIRS dir1 dir2 ...]
+#       [LINK_LIBS lib1 lib2 ...])
 function(add_cuda_library TARGET SHARED DO_COPY)
-    set(SRC_FILES ${ARGN})
-    set(CUDA_SOURCE_FILES "")
-    set_cuda_sources("${DO_COPY}" "${SRC_FILES}" CUDA_SOURCE_FILES)
+    cmake_parse_arguments(CUDA "" "" "INCLUDE_DIRS;LINK_LIBS" ${ARGN})
+    set(SRC_FILES ${CUDA_UNPARSED_ARGUMENTS})
 
     # Resolve "native" to the detected GPU architecture before add_library so
     # CMake does not attempt to re-detect the GPU at configure time for targets
@@ -206,47 +215,227 @@ function(add_cuda_library TARGET SHARED DO_COPY)
             CACHE STRING "CUDA architectures to compile for" FORCE)
     endif()
 
-    add_library(${TARGET} ${SHARED} ${CUDA_SOURCE_FILES})
+    if(WRP_CORE_CLANG_CUDA_COMPILER)
+        # ---- Clang path ----
+        _wrp_core_get_clang_gpu_arch(GPU_ARCH_FLAGS)
 
-    set_target_properties(${TARGET} PROPERTIES
-        CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+        set(INCLUDE_FLAGS "")
+        foreach(DIR IN LISTS CUDA_INCLUDE_DIRS)
+            list(APPEND INCLUDE_FLAGS "-I${DIR}")
+        endforeach()
 
-    target_compile_options(${TARGET} PUBLIC
-        $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+        set(OBJECT_FILES "")
+        foreach(SRC IN LISTS SRC_FILES)
+            get_filename_component(SRC_NAME ${SRC} NAME_WE)
+            get_filename_component(SRC_ABS ${SRC} ABSOLUTE)
+            set(OBJ_FILE "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda/${SRC_NAME}.o")
 
-    if(SHARED STREQUAL "SHARED")
+            add_custom_command(
+                OUTPUT ${OBJ_FILE}
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda"
+                COMMAND ${WRP_CORE_CLANG_CUDA_COMPILER}
+                    -x cuda
+                    -std=c++20
+                    --cuda-path=${WRP_CORE_CLANG_CUDA_PATH}
+                    ${GPU_ARCH_FLAGS}
+                    -Wno-unknown-cuda-version
+                    -fPIC
+                    ${INCLUDE_FLAGS}
+                    -c ${SRC_ABS}
+                    -o ${OBJ_FILE}
+                    "$<$<CONFIG:Debug>:-g>"
+                    "$<$<CONFIG:Debug>:-O0>"
+                    "$<$<CONFIG:Release>:-O2>"
+                    "$<$<CONFIG:RelWithDebInfo>:-O2>"
+                    "$<$<CONFIG:RelWithDebInfo>:-g>"
+                DEPENDS ${SRC_ABS}
+                COMMENT "Clang CUDA: Compiling ${SRC}"
+                VERBATIM
+            )
+            list(APPEND OBJECT_FILES ${OBJ_FILE})
+        endforeach()
+
+        add_library(${TARGET} ${SHARED} ${OBJECT_FILES})
         set_target_properties(${TARGET} PROPERTIES
-            CUDA_SEPARABLE_COMPILATION ON
+            LINKER_LANGUAGE CUDA
             POSITION_INDEPENDENT_CODE ON
-            CUDA_RUNTIME_LIBRARY Shared
         )
     else()
+        # ---- NVCC path ----
+        set(CUDA_SOURCE_FILES "")
+        set_cuda_sources("${DO_COPY}" "${SRC_FILES}" CUDA_SOURCE_FILES)
+
+        add_library(${TARGET} ${SHARED} ${CUDA_SOURCE_FILES})
+
         set_target_properties(${TARGET} PROPERTIES
-            CUDA_SEPARABLE_COMPILATION ON
-            POSITION_INDEPENDENT_CODE ON
-            CUDA_RUNTIME_LIBRARY Static
-        )
+            CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+
+        target_compile_options(${TARGET} PUBLIC
+            $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+
+        if(SHARED STREQUAL "SHARED")
+            set_target_properties(${TARGET} PROPERTIES
+                CUDA_SEPARABLE_COMPILATION ON
+                POSITION_INDEPENDENT_CODE ON
+                CUDA_RUNTIME_LIBRARY Shared
+            )
+        else()
+            set_target_properties(${TARGET} PROPERTIES
+                CUDA_SEPARABLE_COMPILATION ON
+                POSITION_INDEPENDENT_CODE ON
+                CUDA_RUNTIME_LIBRARY Static
+            )
+        endif()
+
+        if(CUDA_INCLUDE_DIRS)
+            target_include_directories(${TARGET} PUBLIC ${CUDA_INCLUDE_DIRS})
+        endif()
+    endif()
+
+    if(CUDA_LINK_LIBS)
+        target_link_libraries(${TARGET} ${CUDA_LINK_LIBS})
     endif()
 endfunction()
 
 # Function for adding a CUDA executable
+#
+# When WRP_CORE_CLANG_CUDA_COMPILER is set (via wrp_core_find_clang_cuda()),
+# compiles with Clang (C++20, coroutines in device code).  Otherwise uses
+# NVCC via CMake's native CUDA language support.
+#
+# Usage:
+#   add_cuda_executable(TARGET DO_COPY source1.cu ...
+#       [INCLUDE_DIRS dir1 dir2 ...]
+#       [LINK_LIBS lib1 lib2 ...])
 function(add_cuda_executable TARGET DO_COPY)
-    set(SRC_FILES ${ARGN})
-    set(CUDA_SOURCE_FILES "")
-    set_cuda_sources("${DO_COPY}" "${SRC_FILES}" CUDA_SOURCE_FILES)
-    add_executable(${TARGET} ${CUDA_SOURCE_FILES})
-    set_target_properties(${TARGET} PROPERTIES
-        CUDA_SEPARABLE_COMPILATION ON
-        POSITION_INDEPENDENT_CODE ON
-    )
+    cmake_parse_arguments(CUDA "" "" "INCLUDE_DIRS;LINK_LIBS" ${ARGN})
+    set(SRC_FILES ${CUDA_UNPARSED_ARGUMENTS})
 
-    # When copying sources, we need to add the include path back to the original source directory
-    if(${DO_COPY})
-        target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    if(WRP_CORE_CLANG_CUDA_COMPILER)
+        # ---- Clang path ----
+        _wrp_core_get_clang_gpu_arch(GPU_ARCH_FLAGS)
+
+        set(INCLUDE_FLAGS "")
+        foreach(DIR IN LISTS CUDA_INCLUDE_DIRS)
+            list(APPEND INCLUDE_FLAGS "-I${DIR}")
+        endforeach()
+
+        set(OBJECT_FILES "")
+        foreach(SRC IN LISTS SRC_FILES)
+            get_filename_component(SRC_NAME ${SRC} NAME_WE)
+            get_filename_component(SRC_ABS ${SRC} ABSOLUTE)
+            set(OBJ_FILE "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda/${SRC_NAME}.o")
+
+            add_custom_command(
+                OUTPUT ${OBJ_FILE}
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda"
+                COMMAND ${WRP_CORE_CLANG_CUDA_COMPILER}
+                    -x cuda
+                    -std=c++20
+                    --cuda-path=${WRP_CORE_CLANG_CUDA_PATH}
+                    ${GPU_ARCH_FLAGS}
+                    -Wno-unknown-cuda-version
+                    ${INCLUDE_FLAGS}
+                    -c ${SRC_ABS}
+                    -o ${OBJ_FILE}
+                    "$<$<CONFIG:Debug>:-g>"
+                    "$<$<CONFIG:Debug>:-O0>"
+                    "$<$<CONFIG:Release>:-O2>"
+                    "$<$<CONFIG:RelWithDebInfo>:-O2>"
+                    "$<$<CONFIG:RelWithDebInfo>:-g>"
+                DEPENDS ${SRC_ABS}
+                COMMENT "Clang CUDA: Compiling ${SRC}"
+                VERBATIM
+            )
+            list(APPEND OBJECT_FILES ${OBJ_FILE})
+        endforeach()
+
+        add_executable(${TARGET} ${OBJECT_FILES})
+        set_target_properties(${TARGET} PROPERTIES
+            LINKER_LANGUAGE CXX
+        )
+        target_link_libraries(${TARGET} -L${WRP_CORE_CLANG_CUDA_PATH}/lib64 -lcudart)
+    else()
+        # ---- NVCC path ----
+        set(CUDA_SOURCE_FILES "")
+        set_cuda_sources("${DO_COPY}" "${SRC_FILES}" CUDA_SOURCE_FILES)
+        add_executable(${TARGET} ${CUDA_SOURCE_FILES})
+        set_target_properties(${TARGET} PROPERTIES
+            CUDA_SEPARABLE_COMPILATION ON
+            POSITION_INDEPENDENT_CODE ON
+        )
+
+        if(${DO_COPY})
+            target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        endif()
+
+        target_compile_options(${TARGET} PUBLIC
+            $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+
+        if(CUDA_INCLUDE_DIRS)
+            target_include_directories(${TARGET} PUBLIC ${CUDA_INCLUDE_DIRS})
+        endif()
     endif()
 
-    target_compile_options(${TARGET} PUBLIC
-        $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+    if(CUDA_LINK_LIBS)
+        target_link_libraries(${TARGET} ${CUDA_LINK_LIBS})
+    endif()
+endfunction()
+
+#------------------------------------------------------------------------------
+# Clang CUDA Detection (for C++20 coroutines on GPU)
+#------------------------------------------------------------------------------
+
+# Find the Clang compiler for CUDA compilation.
+# When found, add_cuda_library() and add_cuda_executable() will automatically
+# use Clang instead of NVCC, enabling C++20 features (coroutines, concepts,
+# etc.) in device code.
+macro(wrp_core_find_clang_cuda)
+    if(NOT WRP_CORE_CLANG_CUDA_COMPILER)
+        find_program(WRP_CORE_CLANG_CUDA_COMPILER
+            NAMES clang++-18 clang++-19 clang++-20 clang++
+            PATHS /usr/bin /usr/local/bin
+            DOC "Clang compiler for CUDA compilation"
+        )
+    endif()
+
+    # Derive --cuda-path from CMAKE_CUDA_COMPILER (e.g., /usr/local/cuda-12.6/bin/nvcc -> /usr/local/cuda-12.6)
+    if(NOT WRP_CORE_CLANG_CUDA_PATH)
+        if(CMAKE_CUDA_COMPILER)
+            get_filename_component(_cuda_bin_dir "${CMAKE_CUDA_COMPILER}" DIRECTORY)
+            get_filename_component(WRP_CORE_CLANG_CUDA_PATH "${_cuda_bin_dir}" DIRECTORY)
+        elseif(CUDAToolkit_BIN_DIR)
+            get_filename_component(WRP_CORE_CLANG_CUDA_PATH "${CUDAToolkit_BIN_DIR}" DIRECTORY)
+        else()
+            set(WRP_CORE_CLANG_CUDA_PATH "/usr/local/cuda")
+        endif()
+        set(WRP_CORE_CLANG_CUDA_PATH "${WRP_CORE_CLANG_CUDA_PATH}" CACHE PATH "CUDA toolkit root for Clang")
+    endif()
+
+    if(WRP_CORE_CLANG_CUDA_COMPILER)
+        message(STATUS "Found Clang for CUDA: ${WRP_CORE_CLANG_CUDA_COMPILER}")
+        message(STATUS "  CUDA path for Clang: ${WRP_CORE_CLANG_CUDA_PATH}")
+    else()
+        message(WARNING "Clang not found -- GPU coroutine targets will be unavailable")
+    endif()
+endmacro()
+
+# Get the GPU architecture flag for Clang from CMAKE_CUDA_ARCHITECTURES.
+# Converts CMake architecture numbers (e.g., 89) to Clang's --cuda-gpu-arch=sm_XX.
+function(_wrp_core_get_clang_gpu_arch OUTPUT_VAR)
+    set(ARCH_FLAGS "")
+    if(CMAKE_CUDA_ARCHITECTURES)
+        foreach(ARCH IN LISTS CMAKE_CUDA_ARCHITECTURES)
+            if(NOT "${ARCH}" STREQUAL "native")
+                list(APPEND ARCH_FLAGS "--cuda-gpu-arch=sm_${ARCH}")
+            endif()
+        endforeach()
+    endif()
+    # If no explicit architectures (or only "native"), default to sm_80
+    if(NOT ARCH_FLAGS)
+        list(APPEND ARCH_FLAGS "--cuda-gpu-arch=sm_80")
+    endif()
+    set(${OUTPUT_VAR} "${ARCH_FLAGS}" PARENT_SCOPE)
 endfunction()
 
 #------------------------------------------------------------------------------
