@@ -197,6 +197,13 @@ void Worker::Finalize() {
     }
   }
 
+  // Clean up all periodic queues
+  for (u32 i = 0; i < NUM_PERIODIC_QUEUES; ++i) {
+    while (!periodic_queues_[i].empty()) {
+      periodic_queues_[i].pop();
+    }
+  }
+
   // Clean up retry queue
   while (!retry_queue_.empty()) {
     retry_queue_.pop();

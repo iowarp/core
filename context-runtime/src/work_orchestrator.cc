@@ -180,13 +180,14 @@ void WorkOrchestrator::StopWorkers() {
   }
 
   // Wait for worker threads with a hard 5-second deadline per thread.
-  // We use pthread_timedjoin_np on std_thread_::native_handle() so the
-  // timeout actually fires — plain Join() blocks indefinitely.
+  // hshm::Thread uses pthread_create internally, so we use pthread_thread_
+  // directly — std_thread_ is never populated when using the Pthread model.
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 
   size_t joined_count = 0;
   for (auto &thread : worker_threads_) {
-    if (!thread.std_thread_.joinable()) {
+    // pthread_thread_ is 0 when the hshm Thread was never started
+    if (thread.pthread_thread_ == 0) {
       ++joined_count;
       continue;
     }
@@ -198,7 +199,8 @@ void WorkOrchestrator::StopWorkers() {
     if (remaining <= 0) {
       HLOG(kError, "StopWorkers: deadline exceeded, detaching remaining "
                    "worker threads");
-      thread.std_thread_.detach();
+      pthread_detach(thread.pthread_thread_);
+      thread.pthread_thread_ = 0;
       continue;
     }
 
@@ -211,15 +213,16 @@ void WorkOrchestrator::StopWorkers() {
       ts.tv_nsec -= 1000000000LL;
     }
 
-    int r = pthread_timedjoin_np(thread.std_thread_.native_handle(),
-                                  nullptr, &ts);
+    int r = pthread_timedjoin_np(thread.pthread_thread_, nullptr, &ts);
     if (r == 0) {
       ++joined_count;
+      thread.pthread_thread_ = 0;
     } else {
       // ETIMEDOUT or other error — detach so the destructor doesn't block.
       HLOG(kError, "StopWorkers: thread join timed out (err={}), detaching",
            r);
-      thread.std_thread_.detach();
+      pthread_detach(thread.pthread_thread_);
+      thread.pthread_thread_ = 0;
     }
   }
 
