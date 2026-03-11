@@ -223,7 +223,74 @@ if(HDF5_ENABLED)
 endif()
 
 #------------------------------------------------------------------------------
-# Test 5: Globus Transfer Integration (Conditional) - REMOVED
+# Test 6: Summary Operator (Conditional)
+#------------------------------------------------------------------------------
+# Tests the SummaryOperator which reads a "description" blob and
+# generates a 4-8 word summary via a local LLM inference endpoint.
+# Requires: WRP_CAE_ENABLE_SUMMARY_OP=ON, CURL, nlohmann_json
+# Runtime: CAE_SUMMARY_ENDPOINT and CAE_SUMMARY_MODEL env vars
+# Note: Test SKIPs gracefully if env vars are not set
+#------------------------------------------------------------------------------
+if(SUMMARY_OP_ENABLED)
+  # Compile summary_operator.cc directly to avoid pulling HDF5 transitive deps
+  # from the runtime library (HDF5's libcurl has symbol version conflicts)
+  add_executable(cae_summary_op
+    ${CMAKE_CURRENT_SOURCE_DIR}/summary_op/test_summary_operator.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../core/src/factory/summary_operator.cc
+  )
+  target_link_libraries(cae_summary_op
+    PRIVATE
+      wrp_cae_core_client
+      wrp_cte_core_client
+      chimaera::cxx
+      hshm::configure
+      CURL::libcurl
+      nlohmann_json::nlohmann_json
+  )
+  target_include_directories(cae_summary_op PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  install(TARGETS cae_summary_op DESTINATION bin)
+  add_test(NAME cae_summary_op COMMAND cae_summary_op)
+  set_tests_properties(cae_summary_op PROPERTIES
+    ENVIRONMENT "CHI_WITH_RUNTIME=1;CHI_SERVER_CONF=${CMAKE_CURRENT_SOURCE_DIR}/wrp_config.yaml;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    TIMEOUT 300
+    LABELS "operator;summary;msan_skip"
+  )
+
+  # Benchmark: SummaryOperator I/O + LLM latency (run manually)
+  add_executable(cae_summary_bench
+    ${CMAKE_CURRENT_SOURCE_DIR}/summary_op/bench_summary_operator.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../core/src/factory/summary_operator.cc
+  )
+  target_link_libraries(cae_summary_bench
+    PRIVATE
+      wrp_cae_core_client
+      wrp_cte_core_client
+      chimaera::cxx
+      hshm::configure
+      CURL::libcurl
+      nlohmann_json::nlohmann_json
+  )
+  target_include_directories(cae_summary_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  install(TARGETS cae_summary_bench DESTINATION bin)
+
+  # Benchmark: CTE Agent Memory — CTE Raw vs CTE+Summary (run manually)
+  add_executable(cae_memory_bench
+    ${CMAKE_CURRENT_SOURCE_DIR}/summary_op/bench_cte_memory.cc
+  )
+  target_link_libraries(cae_memory_bench
+    PRIVATE
+      wrp_cte_core_client
+      chimaera::cxx
+      hshm::configure
+      CURL::libcurl
+      nlohmann_json::nlohmann_json
+  )
+  target_include_directories(cae_memory_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  install(TARGETS cae_memory_bench DESTINATION bin)
+endif()
+
+#------------------------------------------------------------------------------
+# Globus Transfer Integration (Conditional) - REMOVED
 #------------------------------------------------------------------------------
 # Globus integration testing has been moved to integration tests only
 # due to the complexity of OAuth2 authentication and collection-specific scopes.
@@ -272,6 +339,11 @@ if(HDF5_ENABLED)
   message(STATUS "  HDF5 Format Test:         ENABLED")
 else()
   message(STATUS "  HDF5 Format Test:         DISABLED (set -DWRP_CORE_ENABLE_HDF5=ON to enable)")
+endif()
+if(SUMMARY_OP_ENABLED)
+  message(STATUS "  Summary Operator Test:    ENABLED")
+else()
+  message(STATUS "  Summary Operator Test:    DISABLED (set -DWRP_CAE_ENABLE_SUMMARY_OP=ON to enable)")
 endif()
 message(STATUS "")
 message(STATUS "Run tests with:")

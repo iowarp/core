@@ -509,6 +509,44 @@ class Client : public chi::ContainerClient {
 
     return ipc_manager->Send(task);
   }
+
+#ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+  /**
+   * Asynchronous update knowledge graph - stores a summary for a tag
+   * @param tag_id Tag ID to associate the summary with
+   * @param summary Summary text to store in the knowledge graph
+   * @param pool_query Pool query for task routing (default: Dynamic)
+   */
+  chi::Future<UpdateKnowledgeGraphTask> AsyncUpdateKnowledgeGraph(
+      const TagId &tag_id,
+      const std::string &summary,
+      const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
+    auto *ipc_manager = CHI_IPC;
+
+    auto task = ipc_manager->NewTask<UpdateKnowledgeGraphTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, tag_id, summary);
+
+    return ipc_manager->Send(task);
+  }
+
+  /**
+   * Asynchronous semantic query - searches the knowledge graph
+   * @param prompt Search query text
+   * @param top_k Maximum number of results to return
+   * @param pool_query Pool query for task routing (default: Dynamic)
+   */
+  chi::Future<SemanticQueryTask> AsyncSemanticQuery(
+      const std::string &prompt,
+      chi::u32 top_k = 10,
+      const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
+    auto *ipc_manager = CHI_IPC;
+
+    auto task = ipc_manager->NewTask<SemanticQueryTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, prompt, top_k);
+
+    return ipc_manager->Send(task);
+  }
+#endif  // WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
 };
 
 // Global pointer-based singleton for CTE client with lazy initialization

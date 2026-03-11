@@ -3104,6 +3104,76 @@ chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
   co_return;
 }
 
+#ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+// ==============================================================================
+// Knowledge Graph Methods
+// ==============================================================================
+
+chi::TaskResume Runtime::UpdateKnowledgeGraph(
+    hipc::FullPtr<UpdateKnowledgeGraphTask> task, chi::RunContext &ctx) {
+  try {
+    TagId tag_id = task->tag_id_;
+    std::string summary = task->summary_.str();
+
+    // Update the tag's summary in TagInfo
+    {
+      co_await tag_map_lock_.WriteLock(ctx);
+      auto it = tag_id_to_info_.find(tag_id);
+      if (it == tag_id_to_info_.end()) {
+        tag_map_lock_.WriteUnlock();
+        task->SetReturnCode(1);  // Tag not found
+        co_return;
+      }
+      it->second.summary_ = summary;
+      tag_map_lock_.WriteUnlock();
+    }
+
+    // Add to knowledge graph
+    {
+      co_await kg_lock_.WriteLock(ctx);
+      knowledge_graph_.Add(tag_id, summary);
+      kg_lock_.WriteUnlock();
+    }
+
+    HLOG(kDebug, "Updated knowledge graph for tag {}.{}: {}",
+         tag_id.major_, tag_id.minor_, summary);
+    task->SetReturnCode(0);
+  } catch (const std::exception &e) {
+    HLOG(kError, "UpdateKnowledgeGraph failed: {}", e.what());
+    task->SetReturnCode(2);
+  }
+  co_return;
+}
+
+chi::TaskResume Runtime::SemanticQuery(
+    hipc::FullPtr<SemanticQueryTask> task, chi::RunContext &ctx) {
+  try {
+    std::string prompt = task->prompt_.str();
+    chi::u32 top_k = task->top_k_;
+
+    // Search the knowledge graph
+    co_await kg_lock_.ReadLock(ctx);
+    auto results = knowledge_graph_.Search(prompt, static_cast<int>(top_k));
+    kg_lock_.ReadUnlock();
+
+    // Extract TagIds from search results
+    task->results_.clear();
+    task->results_.reserve(results.size());
+    for (const auto &result : results) {
+      task->results_.push_back(result.key);
+    }
+
+    HLOG(kDebug, "SemanticQuery '{}' returned {} results",
+         prompt, task->results_.size());
+    task->SetReturnCode(0);
+  } catch (const std::exception &e) {
+    HLOG(kError, "SemanticQuery failed: {}", e.what());
+    task->SetReturnCode(1);
+  }
+  co_return;
+}
+#endif  // WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+
 }  // namespace wrp_cte::core
 
 // Define ChiMod entry points using CHI_TASK_CC macro

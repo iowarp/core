@@ -60,6 +60,35 @@ else()
 endif()
 
 #------------------------------------------------------------------------------
+# Optional Summary Operator support (requires CURL + nlohmann_json)
+#------------------------------------------------------------------------------
+if(WRP_CAE_ENABLE_SUMMARY_OP)
+  find_package(CURL)
+  # nlohmann_json may already be found by root CMakeLists.txt (for Globus)
+  find_package(nlohmann_json QUIET)
+
+  if(CURL_FOUND AND nlohmann_json_FOUND)
+    message(STATUS "CAE Summary Operator: ENABLED")
+    add_compile_definitions(WRP_CAE_ENABLE_SUMMARY_OP)
+    set(SUMMARY_OP_ENABLED TRUE)
+  else()
+    message(WARNING "WRP_CAE_ENABLE_SUMMARY_OP is ON but required dependencies not found:")
+    if(NOT CURL_FOUND)
+      message(WARNING "  - libcurl not found (install libcurl4-openssl-dev)")
+    endif()
+    if(NOT nlohmann_json_FOUND)
+      message(WARNING "  - nlohmann_json not found (install nlohmann-json3-dev)")
+    endif()
+    message(WARNING "Summary Operator will be disabled. Install dependencies to enable.")
+    set(SUMMARY_OP_ENABLED FALSE)
+    set(WRP_CAE_ENABLE_SUMMARY_OP OFF)
+  endif()
+else()
+  message(STATUS "CAE Summary Operator: DISABLED")
+  set(SUMMARY_OP_ENABLED FALSE)
+endif()
+
+#------------------------------------------------------------------------------
 # Client Library
 #------------------------------------------------------------------------------
 add_chimod_client(
@@ -93,6 +122,12 @@ endif()
 if(GLOBUS_ENABLED)
   list(APPEND RUNTIME_SOURCES src/factory/globus_file_assimilator.cc)
   list(APPEND RUNTIME_LINK_LIBRARIES Poco::Net Poco::NetSSL Poco::Crypto Poco::JSON nlohmann_json::nlohmann_json)
+endif()
+
+# Conditionally add Summary operator if enabled
+if(SUMMARY_OP_ENABLED)
+  list(APPEND RUNTIME_SOURCES src/factory/summary_operator.cc)
+  list(APPEND RUNTIME_LINK_LIBRARIES CURL::libcurl nlohmann_json::nlohmann_json)
 endif()
 
 add_chimod_runtime(

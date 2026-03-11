@@ -94,6 +94,7 @@ option(WRP_CORE_ENABLE_THALLIUM "Build tests which depend on thallium" OFF)
 #------------------------------------------------------------------------------
 option(WRP_CORE_ENABLE_CEREAL "Enable serialization using cereal" ON)
 option(WRP_CTE_ENABLE_COMPRESS "Enable compression support (builds compressor chimod and tests)" OFF)
+option(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH "Enable knowledge graph support in CTE" OFF)
 option(WRP_CORE_ENABLE_ENCRYPT "Enable encryption" OFF)
 option(WRP_CORE_ENABLE_IO_URING "Enable io_uring async I/O backend (Linux 5.1+, requires liburing)" OFF)
 

@@ -549,20 +549,23 @@ struct TagInfo {
   std::atomic<size_t> total_size_;  // Total size of all blobs in this tag
   Timestamp last_modified_;         // Last modification time
   Timestamp last_read_;             // Last read time
+  std::string summary_;             // Summary text for knowledge graph
 
   TagInfo()
       : tag_name_(),
         tag_id_(TagId::GetNull()),
         total_size_(0),
         last_modified_(std::chrono::steady_clock::now()),
-        last_read_(std::chrono::steady_clock::now()) {}
+        last_read_(std::chrono::steady_clock::now()),
+        summary_() {}
 
   TagInfo(const std::string &tag_name, const TagId &tag_id)
       : tag_name_(tag_name),
         tag_id_(tag_id),
         total_size_(0),
         last_modified_(std::chrono::steady_clock::now()),
-        last_read_(std::chrono::steady_clock::now()) {}
+        last_read_(std::chrono::steady_clock::now()),
+        summary_() {}
 
   // Copy constructor
   TagInfo(const TagInfo &other)
@@ -570,7 +573,8 @@ struct TagInfo {
         tag_id_(other.tag_id_),
         total_size_(other.total_size_.load()),
         last_modified_(other.last_modified_),
-        last_read_(other.last_read_) {}
+        last_read_(other.last_read_),
+        summary_(other.summary_) {}
 
   // Copy assignment operator
   TagInfo &operator=(const TagInfo &other) {
@@ -580,6 +584,7 @@ struct TagInfo {
       total_size_.store(other.total_size_.load());
       last_modified_ = other.last_modified_;
       last_read_ = other.last_read_;
+      summary_ = other.summary_;
     }
     return *this;
   }
@@ -1956,6 +1961,121 @@ struct FlushDataTask : public chi::Task {
     Copy(other_base.template Cast<FlushDataTask>());
   }
 };
+
+#ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+/**
+ * UpdateKnowledgeGraph task - Store a summary for a tag in the knowledge graph
+ */
+struct UpdateKnowledgeGraphTask : public chi::Task {
+  IN TagId tag_id_;                    // Tag ID to associate summary with
+  IN chi::priv::string summary_;       // Summary text to store
+
+  // SHM constructor
+  UpdateKnowledgeGraphTask()
+      : chi::Task(),
+        tag_id_(TagId::GetNull()),
+        summary_(HSHM_MALLOC) {}
+
+  // Emplace constructor
+  explicit UpdateKnowledgeGraphTask(const chi::TaskId &task_id,
+                                    const chi::PoolId &pool_id,
+                                    const chi::PoolQuery &pool_query,
+                                    const TagId &tag_id,
+                                    const std::string &summary)
+      : chi::Task(task_id, pool_id, pool_query, Method::kUpdateKnowledgeGraph),
+        tag_id_(tag_id),
+        summary_(HSHM_MALLOC, summary) {
+    task_id_ = task_id;
+    pool_id_ = pool_id;
+    method_ = Method::kUpdateKnowledgeGraph;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+    ar(tag_id_, summary_);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+  }
+
+  void Copy(const hipc::FullPtr<UpdateKnowledgeGraphTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    tag_id_ = other->tag_id_;
+    summary_ = other->summary_;
+  }
+
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<UpdateKnowledgeGraphTask>());
+  }
+};
+
+/**
+ * SemanticQuery task - Search the knowledge graph for matching tags
+ */
+struct SemanticQueryTask : public chi::Task {
+  IN chi::priv::string prompt_;        // Search query text
+  IN chi::u32 top_k_;                  // Maximum number of results
+  OUT std::vector<TagId> results_;     // Matching tag IDs sorted by confidence
+
+  // SHM constructor
+  SemanticQueryTask()
+      : chi::Task(),
+        prompt_(HSHM_MALLOC),
+        top_k_(10),
+        results_() {}
+
+  // Emplace constructor
+  explicit SemanticQueryTask(const chi::TaskId &task_id,
+                             const chi::PoolId &pool_id,
+                             const chi::PoolQuery &pool_query,
+                             const std::string &prompt,
+                             chi::u32 top_k)
+      : chi::Task(task_id, pool_id, pool_query, Method::kSemanticQuery),
+        prompt_(HSHM_MALLOC, prompt),
+        top_k_(top_k),
+        results_() {
+    task_id_ = task_id;
+    pool_id_ = pool_id;
+    method_ = Method::kSemanticQuery;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+    ar(prompt_, top_k_);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(results_);
+  }
+
+  void Copy(const hipc::FullPtr<SemanticQueryTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    prompt_ = other->prompt_;
+    top_k_ = other->top_k_;
+    results_ = other->results_;
+  }
+
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+    Task::Aggregate(other_base);
+    // Merge results from replicas, re-sort, and truncate
+    auto replica = other_base.template Cast<SemanticQueryTask>();
+    results_.insert(results_.end(),
+                    replica->results_.begin(),
+                    replica->results_.end());
+  }
+};
+#endif  // WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
 
 }  // namespace wrp_cte::core
 

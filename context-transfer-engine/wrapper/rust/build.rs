@@ -6,6 +6,14 @@ fn main() {
         .include("/usr/local/include")
         .include("/home/iowarp/miniconda3/include") // yaml-cpp, cereal, etc.
         .include(".") // for "shim/shim.h"
+        // Workspace source includes (headers not installed to /usr/local)
+        .include("/workspace/context-transfer-engine/core/include")
+        .include("/workspace/context-runtime/include")
+        .include("/workspace/context-runtime/modules/bdev/include")
+        .include("/workspace/context-runtime/modules/admin/include")
+        .include("/workspace/context-transport-primitives/include")
+        .include("/workspace/build/context-transport-primitives/include")
+        .include("/workspace/build/context-transport-primitives/src/include")
         // Coroutine support
         .flag("-fcoroutines")
         // Suppress warnings from CTE/chimaera headers
@@ -39,6 +47,8 @@ fn main() {
 
     println!("cargo:rustc-link-search=native=/usr/local/lib");
     println!("cargo:rustc-link-search=native=/home/iowarp/miniconda3/lib");
+    println!("cargo:rustc-link-search=native=/workspace/build_bench/bin");
+    println!("cargo:rustc-link-search=native=/workspace/build/bin");
 
     // Direct dependency
     println!("cargo:rustc-link-lib=dylib=wrp_cte_core_client");
@@ -49,6 +59,8 @@ fn main() {
 
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/lib");
     println!("cargo:rustc-link-arg=-Wl,-rpath,/home/iowarp/miniconda3/lib");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/workspace/build_bench/bin");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/workspace/build/bin");
     println!("cargo:rerun-if-changed=shim/shim.h");
     println!("cargo:rerun-if-changed=shim/shim.cc");
 }

@@ -41,6 +41,9 @@
 #include <hermes_shm/data_structures/priv/unordered_map_ll.h>
 #include <hermes_shm/data_structures/ipc/ring_buffer.h>
 #include <hermes_shm/memory/allocator/malloc_allocator.h>
+#ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+#include <hermes_shm/data_structures/priv/knowledge_graph/knowledge_graph.h>
+#endif
 #include <wrp_cte/core/core_client.h>
 #include <wrp_cte/core/core_config.h>
 #include <wrp_cte/core/core_tasks.h>
@@ -250,6 +253,12 @@ private:
   // Write-Ahead Transaction Logs (per-worker)
   std::vector<std::unique_ptr<TransactionLog>> blob_txn_logs_;
   std::vector<std::unique_ptr<TransactionLog>> tag_txn_logs_;
+
+#ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+  // Knowledge graph for semantic search over tag summaries
+  hshm::priv::KnowledgeGraph<TagId, hshm::hash<TagId>> knowledge_graph_;
+  chi::CoRwLock kg_lock_;  // Lock for knowledge graph access
+#endif
 
   /**
    * Get access to configuration manager
@@ -491,6 +500,20 @@ private:
    * Flush data from volatile to non-volatile targets (Method::kFlushData)
    */
   chi::TaskResume FlushData(hipc::FullPtr<FlushDataTask> task, chi::RunContext &ctx);
+
+#ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+  /**
+   * Update knowledge graph - stores summary for a tag (Method::kUpdateKnowledgeGraph)
+   */
+  chi::TaskResume UpdateKnowledgeGraph(hipc::FullPtr<UpdateKnowledgeGraphTask> task,
+                                       chi::RunContext &ctx);
+
+  /**
+   * Semantic query - searches the knowledge graph (Method::kSemanticQuery)
+   */
+  chi::TaskResume SemanticQuery(hipc::FullPtr<SemanticQueryTask> task,
+                                chi::RunContext &ctx);
+#endif  // WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
 
 private:
   /**
