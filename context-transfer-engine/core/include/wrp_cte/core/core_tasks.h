@@ -47,8 +47,8 @@
 #include <yaml-cpp/yaml.h>
 #include <cereal/archives/binary.hpp>
 #include <cereal/cereal.hpp>
-#endif
 #include <chrono>
+#endif
 
 namespace wrp_cte::core {
 
@@ -60,8 +60,26 @@ static constexpr chi::PoolId kCtePoolId(512, 0);
 // CTE Core Pool Name constant
 static constexpr const char *kCtePoolName = "wrp_cte_core";
 
-// Timestamp type definition
-using Timestamp = std::chrono::time_point<std::chrono::steady_clock>;
+// Timestamp type definition - nanoseconds since epoch (0 on GPU)
+using Timestamp = chi::u64;
+
+#if HSHM_IS_GPU_COMPILER
+// GPU compiler: CROSS_FUN so __device__ bodies can call it in both passes.
+// Use __CUDA_ARCH__ (defined in device pass only) to select the right impl.
+HSHM_CROSS_FUN inline Timestamp GetCurrentTimeNs() {
+#ifdef __CUDA_ARCH__
+  return 0;  // GPU device code: return 0 (no clock available)
+#else
+  return static_cast<chi::u64>(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+#endif
+}
+#else
+inline Timestamp GetCurrentTimeNs() {
+  return static_cast<chi::u64>(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+}
+#endif
 
 /**
  * CreateParams for CTE Core chimod
@@ -546,40 +564,47 @@ namespace wrp_cte::core {
  * Tag information structure for blob grouping
  */
 struct TagInfo {
-  std::string tag_name_;
+  chi::priv::string tag_name_;
   TagId tag_id_;
-  std::atomic<size_t> total_size_;  // Total size of all blobs in this tag
-  Timestamp last_modified_;         // Last modification time
-  Timestamp last_read_;             // Last read time
+  chi::u64 total_size_;  // Total size of all blobs in this tag (non-atomic for GPU)
+  Timestamp last_modified_;
+  Timestamp last_read_;
 
-  TagInfo()
-      : tag_name_(),
+  HSHM_CROSS_FUN TagInfo()
+      : tag_name_(CHI_PRIV_ALLOC),
         tag_id_(TagId::GetNull()),
         total_size_(0),
-        last_modified_(std::chrono::steady_clock::now()),
-        last_read_(std::chrono::steady_clock::now()) {}
+        last_modified_(0),
+        last_read_(0) {}
 
-  TagInfo(const std::string &tag_name, const TagId &tag_id)
+  HSHM_CROSS_FUN TagInfo(const chi::priv::string &tag_name, const TagId &tag_id)
       : tag_name_(tag_name),
         tag_id_(tag_id),
         total_size_(0),
-        last_modified_(std::chrono::steady_clock::now()),
-        last_read_(std::chrono::steady_clock::now()) {}
+        last_modified_(0),
+        last_read_(0) {}
 
-  // Copy constructor
-  TagInfo(const TagInfo &other)
+#if HSHM_IS_HOST
+  TagInfo(const std::string &tag_name, const TagId &tag_id)
+      : tag_name_(CHI_PRIV_ALLOC, tag_name),
+        tag_id_(tag_id),
+        total_size_(0),
+        last_modified_(GetCurrentTimeNs()),
+        last_read_(GetCurrentTimeNs()) {}
+#endif
+
+  HSHM_CROSS_FUN TagInfo(const TagInfo &other)
       : tag_name_(other.tag_name_),
         tag_id_(other.tag_id_),
-        total_size_(other.total_size_.load()),
+        total_size_(other.total_size_),
         last_modified_(other.last_modified_),
         last_read_(other.last_read_) {}
 
-  // Copy assignment operator
-  TagInfo &operator=(const TagInfo &other) {
+  HSHM_CROSS_FUN TagInfo &operator=(const TagInfo &other) {
     if (this != &other) {
       tag_name_ = other.tag_name_;
       tag_id_ = other.tag_id_;
-      total_size_.store(other.total_size_.load());
+      total_size_ = other.total_size_;
       last_modified_ = other.last_modified_;
       last_read_ = other.last_read_;
     }
@@ -611,42 +636,72 @@ struct BlobBlock {
  * Blob information structure with block-based management
  */
 struct BlobInfo {
-  std::string blob_name_;
-  std::vector<BlobBlock>
-      blocks_;   // Vector of blocks that make up this blob (ordered)
+  chi::priv::string blob_name_;
+  chi::priv::vector<BlobBlock> blocks_;
   float score_;  // 0-1 score for reorganization
-  Timestamp last_modified_;  // Last modification time
-  Timestamp last_read_;      // Last read time
-  int compress_lib_;     // Compression library ID used for this blob (0 = no
-                         // compression)
+  Timestamp last_modified_;
+  Timestamp last_read_;
+  int compress_lib_;     // Compression library ID used for this blob (0 = no compression)
   int compress_preset_;  // Compression preset used (1=FAST, 2=BALANCED, 3=BEST)
-  chi::u64
-      trace_key_;  // Unique trace ID for linking to trace logs (0 = not traced)
+  chi::u64 trace_key_;   // Unique trace ID for linking to trace logs (0 = not traced)
 
-  BlobInfo()
-      : blob_name_(),
-        blocks_(),
+  HSHM_CROSS_FUN BlobInfo()
+      : blob_name_(CHI_PRIV_ALLOC),
+        blocks_(CHI_PRIV_ALLOC),
         score_(0.0f),
-        last_modified_(std::chrono::steady_clock::now()),
-        last_read_(std::chrono::steady_clock::now()),
+        last_modified_(0),
+        last_read_(0),
         compress_lib_(0),
         compress_preset_(2),
         trace_key_(0) {}
 
-  BlobInfo(const std::string &blob_name, float score)
+  HSHM_CROSS_FUN BlobInfo(const chi::priv::string &blob_name, float score)
       : blob_name_(blob_name),
-        blocks_(),
+        blocks_(CHI_PRIV_ALLOC),
         score_(score),
-        last_modified_(std::chrono::steady_clock::now()),
-        last_read_(std::chrono::steady_clock::now()),
+        last_modified_(0),
+        last_read_(0),
         compress_lib_(0),
         compress_preset_(2),
         trace_key_(0) {}
 
-  /**
-   * Get total size of blob by summing all block sizes
-   */
-  chi::u64 GetTotalSize() const {
+#if HSHM_IS_HOST
+  BlobInfo(const std::string &blob_name, float score)
+      : blob_name_(CHI_PRIV_ALLOC, blob_name),
+        blocks_(CHI_PRIV_ALLOC),
+        score_(score),
+        last_modified_(GetCurrentTimeNs()),
+        last_read_(GetCurrentTimeNs()),
+        compress_lib_(0),
+        compress_preset_(2),
+        trace_key_(0) {}
+#endif
+
+  HSHM_CROSS_FUN BlobInfo(const BlobInfo &other)
+      : blob_name_(other.blob_name_),
+        blocks_(other.blocks_),
+        score_(other.score_),
+        last_modified_(other.last_modified_),
+        last_read_(other.last_read_),
+        compress_lib_(other.compress_lib_),
+        compress_preset_(other.compress_preset_),
+        trace_key_(other.trace_key_) {}
+
+  HSHM_CROSS_FUN BlobInfo &operator=(const BlobInfo &other) {
+    if (this != &other) {
+      blob_name_ = other.blob_name_;
+      blocks_ = other.blocks_;
+      score_ = other.score_;
+      last_modified_ = other.last_modified_;
+      last_read_ = other.last_read_;
+      compress_lib_ = other.compress_lib_;
+      compress_preset_ = other.compress_preset_;
+      trace_key_ = other.trace_key_;
+    }
+    return *this;
+  }
+
+  HSHM_CROSS_FUN chi::u64 GetTotalSize() const {
     chi::u64 total = 0;
     for (size_t i = 0; i < blocks_.size(); ++i) {
       total += blocks_[i].size_;
@@ -685,7 +740,7 @@ struct Context {
   double actual_compress_time_ms_;   // Actual compression time in milliseconds
   double actual_psnr_db_;  // Actual PSNR for lossy compression (0 if lossless)
 
-  Context()
+  HSHM_CROSS_FUN Context()
       : dynamic_compress_(0),
         compress_lib_(0),
         compress_preset_(2),
@@ -705,9 +760,8 @@ struct Context {
         actual_compress_time_ms_(0.0),
         actual_psnr_db_(0.0) {}
 
-  // Serialization support for cereal
   template <class Archive>
-  void serialize(Archive &ar) {
+  HSHM_CROSS_FUN void serialize(Archive &ar) {
     ar(dynamic_compress_, compress_lib_, compress_preset_, target_psnr_,
        psnr_chance_, max_performance_, consumer_node_, data_type_, trace_,
        trace_key_, trace_node_, min_persistence_level_, persistence_target_,
@@ -745,10 +799,11 @@ struct CteTelemetry {
         off_(0),
         size_(0),
         tag_id_(TagId::GetNull()),
-        mod_time_(std::chrono::steady_clock::now()),
-        read_time_(std::chrono::steady_clock::now()),
+        mod_time_(0),
+        read_time_(0),
         logical_time_(0) {}
 
+#if HSHM_IS_HOST
   CteTelemetry(CteOp op, size_t off, size_t size, const TagId &tag_id,
                const Timestamp &mod_time, const Timestamp &read_time,
                std::uint64_t logical_time = 0)
@@ -763,16 +818,9 @@ struct CteTelemetry {
   // Serialization support for cereal
   template <class Archive>
   void serialize(Archive &ar) {
-    // Convert timestamps to duration counts for serialization
-    auto mod_count = mod_time_.time_since_epoch().count();
-    auto read_count = read_time_.time_since_epoch().count();
-    ar(op_, off_, size_, tag_id_, mod_count, read_count, logical_time_);
-    // Note: On deserialization, timestamps will be reconstructed from counts
-    if (Archive::is_loading::value) {
-      mod_time_ = Timestamp(Timestamp::duration(mod_count));
-      read_time_ = Timestamp(Timestamp::duration(read_count));
-    }
+    ar(op_, off_, size_, tag_id_, mod_time_, read_time_, logical_time_);
   }
+#endif
 };
 
 /**
@@ -785,7 +833,7 @@ struct GetOrCreateTagTask : public chi::Task {
   INOUT TagId tag_id_;  // Tag unique ID (default null, output on creation)
 
   // SHM constructor
-  GetOrCreateTagTask()
+  HSHM_CROSS_FUN GetOrCreateTagTask()
       : chi::Task(), tag_name_(CHI_PRIV_ALLOC), tag_id_(TagId::GetNull()) {}
 
   // Emplace constructor
@@ -859,7 +907,7 @@ struct PutBlobTask : public chi::Task {
   // SHM constructor
   // Default score -1.0f means "unknown" - runtime will use 1.0 for new blobs
   // or preserve existing score for modifications
-  PutBlobTask()
+  HSHM_CROSS_FUN PutBlobTask()
       : chi::Task(),
         tag_id_(TagId::GetNull()),
         blob_name_(CHI_PRIV_ALLOC),
@@ -890,7 +938,28 @@ struct PutBlobTask : public chi::Task {
     method_ = Method::kPutBlob;
     task_flags_.Clear();
     pool_query_ = pool_query;
-    // stat_.io_size_ = size;
+  }
+
+  // GPU-compatible emplace constructor (const char* instead of std::string)
+  HSHM_CROSS_FUN explicit PutBlobTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
+                       const chi::PoolQuery &pool_query, const TagId &tag_id,
+                       const char *blob_name, chi::u64 offset,
+                       chi::u64 size, hipc::ShmPtr<> blob_data, float score,
+                       const Context &context, chi::u32 flags)
+      : chi::Task(task_id, pool_id, pool_query, Method::kPutBlob),
+        tag_id_(tag_id),
+        blob_name_(CHI_PRIV_ALLOC, blob_name),
+        offset_(offset),
+        size_(size),
+        blob_data_(blob_data),
+        score_(score),
+        context_(context),
+        flags_(flags) {
+    task_id_ = task_id;
+    pool_id_ = pool_id;
+    method_ = Method::kPutBlob;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
   }
 
   /**
@@ -953,7 +1022,7 @@ struct GetBlobTask : public chi::Task {
       blob_data_;  // Input buffer for blob data (shared memory pointer)
 
   // SHM constructor
-  GetBlobTask()
+  HSHM_CROSS_FUN GetBlobTask()
       : chi::Task(),
         tag_id_(TagId::GetNull()),
         blob_name_(CHI_PRIV_ALLOC),
@@ -979,7 +1048,25 @@ struct GetBlobTask : public chi::Task {
     method_ = Method::kGetBlob;
     task_flags_.Clear();
     pool_query_ = pool_query;
-    // stat_.io_size_ = size;
+  }
+
+  // GPU-compatible emplace constructor (const char* instead of std::string)
+  HSHM_CROSS_FUN explicit GetBlobTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
+                       const chi::PoolQuery &pool_query, const TagId &tag_id,
+                       const char *blob_name, chi::u64 offset,
+                       chi::u64 size, chi::u32 flags, hipc::ShmPtr<> blob_data)
+      : chi::Task(task_id, pool_id, pool_query, Method::kGetBlob),
+        tag_id_(tag_id),
+        blob_name_(CHI_PRIV_ALLOC, blob_name),
+        offset_(offset),
+        size_(size),
+        flags_(flags),
+        blob_data_(blob_data) {
+    task_id_ = task_id;
+    pool_id_ = pool_id;
+    method_ = Method::kGetBlob;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
   }
 
   /**

@@ -7,6 +7,7 @@
 #include "chimaera/MOD_NAME/MOD_NAME_gpu_runtime.h"
 #include "chimaera/admin/admin_gpu_runtime.h"
 #include "chimaera/bdev/bdev_gpu_runtime.h"
+#include "wrp_cte/core/core_gpu_runtime.h"
 
 #include "chimaera/gpu_container.h"
 #include "chimaera/types.h"
@@ -26,6 +27,7 @@ __global__ void _gpu_alloc_container(Container **out, u32 module_id,
     case 0: obj = new chimaera::MOD_NAME::GpuRuntime(); break;
     case 1: obj = new chimaera::admin::GpuRuntime(); break;
     case 2: obj = new chimaera::bdev::GpuRuntime(); break;
+    case 3: obj = new wrp_cte::core::GpuRuntime(); break;
     default: break;
   }
   if (obj) obj->Init(*pid, cid);
@@ -39,6 +41,7 @@ inline u32 GetGpuModuleId(const char *chimod_name) {
   if (strcmp(chimod_name, "chimaera_MOD_NAME") == 0) return 0;
   if (strcmp(chimod_name, "chimaera_admin") == 0) return 1;
   if (strcmp(chimod_name, "chimaera_bdev") == 0) return 2;
+  if (strcmp(chimod_name, "wrp_cte_core") == 0) return 3;
   return 0xFFFFFFFF;
 }
 

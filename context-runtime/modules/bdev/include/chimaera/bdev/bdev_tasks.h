@@ -593,14 +593,14 @@ struct GetStatsTask : public chi::Task {
 
   /** Serialize IN and INOUT parameters */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     // No additional input parameters
   }
 
   /** Serialize OUT and INOUT parameters */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(metrics_, remaining_size_);
   }

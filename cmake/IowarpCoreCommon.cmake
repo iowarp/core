@@ -285,6 +285,7 @@ function(add_cuda_library TARGET SHARED DO_COPY)
                     ${GPU_ARCH_FLAGS}
                     -Wno-unknown-cuda-version
                     -fPIC
+                    -fgpu-rdc
                     ${CLANG_CUDA_DEFS}
                     ${INCLUDE_FLAGS}
                     -c ${SRC_ABS}
@@ -301,11 +302,48 @@ function(add_cuda_library TARGET SHARED DO_COPY)
             list(APPEND OBJECT_FILES ${OBJ_FILE})
         endforeach()
 
+        # Device link step: nvcc -dlink resolves __cudaRegisterLinkedBinary__nv_*
+        # symbols that clang-cuda -fgpu-rdc compilation leaves undefined.
+        set(DEVICE_LINK_OBJ "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda/device_link.o")
+        set(NVCC_ARCH_FLAGS "")
+        if(CMAKE_CUDA_ARCHITECTURES)
+            foreach(ARCH IN LISTS CMAKE_CUDA_ARCHITECTURES)
+                if(NOT "${ARCH}" STREQUAL "native")
+                    string(REGEX REPLACE "-real|-virtual" "" ARCH_NUM "${ARCH}")
+                    list(APPEND NVCC_ARCH_FLAGS
+                        "--generate-code=arch=compute_${ARCH_NUM},code=[compute_${ARCH_NUM},sm_${ARCH_NUM}]")
+                endif()
+            endforeach()
+        endif()
+        if(NOT NVCC_ARCH_FLAGS)
+            list(APPEND NVCC_ARCH_FLAGS "--generate-code=arch=compute_80,code=[compute_80,sm_80]")
+        endif()
+        add_custom_command(
+            OUTPUT ${DEVICE_LINK_OBJ}
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda"
+            COMMAND ${CMAKE_CUDA_COMPILER}
+                -dlink
+                -shared
+                ${NVCC_ARCH_FLAGS}
+                -Xcompiler=-fPIC
+                ${OBJECT_FILES}
+                -o ${DEVICE_LINK_OBJ}
+                -L${WRP_CORE_CLANG_CUDA_PATH}/lib64
+                -lcudadevrt
+                -lcudart
+            DEPENDS ${OBJECT_FILES}
+            COMMENT "NVCC: Device link for ${TARGET}"
+            VERBATIM
+        )
+        list(APPEND OBJECT_FILES ${DEVICE_LINK_OBJ})
+
         add_library(${TARGET} ${SHARED} ${OBJECT_FILES})
         set_target_properties(${TARGET} PROPERTIES
-            LINKER_LANGUAGE CUDA
+            LINKER_LANGUAGE CXX
             POSITION_INDEPENDENT_CODE ON
         )
+        set_property(TARGET ${TARGET} APPEND PROPERTY
+            LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart")
     else()
         # ---- NVCC path ----
         set(CUDA_SOURCE_FILES "")
@@ -354,7 +392,7 @@ endfunction()
 #       [INCLUDE_DIRS dir1 dir2 ...]
 #       [LINK_LIBS lib1 lib2 ...])
 function(add_cuda_executable TARGET DO_COPY)
-    cmake_parse_arguments(CUDA "" "" "INCLUDE_DIRS;LINK_LIBS" ${ARGN})
+    cmake_parse_arguments(CUDA "" "" "INCLUDE_DIRS;LINK_LIBS;DEFS" ${ARGN})
     set(SRC_FILES ${CUDA_UNPARSED_ARGUMENTS})
 
     if(WRP_CORE_CLANG_CUDA_COMPILER)
@@ -365,6 +403,52 @@ function(add_cuda_executable TARGET DO_COPY)
         foreach(DIR IN LISTS CUDA_INCLUDE_DIRS)
             list(APPEND INCLUDE_FLAGS "-I${DIR}")
         endforeach()
+
+        # Collect extra per-target definitions passed via DEFS argument
+        set(EXTRA_DEFS "")
+        foreach(DEF IN LISTS CUDA_DEFS)
+            list(APPEND EXTRA_DEFS "-D${DEF}")
+        endforeach()
+
+        # Collect compile definitions (same as add_cuda_library)
+        set(CLANG_CUDA_DEFS "")
+        if(WRP_CORE_ENABLE_CUDA)
+            list(APPEND CLANG_CUDA_DEFS "-DHSHM_ENABLE_CUDA=1" "-DHSHM_ENABLE_ROCM=0")
+        elseif(WRP_CORE_ENABLE_ROCM)
+            list(APPEND CLANG_CUDA_DEFS "-DHSHM_ENABLE_CUDA=0" "-DHSHM_ENABLE_ROCM=1")
+        endif()
+        if(HSHM_ENABLE_PTHREADS)
+            list(APPEND CLANG_CUDA_DEFS
+                "-DHSHM_DEFAULT_THREAD_MODEL=hshm::thread::Pthread"
+                "-DHSHM_ENABLE_PTHREADS=1")
+        else()
+            list(APPEND CLANG_CUDA_DEFS
+                "-DHSHM_DEFAULT_THREAD_MODEL=hshm::thread::StdThread"
+                "-DHSHM_ENABLE_PTHREADS=0")
+        endif()
+        if(WRP_CORE_ENABLE_CUDA)
+            list(APPEND CLANG_CUDA_DEFS
+                "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::Cuda")
+        elseif(WRP_CORE_ENABLE_ROCM)
+            list(APPEND CLANG_CUDA_DEFS
+                "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::Rocm")
+        else()
+            list(APPEND CLANG_CUDA_DEFS
+                "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::StdThread")
+        endif()
+        list(APPEND CLANG_CUDA_DEFS
+            "-DHSHM_DEFAULT_ALLOC_T=hipc::ThreadLocalAllocator"
+            "-DHSHM_ENABLE_WINDOWS_THREADS=0"
+            "-DHSHM_ENABLE_PROCFS_SYSINFO=1"
+            "-DHSHM_ENABLE_WINDOWS_SYSINFO=0"
+            "-DHSHM_COMPILER_MSVC=0"
+            "-DHSHM_COMPILER_GNU=0"
+            "-DHSHM_ENABLE_DOXYGEN=0"
+            "-DHSHM_DEBUG_LOCK=0"
+            "-DHSHM_LOG_LEVEL=${HSHM_LOG_LEVEL}"
+            "-DHSHM_ENABLE_DLL_EXPORT=0"
+            "-DHSHM_ENABLE_MPI=0"
+        )
 
         set(OBJECT_FILES "")
         foreach(SRC IN LISTS SRC_FILES)
@@ -381,6 +465,8 @@ function(add_cuda_executable TARGET DO_COPY)
                     --cuda-path=${WRP_CORE_CLANG_CUDA_PATH}
                     ${GPU_ARCH_FLAGS}
                     -Wno-unknown-cuda-version
+                    ${CLANG_CUDA_DEFS}
+                    ${EXTRA_DEFS}
                     ${INCLUDE_FLAGS}
                     -c ${SRC_ABS}
                     -o ${OBJ_FILE}
@@ -400,7 +486,8 @@ function(add_cuda_executable TARGET DO_COPY)
         set_target_properties(${TARGET} PROPERTIES
             LINKER_LANGUAGE CXX
         )
-        target_link_libraries(${TARGET} -L${WRP_CORE_CLANG_CUDA_PATH}/lib64 -lcudart)
+        set_property(TARGET ${TARGET} APPEND PROPERTY
+            LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart")
     else()
         # ---- NVCC path ----
         set(CUDA_SOURCE_FILES "")

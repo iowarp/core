@@ -120,7 +120,7 @@ struct CustomTask : public chi::Task {
    * This includes: data_, operation_id_
    */
   template<typename Archive>
-  void SerializeIn(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(data_, operation_id_);
   }
@@ -130,7 +130,7 @@ struct CustomTask : public chi::Task {
    * This includes: data_
    */
   template<typename Archive>
-  void SerializeOut(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(data_);
   }
@@ -190,13 +190,13 @@ struct CoMutexTestTask : public chi::Task {
   }
 
   template<typename Archive>
-  void SerializeIn(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(test_id_, hold_duration_ms_);
   }
 
   template<typename Archive>
-  void SerializeOut(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     // No output parameters for this task
   }
@@ -254,13 +254,13 @@ struct CoRwLockTestTask : public chi::Task {
   }
 
   template<typename Archive>
-  void SerializeIn(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(test_id_, is_writer_, hold_duration_ms_);
   }
 
   template<typename Archive>
-  void SerializeOut(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     // No output parameters for this task
   }
@@ -319,13 +319,13 @@ struct WaitTestTask : public chi::Task {
   }
 
   template<typename Archive>
-  void SerializeIn(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(depth_, test_id_, current_depth_);
   }
 
   template<typename Archive>
-  void SerializeOut(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(current_depth_);  // Return the final depth reached
   }
@@ -380,13 +380,13 @@ struct TestLargeOutputTask : public chi::Task {
   }
 
   template<typename Archive>
-  void SerializeIn(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     // No input parameters for this task
   }
 
   template<typename Archive>
-  void SerializeOut(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(data_);  // Return the 1MB output data
   }

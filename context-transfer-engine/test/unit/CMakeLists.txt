@@ -59,6 +59,20 @@ add_executable(test_reorganize_blob
 )
 
 # Create test_gpu_core executable for GPU client API tests (AsyncPutBlob/AsyncGetBlob)
+# GPU-initiated kernel compiled via add_cuda_library (clang-cuda dual-pass)
+if(WRP_CORE_ENABLE_CUDA)
+  add_cuda_library(test_gpu_initiated_kernels STATIC TRUE
+      test_gpu_initiated_gpu.cc
+      INCLUDE_DIRS
+          ${CMAKE_SOURCE_DIR}/context-transfer-engine/core/include
+          ${CMAKE_SOURCE_DIR}/context-runtime/include
+          ${CMAKE_SOURCE_DIR}/context-runtime/modules/admin/include
+          ${CMAKE_SOURCE_DIR}/context-runtime/modules/bdev/include
+          ${CMAKE_SOURCE_DIR}/context-transport-primitives/include
+  )
+  target_link_libraries(test_gpu_initiated_kernels PUBLIC hshm::cuda_cxx)
+endif()
+
 add_executable(test_gpu_core
     test_gpu_core.cc
 )
@@ -255,8 +269,14 @@ target_link_libraries(test_gpu_core
     chimaera::bdev_runtime       # Bdev module runtime (required for runtime mode)
     chimaera::bdev_client        # Bdev client for BdevType enum
     hshm::cxx                    # HermesShm library
+    $<$<BOOL:${HSHM_ENABLE_CUDA}>:hermes_shm_cuda>  # CUDA support for cudaMallocHost
+    $<$<BOOL:${WRP_CORE_ENABLE_CUDA}>:test_gpu_initiated_kernels>  # GPU-initiated test kernels
     ${CMAKE_THREAD_LIBS_INIT}    # Threading support
 )
+if(WRP_CORE_ENABLE_CUDA AND CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES)
+  set_property(TARGET test_gpu_core APPEND PROPERTY
+    LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart")
+endif()
 
 # Link test_gpu_create - using simple_test.h framework (NOT Catch2)
 target_link_libraries(test_gpu_create

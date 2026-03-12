@@ -725,7 +725,7 @@ chi::TaskResume Runtime::GetOrCreateTag(
     task->tag_id_ = tag_id;
 
     // Update timestamp and log telemetry
-    auto now = std::chrono::steady_clock::now();
+    auto now = GetCurrentTimeNs();
     {
       chi::ScopedCoRwWriteLock write_lock(tag_map_lock_);
       TagInfo *tag_info_ptr = tag_id_to_info_.find(tag_id);
@@ -898,7 +898,7 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
     chi::u64 new_blob_size = blob_info_ptr->GetTotalSize();
     chi::i64 size_change = static_cast<chi::i64>(new_blob_size) -
                            static_cast<chi::i64>(old_blob_size);
-    auto now = std::chrono::steady_clock::now();
+    auto now = GetCurrentTimeNs();
     blob_info_ptr->last_modified_ = now;
     blob_info_ptr->score_ = blob_score;
     {
@@ -907,13 +907,13 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
       if (tag_info_ptr) {
         tag_info_ptr->last_modified_ = now;
         if (size_change >= 0) {
-          tag_info_ptr->total_size_.fetch_add(static_cast<size_t>(size_change));
+          tag_info_ptr->total_size_ += static_cast<chi::u64>(size_change);
         } else {
           // HLOG(kError, "Size should not decrease");
           // task->return_code_ = 1;
           // co_return;
           chi::u64 abs_change = static_cast<chi::u64>(-size_change);
-          tag_info_ptr->total_size_.fetch_sub(abs_change);
+          tag_info_ptr->total_size_ -= abs_change;
         }
       }
     }
@@ -976,7 +976,7 @@ chi::TaskResume Runtime::GetBlob(hipc::FullPtr<GetBlobTask> task,
 
     // Step 3: Update timestamp (no lock needed - just updating values, not
     // modifying map structure)
-    auto now = std::chrono::steady_clock::now();
+    auto now = GetCurrentTimeNs();
     size_t num_blocks = 0;
     blob_info_ptr->last_read_ = now;
     num_blocks = blob_info_ptr->blocks_.size();
@@ -1164,7 +1164,7 @@ chi::TaskResume Runtime::DelBlob(hipc::FullPtr<DelBlobTask> task,
     }
 
     // Step 6: Log telemetry for DelBlob operation
-    auto now = std::chrono::steady_clock::now();
+    auto now = GetCurrentTimeNs();
     LogTelemetry(CteOp::kDelBlob, 0, blob_size, tag_id, now, now);
 
     // WAL: log blob deletion
@@ -1218,7 +1218,7 @@ chi::TaskResume Runtime::DelTag(hipc::FullPtr<DelTagTask> task,
         task->return_code_ = 1;  // Tag not found by ID
         co_return;
       }
-      cached_tag_name = tag_info_ptr->tag_name_;
+      cached_tag_name = tag_info_ptr->tag_name_.str();
     }
 
     // Step 3: Collect blob names under read lock, then delete
@@ -1231,7 +1231,7 @@ chi::TaskResume Runtime::DelTag(hipc::FullPtr<DelTagTask> task,
           [&tag_prefix, &blob_names_to_delete](const std::string &compound_key,
                                                const BlobInfo &blob_info) {
             if (compound_key.compare(0, tag_prefix.length(), tag_prefix) == 0) {
-              blob_names_to_delete.push_back(blob_info.blob_name_);
+              blob_names_to_delete.push_back(blob_info.blob_name_.str());
             }
           });
     }
@@ -1297,13 +1297,13 @@ chi::TaskResume Runtime::DelTag(hipc::FullPtr<DelTagTask> task,
       if (tag_info_ptr != nullptr) {
         total_size = tag_info_ptr->total_size_;
         if (!tag_info_ptr->tag_name_.empty()) {
-          tag_name_to_id_.erase(tag_info_ptr->tag_name_);
+          tag_name_to_id_.erase(tag_info_ptr->tag_name_.str());
         }
       }
     }
 
     // Log telemetry for DelTag operation
-    auto now = std::chrono::steady_clock::now();
+    auto now = GetCurrentTimeNs();
     LogTelemetry(CteOp::kDelTag, 0, total_size, tag_id, now, now);
 
     // WAL: log tag deletion
@@ -1348,7 +1348,7 @@ chi::TaskResume Runtime::GetTagSize(hipc::FullPtr<GetTagSizeTask> task,
     }
 
     // Update timestamp and return the total size
-    auto now = std::chrono::steady_clock::now();
+    auto now = GetCurrentTimeNs();
     tag_info_ptr->last_read_ = now;
 
     task->tag_size_ = tag_info_ptr->total_size_;
@@ -1484,7 +1484,7 @@ chi::TaskResume Runtime::FlushMetadata(hipc::FullPtr<FlushMetadataTask> task,
     tag_id_to_info_.for_each([&](const TagId &id, const TagInfo &info) {
       uint8_t entry_type = 0;
       uint32_t name_len = static_cast<uint32_t>(info.tag_name_.size());
-      chi::u64 total_size = info.total_size_.load();
+      chi::u64 total_size = info.total_size_;
       ofs.write(reinterpret_cast<const char *>(&entry_type),
                 sizeof(entry_type));
       ofs.write(reinterpret_cast<const char *>(&name_len), sizeof(name_len));
@@ -1643,7 +1643,7 @@ chi::TaskResume Runtime::FlushData(hipc::FullPtr<FlushDataTask> task,
       if (has_volatile_blocks) {
         FlushEntry entry;
         entry.composite_key = key;
-        entry.blob_name = blob_info.blob_name_;
+        entry.blob_name = blob_info.blob_name_.str();
         entry.total_size = blob_info.GetTotalSize();
         entry.score = blob_info.score_;
 
@@ -1695,7 +1695,7 @@ chi::TaskResume Runtime::FlushData(hipc::FullPtr<FlushDataTask> task,
     }
 
     // Step 2: Free only volatile blocks
-    std::vector<BlobBlock> nonvolatile_blocks;
+    chi::priv::vector<BlobBlock> nonvolatile_blocks(CHI_PRIV_ALLOC);
     std::unordered_map<
         chi::PoolId,
         std::pair<chi::PoolQuery, std::vector<chimaera::bdev::Block>>>
@@ -1824,7 +1824,7 @@ void Runtime::RestoreMetadataFromLog() {
       // Populate maps
       tag_name_to_id_.insert_or_assign(tag_name, tag_id);
       TagInfo tag_info(tag_name, tag_id);
-      tag_info.total_size_.store(total_size);
+      tag_info.total_size_ = total_size;
       tag_id_to_info_.insert_or_assign(tag_id, tag_info);
 
       if (tag_id.minor_ >= max_minor) {
@@ -2069,7 +2069,7 @@ void Runtime::ReplayTransactionLogs() {
             total += blob_info.GetTotalSize();
           }
         });
-    tag_info.total_size_.store(total);
+    tag_info.total_size_ = total;
   });
 
   // Phase 4: Update next_tag_id_minor_
@@ -2294,7 +2294,7 @@ chi::TaskResume Runtime::ExtendBlob(BlobInfo &blob_info, chi::u64 offset,
     BlobBlock new_block(target_info_copy.bdev_client_,
                         target_info_copy.target_query_, allocated_offset,
                         allocate_size);
-    blob_info.blocks_.emplace_back(new_block);
+    blob_info.blocks_.push_back(new_block);
 
     remaining_to_allocate -= allocate_size;
   }
@@ -2311,7 +2311,7 @@ chi::TaskResume Runtime::ExtendBlob(BlobInfo &blob_info, chi::u64 offset,
 }
 
 chi::TaskResume Runtime::ModifyExistingData(
-    const std::vector<BlobBlock> &blocks, hipc::ShmPtr<> data, size_t data_size,
+    const chi::priv::vector<BlobBlock> &blocks, hipc::ShmPtr<> data, size_t data_size,
     size_t data_offset_in_blob, chi::u32 &error_code) {
   HLOG(kDebug,
        "ModifyExistingData: blocks={}, data_size={}, data_offset_in_blob={}",
@@ -2424,7 +2424,7 @@ chi::TaskResume Runtime::ModifyExistingData(
   co_return;
 }
 
-chi::TaskResume Runtime::ReadData(const std::vector<BlobBlock> &blocks,
+chi::TaskResume Runtime::ReadData(const chi::priv::vector<BlobBlock> &blocks,
                                   hipc::ShmPtr<> data, size_t data_size,
                                   size_t data_offset_in_blob,
                                   chi::u32 &error_code) {
@@ -2799,7 +2799,7 @@ chi::TaskResume Runtime::GetBlobScore(hipc::FullPtr<GetBlobScoreTask> task,
     task->score_ = blob_info_ptr->score_;
 
     // Step 3: Update timestamps and log telemetry
-    auto now = std::chrono::steady_clock::now();
+    auto now = GetCurrentTimeNs();
     blob_info_ptr->last_read_ = now;
 
     // No specific telemetry enum for GetBlobScore, using GetBlob as closest
@@ -2842,7 +2842,7 @@ chi::TaskResume Runtime::GetBlobSize(hipc::FullPtr<GetBlobSizeTask> task,
     task->size_ = blob_info_ptr->GetTotalSize();
 
     // Step 3: Update timestamps and log telemetry
-    auto now = std::chrono::steady_clock::now();
+    auto now = GetCurrentTimeNs();
     blob_info_ptr->last_read_ = now;
 
     // No specific telemetry enum for GetBlobSize, using GetBlob as closest
@@ -2897,7 +2897,7 @@ chi::TaskResume Runtime::GetBlobInfo(hipc::FullPtr<GetBlobInfoTask> task,
     // }
 
     // Step 4: Update timestamps
-    auto now = std::chrono::steady_clock::now();
+    auto now = GetCurrentTimeNs();
     blob_info_ptr->last_read_ = now;
 
     // Success
@@ -2950,8 +2950,8 @@ chi::TaskResume Runtime::GetContainedBlobs(
 
     // Log telemetry for this operation
     LogTelemetry(CteOp::kGetOrCreateTag, task->blob_names_.size(), 0, tag_id,
-                 std::chrono::steady_clock::now(),
-                 std::chrono::steady_clock::now());
+                 GetCurrentTimeNs(),
+                 GetCurrentTimeNs());
 
     HLOG(kDebug, "GetContainedBlobs successful: tag_id={},{}, found {} blobs",
          tag_id.major_, tag_id.minor_, task->blob_names_.size());

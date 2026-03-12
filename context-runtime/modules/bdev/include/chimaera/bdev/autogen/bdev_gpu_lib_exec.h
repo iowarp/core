@@ -7,27 +7,27 @@ HSHM_GPU_FUN chi::gpu::TaskResume Run(chi::u32 method, hipc::FullPtr<chi::Task> 
   switch (method) {
     case Method::kUpdate: {
       auto typed = task_ptr.template Cast<UpdateTask>();
-      Update(typed, rctx);
+      co_await Update(typed, rctx);
       break;
     }
     case Method::kAllocateBlocks: {
       auto typed = task_ptr.template Cast<AllocateBlocksTask>();
-      AllocateBlocks(typed, rctx);
+      co_await AllocateBlocks(typed, rctx);
       break;
     }
     case Method::kFreeBlocks: {
       auto typed = task_ptr.template Cast<FreeBlocksTask>();
-      FreeBlocks(typed, rctx);
+      co_await FreeBlocks(typed, rctx);
       break;
     }
     case Method::kWrite: {
       auto typed = task_ptr.template Cast<WriteTask>();
-      Write(typed, rctx);
+      co_await Write(typed, rctx);
       break;
     }
     case Method::kRead: {
       auto typed = task_ptr.template Cast<ReadTask>();
-      Read(typed, rctx);
+      co_await Read(typed, rctx);
       break;
     }
     default: break;

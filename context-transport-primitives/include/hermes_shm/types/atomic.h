@@ -770,14 +770,18 @@ struct std_atomic {
   HSHM_INLINE std_atomic(std_atomic &&other) : x(other.x.load()) {}
 
   /** Copy assign operator */
-  HSHM_INLINE std_atomic &operator=(const std_atomic &other) {
+  HSHM_INLINE_CROSS_FUN std_atomic &operator=(const std_atomic &other) {
+#if HSHM_IS_HOST
     x = other.x.load();
+#endif
     return *this;
   }
 
   /** Move assign operator */
-  HSHM_INLINE std_atomic &operator=(std_atomic &&other) {
+  HSHM_INLINE_CROSS_FUN std_atomic &operator=(std_atomic &&other) {
+#if HSHM_IS_HOST
     x = other.x.load();
+#endif
     return *this;
   }
 
@@ -809,15 +813,21 @@ struct std_atomic {
 
   /** Atomic store wrapper */
   template <typename U>
-  HSHM_INLINE void store(U count,
+  HSHM_INLINE_CROSS_FUN void store(U count,
                          std::memory_order order = std::memory_order_seq_cst) {
+#if HSHM_IS_HOST
     x.store(count, order);
+#endif
   }
 
   /** System-scope store (same as store for std_atomic) */
   template <typename U>
-  HSHM_INLINE void store_system(U count) {
+  HSHM_INLINE_CROSS_FUN void store_system(U count) {
+#if HSHM_IS_HOST
     x.store(count, std::memory_order_seq_cst);
+#else
+    (void)count;
+#endif
   }
 
   /** System-scope load (same as load for std_atomic) */
@@ -902,8 +912,12 @@ struct std_atomic {
 
   /** Atomic assign operator */
   template <typename U>
-  HSHM_INLINE std_atomic &operator=(U count) {
+  HSHM_INLINE_CROSS_FUN std_atomic &operator=(U count) {
+#if HSHM_IS_HOST
     x.exchange(count);
+#else
+    (void)count;
+#endif
     return *this;
   }
 
@@ -1000,22 +1014,22 @@ using opt_atomic =
     typename std::conditional<is_atomic, atomic<T>, nonatomic<T>>::type;
 
 /** Device-scope memory fence */
-HSHM_INLINE_CROSS_FUN static void threadfence() {
 #if HSHM_IS_GPU
-  __threadfence();
+HSHM_GPU_FUN static void threadfence() { __threadfence(); }
 #else
+HSHM_INLINE static void threadfence() {
   std::atomic_thread_fence(std::memory_order_release);
-#endif
 }
+#endif
 
 /** System-scope memory fence (ensures GPU writes are visible to CPU) */
-HSHM_INLINE_CROSS_FUN static void threadfence_system() {
 #if HSHM_IS_GPU
-  __threadfence_system();
+HSHM_GPU_FUN static void threadfence_system() { __threadfence_system(); }
 #else
+HSHM_INLINE static void threadfence_system() {
   std::atomic_thread_fence(std::memory_order_seq_cst);
-#endif
 }
+#endif
 
 }  // namespace hshm::ipc
 

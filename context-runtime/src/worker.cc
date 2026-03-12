@@ -885,11 +885,7 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
   } else {
     // Runtime task without parent (top-level client task) - set FUTURE_COMPLETE
     // directly so the client's Wait() can see it
-    HLOG(kInfo, "EndTask: setting FUTURE_COMPLETE for pool_id={} method={}",
-         task_ptr->pool_id_, task_ptr->method_);
     future_shm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
-    HLOG(kInfo, "EndTask: FUTURE_COMPLETE set, flags={}",
-         (u32)future_shm->flags_.Any(FutureShm::FUTURE_COMPLETE));
   }
 }
 

@@ -114,9 +114,13 @@ class LbmMeta {
   ClientInfo client_info_;  // Client routing info (not serialized, host-only)
 #endif
 
-  /** Default constructor (uses HSHM_MALLOC allocator) */
+  /** Default constructor (uses HSHM_MALLOC on host, nullptr on GPU) */
   HSHM_CROSS_FUN LbmMeta()
+#if HSHM_IS_HOST
       : send(HSHM_MALLOC), recv(HSHM_MALLOC), alloc_(HSHM_MALLOC) {}
+#else
+      : send(nullptr), recv(nullptr), alloc_(nullptr) {}
+#endif
 
   /** Constructor with custom allocator */
   HSHM_CROSS_FUN explicit LbmMeta(AllocT* alloc)

@@ -1112,7 +1112,7 @@ class vector {
 
     if (!data_.IsNull()) {
       if constexpr (kIsPod) {
-        std::memcpy(new_data.ptr_, data_.ptr_, size_ * sizeof(T));
+        memcpy(new_data.ptr_, data_.ptr_, size_ * sizeof(T));
       } else {
         for (size_type i = 0; i < size_; ++i) {
           new (&new_data.ptr_[i]) T(std::move(data_.ptr_[i]));
@@ -1144,7 +1144,7 @@ class vector {
         auto new_data = alloc_->template AllocateObjs<T>(size_);
 
         if constexpr (kIsPod) {
-          std::memcpy(new_data.ptr_, data_.ptr_, size_ * sizeof(T));
+          memcpy(new_data.ptr_, data_.ptr_, size_ * sizeof(T));
         } else {
           for (size_type i = 0; i < size_; ++i) {
             new (&new_data.ptr_[i]) T(std::move(data_.ptr_[i]));
@@ -1223,7 +1223,7 @@ class vector {
     }
 
     if constexpr (kIsPod) {
-      std::memmove(&data_.ptr_[idx + 1], &data_.ptr_[idx], (size_ - idx) * sizeof(T));
+      memmove(&data_.ptr_[idx + 1], &data_.ptr_[idx], (size_ - idx) * sizeof(T));
       data_.ptr_[idx] = val;
     } else {
       for (size_type i = size_; i > idx; --i) {
@@ -1253,7 +1253,7 @@ class vector {
     }
 
     if constexpr (kIsPod) {
-      std::memmove(&data_.ptr_[idx + 1], &data_.ptr_[idx], (size_ - idx) * sizeof(T));
+      memmove(&data_.ptr_[idx + 1], &data_.ptr_[idx], (size_ - idx) * sizeof(T));
       data_.ptr_[idx] = std::move(val);
     } else {
       for (size_type i = size_; i > idx; --i) {
@@ -1287,8 +1287,8 @@ class vector {
     }
 
     if constexpr (kIsPod) {
-      std::memmove(&data_.ptr_[idx + count], &data_.ptr_[idx], (size_ - idx) * sizeof(T));
-      std::memcpy(&data_.ptr_[idx], first.get(), count * sizeof(T));
+      memmove(&data_.ptr_[idx + count], &data_.ptr_[idx], (size_ - idx) * sizeof(T));
+      memcpy(&data_.ptr_[idx], first.get(), count * sizeof(T));
     } else {
       for (size_type i = size_ + count - 1; i >= idx + count; --i) {
         new (&data_.ptr_[i]) T(std::move(data_.ptr_[i - count]));
@@ -1316,7 +1316,7 @@ class vector {
     size_type idx = pos.get() - data_.ptr_;
 
     if constexpr (kIsPod) {
-      std::memmove(&data_.ptr_[idx], &data_.ptr_[idx + 1], (size_ - idx - 1) * sizeof(T));
+      memmove(&data_.ptr_[idx], &data_.ptr_[idx + 1], (size_ - idx - 1) * sizeof(T));
     } else {
       Destroy(idx);
       for (size_type i = idx; i < size_ - 1; ++i) {
@@ -1344,7 +1344,7 @@ class vector {
     size_type count = last_idx - first_idx;
 
     if constexpr (kIsPod) {
-      std::memmove(&data_.ptr_[first_idx], &data_.ptr_[last_idx],
+      memmove(&data_.ptr_[first_idx], &data_.ptr_[last_idx],
                    (size_ - last_idx) * sizeof(T));
     } else {
       DestroyRange(first_idx, last_idx);

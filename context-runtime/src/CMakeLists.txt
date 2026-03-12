@@ -10,8 +10,9 @@ file(GLOB_RECURSE CHIMAERA_SOURCES
 )
 
 # Collect GPU sources from modules (not picked up by the src/ glob above)
+# Only match src/ subdirectories to avoid picking up test files.
 file(GLOB_RECURSE CHIMAERA_MODULE_GPU_SOURCES
-  ${CMAKE_CURRENT_SOURCE_DIR}/../modules/*_gpu.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/../modules/*/src/*_gpu.cc
 )
 
 # Separate GPU sources (_gpu.cc files) from CPU sources
@@ -30,6 +31,15 @@ foreach(src ${CHIMAERA_MODULE_GPU_SOURCES})
   list(APPEND CHIMAERA_GPU_SOURCES ${src})
 endforeach()
 
+# Collect GPU sources from external modules (e.g., CTE core) that register
+# GPU containers in the orchestrator but live outside context-runtime/modules/.
+file(GLOB_RECURSE CHIMAERA_EXTERNAL_GPU_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../context-transfer-engine/core/src/*_gpu.cc
+)
+foreach(src ${CHIMAERA_EXTERNAL_GPU_SOURCES})
+  list(APPEND CHIMAERA_GPU_SOURCES ${src})
+endforeach()
+
 # Create main library with namespace prefix to avoid conflicts
 set(CHIMAERA_LIB_NAME "${CHIMAERA_NAMESPACE}_cxx")
 add_library(${CHIMAERA_LIB_NAME} SHARED ${CHIMAERA_CPU_SOURCES})
@@ -44,6 +54,7 @@ if(CHIMAERA_GPU_SOURCES)
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../modules/MOD_NAME/include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../modules/bdev/include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../context-transport-primitives/include>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../context-transfer-engine/core/include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     )
     target_link_libraries(${CHIMAERA_LIB_NAME}_gpu PUBLIC hshm::cuda_cxx)
@@ -80,6 +91,9 @@ if(WRP_CORE_ENABLE_CUDA AND CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES)
   target_include_directories(${CHIMAERA_LIB_NAME} PUBLIC
     ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
   )
+  # Link cudart for host-callable CUDA runtime functions used in ipc_manager.cc etc.
+  set_property(TARGET ${CHIMAERA_LIB_NAME} APPEND PROPERTY
+    LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart")
 endif()
 
 # Add runtime definition

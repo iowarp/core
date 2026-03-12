@@ -370,7 +370,7 @@ private:
    * @param error_code Output: 0 for success, 1 for failure
    * Returns TaskResume for coroutine-based async operations
    */
-  chi::TaskResume ModifyExistingData(const std::vector<BlobBlock> &blocks,
+  chi::TaskResume ModifyExistingData(const chi::priv::vector<BlobBlock> &blocks,
                                      hipc::ShmPtr<> data, size_t data_size,
                                      size_t data_offset_in_blob, chi::u32 &error_code);
 
@@ -383,7 +383,7 @@ private:
    * @param error_code Output: 0 for success, 1 for failure
    * Returns TaskResume for coroutine-based async operations
    */
-  chi::TaskResume ReadData(const std::vector<BlobBlock> &blocks, hipc::ShmPtr<> data,
+  chi::TaskResume ReadData(const chi::priv::vector<BlobBlock> &blocks, hipc::ShmPtr<> data,
                            size_t data_size, size_t data_offset_in_blob, chi::u32 &error_code);
 
   /**

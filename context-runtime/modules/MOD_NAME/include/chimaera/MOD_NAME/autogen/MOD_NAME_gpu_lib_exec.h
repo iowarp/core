@@ -7,7 +7,7 @@ HSHM_GPU_FUN chi::gpu::TaskResume Run(chi::u32 method, hipc::FullPtr<chi::Task> 
   switch (method) {
     case Method::kGpuSubmit: {
       auto typed = task_ptr.template Cast<GpuSubmitTask>();
-      GpuSubmit(typed, rctx);
+      co_await GpuSubmit(typed, rctx);
       break;
     }
     default: break;

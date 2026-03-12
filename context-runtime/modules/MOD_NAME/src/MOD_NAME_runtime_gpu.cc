@@ -42,22 +42,4 @@
 
 namespace chimaera::MOD_NAME {
 
-/**
- * Execute a GpuSubmit task on the GPU.
- * Computes result_value_ = (test_value_ * 3) + gpu_id_ to verify
- * that the correct GPU and input values were received.
- * @param task The GPU submit task.
- * @param rctx GPU run context (unused).
- */
-HSHM_GPU_FUN void GpuRuntime::GpuSubmit(hipc::FullPtr<GpuSubmitTask> task,
-                                          chi::gpu::RunContext &rctx) {
-  (void)rctx;
-#if HSHM_IS_GPU
-  printf("[GpuSubmit] blk=%d thr=%d test_value_=%u gpu_id_=%u\n",
-         (int)blockIdx.x, (int)threadIdx.x,
-         (unsigned)task->test_value_, (unsigned)task->gpu_id_);
-#endif
-  task->result_value_ = (task->test_value_ * 3) + task->gpu_id_;
-}
-
 }  // namespace chimaera::MOD_NAME

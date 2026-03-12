@@ -47,6 +47,20 @@
 
 namespace hshm::priv {
 
+/** GPU-compatible hshm_memcmp: character-by-character on GPU, memcmp on CPU */
+HSHM_INLINE_CROSS_FUN int hshm_memcmp(const void *a, const void *b, size_t n) {
+#if HSHM_IS_HOST
+  return ::memcmp(a, b, n);
+#else
+  const unsigned char *pa = static_cast<const unsigned char*>(a);
+  const unsigned char *pb = static_cast<const unsigned char*>(b);
+  for (size_t i = 0; i < n; ++i) {
+    if (pa[i] != pb[i]) return (pa[i] < pb[i]) ? -1 : 1;
+  }
+  return 0;
+#endif
+}
+
 /**
  * Private-memory string container with Short String Optimization (SSO)
  *
@@ -623,7 +637,7 @@ class basic_string {
 
     if (UsingSso() && size_ + len <= SSOSize - 1) {
       // Still fits in SSO
-      std::memcpy(&storage_.buffer_[size_], s, len * sizeof(T));
+      memcpy(&storage_.buffer_[size_], s, len * sizeof(T));
       size_ += len;
       storage_.buffer_[size_] = T();
     } else {
@@ -683,7 +697,7 @@ class basic_string {
       size_type len = 0;
       while (s[len] != T()) ++len;
       if (len < SSOSize - 1) {
-        std::memcpy(storage_.buffer_, s, len * sizeof(T));
+        memcpy(storage_.buffer_, s, len * sizeof(T));
         storage_.buffer_[len] = T();
         size_ = len;
       } else {
@@ -757,7 +771,7 @@ class basic_string {
 
     const T* other_data = other.GetData();
     if (copy_count < SSOSize - 1) {
-      std::memcpy(storage_.buffer_, &other_data[pos], copy_count * sizeof(T));
+      memcpy(storage_.buffer_, &other_data[pos], copy_count * sizeof(T));
       storage_.buffer_[copy_count] = T();
       size_ = copy_count;
     } else {
@@ -777,14 +791,15 @@ class basic_string {
    *
    * @param other String to copy from
    */
-  basic_string(const basic_string& other)
+  HSHM_CROSS_FUN basic_string(const basic_string& other)
     : size_(0), using_sso_(true), alloc_(other.alloc_) {
     const T* other_data = other.GetData();
     if (other.size_ < SSOSize - 1) {
-      std::memcpy(storage_.buffer_, other_data, other.size_ * sizeof(T));
+      memcpy(storage_.buffer_, other_data, other.size_ * sizeof(T));
       storage_.buffer_[other.size_] = T();
       size_ = other.size_;
     } else {
+#if HSHM_IS_HOST
       storage_.vec_ = new vector<T, AllocT>(alloc_);
       storage_.vec_->reserve(other.size_ + 1);
       for (size_type i = 0; i < other.size_; ++i) {
@@ -792,6 +807,14 @@ class basic_string {
       }
       size_ = other.size_;
       using_sso_ = false;
+#else
+      // GPU: only SSO strings (< SSOSize chars) supported for copy
+      // Long strings are truncated to SSO capacity
+      size_type copy_count = SSOSize - 1;
+      memcpy(storage_.buffer_, other_data, copy_count * sizeof(T));
+      storage_.buffer_[copy_count] = T();
+      size_ = copy_count;
+#endif
     }
   }
 
@@ -801,10 +824,10 @@ class basic_string {
    *
    * @param other String to move from
    */
-  basic_string(basic_string&& other) noexcept
+  HSHM_CROSS_FUN basic_string(basic_string&& other) noexcept
     : size_(other.size_), using_sso_(other.using_sso_), alloc_(other.alloc_) {
     if (other.UsingSso()) {
-      std::memcpy(storage_.buffer_, other.storage_.buffer_,
+      memcpy(storage_.buffer_, other.storage_.buffer_,
                   other.size_ * sizeof(T));
       storage_.buffer_[other.size_] = T();
     } else {
@@ -855,7 +878,7 @@ class basic_string {
     : size_(0), using_sso_(true), alloc_(alloc) {
     size_type len = str.size();
     if (len < SSOSize - 1) {
-      std::memcpy(storage_.buffer_, str.data(), len * sizeof(T));
+      memcpy(storage_.buffer_, str.data(), len * sizeof(T));
       storage_.buffer_[len] = T();
       size_ = len;
     } else {
@@ -888,7 +911,7 @@ class basic_string {
 
       const T* other_data = other.GetData();
       if (other.size_ < SSOSize - 1) {
-        std::memcpy(storage_.buffer_, other_data, other.size_ * sizeof(T));
+        memcpy(storage_.buffer_, other_data, other.size_ * sizeof(T));
         storage_.buffer_[other.size_] = T();
         size_ = other.size_;
       } else {
@@ -922,7 +945,7 @@ class basic_string {
       alloc_ = other.alloc_;
 
       if (other.UsingSso()) {
-        std::memcpy(storage_.buffer_, other.storage_.buffer_,
+        memcpy(storage_.buffer_, other.storage_.buffer_,
                     other.size_ * sizeof(T));
         storage_.buffer_[other.size_] = T();
       } else {
@@ -959,7 +982,7 @@ class basic_string {
     while (s[len] != T()) ++len;
 
     if (len < SSOSize - 1) {
-      std::memcpy(storage_.buffer_, s, len * sizeof(T));
+      memcpy(storage_.buffer_, s, len * sizeof(T));
       storage_.buffer_[len] = T();
       size_ = len;
     } else {
@@ -1025,7 +1048,7 @@ class basic_string {
 
     size_type len = str.size();
     if (len < SSOSize - 1) {
-      std::memcpy(storage_.buffer_, str.data(), len * sizeof(T));
+      memcpy(storage_.buffer_, str.data(), len * sizeof(T));
       storage_.buffer_[len] = T();
       size_ = len;
     } else {
@@ -1609,7 +1632,7 @@ class basic_string {
     if (size_ != str.size_) {
       return false;
     }
-    return std::memcmp(GetData(), str.GetData(), size_ * sizeof(T)) == 0;
+    return hshm_memcmp(GetData(), str.GetData(), size_ * sizeof(T)) == 0;
   }
 
   /**
@@ -1628,7 +1651,7 @@ class basic_string {
     if (size_ != s_len) {
       return false;
     }
-    return std::memcmp(GetData(), s, size_ * sizeof(T)) == 0;
+    return hshm_memcmp(GetData(), s, size_ * sizeof(T)) == 0;
   }
 
   /**
@@ -1662,7 +1685,7 @@ class basic_string {
   HSHM_CROSS_FUN
   int compare(const basic_string& str) const {
     size_type cmp_len = std::min(size_, str.size_);
-    int result = std::memcmp(GetData(), str.GetData(), cmp_len * sizeof(T));
+    int result = hshm_memcmp(GetData(), str.GetData(), cmp_len * sizeof(T));
     if (result != 0) {
       return result;
     }
@@ -1689,7 +1712,7 @@ class basic_string {
     while (s[s_len] != T()) ++s_len;
 
     size_type cmp_len = std::min(size_, s_len);
-    int result = std::memcmp(GetData(), s, cmp_len * sizeof(T));
+    int result = hshm_memcmp(GetData(), s, cmp_len * sizeof(T));
     if (result != 0) {
       return result;
     }
@@ -1712,7 +1735,7 @@ class basic_string {
     if (str.size_ > size_) {
       return false;
     }
-    return std::memcmp(GetData(), str.GetData(), str.size_ * sizeof(T)) == 0;
+    return hshm_memcmp(GetData(), str.GetData(), str.size_ * sizeof(T)) == 0;
   }
 
   /**
@@ -1742,7 +1765,7 @@ class basic_string {
     if (s_len > size_) {
       return false;
     }
-    return std::memcmp(GetData(), s, s_len * sizeof(T)) == 0;
+    return hshm_memcmp(GetData(), s, s_len * sizeof(T)) == 0;
   }
 
   /**
@@ -1756,7 +1779,7 @@ class basic_string {
     if (str.size_ > size_) {
       return false;
     }
-    return std::memcmp(&GetData()[size_ - str.size_], str.GetData(),
+    return hshm_memcmp(&GetData()[size_ - str.size_], str.GetData(),
                       str.size_ * sizeof(T)) == 0;
   }
 
@@ -1787,7 +1810,7 @@ class basic_string {
     if (s_len > size_) {
       return false;
     }
-    return std::memcmp(&GetData()[size_ - s_len], s, s_len * sizeof(T)) == 0;
+    return hshm_memcmp(&GetData()[size_ - s_len], s, s_len * sizeof(T)) == 0;
   }
 
   /**
@@ -1808,7 +1831,7 @@ class basic_string {
 
     const T* data = GetData();
     for (size_type i = pos; i <= size_ - str.size_; ++i) {
-      if (std::memcmp(&data[i], str.GetData(), str.size_ * sizeof(T)) == 0) {
+      if (hshm_memcmp(&data[i], str.GetData(), str.size_ * sizeof(T)) == 0) {
         return i;
       }
     }
@@ -1860,7 +1883,7 @@ class basic_string {
 
     const T* data = GetData();
     for (size_type i = pos; i <= size_ - s_len; ++i) {
-      if (std::memcmp(&data[i], s, s_len * sizeof(T)) == 0) {
+      if (hshm_memcmp(&data[i], s, s_len * sizeof(T)) == 0) {
         return i;
       }
     }
@@ -1903,10 +1926,10 @@ class basic_string {
 
     if (UsingSso() && new_size <= SSOSize - 1) {
       // Can do in-place with SSO
-      std::memmove(&storage_.buffer_[pos + str.size_],
+      memmove(&storage_.buffer_[pos + str.size_],
                    &storage_.buffer_[pos + rep_count],
                    (size_ - pos - rep_count) * sizeof(T));
-      std::memcpy(&storage_.buffer_[pos], str.GetData(),
+      memcpy(&storage_.buffer_[pos], str.GetData(),
                   str.size_ * sizeof(T));
       size_ = new_size;
       storage_.buffer_[size_] = T();
@@ -1990,14 +2013,14 @@ class basic_string {
     erase_count = std::min(erase_count, size_ - pos);
 
     if (UsingSso()) {
-      std::memmove(&storage_.buffer_[pos],
+      memmove(&storage_.buffer_[pos],
                    &storage_.buffer_[pos + erase_count],
                    (size_ - pos - erase_count) * sizeof(T));
       size_ -= erase_count;
       storage_.buffer_[size_] = T();
     } else {
       T* data = GetData();
-      std::memmove(&data[pos], &data[pos + erase_count],
+      memmove(&data[pos], &data[pos + erase_count],
                    (size_ - pos - erase_count) * sizeof(T));
       size_ -= erase_count;
     }
@@ -2057,7 +2080,7 @@ class basic_string {
    * @param ar Archive to save to
    */
   template<class Archive>
-  void save(Archive& ar) const {
+  HSHM_CROSS_FUN void save(Archive& ar) const {
     hshm::ipc::save_string(ar, *this);
   }
 
@@ -2069,7 +2092,7 @@ class basic_string {
    * @param ar Archive to load from
    */
   template<class Archive>
-  void load(Archive& ar) {
+  HSHM_CROSS_FUN void load(Archive& ar) {
     hshm::ipc::load_string(ar, *this);
   }
 };

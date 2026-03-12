@@ -47,7 +47,6 @@
 
 #include "chimaera/chimaera_manager.h"
 #include "chimaera/corwlock.h"
-#include "chimaera/local_task_archives.h"
 #include "chimaera/scheduler/scheduler.h"
 #include "chimaera/task.h"
 #include "chimaera/task_archives.h"
@@ -67,6 +66,12 @@
 #endif
 
 namespace chi {
+
+// Forward declarations — full definitions in local_task_archives.h,
+// included after CHI_IPC is defined at the bottom of this header.
+class LocalSaveTaskArchive;
+class LocalLoadTaskArchive;
+enum class LocalMsgType : uint8_t;
 
 /**
  * IPC transport mode for client-to-runtime communication
@@ -194,6 +199,10 @@ struct IpcManagerGpuInfo {
 
   u32 gpu_queue_depth = 16;
 
+  /** When true, skip heap re-initialization (heap allocators persist across
+   *  pause/resume cycles — re-init would destroy existing allocations). */
+  bool skip_heap_init = false;
+
   HSHM_CROSS_FUN IpcManagerGpuInfo() = default;
 
   /** Convenience constructor: backend + gpu2gpu queue */
@@ -277,7 +286,14 @@ class IpcManager {
     // Set up GPU heap table (GpuMalloc device memory, BuddyAllocator)
     if (gpu_info.gpu_heap_backend.data_ != nullptr) {
       gpu_heap_backend_ = gpu_info.gpu_heap_backend;
-      InitHeapTable(gpu_heap_backend_, num_threads, &gpu_heap_allocs_);
+      if (gpu_info.skip_heap_init) {
+        // Resume path: heap allocators persist across pause/resume.
+        // Just rebuild the pointer table (already stored at base of backend).
+        gpu_heap_allocs_ =
+            reinterpret_cast<CHI_GPU_HEAP_T **>(gpu_heap_backend_.data_);
+      } else {
+        InitHeapTable(gpu_heap_backend_, num_threads, &gpu_heap_allocs_);
+      }
     }
   }
 
@@ -628,7 +644,9 @@ class IpcManager {
     if (copy_space_size == 0) copy_space_size = 4096;
     size_t alloc_size = sizeof(FutureShm) + copy_space_size;
     hipc::FullPtr<char> buffer = alloc->AllocateObjs<char>(alloc_size);
-    if (buffer.IsNull()) return Future<TaskT>();
+    if (buffer.IsNull()) {
+      return Future<TaskT>();
+    }
 
     // Construct FutureShm
     FutureShm *fshm = new (buffer.ptr_) FutureShm();
@@ -636,8 +654,8 @@ class IpcManager {
     fshm->method_id_ = task_ptr->method_;
     fshm->origin_ = FutureShm::FUTURE_CLIENT_SHM;
     fshm->client_task_vaddr_ = 0;
-    fshm->input_.copy_space_size_ = copy_space_size;
-    fshm->output_.copy_space_size_ = copy_space_size;
+    fshm->input_.copy_space_size_.store_system(copy_space_size);
+    fshm->output_.copy_space_size_.store_system(copy_space_size);
     fshm->flags_.SetBits(FutureShm::FUTURE_COPY_FROM_CLIENT);
 
     // Store absolute UVA pointer in off_ with null alloc_id_ so that
@@ -653,26 +671,20 @@ class IpcManager {
     ctx.copy_space = fshm->copy_space;
     ctx.shm_info_ = &fshm->input_;
 
-    // Enqueue BEFORE sending so worker can start deserializing concurrently.
-    // GPU→CPU path: use PushSystem so device-scope writes (tail, SetReady)
-    // are visible to the CPU worker via system-scope atomics. Without this,
-    // the CPU's load_system() on tail/entry flags would see stale values on
-    // platforms where cudaDevAttrHostNativeAtomicSupported == 0 (PCIe GPUs).
-    auto &lane = queue->GetLane(0, 0);
-    Future<Task> task_future(future.GetFutureShmPtr());
-    if (to_cpu) {
-      lane.PushSystem(task_future);  // GPU→CPU: system-scope for CPU visibility
-    } else {
-      lane.Push(task_future);  // GPU→GPU: device-scope is sufficient
-    }
-
-    // Serialize task input into the ring buffer using the heap BuddyAllocator
-    // so the scratch buffer is individually freed when buf goes out of scope.
-    auto *heap = GetGpuHeap();
-    hshm::priv::vector<char, CHI_GPU_HEAP_T> buf(heap);
-    LocalSaveTaskArchive save_ar(LocalMsgType::kSerializeIn, buf, heap);
+    // Serialize task input into the ring buffer BEFORE enqueuing,
+    // so the worker sees complete data when it pops.
+    LocalSaveTaskArchive save_ar(LocalMsgType::kSerializeIn);
     task_ptr->SerializeIn(save_ar);
     hshm::lbm::ShmTransport::Send(save_ar, ctx);
+
+    // Enqueue AFTER serialization is complete.
+    // Always use PushSystem (system-scope atomics) because the worker's Pop()
+    // uses system-scope loads (load_system, IsReadySystem). Mixing device-scope
+    // writes with system-scope reads can cause missed updates when system-scope
+    // reads bypass L2 cache and device-scope writes are only in L2.
+    auto &lane = queue->GetLane(0, 0);
+    Future<Task> task_future(future.GetFutureShmPtr());
+    lane.PushSystem(task_future);
 
     return future;
   }
@@ -704,8 +716,8 @@ class IpcManager {
       ctx.copy_space = fshm->copy_space;
       ctx.shm_info_ = &fshm->output_;
 
-      // Use the GPU heap BuddyAllocator for the deserialization scratch buffer
-      LocalLoadTaskArchive load_ar(GetGpuHeap());
+      // Use the generic heap allocator for the deserialization scratch buffer
+      LocalLoadTaskArchive load_ar;
       hshm::lbm::ShmTransport::Recv(load_ar, ctx);
       load_ar.SetMsgType(LocalMsgType::kSerializeOut);
       task_ptr->SerializeOut(load_ar);
@@ -745,8 +757,11 @@ class IpcManager {
    * @return Pointer to the per-block IpcManager
    */
   static HSHM_GPU_FUN __noinline__ IpcManager *GetBlockIpcManager() {
-    __shared__ IpcManager s_ipc;
-    return &s_ipc;
+    // Use raw bytes to avoid invoking host-only constructors of IpcManager
+    // members. The memory is initialized via ClientInitGpu before any fields
+    // are accessed.
+    __shared__ char s_ipc_bytes[sizeof(IpcManager)];
+    return reinterpret_cast<IpcManager *>(s_ipc_bytes);
   }
 #endif  // HSHM_IS_GPU_COMPILER
 
@@ -1772,6 +1787,7 @@ class IpcManager {
   template <typename TaskT>
   Future<TaskT> SendToGpu(const hipc::FullPtr<TaskT> &task_ptr,
                            u32 gpu_id = 0) {
+#if HSHM_IS_HOST
     if (task_ptr.IsNull() || gpu_id >= cpu2gpu_queues_.size()) {
       return Future<TaskT>();
     }
@@ -1808,14 +1824,15 @@ class IpcManager {
     task_ptr->SerializeIn(save_ar);
     hshm::lbm::ShmTransport::Send(save_ar, ctx);
 
-    // Flush FutureShm header to DRAM so the GPU can read all fields via
-    // system-scope loads (atomicAdd_system reads DRAM, not CPU cache).
-    // CPU writes go to CPU L1/L2/LLC; without clflush they may not reach DRAM
-    // before the GPU (on discrete PCIe) reads them.
+    // Flush FutureShm header + copy_space data to DRAM so the GPU can read
+    // all fields via system-scope loads.  CPU writes go to CPU L1/L2/LLC;
+    // without clflush they may not reach DRAM before the GPU (on discrete
+    // PCIe) reads them.  Must flush the entire allocation (header + ring
+    // buffer data written by ShmTransport::Send above).
 #if defined(__x86_64__) || defined(__i386__)
     {
       const char *base = reinterpret_cast<const char *>(future_shm);
-      for (const char *cl = base; cl < base + sizeof(FutureShm); cl += 64) {
+      for (const char *cl = base; cl < base + alloc_size; cl += 64) {
         _mm_clflush(cl);
       }
       _mm_sfence();
@@ -1828,6 +1845,10 @@ class IpcManager {
     lane.Push(task_future);
 
     return future;
+#else
+    (void)task_ptr; (void)gpu_id;
+    return Future<TaskT>();
+#endif  // HSHM_IS_HOST
   }
 #endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 
@@ -2404,6 +2425,19 @@ HSHM_CROSS_FUN inline IpcManager *GetIpcManager() {
 #define CHI_IPC HSHM_GET_GLOBAL_PTR_VAR(::chi::IpcManager, g_ipc_manager)
 #endif
 
+// Define GetPrivAllocGpu now that CHI_IPC is available
+#if !HSHM_IS_HOST
+namespace chi {
+HSHM_GPU_FUN inline hipc::BuddyAllocator *GetPrivAllocGpu() {
+  return CHI_IPC->GetGpuHeap();
+}
+}  // namespace chi
+#endif
+
+// Include local_task_archives after CHI_IPC is defined, since on GPU
+// CHI_PRIV_ALLOC expands to chi::GetPrivAllocGpu()
+#include "chimaera/local_task_archives.h"
+
 // GPU kernel initialization macro
 // Creates a shared IPC manager instance in GPU __shared__ memory
 // Each thread has its own ArenaAllocator for memory allocation
@@ -2633,7 +2667,7 @@ HSHM_CROSS_FUN bool Future<TaskT, AllocT>::Wait(float max_sec) {
 
       // Deserialize output from GPU FutureShm ring buffer (SendToGpu path)
       if (flags.Any(FutureShm::FUTURE_COPY_FROM_CLIENT) &&
-          future_full->output_.copy_space_size_ > 0) {
+          future_full->output_.total_written_.load() > 0) {
         hshm::lbm::LbmContext ctx;
         ctx.copy_space = future_full->copy_space;
         ctx.shm_info_ = &future_full->output_;
@@ -2670,7 +2704,7 @@ HSHM_CROSS_FUN bool Future<TaskT, AllocT>::Wait(float max_sec) {
           }
         }
         // Deserialize output from GPU FutureShm ring buffer if present
-        if (future_full->output_.copy_space_size_.load() > 0) {
+        if (future_full->output_.total_written_.load() > 0) {
           hshm::lbm::LbmContext ctx;
           ctx.copy_space = future_full->copy_space;
           ctx.shm_info_ = &future_full->output_;

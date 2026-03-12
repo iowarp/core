@@ -614,6 +614,15 @@ struct ShmPtrBase : public ShmPointer {
     off_.SetNull();
   }
 
+  /** Construct from a raw pointer (UVA). Stores the address as the offset
+   *  with a null AllocatorId, which GPU-side resolution treats as absolute. */
+  HSHM_INLINE_CROSS_FUN static ShmPtrBase FromRaw(void *ptr) {
+    ShmPtrBase p;
+    p.alloc_id_ = AllocatorId::GetNull();
+    p.off_.exchange(reinterpret_cast<size_t>(ptr));
+    return p;
+  }
+
   /** Full constructor */
   HSHM_INLINE_CROSS_FUN explicit ShmPtrBase(AllocatorId id, size_t off)
       : alloc_id_(id), off_(off) {}

@@ -34,9 +34,8 @@
 #ifndef CHIMAERA_INCLUDE_CHIMAERA_LOCAL_TASK_ARCHIVES_H_
 #define CHIMAERA_INCLUDE_CHIMAERA_LOCAL_TASK_ARCHIVES_H_
 
-#include <memory>
-#include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 // Include LocalSerialize for serialization
@@ -136,14 +135,11 @@ HSHM_CROSS_FUN void load(Ar &ar, chi::LocalTaskInfo &info) {
 
 namespace chi {
 
-// Conditional base type for LbmMeta inheritance
-#if HSHM_IS_HOST
-using LocalLbmBase = hshm::lbm::LbmMeta<>;
-using LocalTaskInfoVec = std::vector<LocalTaskInfo>;
-#else
-using LocalLbmBase = hshm::lbm::LbmMeta<CHI_GPU_HEAP_T>;
-using LocalTaskInfoVec = hshm::priv::vector<LocalTaskInfo, CHI_GPU_HEAP_T>;
-#endif
+// Base type for LbmMeta inheritance: use CHI_PRIV_ALLOC_T so that
+// ShmTransport::Recv can allocate internal buffers on GPU (BuddyAllocator)
+// and on host (MallocAllocator).
+using LocalLbmBase = hshm::lbm::LbmMeta<CHI_PRIV_ALLOC_T>;
+using LocalTaskInfoVec = chi::priv::vector<LocalTaskInfo>;
 
 /**
  * Archive for saving tasks (inputs or outputs) using LocalSerialize
@@ -161,14 +157,8 @@ class LocalSaveTaskArchive : public LocalLbmBase {
   LocalMsgType msg_type_; /**< Message type: kSerializeIn or kSerializeOut */
 
  private:
-#if HSHM_IS_HOST
-  std::vector<char> buffer_;
-  hshm::ipc::LocalSerialize<std::vector<char>> serializer_;
-#else
-  using GpuVec = hshm::priv::vector<char, CHI_GPU_HEAP_T>;
-  GpuVec &buffer_;
-  hshm::ipc::LocalSerialize<GpuVec> serializer_;
-#endif
+  chi::priv::vector<char> buffer_;
+  hshm::ipc::LocalSerialize<chi::priv::vector<char>> serializer_;
 
  public:
   /**
@@ -184,54 +174,32 @@ class LocalSaveTaskArchive : public LocalLbmBase {
   }
 
   /**
-   * Constructor with message type (HOST - uses std::vector buffer)
+   * Constructor with message type.
    *
    * @param msg_type Message type (kSerializeIn or kSerializeOut)
    */
-#if HSHM_IS_HOST
-  explicit LocalSaveTaskArchive(LocalMsgType msg_type)
-      : Base(), msg_type_(msg_type), serializer_(buffer_) {}
-#else
-  HSHM_GPU_FUN explicit LocalSaveTaskArchive(
-      LocalMsgType msg_type);  // Not implemented for GPU
-#endif
+  HSHM_CROSS_FUN explicit LocalSaveTaskArchive(LocalMsgType msg_type)
+      : Base(CHI_PRIV_ALLOC),
+        task_infos_(CHI_PRIV_ALLOC),
+        msg_type_(msg_type),
+        buffer_(CHI_PRIV_ALLOC),
+        serializer_(buffer_) {}
 
-#if HSHM_IS_GPU_COMPILER
   /**
-   * Constructor with message type, pre-allocated vector, and allocator (GPU)
-   *
-   * @param msg_type Message type (kSerializeIn or kSerializeOut)
-   * @param buffer Pre-allocated priv::vector for serialization
-   * @param alloc Allocator for LbmMeta and task_infos_
+   * Constructor with external buffer and allocator.
+   * Used by GPU worker where buffer is pre-allocated from GPU heap.
    */
-  HSHM_CROSS_FUN explicit LocalSaveTaskArchive(
-      LocalMsgType msg_type, hshm::priv::vector<char, CHI_GPU_HEAP_T> &buffer,
-      CHI_GPU_HEAP_T *alloc)
-      :
-#if HSHM_IS_GPU
-        Base(alloc),
+  template <typename AllocPtrT>
+  HSHM_CROSS_FUN LocalSaveTaskArchive(LocalMsgType msg_type,
+                                       AllocPtrT *alloc)
+      : Base(alloc),
         task_infos_(alloc),
-#else
-        Base(),
-#endif
-        msg_type_(msg_type)
-#if HSHM_IS_GPU
-        ,
-        buffer_(buffer),
-        serializer_(buffer_)
-#else
-        ,
-        serializer_(buffer_)
-#endif
-  {
-    (void)buffer;
-    (void)alloc;
-  }
-#endif
+        msg_type_(msg_type),
+        buffer_(alloc),
+        serializer_(buffer_) {}
 
-#if HSHM_IS_HOST
-  /** Move constructor (HOST only) */
-  LocalSaveTaskArchive(LocalSaveTaskArchive &&other) noexcept
+  /** Move constructor */
+  HSHM_CROSS_FUN LocalSaveTaskArchive(LocalSaveTaskArchive &&other) noexcept
       : Base(std::move(other)),
         task_infos_(std::move(other.task_infos_)),
         msg_type_(other.msg_type_),
@@ -242,16 +210,12 @@ class LocalSaveTaskArchive : public LocalLbmBase {
    * serializer */
   LocalSaveTaskArchive &operator=(LocalSaveTaskArchive &&other) noexcept =
       delete;
-#else
-  /** Move constructor disabled for GPU */
-  LocalSaveTaskArchive(LocalSaveTaskArchive &&other) = delete;
-  LocalSaveTaskArchive &operator=(LocalSaveTaskArchive &&other) = delete;
-#endif
 
   /** Delete copy constructor and assignment */
   LocalSaveTaskArchive(const LocalSaveTaskArchive &) = delete;
   LocalSaveTaskArchive &operator=(const LocalSaveTaskArchive &) = delete;
 
+ public:
   /**
    * Serialize operator - handles Task-derived types specially
    *
@@ -262,11 +226,9 @@ class LocalSaveTaskArchive : public LocalLbmBase {
   template <typename T>
   HSHM_CROSS_FUN LocalSaveTaskArchive &operator<<(T &value) {
     if constexpr (std::is_base_of_v<Task, T>) {
-#if HSHM_IS_HOST
       // Record task information
       LocalTaskInfo info{value.task_id_, value.pool_id_, value.method_};
       task_infos_.push_back(info);
-#endif
 
       // Serialize task based on mode
       if (msg_type_ == LocalMsgType::kSerializeIn) {
@@ -400,14 +362,12 @@ class LocalSaveTaskArchive : public LocalLbmBase {
     serializer_.write_binary(reinterpret_cast<const char *>(ptr), size);
   }
 
-#if HSHM_IS_HOST
   /**
-   * Get task information (HOST only)
+   * Get task information
    *
    * @return Vector of task information
    */
-  const std::vector<LocalTaskInfo> &GetTaskInfos() const { return task_infos_; }
-#endif
+  const LocalTaskInfoVec &GetTaskInfos() const { return task_infos_; }
 
   /**
    * Get message type
@@ -422,29 +382,19 @@ class LocalSaveTaskArchive : public LocalLbmBase {
    * @return Size of serialized data
    */
   HSHM_CROSS_FUN size_t GetSize() const { return buffer_.size(); }
-
-#if HSHM_IS_HOST
   /**
    * Get serialized data
    *
    * @return Reference to buffer containing serialized data
    */
-  const std::vector<char> &GetData() const { return buffer_; }
+  const chi::priv::vector<char> &GetData() const { return buffer_; }
 
   /**
    * Move serialized data out of the archive
    *
    * @return Moved buffer containing serialized data
    */
-  std::vector<char> MoveData() { return std::move(buffer_); }
-#else
-  /**
-   * Get raw buffer pointer (GPU only)
-   *
-   * @return Pointer to buffer data
-   */
-  HSHM_GPU_FUN const char *GetData() const { return buffer_.data(); }
-#endif
+  chi::priv::vector<char> MoveData() { return std::move(buffer_); }
 };
 
 /**
@@ -463,16 +413,10 @@ class LocalLoadTaskArchive : public LocalLbmBase {
   LocalMsgType msg_type_; /**< Message type: kSerializeIn or kSerializeOut */
 
  private:
-#if HSHM_IS_HOST
-  std::vector<char> owned_data_;
-  const std::vector<char> *data_;
-  hshm::ipc::LocalDeserialize<std::vector<char>> deserializer_;
+  chi::priv::vector<char> owned_data_;
+  const chi::priv::vector<char> *data_;
+  hshm::ipc::LocalDeserialize<chi::priv::vector<char>> deserializer_;
   size_t current_task_index_;
-#else
-  using GpuVec = hshm::priv::vector<char, CHI_GPU_HEAP_T>;
-  GpuVec data_;
-  hshm::ipc::LocalDeserialize<GpuVec> deserializer_;
-#endif
 
  public:
   /**
@@ -485,140 +429,98 @@ class LocalLoadTaskArchive : public LocalLbmBase {
   HSHM_CROSS_FUN void serialize(Ar &ar) {
     ar(this->send, this->recv, this->send_bulks, this->recv_bulks);
     ar(task_infos_, msg_type_);
-#if HSHM_IS_HOST
     ar(owned_data_);
     data_ = &owned_data_;
     new (&deserializer_)
-        hshm::ipc::LocalDeserialize<std::vector<char>>(owned_data_);
-#else
-    ar(data_);
-    new (&deserializer_) hshm::ipc::LocalDeserialize<GpuVec>(data_);
-#endif
+        hshm::ipc::LocalDeserialize<chi::priv::vector<char>>(owned_data_);
   }
 
-#if HSHM_IS_HOST
   /**
-   * Default constructor (HOST)
+   * Default constructor
    */
-  LocalLoadTaskArchive()
-      : Base(),
+  HSHM_CROSS_FUN LocalLoadTaskArchive()
+      : Base(CHI_PRIV_ALLOC),
+        task_infos_(CHI_PRIV_ALLOC),
         msg_type_(LocalMsgType::kSerializeIn),
+        owned_data_(CHI_PRIV_ALLOC),
         data_(nullptr),
-        deserializer_(empty_buffer_),
+        deserializer_(GetEmptyBuffer()),
         current_task_index_(0) {}
 
   /**
-   * Constructor from serialized data (HOST - uses std::vector)
+   * Constructor with explicit allocator pointer.
+   * Used by GPU worker where allocator comes from GPU heap.
+   */
+  HSHM_CROSS_FUN explicit LocalLoadTaskArchive(CHI_PRIV_ALLOC_T *alloc)
+      : Base(alloc),
+        task_infos_(alloc),
+        msg_type_(LocalMsgType::kSerializeIn),
+        owned_data_(alloc),
+        data_(nullptr),
+        deserializer_(GetEmptyBuffer()),
+        current_task_index_(0) {}
+
+  /**
+   * Constructor from serialized data (uses chi::priv::vector)
+   *
+   * @param data Buffer containing serialized data
+   */
+  HSHM_CROSS_FUN explicit LocalLoadTaskArchive(
+      const chi::priv::vector<char> &data)
+      : Base(CHI_PRIV_ALLOC),
+        task_infos_(CHI_PRIV_ALLOC),
+        msg_type_(LocalMsgType::kSerializeIn),
+        owned_data_(CHI_PRIV_ALLOC),
+        data_(&data),
+        deserializer_(data),
+        current_task_index_(0) {}
+
+  /**
+   * Constructor from std::vector serialized data.
+   * Copies the data into owned_data_ for lifetime management.
    *
    * @param data Buffer containing serialized data
    */
   explicit LocalLoadTaskArchive(const std::vector<char> &data)
       : Base(),
+        task_infos_(CHI_PRIV_ALLOC),
         msg_type_(LocalMsgType::kSerializeIn),
-        data_(&data),
-        deserializer_(data),
-        current_task_index_(0) {}
-#else
-  HSHM_GPU_FUN LocalLoadTaskArchive();  // Not implemented for GPU
-  HSHM_GPU_FUN explicit LocalLoadTaskArchive(
-      const std::vector<char> &data);  // Not implemented for GPU
-#endif
-
-#if HSHM_IS_GPU_COMPILER
-  /**
-   * Constructor with allocator only (GPU - for ShmTransport::Recv path)
-   * data_ starts empty; serialize() populates it from the ring buffer.
-   *
-   * @param alloc Allocator for LbmMeta, task_infos_, and data_
-   */
-  HSHM_CROSS_FUN explicit LocalLoadTaskArchive(CHI_GPU_HEAP_T *alloc)
-      :
-#if HSHM_IS_GPU
-        Base(alloc),
-        task_infos_(alloc),
-#else
-        Base(),
-#endif
-        msg_type_(LocalMsgType::kSerializeIn)
-#if HSHM_IS_GPU
-        ,
-        data_(alloc),
-        deserializer_(data_)
-#else
-        ,
+        owned_data_(CHI_PRIV_ALLOC),
         data_(nullptr),
-        deserializer_(empty_buffer_),
-        current_task_index_(0)
-#endif
-  {
-    (void)alloc;
-  }
-
-  /**
-   * Constructor from pre-populated priv::vector (GPU)
-   * Copies data from ext_data into owned data_ buffer.
-   *
-   * @param ext_data Pre-populated vector containing serialized data
-   * @param alloc Allocator for LbmMeta, task_infos_, and data_
-   */
-  HSHM_CROSS_FUN explicit LocalLoadTaskArchive(
-      const hshm::priv::vector<char, CHI_GPU_HEAP_T> &ext_data,
-      CHI_GPU_HEAP_T *alloc)
-      :
-#if HSHM_IS_GPU
-        Base(alloc),
-        task_infos_(alloc),
-#else
-        Base(),
-#endif
-        msg_type_(LocalMsgType::kSerializeIn)
-#if HSHM_IS_GPU
-        ,
-        data_(ext_data.size(), alloc),
-        deserializer_(data_)
-#else
-        ,
-        data_(nullptr),
-        deserializer_(empty_buffer_),
-        current_task_index_(0)
-#endif
-  {
-#if HSHM_IS_GPU
-    for (size_t i = 0; i < ext_data.size(); ++i) {
-      data_[i] = ext_data[i];
+        deserializer_(GetEmptyBuffer()),
+        current_task_index_(0) {
+    owned_data_.reserve(data.size());
+    for (size_t i = 0; i < data.size(); ++i) {
+      owned_data_.push_back(data[i]);
     }
-#endif
-    (void)ext_data;
-    (void)alloc;
+    data_ = &owned_data_;
+    new (&deserializer_)
+        hshm::ipc::LocalDeserialize<chi::priv::vector<char>>(owned_data_);
   }
-#endif
 
-#if HSHM_IS_HOST
-  /** Move constructor (HOST only) */
-  LocalLoadTaskArchive(LocalLoadTaskArchive &&other) noexcept
+  /** Move constructor */
+  HSHM_CROSS_FUN LocalLoadTaskArchive(LocalLoadTaskArchive &&other) noexcept
       : Base(std::move(other)),
         task_infos_(std::move(other.task_infos_)),
         msg_type_(other.msg_type_),
+        owned_data_(std::move(other.owned_data_)),
         data_(other.data_),
-        deserializer_(other.data_ ? *other.data_ : empty_buffer_),
+        deserializer_(other.data_ ? *other.data_ : GetEmptyBuffer()),
         current_task_index_(other.current_task_index_) {
     other.data_ = nullptr;
   }
 
+ public:
   /** Move assignment operator - not supported due to reference member in
    * deserializer */
   LocalLoadTaskArchive &operator=(LocalLoadTaskArchive &&other) noexcept =
       delete;
-#else
-  /** Move constructor disabled for GPU */
-  LocalLoadTaskArchive(LocalLoadTaskArchive &&other) = delete;
-  LocalLoadTaskArchive &operator=(LocalLoadTaskArchive &&other) = delete;
-#endif
 
   /** Delete copy constructor and assignment */
   LocalLoadTaskArchive(const LocalLoadTaskArchive &) = delete;
   LocalLoadTaskArchive &operator=(const LocalLoadTaskArchive &) = delete;
 
+ public:
   /**
    * Deserialize operator - handles Task-derived types specially
    *
@@ -806,13 +708,12 @@ class LocalLoadTaskArchive : public LocalLbmBase {
     deserializer_.read_binary(reinterpret_cast<char *>(ptr), size);
   }
 
-#if HSHM_IS_HOST
   /**
    * Get task information (HOST only)
    *
    * @return Vector of task information
    */
-  const std::vector<LocalTaskInfo> &GetTaskInfos() const { return task_infos_; }
+  const LocalTaskInfoVec &GetTaskInfos() const { return task_infos_; }
 
   /**
    * Get current task info (HOST only)
@@ -822,7 +723,6 @@ class LocalLoadTaskArchive : public LocalLbmBase {
   const LocalTaskInfo &GetCurrentTaskInfo() const {
     return task_infos_[current_task_index_];
   }
-#endif
 
   /**
    * Get message type
@@ -831,12 +731,10 @@ class LocalLoadTaskArchive : public LocalLbmBase {
    */
   LocalMsgType GetMsgType() const { return msg_type_; }
 
-#if HSHM_IS_HOST
   /**
    * Reset task index for iteration (HOST only)
    */
   void ResetTaskIndex() { current_task_index_ = 0; }
-#endif
 
   /**
    * Set message type
@@ -848,9 +746,22 @@ class LocalLoadTaskArchive : public LocalLbmBase {
   }
 
  private:
+  /**
+   * Get a reference to an empty buffer for use as a placeholder.
+   * Uses function-local static to be accessible from both host and device.
+   *
+   * @return Reference to an empty vector
+   */
+  HSHM_CROSS_FUN static chi::priv::vector<char> &GetEmptyBuffer() {
 #if HSHM_IS_HOST
-  static inline std::vector<char> empty_buffer_;
+    static chi::priv::vector<char> buf(nullptr);
+#else
+    // On GPU, use shared memory for the empty buffer placeholder
+    __shared__ char buf_storage[sizeof(chi::priv::vector<char>)];
+    auto &buf = *reinterpret_cast<chi::priv::vector<char> *>(buf_storage);
 #endif
+    return buf;
+  }
 };
 
 }  // namespace chi

@@ -147,7 +147,9 @@ class Worker {
 
     // Resolve FutureShm: queue-dependent resolution
     hipc::ShmPtr<FutureShm> sptr = future.GetFutureShmPtr();
-    if (sptr.IsNull()) return true;
+    if (sptr.IsNull()) {
+      return true;
+    }
     size_t off = sptr.off_.load();
     FutureShm *fshm;
     if (queue == cpu2gpu_queue_) {
@@ -166,16 +168,14 @@ class Worker {
     u32 method_id = fshm->method_id_;
     Container *container = pool_mgr_->GetContainer(pool_id);
     if (!container) {
-      // No container registered — mark complete with no output (system-scope for CPU visibility)
+      // No container registered — mark complete with no output
       fshm->flags_.SetBitsSystem(FutureShm::FUTURE_COMPLETE);
       return true;
     }
 
     if (fshm->flags_.Any(FutureShm::FUTURE_COPY_FROM_CLIENT)) {
-      // Copy path (SendGpuLocal / SendToGpu): deserialize, run, serialize
       DispatchTask(fshm, container, method_id);
     } else {
-      // Forward path (SendGpuForward): run task in-place, no (de)serialization
       DispatchTaskDirect(fshm, container, method_id);
     }
     return true;
@@ -235,6 +235,7 @@ class Worker {
    */
   HSHM_GPU_FUN void DispatchTask(FutureShm *fshm, Container *container,
                                   u32 method_id) {
+#if !HSHM_IS_HOST
     // Step 1: Deserialize input from FutureShm ring buffer
     hshm::lbm::LbmContext in_ctx;
     in_ctx.copy_space = fshm->copy_space;
@@ -257,7 +258,6 @@ class Worker {
 
     if (task_ptr.IsNull()) {
       fshm->flags_.SetBitsSystem(FutureShm::FUTURE_COMPLETE);
-      // Reset arena: no task was allocated, safe to reclaim all scratch memory.
       alloc->Reset();
       return;
     }
@@ -266,7 +266,6 @@ class Worker {
     {
       TaskResume coro = container->Run(method_id, task_ptr, rctx_);
       coro.resume();
-      // TODO: handle yielding coroutines (coro.done() == false)
     }
 
     // Step 4: Serialize output into FutureShm ring buffer
@@ -275,24 +274,19 @@ class Worker {
     out_ctx.shm_info_ = &fshm->output_;
 
     auto *heap = CHI_GPU_HEAP;
-    hshm::priv::vector<char, CHI_GPU_HEAP_T> buf(heap);
-    LocalSaveTaskArchive save_ar(LocalMsgType::kSerializeOut, buf, heap);
+    LocalSaveTaskArchive save_ar(LocalMsgType::kSerializeOut, heap);
     container->LocalSaveTask(method_id, save_ar, task_ptr);
     hshm::lbm::ShmTransport::Send(save_ar, out_ctx);
 
-    // Step 5: task_ptr destructor (output already written to fshm->copy_space).
+    // Step 5: Destroy task
     task_ptr.ptr_->~Task();
 
-    // Step 6: System-scope OR: fence + atomicOr_system ensures output bytes
-    // written to copy_space are globally visible before FUTURE_COMPLETE.
+    // Step 6: Signal completion
     fshm->flags_.SetBitsSystem(FutureShm::FUTURE_COMPLETE);
 
-    // Step 7: Reset the orchestrator's arena allocator.
-    // ArenaAllocator is a bump-pointer allocator with no individual-free support.
-    // All task scratch (deserialized task, buf vector) is dead after FUTURE_COMPLETE.
-    // This reclaims the arena so subsequent tasks don't exhaust memory.
-    // NOTE: safe only when one task is processed per thread at a time.
+    // Step 7: Reset arena
     alloc->Reset();
+#endif  // !HSHM_IS_HOST
   }
 };
 

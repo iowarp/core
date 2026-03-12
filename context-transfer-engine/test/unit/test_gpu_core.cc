@@ -34,13 +34,15 @@
 /**
  * GPU CTE Core Client API Tests
  *
- * Verifies that AsyncPutBlob and AsyncGetBlob with PoolQuery::Local() work
- * end-to-end with the CTE core runtime. Tests use a fork client (background
- * runtime spawned by CHIMAERA_INIT with fork=true).
+ * Two fixture classes:
  *
- * The 4KB blob is allocated in shared memory via CHI_IPC->AllocateBuffer,
- * routed through PoolQuery::Local() to CPU workers, and verified by checking
- * the task return code.
+ * GpuCoreFixture  — CPU path: fork-client mode, PoolQuery::Local(), SHM buffers.
+ *                   Verifies AsyncPutBlob / AsyncGetBlob go through CPU workers.
+ *
+ * GpuCoreGpuFixture — GPU path: server mode, PoolQuery::LocalGpuBcast(),
+ *                     cudaMallocHost (pinned UVM) buffers.
+ *                     Verifies PutBlob and GetBlob execute inside GPU kernels
+ *                     via GpuRuntime::PutBlob / GpuRuntime::GetBlob.
  */
 
 #include "simple_test.h"
@@ -57,12 +59,21 @@
 #include <wrp_cte/core/core_client.h>
 #include <wrp_cte/core/core_tasks.h>
 
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+#include <cuda_runtime.h>
+#endif
+
 namespace fs = std::filesystem;
 using namespace std::chrono_literals;
 
 namespace {
   bool g_initialized = false;
+  bool g_gpu_initialized = false;
 }  // namespace
+
+// ============================================================================
+// CPU-path fixture (fork client, Local routing)
+// ============================================================================
 
 /**
  * Test fixture: initializes chimaera as a fork client (background runtime)
@@ -128,6 +139,274 @@ class GpuCoreFixture {
     INFO("GpuCoreFixture ready (pool_id=" << core_pool_id_.ToU64() << ")");
   }
 };
+
+// ============================================================================
+// GPU-path fixture (server mode, LocalGpuBcast routing, pinned UVM buffers)
+// ============================================================================
+
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+
+static bool HasAvailableGpuDevice() {
+  int device_count = 0;
+  cudaError_t err = cudaGetDeviceCount(&device_count);
+  if (err != cudaSuccess) {
+    INFO("cudaGetDeviceCount failed; GPU-path CTE tests will be skipped: "
+         << cudaGetErrorString(err));
+    return false;
+  }
+  if (device_count <= 0) {
+    INFO("No CUDA/ROCM devices reported; GPU-path CTE tests will be skipped");
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Allocate a pinned host buffer accessible from both CPU and GPU via UVA.
+ * Uses cudaMallocHost — non-synchronizing free, safe alongside the persistent
+ * GPU orchestrator kernel.
+ */
+static char *AllocPinned(size_t bytes) {
+  char *ptr = nullptr;
+  cudaMallocHost(&ptr, bytes);
+  return ptr;
+}
+
+static void FreePinned(char *ptr) {
+  (void)ptr;  // Intentional leak: cudaFreeHost blocks on persistent GPU kernel.
+}
+
+/**
+ * Encode a pinned (UVA) pointer into an hipc::ShmPtr<> for task routing.
+ * Null alloc_id + raw pointer in off_ signals GPU path in IpcManager::ToFullPtr.
+ */
+static hipc::ShmPtr<> PinnedToShmPtr(void *ptr) {
+  hipc::ShmPtr<> sp;
+  sp.alloc_id_ = hipc::MemoryBackendId::GetNull();
+  sp.off_.exchange(reinterpret_cast<size_t>(ptr));
+  return sp;
+}
+
+/**
+ * GPU-path fixture: initializes chimaera in kServer mode so that GPU workers
+ * and the persistent GPU orchestrator kernel are active.
+ */
+class GpuCoreGpuFixture {
+ public:
+  static constexpr size_t kBlobSize = 4096;
+
+  std::unique_ptr<wrp_cte::core::Client> core_client_;
+  chi::PoolId core_pool_id_;
+  wrp_cte::core::TagId tag_id_{};
+
+  GpuCoreGpuFixture() {
+    if (g_gpu_initialized) return;
+
+    if (!HasAvailableGpuDevice()) {
+      INFO("No CUDA/ROCM device; GPU-path CTE tests will be skipped");
+      return;
+    }
+
+    // Ensure the runtime is initialized (GpuCoreFixture may not have run yet)
+    if (!g_initialized) {
+      hshm::Singleton<GpuCoreFixture>::GetInstance();
+    }
+
+    auto *ipc = CHI_IPC;
+    if (ipc == nullptr) {
+      INFO("CHI_IPC is null; GPU-path CTE tests will be skipped");
+      return;
+    }
+    if (ipc->GetToGpuQueueCount() == 0) {
+      INFO("No GPU queues available; GPU-path CTE tests will be skipped");
+      return;
+    }
+
+    // Create CTE core pool for GPU path
+    core_pool_id_ = chi::PoolId(wrp_cte::core::kCtePoolId.major_ + 1,
+                                wrp_cte::core::kCtePoolId.minor_);
+    core_client_ = std::make_unique<wrp_cte::core::Client>(core_pool_id_);
+    wrp_cte::core::CreateParams params;
+    auto create_task = core_client_->AsyncCreate(
+        chi::PoolQuery::Dynamic(),
+        "cte_gpu_path_pool", core_pool_id_, params);
+    create_task.Wait();
+    if (create_task->GetReturnCode() != 0) {
+      INFO("GPU fixture: CTE pool create failed: " << create_task->GetReturnCode());
+      return;
+    }
+
+    // GetOrCreateTag via CPU Local() — tag metadata must be in CPU runtime
+    // (the GPU GpuRuntime::GetOrCreateTag also supports this, but the CPU
+    // path is simpler for initial tag setup)
+    auto tag_task = core_client_->AsyncGetOrCreateTag(
+        "gpu_path_tag", wrp_cte::core::TagId::GetNull(), chi::PoolQuery::Local());
+    tag_task.Wait();
+    if (tag_task->GetReturnCode() != 0) {
+      INFO("GPU fixture: GetOrCreateTag failed: " << tag_task->GetReturnCode());
+      return;
+    }
+    tag_id_ = tag_task->tag_id_;
+
+    // Brief delay: allow GPU orchestrator to register the new pool's container
+    std::this_thread::sleep_for(200ms);
+
+    g_gpu_initialized = true;
+    INFO("GpuCoreGpuFixture ready (pool_id=" << core_pool_id_.ToU64()
+         << " tag_id=" << tag_id_.major_ << "." << tag_id_.minor_ << ")");
+  }
+};
+
+// ============================================================================
+// GPU-path tests: PutBlob and GetBlob execute in GPU kernel
+// ============================================================================
+
+/**
+ * Test: GPU-path PutBlob — routes to GpuRuntime::PutBlob via LocalGpuBcast.
+ *
+ * Allocates a 4 KB pinned buffer, fills it with 0xCD, and submits PutBlob
+ * to the GPU worker.  The GPU container stores the UVM pointer as the blob's
+ * backing location.
+ */
+TEST_CASE("GpuCore - GPU PutBlob via LocalGpuBcast", "[gpu][cte][core]") {
+  auto *f = hshm::Singleton<GpuCoreGpuFixture>::GetInstance();
+  if (!g_gpu_initialized) {
+    INFO("GPU not available; skipping GPU PutBlob test");
+    return;
+  }
+
+  const size_t kSize = GpuCoreGpuFixture::kBlobSize;
+
+  char *src = AllocPinned(kSize);
+  REQUIRE(src != nullptr);
+  memset(src, 0xCD, kSize);
+
+  hipc::ShmPtr<> blob_data = PinnedToShmPtr(src);
+
+  auto task = f->core_client_->AsyncPutBlob(
+      f->tag_id_, "gpu_kernel_blob",
+      /*offset=*/0,
+      /*size=*/kSize,
+      blob_data,
+      /*score=*/0.5f,
+      wrp_cte::core::Context(),
+      /*flags=*/0,
+      chi::PoolQuery::LocalGpuBcast());
+  REQUIRE(!task.IsNull());
+  task.Wait();
+  REQUIRE(task->GetReturnCode() == 0);
+
+  INFO("GPU PutBlob succeeded (return_code=0)");
+  // src kept alive; FreePinned is a no-op (safe leak until process exit)
+}
+
+/**
+ * Test: GPU-path GetBlob — routes to GpuRuntime::GetBlob via LocalGpuBcast.
+ *
+ * Reads the blob stored by the previous GPU PutBlob test into a separate
+ * pinned output buffer, then verifies the data matches the write pattern.
+ */
+TEST_CASE("GpuCore - GPU GetBlob via LocalGpuBcast", "[gpu][cte][core]") {
+  auto *f = hshm::Singleton<GpuCoreGpuFixture>::GetInstance();
+  if (!g_gpu_initialized) {
+    INFO("GPU not available; skipping GPU GetBlob test");
+    return;
+  }
+
+  const size_t kSize = GpuCoreGpuFixture::kBlobSize;
+
+  char *dst = AllocPinned(kSize);
+  REQUIRE(dst != nullptr);
+  memset(dst, 0x00, kSize);
+
+  hipc::ShmPtr<> blob_data = PinnedToShmPtr(dst);
+
+  auto task = f->core_client_->AsyncGetBlob(
+      f->tag_id_, "gpu_kernel_blob",
+      /*offset=*/0,
+      /*size=*/kSize,
+      /*flags=*/0,
+      blob_data,
+      chi::PoolQuery::LocalGpuBcast());
+  REQUIRE(!task.IsNull());
+  task.Wait();
+  REQUIRE(task->GetReturnCode() == 0);
+
+  // Verify data round-trip: GPU memcpy'd from src (0xCD) into dst
+  // task.Wait() guarantees GPU future is complete (system-scope atomic),
+  // so UVM coherence ensures CPU can read dst immediately.
+  bool data_ok = true;
+  for (size_t i = 0; i < kSize; ++i) {
+    if ((unsigned char)dst[i] != 0xCD) { data_ok = false; break; }
+  }
+  REQUIRE(data_ok);
+
+  INFO("GPU GetBlob data verified (0xCD pattern correct)");
+  FreePinned(dst);
+}
+
+/**
+ * Test: GPU-path GetOrCreateTag — routes via LocalGpuBcast to GpuRuntime.
+ *
+ * Creates a new tag directly on the GPU container and verifies a valid
+ * tag ID is assigned.
+ */
+TEST_CASE("GpuCore - GPU GetOrCreateTag via LocalGpuBcast", "[gpu][cte][core]") {
+  auto *f = hshm::Singleton<GpuCoreGpuFixture>::GetInstance();
+  if (!g_gpu_initialized) {
+    INFO("GPU not available; skipping GPU GetOrCreateTag test");
+    return;
+  }
+
+  auto task = f->core_client_->AsyncGetOrCreateTag(
+      "gpu_only_tag", wrp_cte::core::TagId::GetNull(),
+      chi::PoolQuery::LocalGpuBcast());
+  REQUIRE(!task.IsNull());
+  task.Wait();
+  REQUIRE(task->GetReturnCode() == 0);
+  REQUIRE(!task->tag_id_.IsNull());
+
+  INFO("GPU GetOrCreateTag succeeded (tag_id="
+       << task->tag_id_.major_ << "." << task->tag_id_.minor_ << ")");
+}
+
+// ============================================================================
+// GPU-initiated tests: kernel creates tasks and awaits completion
+// ============================================================================
+
+extern "C" int run_gpu_initiated_putblob_getblob_test(
+    chi::PoolId pool_id,
+    wrp_cte::core::TagId tag_id,
+    chi::u64 blob_size);
+
+/**
+ * Test: GPU-initiated PutBlob + GetBlob roundtrip.
+ *
+ * The GPU kernel itself creates PutBlob and GetBlob tasks using the unified
+ * Client API, submits them via the GPU→GPU queue, and awaits completion.
+ * This is a full GPU-initiated roundtrip — no CPU task submission involved.
+ */
+TEST_CASE("GpuCore - GPU-Initiated PutBlob+GetBlob", "[gpu][cte][core]") {
+  auto *f = hshm::Singleton<GpuCoreGpuFixture>::GetInstance();
+  if (!g_gpu_initialized) {
+    INFO("GPU not available; skipping GPU-initiated test");
+    return;
+  }
+
+  const chi::u64 kSize = 4096;
+
+  int result = run_gpu_initiated_putblob_getblob_test(
+      f->core_pool_id_, f->tag_id_, kSize);
+
+  INFO("GPU-initiated PutBlob+GetBlob result: " << result);
+  REQUIRE(result == 1);  // 1 = success from kernel
+}
+
+#endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+
+// ============================================================================
+// CPU-path tests
+// ============================================================================
 
 /**
  * Test: AsyncPutBlob with PoolQuery::Local() on a 4KB blob succeeds.

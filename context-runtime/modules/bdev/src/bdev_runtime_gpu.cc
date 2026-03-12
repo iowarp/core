@@ -24,7 +24,7 @@ namespace chimaera::bdev {
 // Update
 // ---------------------------------------------------------------------------
 
-HSHM_GPU_FUN void GpuRuntime::Update(hipc::FullPtr<UpdateTask> task,
+HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Update(hipc::FullPtr<UpdateTask> task,
                                       chi::gpu::RunContext &rctx) {
   hbm_ptr_    = task->hbm_ptr_;
   pinned_ptr_ = task->pinned_ptr_;
@@ -37,20 +37,21 @@ HSHM_GPU_FUN void GpuRuntime::Update(hipc::FullPtr<UpdateTask> task,
   gpu_heap_ = 0;
   task->return_code_ = 0;
   (void)rctx;
+  co_return;
 }
 
 // ---------------------------------------------------------------------------
 // AllocateBlocks
 // ---------------------------------------------------------------------------
 
-HSHM_GPU_FUN void GpuRuntime::AllocateBlocks(
+HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::AllocateBlocks(
     hipc::FullPtr<AllocateBlocksTask> task,
     chi::gpu::RunContext &rctx) {
   chi::u64 req = task->size_;
   if (req == 0 || total_size_ == 0) {
     task->return_code_ = 0;
     (void)rctx;
-    return;
+    co_return;
   }
 
   // Align requested size
@@ -68,7 +69,7 @@ HSHM_GPU_FUN void GpuRuntime::AllocateBlocks(
               (unsigned long long)(-(long long)aligned));
     task->return_code_ = 1;  // out of space
     (void)rctx;
-    return;
+    co_return;
   }
 
   Block blk;
@@ -79,25 +80,27 @@ HSHM_GPU_FUN void GpuRuntime::AllocateBlocks(
 
   task->return_code_ = 0;
   (void)rctx;
+  co_return;
 }
 
 // ---------------------------------------------------------------------------
 // FreeBlocks — no-op for bump allocator
 // ---------------------------------------------------------------------------
 
-HSHM_GPU_FUN void GpuRuntime::FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
+HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
                                            chi::gpu::RunContext &rctx) {
   // GPU bump allocator does not support per-block free.
   // Memory is reclaimed when the bdev pool is destroyed.
   task->return_code_ = 0;
   (void)task; (void)rctx;
+  co_return;
 }
 
 // ---------------------------------------------------------------------------
 // Write
 // ---------------------------------------------------------------------------
 
-HSHM_GPU_FUN void GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
+HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
                                      chi::gpu::RunContext &rctx) {
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
@@ -105,7 +108,7 @@ HSHM_GPU_FUN void GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
   if (bdev_type_ != kHbm && bdev_type_ != kPinned) {
     task->return_code_ = 1;  // unsupported on GPU for other types
     (void)rctx;
-    return;
+    co_return;
   }
 
   char *dst_base = reinterpret_cast<char *>(
@@ -129,13 +132,14 @@ HSHM_GPU_FUN void GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
   task->bytes_written_ = offset_in_data;
   task->return_code_ = 0;
   (void)rctx;
+  co_return;
 }
 
 // ---------------------------------------------------------------------------
 // Read
 // ---------------------------------------------------------------------------
 
-HSHM_GPU_FUN void GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
+HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
                                     chi::gpu::RunContext &rctx) {
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
@@ -143,7 +147,7 @@ HSHM_GPU_FUN void GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
   if (bdev_type_ != kHbm && bdev_type_ != kPinned) {
     task->return_code_ = 1;  // unsupported on GPU for other types
     (void)rctx;
-    return;
+    co_return;
   }
 
   char *src_base = reinterpret_cast<char *>(
@@ -166,6 +170,7 @@ HSHM_GPU_FUN void GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
   task->bytes_read_ = offset_in_data;
   task->return_code_ = 0;
   (void)rctx;
+  co_return;
 }
 
 }  // namespace chimaera::bdev

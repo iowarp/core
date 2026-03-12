@@ -12249,7 +12249,8 @@ TEST_CASE("Autogen - CTE Context struct cereal", "[autogen][cte][context][cereal
   }
 
   SECTION("CteTelemetry parameterized constructor") {
-    auto now = std::chrono::steady_clock::now();
+    auto now_tp = std::chrono::steady_clock::now();
+    auto now = static_cast<chi::u64>(now_tp.time_since_epoch().count());
     wrp_cte::core::CteTelemetry telem(
         wrp_cte::core::CteOp::kGetBlob, 10, 20,
         wrp_cte::core::TagId::GetNull(), now, now, 99);

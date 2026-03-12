@@ -447,7 +447,7 @@ struct DestroyPoolTask : public chi::Task {
    * This includes: target_pool_id_, destruction_flags_
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(target_pool_id_, destruction_flags_);
   }
@@ -457,7 +457,7 @@ struct DestroyPoolTask : public chi::Task {
    * This includes: error_message_
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(error_message_);
   }
@@ -525,7 +525,7 @@ struct StopRuntimeTask : public chi::Task {
    * This includes: shutdown_flags_, grace_period_ms_
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(shutdown_flags_, grace_period_ms_);
   }
@@ -535,7 +535,7 @@ struct StopRuntimeTask : public chi::Task {
    * This includes: error_message_
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(error_message_);
   }
@@ -590,7 +590,7 @@ struct FlushTask : public chi::Task {
    * No additional parameters for FlushTask
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     // No additional parameters to serialize for flush
   }
@@ -600,7 +600,7 @@ struct FlushTask : public chi::Task {
    * This includes: total_work_done_
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(total_work_done_);
   }
@@ -665,7 +665,7 @@ struct SendTask : public chi::Task {
    * Serialize IN and INOUT parameters for network transfer
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(transfer_flags_);
   }
@@ -674,7 +674,7 @@ struct SendTask : public chi::Task {
    * Serialize OUT and INOUT parameters for network transfer
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(error_message_);
   }
@@ -734,7 +734,7 @@ struct RecvTask : public chi::Task {
    * Serialize IN and INOUT parameters for network transfer
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(transfer_flags_);
   }
@@ -743,7 +743,7 @@ struct RecvTask : public chi::Task {
    * Serialize OUT and INOUT parameters for network transfer
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(error_message_);
   }
@@ -840,12 +840,12 @@ struct ClientConnectTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(response_, server_generation_, server_pid_, worker_queues_off_, num_gpus_, gpu_queue_depth_);
     for (chi::u32 i = 0; i < kMaxGpuDevices; ++i) {
@@ -913,12 +913,12 @@ struct ClientRecvTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(tasks_received_);
   }
@@ -958,12 +958,12 @@ struct ClientSendTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(tasks_sent_);
   }
@@ -1012,7 +1012,7 @@ struct WreapDeadIpcsTask : public chi::Task {
    * No additional parameters for WreapDeadIpcsTask
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     // No additional parameters to serialize
   }
@@ -1022,7 +1022,7 @@ struct WreapDeadIpcsTask : public chi::Task {
    * This includes: reaped_count_
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(reaped_count_);
   }
@@ -1070,13 +1070,13 @@ struct MonitorTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(query_);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(results_);
   }
@@ -1120,6 +1120,7 @@ class TaskBatch {
    */
   template <typename TaskT, typename... Args>
   void Add(Args &&...args) {
+#if HSHM_IS_HOST
     // Create new task in IPC
     auto task = CHI_IPC->NewTask<TaskT>(std::forward<Args>(args)...);
 
@@ -1137,6 +1138,7 @@ class TaskBatch {
     // Append serialized data
     const auto &data = archive.GetData();
     serialized_data_.insert(serialized_data_.end(), data.begin(), data.end());
+#endif  // HSHM_IS_HOST
   }
 
   /**
@@ -1239,7 +1241,7 @@ struct SubmitBatchTask : public chi::Task {
    * This includes: task_infos_, serialized_data_
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(task_infos_, serialized_data_);
   }
@@ -1249,7 +1251,7 @@ struct SubmitBatchTask : public chi::Task {
    * This includes: tasks_completed_, error_message_
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(tasks_completed_, error_message_);
   }
@@ -1370,7 +1372,7 @@ struct RegisterMemoryTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(alloc_major_, alloc_minor_, memory_type_, gpu_id_, data_capacity_);
     if constexpr (Archive::is_saving::value) {
@@ -1381,7 +1383,7 @@ struct RegisterMemoryTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(success_);
   }
@@ -1430,12 +1432,12 @@ struct RestartContainersTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(containers_restarted_, error_message_);
   }
@@ -1487,13 +1489,13 @@ struct AddNodeTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(new_node_ip_, new_node_port_);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(new_node_id_, error_message_);
   }
@@ -1550,13 +1552,13 @@ struct ChangeAddressTableTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(target_pool_id_, container_id_, new_node_id_);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(error_message_);
   }
@@ -1608,13 +1610,13 @@ struct MigrateContainersTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(migrations_json_);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(num_migrated_, error_message_);
   }
@@ -1653,12 +1655,12 @@ struct HeartbeatTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
   }
 
@@ -1693,12 +1695,12 @@ struct HeartbeatProbeTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
   }
 
@@ -1739,13 +1741,13 @@ struct ProbeRequestTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(target_node_id_);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(probe_result_);
   }
@@ -1800,13 +1802,13 @@ struct RecoverContainersTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(assignments_data_, dead_node_id_);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(num_recovered_, error_message_);
   }
@@ -1877,12 +1879,12 @@ struct SystemMonitorTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
   }
 
@@ -1923,13 +1925,13 @@ struct AnnounceShutdownTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(shutting_down_node_id_);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
   }
 

@@ -198,6 +198,7 @@ class ShmTransport
 
     // 5. Receive bulk data
     RecvBulksImpl(meta, ctx);
+
     info.rc = 0;
     return info;
   }
@@ -322,6 +323,7 @@ class ShmTransport
     // This ensures GPU sees CPU-written values in pinned host memory.
     size_t ring_size = ctx.shm_info_->copy_space_size_.load_system();
     size_t total_read = ctx.shm_info_->total_read_.load_system();
+    // Debug removed
     while (offset < size) {
       size_t total_written = ctx.shm_info_->total_written_.load_system();
       size_t avail = total_written - total_read;

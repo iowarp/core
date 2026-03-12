@@ -95,7 +95,8 @@ __global__ void chimaera_gpu_orchestrator(gpu::PoolManager *pool_mgr,
 
   // Poll until exit signal; yield when idle so client warps can be scheduled
   while (!control->exit_flag) {
-    if (!worker.PollOnce()) {
+    bool did_work = worker.PollOnce();
+    if (!did_work) {
       __nanosleep(100);
     }
   }
@@ -142,10 +143,9 @@ bool gpu::WorkOrchestrator::Launch(const IpcManagerGpuInfo &gpu_info, u32 blocks
   gpu::PoolManager host_pm;
   hshm::GpuApi::Memcpy(d_pm, &host_pm, sizeof(gpu::PoolManager));
 
-  // Set GPU stack size. 8KB is sufficient for the orchestrator's polling loop
-  // and task dispatch. 128KB would exhaust VRAM (36SMs × 1536 threads × 128KB
-  // ≈ 6.75GB) and prevent concurrent kernel launches.
-  cudaDeviceSetLimit(cudaLimitStackSize, 8192);
+  // Set GPU stack size. 32KB per thread for deep dispatch + serialization.
+  // Only thread 0 per block runs the worker loop, so actual usage is modest.
+  cudaDeviceSetLimit(cudaLimitStackSize, 32768);
 
   // Create dedicated stream
   stream_ = hshm::GpuApi::CreateStream();
@@ -206,6 +206,14 @@ void gpu::WorkOrchestrator::Pause() {
   }
   control_->exit_flag = 1;
   HLOG(kInfo, "GPU work orchestrator: exit_flag set, waiting for kernel...");
+
+  // Check for pre-existing CUDA errors before sync (sticky errors)
+  cudaError_t pre_err = cudaGetLastError();
+  if (pre_err != cudaSuccess) {
+    HLOG(kError, "GPU work orchestrator: pre-sync CUDA error: {}",
+         cudaGetErrorString(pre_err));
+  }
+
   hshm::GpuApi::Synchronize(stream_);
   HLOG(kInfo, "GPU work orchestrator: kernel synchronized");
   is_launched_ = false;
@@ -217,13 +225,35 @@ void gpu::WorkOrchestrator::Resume(const IpcManagerGpuInfo &gpu_info) {
   if (is_launched_) {
     return;
   }
+
+  // Clear any sticky CUDA errors before launching
+  cudaError_t pre_err = cudaGetLastError();
+  if (pre_err != cudaSuccess) {
+    HLOG(kError, "GPU work orchestrator Resume: clearing sticky CUDA error: {}",
+         cudaGetErrorString(pre_err));
+  }
+
   control_->exit_flag = 0;
   control_->running_flag = 0;
+
+  // On resume, skip heap re-initialization to preserve existing GPU-side
+  // container allocations (e.g., GpuMetadata in CTE GpuRuntime).
+  IpcManagerGpuInfo resume_info = gpu_info;
+  resume_info.skip_heap_init = true;
 
   auto *d_pm = static_cast<gpu::PoolManager *>(d_pool_mgr_);
   chimaera_gpu_orchestrator<<<blocks_, threads_per_block_, 0,
       static_cast<cudaStream_t>(stream_)>>>(
-      d_pm, control_, gpu_info, blocks_);
+      d_pm, control_, resume_info, blocks_);
+
+  // Check launch error
+  cudaError_t launch_err = cudaGetLastError();
+  if (launch_err != cudaSuccess) {
+    HLOG(kError, "GPU work orchestrator Resume: kernel launch failed: {}",
+         cudaGetErrorString(launch_err));
+    is_launched_ = false;
+    return;
+  }
 
   is_launched_ = true;
   HLOG(kInfo, "GPU work orchestrator resumed with {} blocks, {} threads/block",

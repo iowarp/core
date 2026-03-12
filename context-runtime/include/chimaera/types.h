@@ -464,7 +464,14 @@ constexpr PoolId kAdminPoolId =
 // GetMainAllocator() which returns gpu_alloc_table_ (ArenaAllocator) cast as
 // BuddyAllocator — a type mismatch that causes UB in string constructors.
 #define CHI_PRIV_ALLOC_T  hipc::BuddyAllocator
-#define CHI_PRIV_ALLOC    (CHI_IPC->GetGpuHeap())
+/**
+ * Get the GPU private allocator (BuddyAllocator from GPU heap).
+ * Declared here; defined in ipc_manager.h after CHI_IPC is available.
+ *
+ * @return Pointer to the GPU heap BuddyAllocator
+ */
+HSHM_GPU_FUN hipc::BuddyAllocator *GetPrivAllocGpu();
+#define CHI_PRIV_ALLOC    (::chi::GetPrivAllocGpu())
 #endif
 
 // CHI_GPU_HEAP_T: allocator for GPU serialization scratch buffers.

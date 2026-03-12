@@ -61,10 +61,19 @@ class GpuApi {
   static int GetDeviceCount() {
     int ngpu = 0;
 #if HSHM_ENABLE_ROCM
-    HIP_ERROR_CHECK(hipGetDeviceCount(&ngpu));
+    hipError_t err = hipGetDeviceCount(&ngpu);
+    if (err != hipSuccess) {
+      HLOG(kDebug, "hipGetDeviceCount failed (err={})", static_cast<int>(err));
+      return 0;
+    }
 #endif
 #if HSHM_ENABLE_CUDA
-    CUDA_ERROR_CHECK(cudaGetDeviceCount(&ngpu));
+    cudaError_t err = cudaGetDeviceCount(&ngpu);
+    if (err != cudaSuccess) {
+      HLOG(kDebug, "cudaGetDeviceCount failed (err={}): {}",
+           static_cast<int>(err), cudaGetErrorString(err));
+      return 0;
+    }
 #endif
     return ngpu;
   }

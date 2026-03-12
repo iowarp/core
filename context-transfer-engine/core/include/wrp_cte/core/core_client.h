@@ -42,9 +42,10 @@ namespace wrp_cte::core {
 
 class Client : public chi::ContainerClient {
  public:
-  Client() = default;
-  explicit Client(const chi::PoolId &pool_id) { Init(pool_id); }
+  HSHM_CROSS_FUN Client() = default;
+  HSHM_CROSS_FUN explicit Client(const chi::PoolId &pool_id) { Init(pool_id); }
 
+#if HSHM_IS_HOST
   /**
    * Asynchronous container creation - returns immediately
    * @param pool_query Pool query for task routing
@@ -81,7 +82,7 @@ class Client : public chi::ContainerClient {
    * @param pool_name Name of the pool (const char*, GPU-safe)
    * @param custom_pool_id Explicit pool ID
    */
-  HSHM_CROSS_FUN chi::Future<CreateTask> AsyncCreate(
+  chi::Future<CreateTask> AsyncCreate(
       const chi::PoolQuery &pool_query, const char *pool_name,
       const chi::PoolId &custom_pool_id) {
     auto *ipc_manager = CHI_IPC;
@@ -217,6 +218,7 @@ class Client : public chi::ContainerClient {
 
     return ipc_manager->Send(task);
   }
+#endif  // HSHM_IS_HOST
 
   /**
    * Asynchronous put blob with optional compression context - returns immediately
@@ -230,9 +232,10 @@ class Client : public chi::ContainerClient {
    * @param flags Operation flags
    * @param pool_query Pool query for task routing (default: Dynamic)
    */
+  HSHM_CROSS_FUN
   chi::Future<PutBlobTask> AsyncPutBlob(
       const TagId &tag_id,
-      const std::string &blob_name,
+      const char *blob_name,
       chi::u64 offset, chi::u64 size,
       hipc::ShmPtr<> blob_data, float score = -1.0f,
       const Context &context = Context(),
@@ -247,6 +250,21 @@ class Client : public chi::ContainerClient {
     return ipc_manager->Send(task);
   }
 
+#if HSHM_IS_HOST
+  /** std::string overload for backward compatibility (host-only) */
+  chi::Future<PutBlobTask> AsyncPutBlob(
+      const TagId &tag_id,
+      const std::string &blob_name,
+      chi::u64 offset, chi::u64 size,
+      hipc::ShmPtr<> blob_data, float score = -1.0f,
+      const Context &context = Context(),
+      chi::u32 flags = 0,
+      const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
+    return AsyncPutBlob(tag_id, blob_name.c_str(), offset, size,
+                        blob_data, score, context, flags, pool_query);
+  }
+#endif  // HSHM_IS_HOST
+
   /**
    * Asynchronous get blob - returns immediately
    * @param tag_id Tag ID
@@ -257,9 +275,10 @@ class Client : public chi::ContainerClient {
    * @param blob_data Shared memory pointer for output
    * @param pool_query Pool query for task routing (default: Dynamic)
    */
+  HSHM_CROSS_FUN
   chi::Future<GetBlobTask> AsyncGetBlob(
       const TagId &tag_id,
-      const std::string &blob_name,
+      const char *blob_name,
       chi::u64 offset, chi::u64 size,
       chi::u32 flags,
       hipc::ShmPtr<> blob_data,
@@ -271,6 +290,19 @@ class Client : public chi::ContainerClient {
         blob_name, offset, size, flags, blob_data);
 
     return ipc_manager->Send(task);
+  }
+
+#if HSHM_IS_HOST
+  /** std::string overload for backward compatibility (host-only) */
+  chi::Future<GetBlobTask> AsyncGetBlob(
+      const TagId &tag_id,
+      const std::string &blob_name,
+      chi::u64 offset, chi::u64 size,
+      chi::u32 flags,
+      hipc::ShmPtr<> blob_data,
+      const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
+    return AsyncGetBlob(tag_id, blob_name.c_str(), offset, size,
+                        flags, blob_data, pool_query);
   }
 
   /**
@@ -531,6 +563,7 @@ class Client : public chi::ContainerClient {
 
     return ipc_manager->Send(task);
   }
+#endif  // HSHM_IS_HOST
 };
 
 // Global pointer-based singleton for CTE client with lazy initialization
