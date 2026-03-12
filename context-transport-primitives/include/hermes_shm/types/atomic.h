@@ -748,7 +748,7 @@ struct std_atomic {
   /** Deserialization - properly handles std::atomic by loading/storing value */
   template <typename Ar>
   void load(Ar &ar) {
-    T val;
+    T val{};
     ar(val);
     x.store(val, std::memory_order_relaxed);
   }

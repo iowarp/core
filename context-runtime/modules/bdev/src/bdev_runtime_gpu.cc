@@ -9,7 +9,7 @@
  * GPU-side bdev container implementation.
  *
  * Compiled as CUDA device code (picked up by chimaera_cxx_gpu via the
- * modules/*_gpu.cc glob in src/CMakeLists.txt).
+ * modules/<star>_gpu.cc glob in src/CMakeLists.txt).
  *
  * Implements Update, AllocateBlocks, FreeBlocks, Write, Read using
  * device-resident atomics and memcpy.

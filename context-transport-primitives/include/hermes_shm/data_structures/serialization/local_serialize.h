@@ -230,7 +230,7 @@ class LocalDeserialize {
     } else if constexpr (std::is_enum<T>::value) {
       // Deserialize enums from their underlying type
       using UnderlyingType = std::underlying_type_t<T>;
-      UnderlyingType value;
+      UnderlyingType value{};
       read_binary(reinterpret_cast<char *>(&value), sizeof(UnderlyingType));
       obj = static_cast<T>(value);
     } else if constexpr (has_serialize_fun_v<LocalDeserialize, T>) {

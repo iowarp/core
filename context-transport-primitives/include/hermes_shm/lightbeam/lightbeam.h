@@ -223,7 +223,7 @@ class Transport {
 
 // --- Transport custom deleter (dispatches via type_ instead of vtable) ---
 struct TransportDeleter {
-  inline void operator()(Transport* t) const;
+  void operator()(Transport* t) const;
 };
 using TransportPtr = std::unique_ptr<Transport, TransportDeleter>;
 
