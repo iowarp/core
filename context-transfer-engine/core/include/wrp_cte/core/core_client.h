@@ -538,7 +538,7 @@ class Client : public chi::ContainerClient {
   chi::Future<SemanticQueryTask> AsyncSemanticQuery(
       const std::string &prompt,
       chi::u32 top_k = 10,
-      const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
+      const chi::PoolQuery &pool_query = chi::PoolQuery::Broadcast()) {
     auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<SemanticQueryTask>(

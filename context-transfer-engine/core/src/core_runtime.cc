@@ -3117,22 +3117,19 @@ chi::TaskResume Runtime::UpdateKnowledgeGraph(
 
     // Update the tag's summary in TagInfo
     {
-      co_await tag_map_lock_.WriteLock(ctx);
-      auto it = tag_id_to_info_.find(tag_id);
-      if (it == tag_id_to_info_.end()) {
-        tag_map_lock_.WriteUnlock();
+      chi::ScopedCoRwWriteLock write_lock(tag_map_lock_);
+      TagInfo *tag_info_ptr = tag_id_to_info_.find(tag_id);
+      if (tag_info_ptr == nullptr) {
         task->SetReturnCode(1);  // Tag not found
         co_return;
       }
-      it->second.summary_ = summary;
-      tag_map_lock_.WriteUnlock();
+      tag_info_ptr->summary_ = summary;
     }
 
     // Add to knowledge graph
     {
-      co_await kg_lock_.WriteLock(ctx);
+      chi::ScopedCoRwWriteLock write_lock(kg_lock_);
       knowledge_graph_.Add(tag_id, summary);
-      kg_lock_.WriteUnlock();
     }
 
     HLOG(kDebug, "Updated knowledge graph for tag {}.{}: {}",
@@ -3152,19 +3149,21 @@ chi::TaskResume Runtime::SemanticQuery(
     chi::u32 top_k = task->top_k_;
 
     // Search the knowledge graph
-    co_await kg_lock_.ReadLock(ctx);
+    chi::ScopedCoRwReadLock read_lock(kg_lock_);
     auto results = knowledge_graph_.Search(prompt, static_cast<int>(top_k));
-    kg_lock_.ReadUnlock();
 
-    // Extract TagIds from search results
-    task->results_.clear();
-    task->results_.reserve(results.size());
+    // Extract TagIds and scores from search results
+    task->result_tags_.clear();
+    task->result_scores_.clear();
+    task->result_tags_.reserve(results.size());
+    task->result_scores_.reserve(results.size());
     for (const auto &result : results) {
-      task->results_.push_back(result.key);
+      task->result_tags_.push_back(result.key);
+      task->result_scores_.push_back(result.score);
     }
 
     HLOG(kDebug, "SemanticQuery '{}' returned {} results",
-         prompt, task->results_.size());
+         prompt, task->result_tags_.size());
     task->SetReturnCode(0);
   } catch (const std::exception &e) {
     HLOG(kError, "SemanticQuery failed: {}", e.what());

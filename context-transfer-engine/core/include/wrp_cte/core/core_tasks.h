@@ -45,7 +45,9 @@
 #include <chimaera/bdev/bdev_client.h>
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <chrono>
+#include <numeric>
 // Include cereal for serialization
 #include <cereal/archives/binary.hpp>
 #include <cereal/cereal.hpp>
@@ -2019,16 +2021,18 @@ struct UpdateKnowledgeGraphTask : public chi::Task {
  * SemanticQuery task - Search the knowledge graph for matching tags
  */
 struct SemanticQueryTask : public chi::Task {
-  IN chi::priv::string prompt_;        // Search query text
-  IN chi::u32 top_k_;                  // Maximum number of results
-  OUT std::vector<TagId> results_;     // Matching tag IDs sorted by confidence
+  IN chi::priv::string prompt_;           // Search query text
+  IN chi::u32 top_k_;                     // Maximum number of results
+  OUT std::vector<TagId> result_tags_;    // Matching tag IDs (parallel with result_scores_)
+  OUT std::vector<float> result_scores_;  // BM25 confidence scores (parallel with result_tags_)
 
   // SHM constructor
   SemanticQueryTask()
       : chi::Task(),
         prompt_(HSHM_MALLOC),
         top_k_(10),
-        results_() {}
+        result_tags_(),
+        result_scores_() {}
 
   // Emplace constructor
   explicit SemanticQueryTask(const chi::TaskId &task_id,
@@ -2039,7 +2043,8 @@ struct SemanticQueryTask : public chi::Task {
       : chi::Task(task_id, pool_id, pool_query, Method::kSemanticQuery),
         prompt_(HSHM_MALLOC, prompt),
         top_k_(top_k),
-        results_() {
+        result_tags_(),
+        result_scores_() {
     task_id_ = task_id;
     pool_id_ = pool_id;
     method_ = Method::kSemanticQuery;
@@ -2056,23 +2061,52 @@ struct SemanticQueryTask : public chi::Task {
   template <typename Archive>
   void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
-    ar(results_);
+    ar(result_tags_, result_scores_);
   }
 
   void Copy(const hipc::FullPtr<SemanticQueryTask> &other) {
     Task::Copy(other.template Cast<Task>());
     prompt_ = other->prompt_;
     top_k_ = other->top_k_;
-    results_ = other->results_;
+    result_tags_ = other->result_tags_;
+    result_scores_ = other->result_scores_;
   }
 
   void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
     Task::Aggregate(other_base);
-    // Merge results from replicas, re-sort, and truncate
     auto replica = other_base.template Cast<SemanticQueryTask>();
-    results_.insert(results_.end(),
-                    replica->results_.begin(),
-                    replica->results_.end());
+    // Merge results from replica
+    size_t orig_size = result_tags_.size();
+    result_tags_.insert(result_tags_.end(),
+                        replica->result_tags_.begin(),
+                        replica->result_tags_.end());
+    result_scores_.insert(result_scores_.end(),
+                          replica->result_scores_.begin(),
+                          replica->result_scores_.end());
+    // Sort by score descending, keep only top_k
+    size_t n = result_tags_.size();
+    if (n > 1) {
+      // Build index array and sort by score
+      std::vector<size_t> idx(n);
+      std::iota(idx.begin(), idx.end(), 0);
+      std::sort(idx.begin(), idx.end(), [this](size_t a, size_t b) {
+        return result_scores_[a] > result_scores_[b];
+      });
+      // Reorder in-place via sorted indices
+      std::vector<TagId> sorted_tags(n);
+      std::vector<float> sorted_scores(n);
+      for (size_t i = 0; i < n; ++i) {
+        sorted_tags[i] = result_tags_[idx[i]];
+        sorted_scores[i] = result_scores_[idx[i]];
+      }
+      result_tags_ = std::move(sorted_tags);
+      result_scores_ = std::move(sorted_scores);
+    }
+    // Truncate to top_k
+    if (result_tags_.size() > top_k_) {
+      result_tags_.resize(top_k_);
+      result_scores_.resize(top_k_);
+    }
   }
 };
 #endif  // WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
