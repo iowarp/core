@@ -1805,7 +1805,7 @@ class IpcManager {
     // system-scope loads (atomicAdd_system reads DRAM, not CPU cache).
     // CPU writes go to CPU L1/L2/LLC; without clflush they may not reach DRAM
     // before the GPU (on discrete PCIe) reads them.
-#if defined(__x86_64__) || defined(__i386__)
+#if (defined(__x86_64__) || defined(__i386__)) && !defined(__CUDACC__)
     {
       const char *base = reinterpret_cast<const char *>(future_shm);
       for (const char *cl = base; cl < base + sizeof(FutureShm); cl += 64) {
