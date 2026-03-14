@@ -10,17 +10,20 @@
 namespace wrp_cae::core {
 
 namespace Method {
-// Inherited methods
-GLOBAL_CONST chi::u32 kCreate = 0;
-GLOBAL_CONST chi::u32 kDestroy = 1;
-GLOBAL_CONST chi::u32 kMonitor = 9;
 
-// core-specific methods
-GLOBAL_CONST chi::u32 kParseOmni = 10;
-GLOBAL_CONST chi::u32 kProcessHdf5Dataset = 11;
-GLOBAL_CONST chi::u32 kExportData = 12;
+enum : chi::u32 {
+  // Inherited methods
+  kCreate = 0,
+  kDestroy = 1,
+  kMonitor = 9,
 
-GLOBAL_CONST chi::u32 kMaxMethodId = 13;
+  // core-specific methods
+  kParseOmni = 10,
+  kProcessHdf5Dataset = 11,
+  kExportData = 12,
+
+  kMaxMethodId = 13,
+};
 }  // namespace Method
 
 }  // namespace wrp_cae::core

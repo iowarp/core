@@ -12,17 +12,20 @@
 namespace wrp_cte::compressor {
 
 namespace Method {
-// Inherited methods
-GLOBAL_CONST chi::u32 kCreate = 0;
-GLOBAL_CONST chi::u32 kDestroy = 1;
-GLOBAL_CONST chi::u32 kMonitor = 9;
 
-// compressor-specific methods
-GLOBAL_CONST chi::u32 kDynamicSchedule = 10;
-GLOBAL_CONST chi::u32 kCompress = 11;
-GLOBAL_CONST chi::u32 kDecompress = 12;
+enum : chi::u32 {
+  // Inherited methods
+  kCreate = 0,
+  kDestroy = 1,
+  kMonitor = 9,
 
-GLOBAL_CONST chi::u32 kMaxMethodId = 13;
+  // compressor-specific methods
+  kDynamicSchedule = 10,
+  kCompress = 11,
+  kDecompress = 12,
+
+  kMaxMethodId = 13,
+};
 
 inline const std::vector<std::string>& GetMethodNames() {
   static const std::vector<std::string> names = [] {

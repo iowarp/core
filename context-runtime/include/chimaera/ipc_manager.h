@@ -60,10 +60,10 @@
 #include "hermes_shm/memory/allocator/arena_allocator.h"
 #include "hermes_shm/memory/backend/gpu_malloc.h"
 #include "hermes_shm/memory/backend/gpu_shm_mmap.h"
-#if defined(__x86_64__) || defined(__i386__)
+#if (defined(__x86_64__) || defined(__i386__)) && !HSHM_IS_GPU_COMPILER
 #include <immintrin.h>
-#endif
-#endif
+#endif  // x86 && !GPU_COMPILER
+#endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 
 namespace chi {
 
@@ -1856,7 +1856,10 @@ class IpcManager {
     // without clflush they may not reach DRAM before the GPU (on discrete
     // PCIe) reads them.  Must flush the entire allocation (header + ring
     // buffer data written by ShmTransport::Send above).
-#if defined(__x86_64__) || defined(__i386__)
+    // Suppressed under GPU compilers: this TU is compiled by NVCC for device-
+    // callable host wrappers; the actual CPU server path that needs clflush
+    // is compiled by g++ where HSHM_IS_GPU_COMPILER is 0.
+#if (defined(__x86_64__) || defined(__i386__)) && !HSHM_IS_GPU_COMPILER
     {
       const char *base = reinterpret_cast<const char *>(future_shm);
       for (const char *cl = base; cl < base + alloc_size; cl += 64) {

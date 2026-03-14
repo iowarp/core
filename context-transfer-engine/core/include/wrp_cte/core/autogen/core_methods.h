@@ -12,35 +12,38 @@
 namespace wrp_cte::core {
 
 namespace Method {
-// Inherited methods
-GLOBAL_CONST chi::u32 kCreate = 0;
-GLOBAL_CONST chi::u32 kDestroy = 1;
-GLOBAL_CONST chi::u32 kMonitor = 9;
 
-// core-specific methods
-GLOBAL_CONST chi::u32 kRegisterTarget = 10;
-GLOBAL_CONST chi::u32 kUnregisterTarget = 11;
-GLOBAL_CONST chi::u32 kListTargets = 12;
-GLOBAL_CONST chi::u32 kStatTargets = 13;
-GLOBAL_CONST chi::u32 kGetOrCreateTag = 14;
-GLOBAL_CONST chi::u32 kPutBlob = 15;
-GLOBAL_CONST chi::u32 kGetBlob = 16;
-GLOBAL_CONST chi::u32 kReorganizeBlob = 17;
-GLOBAL_CONST chi::u32 kDelBlob = 18;
-GLOBAL_CONST chi::u32 kDelTag = 19;
-GLOBAL_CONST chi::u32 kGetTagSize = 20;
-GLOBAL_CONST chi::u32 kPollTelemetryLog = 21;
-GLOBAL_CONST chi::u32 kGetBlobScore = 22;
-GLOBAL_CONST chi::u32 kGetBlobSize = 23;
-GLOBAL_CONST chi::u32 kGetContainedBlobs = 24;
-GLOBAL_CONST chi::u32 kGetBlobInfo = 25;
-GLOBAL_CONST chi::u32 kTagQuery = 30;
-GLOBAL_CONST chi::u32 kBlobQuery = 31;
-GLOBAL_CONST chi::u32 kGetTargetInfo = 32;
-GLOBAL_CONST chi::u32 kFlushMetadata = 33;
-GLOBAL_CONST chi::u32 kFlushData = 34;
+enum : chi::u32 {
+  // Inherited methods
+  kCreate = 0,
+  kDestroy = 1,
+  kMonitor = 9,
 
-GLOBAL_CONST chi::u32 kMaxMethodId = 35;
+  // core-specific methods
+  kRegisterTarget = 10,
+  kUnregisterTarget = 11,
+  kListTargets = 12,
+  kStatTargets = 13,
+  kGetOrCreateTag = 14,
+  kPutBlob = 15,
+  kGetBlob = 16,
+  kReorganizeBlob = 17,
+  kDelBlob = 18,
+  kDelTag = 19,
+  kGetTagSize = 20,
+  kPollTelemetryLog = 21,
+  kGetBlobScore = 22,
+  kGetBlobSize = 23,
+  kGetContainedBlobs = 24,
+  kGetBlobInfo = 25,
+  kTagQuery = 30,
+  kBlobQuery = 31,
+  kGetTargetInfo = 32,
+  kFlushMetadata = 33,
+  kFlushData = 34,
+
+  kMaxMethodId = 35,
+};
 
 inline const std::vector<std::string>& GetMethodNames() {
   static const std::vector<std::string> names = [] {
