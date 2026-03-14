@@ -61,7 +61,9 @@
 #include "hermes_shm/memory/backend/gpu_malloc.h"
 #include "hermes_shm/memory/backend/gpu_shm_mmap.h"
 #if defined(__x86_64__) || defined(__i386__)
+#ifndef __CUDACC__
 #include <immintrin.h>
+#endif
 #endif
 #endif
 
