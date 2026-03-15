@@ -291,7 +291,7 @@ function(add_cuda_library TARGET SHARED DO_COPY)
                     -c ${SRC_ABS}
                     -o ${OBJ_FILE}
                     "$<$<CONFIG:Debug>:-g>"
-                    "$<$<CONFIG:Debug>:-O0>"
+                    "$<$<CONFIG:Debug>:-O1>"
                     "$<$<CONFIG:Release>:-O2>"
                     "$<$<CONFIG:RelWithDebInfo>:-O2>"
                     "$<$<CONFIG:RelWithDebInfo>:-g>"
@@ -478,7 +478,7 @@ function(add_cuda_executable TARGET DO_COPY)
                     -c ${SRC_ABS}
                     -o ${OBJ_FILE}
                     "$<$<CONFIG:Debug>:-g>"
-                    "$<$<CONFIG:Debug>:-O0>"
+                    "$<$<CONFIG:Debug>:-O1>"
                     "$<$<CONFIG:Release>:-O2>"
                     "$<$<CONFIG:RelWithDebInfo>:-O2>"
                     "$<$<CONFIG:RelWithDebInfo>:-g>"
