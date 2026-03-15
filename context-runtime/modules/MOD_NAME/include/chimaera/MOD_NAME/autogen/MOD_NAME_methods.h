@@ -12,20 +12,23 @@
 namespace chimaera::MOD_NAME {
 
 namespace Method {
-// Inherited methods
-GLOBAL_CONST chi::u32 kCreate = 0;
-GLOBAL_CONST chi::u32 kDestroy = 1;
-GLOBAL_CONST chi::u32 kMonitor = 9;
 
-// MOD_NAME-specific methods
-GLOBAL_CONST chi::u32 kCustom = 10;
-GLOBAL_CONST chi::u32 kCoMutexTest = 20;
-GLOBAL_CONST chi::u32 kCoRwLockTest = 21;
-GLOBAL_CONST chi::u32 kWaitTest = 23;
-GLOBAL_CONST chi::u32 kTestLargeOutput = 24;
-GLOBAL_CONST chi::u32 kGpuSubmit = 25;
+enum : chi::u32 {
+  // Inherited methods
+  kCreate = 0,
+  kDestroy = 1,
+  kMonitor = 9,
 
-GLOBAL_CONST chi::u32 kMaxMethodId = 26;
+  // MOD_NAME-specific methods
+  kCustom = 10,
+  kCoMutexTest = 20,
+  kCoRwLockTest = 21,
+  kWaitTest = 23,
+  kTestLargeOutput = 24,
+  kGpuSubmit = 25,
+
+  kMaxMethodId = 26,
+};
 
 inline const std::vector<std::string>& GetMethodNames() {
   static const std::vector<std::string> names = [] {

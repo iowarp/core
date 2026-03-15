@@ -216,32 +216,39 @@ class ChiModGenerator {
     std::copy_if(methods.begin(), methods.end(), std::back_inserter(inherited_methods),
                  [](const Method& m) { return m.is_inherited; });
 
-    if (!inherited_methods.empty()) {
-      oss << "// Inherited methods\n";
-      for (const auto& method : inherited_methods) {
-        oss << "GLOBAL_CONST chi::u32 " << method.constant_name << " = " << method.method_id << ";\n";
-      }
-      oss << "\n";
-    }
-
     // Add custom methods
     std::vector<Method> custom_methods;
     std::copy_if(methods.begin(), methods.end(), std::back_inserter(custom_methods),
                  [](const Method& m) { return !m.is_inherited; });
 
-    if (!custom_methods.empty()) {
-      oss << "// " << module_name << "-specific methods\n";
-      for (const auto& method : custom_methods) {
-        oss << "GLOBAL_CONST chi::u32 " << method.constant_name << " = " << method.method_id << ";\n";
+    // Emit a single enum block — enums are visible in device code under NVCC
+    // whereas GLOBAL_CONST variables require special handling to cross the
+    // host/device boundary.
+    oss << "\nenum : chi::u32 {\n";
+
+    if (!inherited_methods.empty()) {
+      oss << "  // Inherited methods\n";
+      for (const auto& method : inherited_methods) {
+        oss << "  " << method.constant_name << " = " << method.method_id << ",\n";
       }
+      oss << "\n";
     }
 
-    // Emit kMaxMethodId (one past the highest method ID)
-    if (!methods.empty()) {
-      oss << "\nGLOBAL_CONST chi::u32 kMaxMethodId = " << (methods.back().method_id + 1) << ";\n";
-    } else {
-      oss << "\nGLOBAL_CONST chi::u32 kMaxMethodId = 0;\n";
+    if (!custom_methods.empty()) {
+      oss << "  // " << module_name << "-specific methods\n";
+      for (const auto& method : custom_methods) {
+        oss << "  " << method.constant_name << " = " << method.method_id << ",\n";
+      }
+      oss << "\n";
     }
+
+    if (!methods.empty()) {
+      oss << "  kMaxMethodId = " << (methods.back().method_id + 1) << ",\n";
+    } else {
+      oss << "  kMaxMethodId = 0,\n";
+    }
+
+    oss << "};\n";
 
     // Emit GetMethodNames() function returning names indexed by method ID
     oss << "\ninline const std::vector<std::string>& GetMethodNames() {\n";

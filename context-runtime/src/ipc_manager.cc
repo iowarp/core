@@ -967,6 +967,7 @@ void IpcManager::SetGpuOrchestratorBlocks(u32 blocks, u32 threads_per_block) {
 #endif
 }
 
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 TaskQueue *IpcManager::GetToGpuQueue(size_t gpu_id) {
   if (gpu_id < cpu2gpu_queues_.size()) {
     return cpu2gpu_queues_[gpu_id].ptr_;
@@ -980,6 +981,7 @@ TaskQueue *IpcManager::GetGpuToGpuQueue(size_t gpu_id) {
   }
   return nullptr;
 }
+#endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 
 void IpcManager::RegisterGpuAllocator(const hipc::MemoryBackendId &id,
                                        char *data, size_t capacity) {
