@@ -1,0 +1,12 @@
+{
+  "provider": "hindsight",
+  "datasets": 20,
+  "queries": 20,
+  "top1_accuracy": 1.0,
+  "top3_accuracy": 1.0,
+  "top5_accuracy": 1.0,
+  "mrr": 1.0,
+  "ingest_latency_ms": 126.3430118560791,
+  "index_latency_ms": 106248.29578399658,
+  "avg_query_latency_ms": 304.75289821624756
+}

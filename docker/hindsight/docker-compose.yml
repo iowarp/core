@@ -5,15 +5,18 @@ services:
       - "8888:8888" # API
       - "9999:9999" # Control Plane UI
     environment:
-      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_LLM_PROVIDER:-anthropic}
-      HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_LLM_API_KEY:-${ANTHROPIC_API_KEY}}
-      HINDSIGHT_API_LLM_MODEL: ${HINDSIGHT_LLM_MODEL:-claude-sonnet-4-5-20250929}
+      HINDSIGHT_API_LLM_PROVIDER: openai
+      HINDSIGHT_API_LLM_API_KEY: sk-local
+      HINDSIGHT_API_LLM_MODEL: qwen
+      HINDSIGHT_API_LLM_BASE_URL: http://iowarp-llm-test:8090/v1
       HINDSIGHT_API_HOST: 0.0.0.0
       HINDSIGHT_API_PORT: 8888
       HINDSIGHT_API_LOG_LEVEL: info
       HINDSIGHT_CP_DATAPLANE_API_URL: http://localhost:8888
     volumes:
       - hindsight_data:/app/data
+    networks:
+      - memorybench-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8888/health"]
       interval: 10s
@@ -23,3 +26,7 @@ services:
 
 volumes:
   hindsight_data:
+
+networks:
+  memorybench-net:
+    external: true

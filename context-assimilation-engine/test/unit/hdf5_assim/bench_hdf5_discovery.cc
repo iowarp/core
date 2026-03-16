@@ -2,19 +2,25 @@
  * bench_hdf5_discovery.cc - HDF5 Dataset Discovery Benchmark
  *
  * Tests CTE Knowledge Graph's ability to locate datasets by natural language:
- *   1. INGEST:   Store 20 HDF5 files (64 MB each) as CTE tags
- *   2. INDEX KG: Feed dataset descriptions into the knowledge graph (BM25)
+ *   1. INGEST:   Store dataset descriptions as CTE tags
+ *   2. INDEX KG: Feed descriptions into the knowledge graph (BM25)
  *   3. QUERY:    Natural language queries -> SemanticQuery -> check accuracy
  *   4. REPORT:   Top-k accuracy, MRR, latency
+ *
+ * Reads datasets and queries from a manifest.json file.
+ * Generate with: python3 gen_hdf5_datasets.py [NUM] [OUTPUT_DIR]
+ * Then set HDF5_BENCH_DIR to the output directory.
  *
  * Requirements:
  * - Built with -DWRP_CTE_ENABLE_KNOWLEDGE_GRAPH=ON
  * - CTE runtime running (CHI_SERVER_CONF set)
+ * - HDF5_BENCH_DIR env var pointing to manifest.json directory
  */
 
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -22,15 +28,18 @@
 #include <algorithm>
 #include <numeric>
 
+#include <nlohmann/json.hpp>
+
 #include <chimaera/chimaera.h>
 #include <wrp_cte/core/core_client.h>
 #include <hermes_shm/util/logging.h>
 
 using Clock = std::chrono::high_resolution_clock;
 using Ms = std::chrono::duration<double, std::milli>;
+using json = nlohmann::json;
 
 // ============================================================
-// Dataset definitions
+// Dataset and query structures
 // ============================================================
 struct DatasetInfo {
   std::string tag_name;
@@ -38,9 +47,18 @@ struct DatasetInfo {
   std::string description;
 };
 
+struct Query {
+  std::string text;
+  std::string expected_tag;
+  std::string category;
+};
+
 static const std::string kTagPrefix = "hdf5_bench/";
 
-static const std::vector<DatasetInfo> kDatasets = {
+// ============================================================
+// Fallback hardcoded data (used when no manifest.json found)
+// ============================================================
+static const std::vector<DatasetInfo> kFallbackDatasets = {
     {"weather_forecast", "weather_forecast.h5",
      "Global weather forecast data including temperature, humidity, wind speed, "
      "and atmospheric pressure measurements from 500 weather stations across "
@@ -123,56 +141,27 @@ static const std::vector<DatasetInfo> kDatasets = {
      "CpG sites"},
 };
 
-// ============================================================
-// Query definitions
-// ============================================================
-struct Query {
-  std::string text;
-  std::string expected_tag;  // tag_name from kDatasets
-  std::string category;
-};
-
-static const std::vector<Query> kQueries = {
-    {"Find the weather forecast dataset",
-     "weather_forecast", "exact"},
-    {"Locate particle collision data from CERN",
-     "particle_physics", "synonym"},
-    {"Where is the ocean temperature data?",
-     "ocean_temperature", "exact"},
-    {"Show me the genomics sequencing results",
-     "genome_sequences", "synonym"},
-    {"Find stock trading historical prices",
-     "stock_market", "synonym"},
-    {"Locate the fMRI brain scan data",
-     "brain_imaging", "synonym"},
-    {"Find climate change projection data",
-     "climate_model", "synonym"},
-    {"Where are the earthquake recordings?",
-     "seismic_waves", "synonym"},
-    {"Locate protein crystallography coordinates",
-     "protein_structure", "synonym"},
-    {"Find the Landsat satellite images",
-     "satellite_imagery", "synonym"},
-    {"Show wind farm power generation data",
-     "wind_turbine", "synonym"},
-    {"Find the cardiovascular drug trial results",
-     "drug_trials", "synonym"},
-    {"Locate highway traffic sensor measurements",
-     "traffic_flow", "synonym"},
-    {"Where is the agricultural soil sensor data?",
-     "soil_moisture", "synonym"},
-    {"Find the speech recognition features dataset",
-     "audio_speech", "synonym"},
-    {"Locate the galaxy redshift catalog",
-     "galaxy_survey", "synonym"},
-    {"Find battery charge-discharge test data",
-     "battery_cycling", "synonym"},
-    {"Where is the PM2.5 air pollution data?",
-     "air_quality", "synonym"},
-    {"Find the neural network model weights",
-     "neural_network", "synonym"},
-    {"Locate the DNA epigenetic methylation data",
-     "dna_methylation", "synonym"},
+static const std::vector<Query> kFallbackQueries = {
+    {"Find the weather forecast dataset", "weather_forecast", "exact"},
+    {"Locate particle collision data from CERN", "particle_physics", "synonym"},
+    {"Where is the ocean temperature data?", "ocean_temperature", "exact"},
+    {"Show me the genomics sequencing results", "genome_sequences", "synonym"},
+    {"Find stock trading historical prices", "stock_market", "synonym"},
+    {"Locate the fMRI brain scan data", "brain_imaging", "synonym"},
+    {"Find climate change projection data", "climate_model", "synonym"},
+    {"Where are the earthquake recordings?", "seismic_waves", "synonym"},
+    {"Locate protein crystallography coordinates", "protein_structure", "synonym"},
+    {"Find the Landsat satellite images", "satellite_imagery", "synonym"},
+    {"Show wind farm power generation data", "wind_turbine", "synonym"},
+    {"Find the cardiovascular drug trial results", "drug_trials", "synonym"},
+    {"Locate highway traffic sensor measurements", "traffic_flow", "synonym"},
+    {"Where is the agricultural soil sensor data?", "soil_moisture", "synonym"},
+    {"Find the speech recognition features dataset", "audio_speech", "synonym"},
+    {"Locate the galaxy redshift catalog", "galaxy_survey", "synonym"},
+    {"Find battery charge-discharge test data", "battery_cycling", "synonym"},
+    {"Where is the PM2.5 air pollution data?", "air_quality", "synonym"},
+    {"Find the neural network model weights", "neural_network", "synonym"},
+    {"Locate the DNA epigenetic methylation data", "dna_methylation", "synonym"},
 };
 
 // ============================================================
@@ -189,7 +178,46 @@ int main() {
   return 0;
 #else
 
-  HLOG(kInfo, "Datasets: {}, Queries: {}", kDatasets.size(), kQueries.size());
+  // Load datasets and queries from manifest.json or fallback
+  std::vector<DatasetInfo> datasets;
+  std::vector<Query> queries;
+
+  const char* bench_dir_env = std::getenv("HDF5_BENCH_DIR");
+  std::string bench_dir = bench_dir_env ? bench_dir_env : "";
+  std::string manifest_path = bench_dir.empty() ? ""
+      : bench_dir + "/manifest.json";
+
+  if (!manifest_path.empty()) {
+    std::ifstream ifs(manifest_path);
+    if (ifs.is_open()) {
+      json manifest = json::parse(ifs);
+      for (const auto& ds : manifest["datasets"]) {
+        datasets.push_back({
+            ds["tag_name"].get<std::string>(),
+            ds.value("filename", ""),
+            ds["description"].get<std::string>()});
+      }
+      for (const auto& q : manifest["queries"]) {
+        queries.push_back({
+            q["text"].get<std::string>(),
+            q["expected_tag"].get<std::string>(),
+            q.value("category", "synonym")});
+      }
+      HLOG(kInfo, "Loaded manifest: {} datasets, {} queries from {}",
+           datasets.size(), queries.size(), manifest_path);
+    } else {
+      HLOG(kWarning, "Cannot open manifest: {} — using fallback data",
+           manifest_path);
+    }
+  }
+
+  if (datasets.empty()) {
+    HLOG(kInfo, "Using built-in 20 datasets (set HDF5_BENCH_DIR for more)");
+    datasets = kFallbackDatasets;
+    queries = kFallbackQueries;
+  }
+
+  HLOG(kInfo, "Datasets: {}, Queries: {}", datasets.size(), queries.size());
 
   // Initialize CTE
   bool ok = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
@@ -209,7 +237,7 @@ int main() {
   HLOG(kInfo, "=== Phase 1: Ingest to CTE ===");
 
   auto t_ingest_start = Clock::now();
-  for (const auto& ds : kDatasets) {
+  for (const auto& ds : datasets) {
     std::string full_tag = kTagPrefix + ds.tag_name;
 
     wrp_cte::core::Tag tag(full_tag);
@@ -231,20 +259,20 @@ int main() {
   HLOG(kInfo, "=== Phase 2: Index Knowledge Graph ===");
 
   auto t_kg_start = Clock::now();
-  for (const auto& ds : kDatasets) {
+  for (const auto& ds : datasets) {
     auto tag_id = tag_ids[ds.tag_name];
     auto fut = WRP_CTE_CLIENT->AsyncUpdateKnowledgeGraph(tag_id, ds.description);
     fut.Wait();
   }
   auto t_kg_end = Clock::now();
   double kg_ms = Ms(t_kg_end - t_kg_start).count();
-  HLOG(kInfo, "  {} descriptions indexed ({:.1f} ms)", kDatasets.size(), kg_ms);
+  HLOG(kInfo, "  {} descriptions indexed ({:.1f} ms)", datasets.size(), kg_ms);
 
   // ============================================================
   // Phase 3: Query
   // ============================================================
   HLOG(kInfo, "");
-  HLOG(kInfo, "=== Phase 3: Query ({} questions) ===", kQueries.size());
+  HLOG(kInfo, "=== Phase 3: Query ({} questions) ===", queries.size());
 
   int top1_correct = 0;
   int top3_correct = 0;
@@ -252,8 +280,8 @@ int main() {
   double total_rr = 0.0;  // Sum of reciprocal ranks
   double total_query_ms = 0.0;
 
-  for (size_t i = 0; i < kQueries.size(); i++) {
-    const auto& q = kQueries[i];
+  for (size_t i = 0; i < queries.size(); i++) {
+    const auto& q = queries[i];
     HLOG(kInfo, "");
     HLOG(kInfo, "  Q{:02d} [{}] \"{}\"", i + 1, q.category, q.text);
 
@@ -270,7 +298,6 @@ int main() {
     std::vector<float> result_scores = result->result_scores_;
 
     // Find expected TagId
-    std::string expected_full_tag = kTagPrefix + q.expected_tag;
     wrp_cte::core::TagId expected_tid;
     if (tag_ids.count(q.expected_tag)) {
       expected_tid = tag_ids[q.expected_tag];
@@ -316,28 +343,49 @@ int main() {
   // ============================================================
   // Phase 4: Report
   // ============================================================
-  double mrr = total_rr / kQueries.size();
+  double n = static_cast<double>(queries.size());
+  double mrr = total_rr / n;
 
   HLOG(kInfo, "");
   HLOG(kInfo, "========================================");
-  HLOG(kInfo, "Results");
+  HLOG(kInfo, "Results (CTE)");
   HLOG(kInfo, "========================================");
   HLOG(kInfo, "  Top-1 Accuracy: {}/{} ({:.1f}%)",
-       top1_correct, kQueries.size(),
-       100.0 * top1_correct / kQueries.size());
+       top1_correct, queries.size(),
+       100.0 * top1_correct / n);
   HLOG(kInfo, "  Top-3 Accuracy: {}/{} ({:.1f}%)",
-       top3_correct, kQueries.size(),
-       100.0 * top3_correct / kQueries.size());
+       top3_correct, queries.size(),
+       100.0 * top3_correct / n);
   HLOG(kInfo, "  Top-5 Accuracy: {}/{} ({:.1f}%)",
-       top5_correct, kQueries.size(),
-       100.0 * top5_correct / kQueries.size());
+       top5_correct, queries.size(),
+       100.0 * top5_correct / n);
   HLOG(kInfo, "  Mean Reciprocal Rank: {:.3f}", mrr);
   HLOG(kInfo, "  Ingest latency:      {:.1f} ms", ingest_ms);
   HLOG(kInfo, "  KG index latency:    {:.1f} ms", kg_ms);
-  HLOG(kInfo, "  Avg query latency:   {:.2f} ms",
-       total_query_ms / kQueries.size());
-  HLOG(kInfo, "  Total queries:       {}", kQueries.size());
+  HLOG(kInfo, "  Avg query latency:   {:.3f} ms", total_query_ms / n);
+  HLOG(kInfo, "  Total queries:       {}", queries.size());
   HLOG(kInfo, "========================================");
+
+  // Write results JSON
+  {
+    std::string out_path = "/tmp/cte_bench_results.json";
+    std::ofstream ofs(out_path);
+    if (ofs.is_open()) {
+      ofs << "{\n"
+          << "  \"provider\": \"cte\",\n"
+          << "  \"datasets\": " << datasets.size() << ",\n"
+          << "  \"queries\": " << queries.size() << ",\n"
+          << "  \"top1_accuracy\": " << top1_correct / n << ",\n"
+          << "  \"top3_accuracy\": " << top3_correct / n << ",\n"
+          << "  \"top5_accuracy\": " << top5_correct / n << ",\n"
+          << "  \"mrr\": " << mrr << ",\n"
+          << "  \"ingest_latency_ms\": " << ingest_ms << ",\n"
+          << "  \"index_latency_ms\": " << kg_ms << ",\n"
+          << "  \"avg_query_latency_ms\": " << total_query_ms / n << "\n"
+          << "}\n";
+      HLOG(kInfo, "\n  Results saved: {}", out_path);
+    }
+  }
 
   return 0;
 #endif  // WRP_CTE_ENABLE_KNOWLEDGE_GRAPH

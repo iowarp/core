@@ -1,0 +1,12 @@
+{
+  "provider": "graphiti",
+  "datasets": 20,
+  "queries": 20,
+  "top1_accuracy": 0.4,
+  "top3_accuracy": 0.5,
+  "top5_accuracy": 0.65,
+  "mrr": 0.47666666666666657,
+  "ingest_latency_ms": 221.77457809448242,
+  "index_latency_ms": 486250.0,
+  "avg_query_latency_ms": 146.70528173446655
+}
