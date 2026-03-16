@@ -287,6 +287,44 @@ if(SUMMARY_OP_ENABLED)
   )
   target_include_directories(cae_memory_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   install(TARGETS cae_memory_bench DESTINATION bin)
+
+  # Benchmark: Knowledge Graph Pipeline — full end-to-end (run manually)
+  # Requires both SUMMARY_OP and KNOWLEDGE_GRAPH enabled
+  if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
+    add_executable(cae_kg_bench
+      ${CMAKE_CURRENT_SOURCE_DIR}/summary_op/bench_kg_pipeline.cc
+    )
+    target_link_libraries(cae_kg_bench
+      PRIVATE
+        wrp_cte_core_client
+        chimaera::cxx
+        hshm::configure
+        CURL::libcurl
+        nlohmann_json::nlohmann_json
+    )
+    target_compile_definitions(cae_kg_bench PRIVATE WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
+    target_include_directories(cae_kg_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    install(TARGETS cae_kg_bench DESTINATION bin)
+  endif()
+endif()
+
+# Benchmark: HDF5 Dataset Discovery via Knowledge Graph (run manually)
+# Requires KNOWLEDGE_GRAPH enabled
+if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
+  add_executable(cae_hdf5_discovery_bench
+    ${CMAKE_CURRENT_SOURCE_DIR}/hdf5_assim/bench_hdf5_discovery.cc
+  )
+  target_link_libraries(cae_hdf5_discovery_bench
+    PRIVATE
+      wrp_cte_core_client
+      chimaera::cxx
+      hshm::configure
+  )
+  target_compile_definitions(cae_hdf5_discovery_bench PRIVATE WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
+  target_include_directories(cae_hdf5_discovery_bench PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  install(TARGETS cae_hdf5_discovery_bench DESTINATION bin)
 endif()
 
 #------------------------------------------------------------------------------
