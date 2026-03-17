@@ -82,7 +82,7 @@ class GlobusFileAssimilator : public BaseAssimilator {
    * -15: Exception during download (Globus-to-local)
    * -20: Globus support not compiled in
    */
-  int Schedule(const AssimilationCtx& ctx) override;
+  chi::TaskResume Schedule(const AssimilationCtx& ctx, int& error_code) override;
 
  private:
   /**
@@ -198,7 +198,8 @@ class GlobusFileAssimilator : public BaseAssimilator {
   int DownloadFile(const std::string& endpoint_id,
                    const std::string& remote_path,
                    const std::string& local_path,
-                   const std::string& access_token);
+                   const std::string& transfer_token,
+                   const std::string& https_token);
 #endif
 
   std::shared_ptr<wrp_cte::core::Client> cte_client_;
