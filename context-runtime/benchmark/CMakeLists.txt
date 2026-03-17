@@ -17,3 +17,10 @@ target_link_libraries(wrp_run_thrpt_benchmark
 install(TARGETS wrp_run_thrpt_benchmark
   DESTINATION bin
 )
+add_executable(wrp_edge_benchmark wrp_edge_benchmark.cc)
+target_link_libraries(wrp_edge_benchmark
+  cxx                             # Core Chimaera runtime
+  chimaera::admin_client          # Admin client for generic task submission
+  hshm::cxx                       # HermesShm shared memory framework
+)
+install(TARGETS wrp_edge_benchmark DESTINATION bin)

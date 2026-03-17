@@ -71,8 +71,21 @@ class IoUringAsyncIO : public AsyncIO {
     if (regular_fd_ < 0) return false;
 
     direct_fd_ = open(path.c_str(), base_flags | O_DIRECT, mode);
+    
+    //Bryan's Changes
+    //int ret = io_uring_queue_init(io_depth_, &ring_, 0);
+    // --- BEGIN PI 4 I/O OPTIMIZATIONS ---
+    struct io_uring_params params;
+    memset(&params, 0, sizeof(params));
 
-    int ret = io_uring_queue_init(io_depth_, &ring_, 0);
+    // DEFER_TASKRUN: Prevents OS interrupts from flushing the Pi 4's 1MB L2 cache
+    // SINGLE_ISSUER: Tells the kernel only this specific thread will submit to the ring
+    params.flags = IORING_SETUP_DEFER_TASKRUN | IORING_SETUP_SINGLE_ISSUER;
+
+    // Use io_uring_queue_init_params instead of the basic init
+    int ret = io_uring_queue_init_params(io_depth_, &ring_, &params);
+    // --- END PI 4 I/O OPTIMIZATIONS ---
+    // End Bryan's Changes
     if (ret < 0) {
       close(regular_fd_); regular_fd_ = -1;
       if (direct_fd_ >= 0) { close(direct_fd_); direct_fd_ = -1; }

@@ -208,6 +208,18 @@ void Worker::Finalize() {
 }
 
 void Worker::Run() {
+  //Start Bryan's Changes
+  // 1. Establish strict hardware affinity
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  CPU_SET(worker_id_, &cpuset); // worker_id_ 0 goes to Core 0, 1 to Core 1, etc.
+
+  int rc = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+  if (rc != 0) {
+      // Log fatal error: "Failed to pin thread to core"
+  }
+  //End Bryan's Changes
+  
   if (!is_initialized_) {
     return;
   }
@@ -226,6 +238,8 @@ void Worker::Run() {
   HLOG(kInfo, "Worker {}: EventManager signal event added, tid={}", worker_id_,
        tid);
 
+  // Bryan's Changes
+  /*
   // Main worker loop - process tasks from assigned lane
   while (is_running_) {
     did_work_ = false;  // Reset work tracker at start of each loop iteration
@@ -236,6 +250,7 @@ void Worker::Run() {
       u32 count = ProcessNewTasks(assigned_lane_);
       if (count > 0) did_work_ = true;
     }
+    
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
     for (auto *gpu_lane : gpu_lanes_) {
       u32 count = ProcessNewTasks(gpu_lane);
@@ -262,6 +277,63 @@ void Worker::Run() {
       did_work_ = false;
     }
   }
+  */
+
+  // --- EXPERIMENTAL AXIS 1: Toggle for Dedicated Core vs Symmetric ---
+  // Set to 'true' to test Model A, 'false' to test Model B
+  bool USE_DEDICATED_CORE_MODEL = true; 
+
+  // Main worker loop - process tasks from assigned lane
+  while (is_running_) {
+    did_work_ = false;  // Reset work tracker at start of each loop iteration
+    task_did_work_ = false;  // Reset task-level work tracker
+
+    if (USE_DEDICATED_CORE_MODEL && worker_id_ == 0) {
+        // --- MODEL A: CORE 0 (Dedicated Steering & I/O) ---
+        if (assigned_lane_) {
+          u32 count = ProcessNewTasks(assigned_lane_);
+          if (count > 0) did_work_ = true;
+        }
+        ContinueBlockedTasks(false);
+
+        // CRITICAL: Dedicated cores do not sleep. We fast-yield to the 
+        // scheduler to prevent Head-of-Line (HoL) blocking without 
+        // triggering a heavy OS context switch.
+        sched_yield(); 
+        
+        // Increment iteration and immediately loop back
+        iteration_count_++;
+        continue; 
+    }
+
+    // --- MODEL A (Cores 1-3) OR MODEL B (All Cores) ---
+    // Process tasks from assigned lane
+    if (assigned_lane_) {
+      u32 count = ProcessNewTasks(assigned_lane_);
+      if (count > 0) did_work_ = true;
+    }
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+    for (auto *gpu_lane : gpu_lanes_) {
+      u32 count = ProcessNewTasks(gpu_lane);
+      if (count > 0) did_work_ = true;
+    }
+#endif
+
+    // Check blocked queue for completed tasks at end of each iteration
+    ContinueBlockedTasks(false);
+    iteration_count_++;
+
+    if (!did_work_) {
+      // Pure compute workers are allowed to use standard adaptive sleep
+      SuspendMe();
+    } else {
+      // Work was done - reset idle counters
+      idle_iterations_ = 0;
+      current_sleep_us_ = 0;
+      sleep_count_ = 0;
+    }
+  }
+  //End  Bryan's Changes
 
   // EventManager destructor handles signalfd and epoll cleanup
 }
