@@ -70,7 +70,7 @@ HSHM_GPU_FUN static chi::u32 HashString(const chi::priv::string &s) {
  */
 struct GpuBlobEntry {
   chi::priv::string key_;       // compound key "major.minor.blob_name"
-  chi::u64 data_ptr_;           // GPU pointer to blob data
+  chi::priv::vector<BlobBlock> blocks_;  // Block allocations from bdev
   chi::u64 size_;               // blob size in bytes
   float score_;
   Timestamp last_modified_;
@@ -78,12 +78,12 @@ struct GpuBlobEntry {
 
   HSHM_CROSS_FUN GpuBlobEntry()
       : key_(CHI_PRIV_ALLOC),
-        data_ptr_(0), size_(0), score_(0.0f),
+        blocks_(CHI_PRIV_ALLOC), size_(0), score_(0.0f),
         last_modified_(0), last_read_(0) {}
 
   HSHM_CROSS_FUN GpuBlobEntry(const GpuBlobEntry &other)
       : key_(other.key_),
-        data_ptr_(other.data_ptr_), size_(other.size_),
+        blocks_(other.blocks_), size_(other.size_),
         score_(other.score_),
         last_modified_(other.last_modified_),
         last_read_(other.last_read_) {}
@@ -91,7 +91,7 @@ struct GpuBlobEntry {
   HSHM_CROSS_FUN GpuBlobEntry &operator=(const GpuBlobEntry &other) {
     if (this != &other) {
       key_ = other.key_;
-      data_ptr_ = other.data_ptr_;
+      blocks_ = other.blocks_;
       size_ = other.size_;
       score_ = other.score_;
       last_modified_ = other.last_modified_;
@@ -248,9 +248,12 @@ struct GpuMetadata {
   hshm::Mutex tag_lock_;
   GpuBlobMap blob_map_;
   chi::priv::vector<TagInfo> tags_;
+  hshm::Mutex target_lock_;
+  chi::priv::vector<TargetInfo> targets_;
 
-  HSHM_GPU_FUN GpuMetadata() : tags_(CHI_PRIV_ALLOC) {
+  HSHM_GPU_FUN GpuMetadata() : tags_(CHI_PRIV_ALLOC), targets_(CHI_PRIV_ALLOC) {
     tag_lock_.Init();
+    target_lock_.Init();
     blob_map_.Init(kDefaultBlobMapCapacity);
   }
 };
@@ -302,7 +305,28 @@ HSHM_GPU_FUN static chi::priv::string MakeCompoundKey(
 
 HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::RegisterTarget(
     hipc::FullPtr<RegisterTargetTask> task, chi::gpu::RunContext &rctx) {
-  (void)task; (void)rctx;
+  (void)rctx;
+  if (!chi::IpcManager::IsWarpScheduler()) co_return;
+  EnsureMetaInit();
+
+  // Extract task fields
+  chi::priv::string target_name(CHI_PRIV_ALLOC, task->target_name_.data());
+  chi::PoolId bdev_id = task->bdev_id_;
+  chi::u64 total_size = task->total_size_;
+  chi::PoolQuery target_query = task->target_query_;
+
+  // Lock and create TargetInfo
+  hshm::ScopedMutex guard(meta_->target_lock_, 0);
+  TargetInfo info;
+  info.target_name_ = target_name;
+  info.bdev_client_.Init(bdev_id);
+  info.target_query_ = target_query;
+  info.remaining_space_ = total_size;
+
+  // Push to targets vector
+  meta_->targets_.push_back(info);
+
+  task->return_code_ = 0;
   co_return;
 }
 
@@ -525,37 +549,109 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::PutBlob(
   auto data_ptr = CHI_IPC->ToFullPtr(task->blob_data_);
   if (data_ptr.IsNull()) { task->return_code_ = 6; co_return; }
 
-  // Build compound key and lock the bucket
+  // Build compound key and lock the blob map bucket
   chi::priv::string ck = MakeCompoundKey(tag_id, blob_name, blob_name_len);
-  hshm::ScopedMutex blob_guard(meta_->blob_map_.Lock(ck), 0);
+  GpuBlobEntry *entry = nullptr;
+  bool is_new_blob = false;
 
-  GpuBlobEntry *entry = meta_->blob_map_.Find(ck);
-  if (entry == nullptr) {
-    // Create new blob entry
-    entry = meta_->blob_map_.InsertOrFind(ck);
-    entry->data_ptr_ = reinterpret_cast<chi::u64>(data_ptr.ptr_);
+  // Scope 1: Lock blob map, find or create entry, clear old blocks if needed
+  {
+    hshm::ScopedMutex blob_guard(meta_->blob_map_.Lock(ck), 0);
+    entry = meta_->blob_map_.Find(ck);
+    if (entry == nullptr) {
+      entry = meta_->blob_map_.InsertOrFind(ck);
+      is_new_blob = true;
+    } else {
+      // Clear old blocks before unlocking
+      entry->blocks_.clear();
+    }
+  }
+
+  // Find a target with sufficient space (must be under target_lock_)
+  // Copy target info locally to avoid holding lock during co_await
+  TargetInfo target_info;
+  chi::u64 old_blob_size = entry->size_;
+  {
+    hshm::ScopedMutex target_guard(meta_->target_lock_, 0);
+    bool found = false;
+    for (size_t i = 0; i < meta_->targets_.size(); ++i) {
+      if (meta_->targets_[i].remaining_space_ >= size) {
+        target_info = meta_->targets_[i];
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      task->return_code_ = 7;  // No space available
+      co_return;
+    }
+  }
+
+  // Allocate blocks via bdev (outside locks)
+  auto alloc_task = target_info.bdev_client_.AsyncAllocateBlocks(
+      target_info.target_query_, size);
+  co_await alloc_task;
+
+  if (alloc_task->blocks_.empty()) {
+    task->return_code_ = 8;  // Allocation failed
+    co_return;
+  }
+
+  // Copy data to allocated blocks via bdev (outside locks)
+  auto write_task = target_info.bdev_client_.AsyncWrite(
+      target_info.target_query_, alloc_task->blocks_, task->blob_data_, size);
+  co_await write_task;
+
+  if (write_task->return_code_ != 0) {
+    task->return_code_ = 9;  // Write failed
+    co_return;
+  }
+
+  // Re-lock blob map and update entry with blocks
+  {
+    hshm::ScopedMutex blob_guard(meta_->blob_map_.Lock(ck), 0);
+
+    // Create BlobBlock structs from allocated blocks
+    entry->blocks_.clear();
+    for (size_t i = 0; i < alloc_task->blocks_.size(); ++i) {
+      BlobBlock blk(target_info.bdev_client_, target_info.target_query_,
+                    alloc_task->blocks_[i].offset_, alloc_task->blocks_[i].size_);
+      entry->blocks_.push_back(blk);
+    }
+
     entry->size_ = size;
     entry->score_ = blob_score;
     entry->last_modified_ = GetCurrentTimeNs();
-    entry->last_read_ = 0;
+    if (is_new_blob) {
+      entry->last_read_ = 0;
+    }
+  }
 
-    // Update tag total_size_
-    hshm::ScopedMutex tag_guard(meta_->tag_lock_, 0);
-    TagInfo *tag = FindTagById(tag_id);
-    if (tag != nullptr) tag->total_size_ += size;
-  } else {
-    // Update existing blob
-    chi::u64 old_size = entry->size_;
-    entry->data_ptr_ = reinterpret_cast<chi::u64>(data_ptr.ptr_);
-    entry->size_ = size;
-    entry->score_ = blob_score;
-    entry->last_modified_ = GetCurrentTimeNs();
-
-    // Update tag total_size_
+  // Update tag total_size_ (under tag_lock_)
+  {
     hshm::ScopedMutex tag_guard(meta_->tag_lock_, 0);
     TagInfo *tag = FindTagById(tag_id);
     if (tag != nullptr) {
-      tag->total_size_ = tag->total_size_ - old_size + size;
+      if (is_new_blob) {
+        tag->total_size_ += size;
+      } else {
+        tag->total_size_ = tag->total_size_ - old_blob_size + size;
+      }
+    }
+  }
+
+  // Update target remaining_space_ (under target_lock_)
+  {
+    hshm::ScopedMutex target_guard(meta_->target_lock_, 0);
+    for (size_t i = 0; i < meta_->targets_.size(); ++i) {
+      if (meta_->targets_[i].target_name_ == target_info.target_name_) {
+        chi::u64 space_used = is_new_blob ? size : size - old_blob_size;
+        meta_->targets_[i].remaining_space_ =
+            (space_used <= meta_->targets_[i].remaining_space_)
+                ? meta_->targets_[i].remaining_space_ - space_used
+                : 0;
+        break;
+      }
     }
   }
 
@@ -581,23 +677,56 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetBlob(
   if (size == 0 || blob_name_len == 0) { task->return_code_ = 1; co_return; }
 
   chi::priv::string ck = MakeCompoundKey(tag_id, blob_name, blob_name_len);
-  hshm::ScopedMutex blob_guard(meta_->blob_map_.Lock(ck), 0);
-
-  GpuBlobEntry *entry = meta_->blob_map_.Find(ck);
-  if (entry == nullptr) { task->return_code_ = 1; co_return; }
 
   // Resolve output buffer
   auto out_ptr = CHI_IPC->ToFullPtr(task->blob_data_);
   if (out_ptr.IsNull()) { task->return_code_ = 1; co_return; }
-  // Copy data from blob to output buffer
-  char *src = reinterpret_cast<char *>(entry->data_ptr_) + offset;
-  char *dst = reinterpret_cast<char *>(out_ptr.ptr_);
-  chi::u64 can_read = (offset < entry->size_) ? (entry->size_ - offset) : 0;
-  chi::u64 to_read = (can_read < size) ? can_read : size;
-  memcpy(dst, src, to_read);
 
-  entry->last_read_ = GetCurrentTimeNs();
-  task->return_code_ = (to_read == size) ? 0 : 1;
+  // Get blob entry and blocks (copy blocks locally)
+  chi::priv::vector<BlobBlock> blocks(CHI_PRIV_ALLOC);
+  chi::u64 blob_size = 0;
+  {
+    hshm::ScopedMutex blob_guard(meta_->blob_map_.Lock(ck), 0);
+    GpuBlobEntry *entry = meta_->blob_map_.Find(ck);
+    if (entry == nullptr) { task->return_code_ = 1; co_return; }
+
+    blocks = entry->blocks_;
+    blob_size = entry->size_;
+    entry->last_read_ = GetCurrentTimeNs();
+  }
+
+  // For GPU simplicity, assume single-block blobs (typical case)
+  if (blocks.empty()) {
+    task->return_code_ = 2;  // No blocks allocated
+    co_return;
+  }
+
+  if (blocks.size() != 1) {
+    // Multi-block read not yet implemented on GPU
+    task->return_code_ = 3;
+    co_return;
+  }
+
+  // Build a vector of blocks for the read operation
+  chi::priv::vector<chimaera::bdev::Block> read_blocks(CHI_PRIV_ALLOC);
+  chimaera::bdev::Block blk(blocks[0].target_offset_, blocks[0].size_, 0);
+  read_blocks.push_back(blk);
+
+  // Read the single block via bdev
+  auto read_task = blocks[0].bdev_client_.AsyncRead(
+      blocks[0].target_query_, read_blocks, task->blob_data_, size);
+  co_await read_task;
+
+  if (read_task->return_code_ != 0) {
+    task->return_code_ = 4;  // Read failed
+    co_return;
+  }
+
+  // Validate we read the expected amount
+  chi::u64 can_read = (offset < blob_size) ? (blob_size - offset) : 0;
+  chi::u64 expected_read = (can_read < size) ? can_read : size;
+
+  task->return_code_ = (read_task->bytes_read_ == expected_read) ? 0 : 1;
   co_return;
 }
 
@@ -647,20 +776,27 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::DelBlob(
   if (blob_name_len == 0) { task->return_code_ = 1; co_return; }
 
   chi::priv::string ck = MakeCompoundKey(tag_id, blob_name, blob_name_len);
-  hshm::ScopedMutex blob_guard(meta_->blob_map_.Lock(ck), 0);
 
-  GpuBlobEntry *entry = meta_->blob_map_.Find(ck);
-  if (entry == nullptr) { task->return_code_ = 1; co_return; }
+  chi::u64 blob_size = 0;
+  {
+    hshm::ScopedMutex blob_guard(meta_->blob_map_.Lock(ck), 0);
+    GpuBlobEntry *entry = meta_->blob_map_.Find(ck);
+    if (entry == nullptr) { task->return_code_ = 1; co_return; }
 
-  chi::u64 blob_size = entry->size_;
-  meta_->blob_map_.Erase(ck);
+    blob_size = entry->size_;
+    // Clear blocks (for bump allocator, freeing is a no-op, but we clear the vector)
+    entry->blocks_.clear();
+    meta_->blob_map_.Erase(ck);
+  }
 
   // Update tag total_size_
-  hshm::ScopedMutex tag_guard(meta_->tag_lock_, 0);
-  TagInfo *tag = FindTagById(tag_id);
-  if (tag != nullptr) {
-    tag->total_size_ =
-        (blob_size <= tag->total_size_) ? tag->total_size_ - blob_size : 0;
+  {
+    hshm::ScopedMutex tag_guard(meta_->tag_lock_, 0);
+    TagInfo *tag = FindTagById(tag_id);
+    if (tag != nullptr) {
+      tag->total_size_ =
+          (blob_size <= tag->total_size_) ? tag->total_size_ - blob_size : 0;
+    }
   }
 
   task->return_code_ = 0;
