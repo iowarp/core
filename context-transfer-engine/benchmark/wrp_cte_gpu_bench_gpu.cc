@@ -169,33 +169,37 @@ __global__ void gpu_putblob_kernel(
 }
 
 /**
- * Kernel 3: Direct memcpy baseline — all threads cooperatively copy from
- * device memory to a pinned host buffer without going through CTE.
- * Uses 4-byte stores for safe pinned memory access.
+ * Kernel 3: Direct copy baseline — all threads cooperatively copy from
+ * device memory to pinned host memory using 4-byte coalesced stores.
+ * 32 threads × 4 bytes = 128 bytes per iteration = one PCIe cache line.
  */
 __global__ void gpu_direct_memcpy_kernel(
     const char *d_src,
     char *h_dst,
-    chi::u64 total_bytes) {
-  chi::u32 global_tid = blockIdx.x * blockDim.x + threadIdx.x;
-  chi::u32 total_threads = gridDim.x * blockDim.x;
+    chi::u64 total_bytes,
+    chi::u32 total_threads_used,
+    int *d_done) {
+  chi::u32 tid = blockIdx.x * blockDim.x + threadIdx.x;
+  chi::u32 stride = blockDim.x * gridDim.x;
 
-  // Use 4-byte stores for safe, aligned access to pinned host memory
+  // Coalesced 4-byte stores across all threads
   chi::u64 n_words = total_bytes / 4;
   const unsigned int *src4 = reinterpret_cast<const unsigned int *>(d_src);
   unsigned int *dst4 = reinterpret_cast<unsigned int *>(h_dst);
-
-  for (chi::u64 i = global_tid; i < n_words; i += total_threads) {
+  for (chi::u64 i = tid; i < n_words; i += stride) {
     dst4[i] = src4[i];
   }
 
-  // Handle tail bytes
-  chi::u64 tail_start = n_words * 4;
-  if (global_tid == 0) {
-    for (chi::u64 i = tail_start; i < total_bytes; ++i) {
+  // Tail bytes
+  if (tid == 0) {
+    chi::u64 tail = n_words * 4;
+    for (chi::u64 i = tail; i < total_bytes; ++i) {
       h_dst[i] = d_src[i];
     }
   }
+
+  __threadfence_system();
+  atomicAdd(d_done, 1);
 }
 
 /**
@@ -326,8 +330,8 @@ extern "C" int run_cte_gpu_bench_putblob(
 /**
  * CPU-side launcher for the direct memcpy baseline benchmark.
  *
- * Allocates device memory, fills it, then launches a kernel that copies
- * directly to pinned host memory — no CTE, no serialization, no queues.
+ * Mirrors PutBlob's structure: same block/thread config, same warp-slicing.
+ * Each warp's lane 0 calls memcpy to copy its slice to pinned host memory.
  */
 extern "C" int run_cte_gpu_bench_direct(
     chi::u32 client_blocks,
@@ -347,6 +351,7 @@ extern "C" int run_cte_gpu_bench_direct(
 
   // Fill with pattern
   cudaMemset(d_src, 0xAB, total_bytes);
+  cudaDeviceSynchronize();
 
   // Allocate pinned host destination buffer
   char *h_dst = nullptr;
@@ -358,16 +363,24 @@ extern "C" int run_cte_gpu_bench_direct(
   }
   memset(h_dst, 0, total_bytes);
 
+  chi::u32 total_threads_used = client_blocks * client_threads;
+  if (total_threads_used == 0) total_threads_used = 1;
+
+  int *d_done;
+  cudaMallocHost(&d_done, sizeof(int));
+  *d_done = 0;
+
   void *stream = hshm::GpuApi::CreateStream();
   cudaGetLastError();
 
   gpu_direct_memcpy_kernel<<<
       client_blocks, client_threads, 0,
       static_cast<cudaStream_t>(stream)>>>(
-      d_src, h_dst, total_bytes);
+      d_src, h_dst, total_bytes, total_threads_used, d_done);
 
   cudaError_t launch_err = cudaGetLastError();
   if (launch_err != cudaSuccess) {
+    cudaFreeHost(d_done);
     cudaFreeHost(h_dst);
     cudaFree(d_src);
     hshm::GpuApi::DestroyStream(stream);
@@ -376,15 +389,145 @@ extern "C" int run_cte_gpu_bench_direct(
   }
 
   auto t_start = std::chrono::high_resolution_clock::now();
-  cudaStreamSynchronize(static_cast<cudaStream_t>(stream));
-  auto t_end = std::chrono::high_resolution_clock::now();
 
+  constexpr int kTimeoutUs = 60000000;  // 60s
+  bool completed = PollDone(d_done, static_cast<int>(total_threads_used), kTimeoutUs);
+
+  auto t_end = std::chrono::high_resolution_clock::now();
   double elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                           t_end - t_start).count();
   *out_elapsed_ms = static_cast<float>(elapsed_ns / 1e6);
 
+  hshm::GpuApi::Synchronize(stream);
+
+  cudaFreeHost(d_done);
   cudaFreeHost(h_dst);
   cudaFree(d_src);
+  hshm::GpuApi::DestroyStream(stream);
+  CHI_IPC->ResumeGpuOrchestrator();
+
+  return completed ? 0 : -4;
+}
+
+/**
+ * Kernel 4: Write to managed memory — same warp structure as PutBlob.
+ * All lanes cooperatively memset their slice. Pages reside in VRAM,
+ * so writes happen at full VRAM bandwidth (~256 GB/s).
+ */
+__global__ void gpu_managed_write_kernel(
+    char *managed_buf,
+    chi::u64 total_bytes,
+    chi::u32 total_warps,
+    int *d_done) {
+  chi::u32 warp_id = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
+  chi::u32 lane_id = threadIdx.x % 32;
+
+  if (warp_id < total_warps) {
+    chi::u64 slice_size = total_bytes / total_warps;
+    chi::u64 my_offset = static_cast<chi::u64>(warp_id) * slice_size;
+    char *my_data = managed_buf + my_offset;
+
+    // All lanes participate in write (same as PutBlob kernel memset)
+    for (chi::u64 i = lane_id; i < slice_size; i += 32) {
+      my_data[i] = static_cast<char>(warp_id & 0xFF);
+    }
+    __syncwarp();
+
+    if (lane_id == 0) {
+      __threadfence();
+      atomicAdd(d_done, 1);
+    }
+  }
+}
+
+/**
+ * CPU-side launcher for managed memory benchmark.
+ *
+ * Measures three phases:
+ *   1. GPU write to managed memory (pages in VRAM)
+ *   2. Prefetch to host via cudaMemPrefetchAsync (DMA migration)
+ *   3. Total (write + prefetch)
+ */
+extern "C" int run_cte_gpu_bench_managed(
+    chi::u32 client_blocks,
+    chi::u32 client_threads,
+    chi::u64 total_bytes,
+    float *out_write_ms,
+    float *out_prefetch_ms,
+    float *out_total_ms) {
+  CHI_IPC->PauseGpuOrchestrator();
+
+  // Allocate managed memory, prefer GPU location
+  char *managed_buf = nullptr;
+  cudaError_t err = cudaMallocManaged(&managed_buf, total_bytes);
+  if (err != cudaSuccess || !managed_buf) {
+    CHI_IPC->ResumeGpuOrchestrator();
+    return -1;
+  }
+
+  // Advise preferred location = GPU so pages stay in VRAM during writes
+  int device = 0;
+  cudaMemAdvise(managed_buf, total_bytes, cudaMemAdviseSetPreferredLocation, device);
+  // Pre-fault pages onto GPU
+  cudaMemPrefetchAsync(managed_buf, total_bytes, device, 0);
+  cudaDeviceSynchronize();
+
+  chi::u32 total_warps = (client_blocks * client_threads) / 32;
+  if (total_warps == 0) total_warps = 1;
+
+  int *d_done;
+  cudaMallocHost(&d_done, sizeof(int));
+  *d_done = 0;
+
+  void *stream = hshm::GpuApi::CreateStream();
+
+  // Phase 1: GPU write
+  auto t0 = std::chrono::high_resolution_clock::now();
+
+  gpu_managed_write_kernel<<<
+      client_blocks, client_threads, 0,
+      static_cast<cudaStream_t>(stream)>>>(
+      managed_buf, total_bytes, total_warps, d_done);
+
+  cudaError_t launch_err = cudaGetLastError();
+  if (launch_err != cudaSuccess) {
+    cudaFreeHost(d_done);
+    cudaFree(managed_buf);
+    hshm::GpuApi::DestroyStream(stream);
+    CHI_IPC->ResumeGpuOrchestrator();
+    return -2;
+  }
+
+  bool completed = PollDone(d_done, static_cast<int>(total_warps), 60000000);
+  hshm::GpuApi::Synchronize(stream);
+
+  auto t1 = std::chrono::high_resolution_clock::now();
+
+  if (!completed) {
+    cudaFreeHost(d_done);
+    cudaFree(managed_buf);
+    hshm::GpuApi::DestroyStream(stream);
+    CHI_IPC->ResumeGpuOrchestrator();
+    return -3;
+  }
+
+  // Phase 2: Prefetch to host (DMA migration)
+  cudaMemPrefetchAsync(managed_buf, total_bytes, cudaCpuDeviceId,
+                       static_cast<cudaStream_t>(stream));
+  cudaStreamSynchronize(static_cast<cudaStream_t>(stream));
+
+  auto t2 = std::chrono::high_resolution_clock::now();
+
+  double write_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+  double prefetch_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+  double total_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t0).count();
+
+  *out_write_ms = static_cast<float>(write_ns / 1e6);
+  *out_prefetch_ms = static_cast<float>(prefetch_ns / 1e6);
+  *out_total_ms = static_cast<float>(total_ns / 1e6);
+
+  cudaFreeHost(d_done);
+  cudaFree(managed_buf);
   hshm::GpuApi::DestroyStream(stream);
   CHI_IPC->ResumeGpuOrchestrator();
 

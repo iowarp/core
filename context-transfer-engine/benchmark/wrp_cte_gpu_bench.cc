@@ -87,7 +87,15 @@ extern "C" int run_cte_gpu_bench_cudamemcpy(
     chi::u64 total_bytes,
     float *out_elapsed_ms);
 
-enum class TestCase { kPutBlob, kPutBlobGpu, kDirect, kCudaMemcpy };
+extern "C" int run_cte_gpu_bench_managed(
+    chi::u32 client_blocks,
+    chi::u32 client_threads,
+    chi::u64 total_bytes,
+    float *out_write_ms,
+    float *out_prefetch_ms,
+    float *out_total_ms);
+
+enum class TestCase { kPutBlob, kPutBlobGpu, kDirect, kCudaMemcpy, kManaged };
 
 struct BenchConfig {
   TestCase test_case = TestCase::kPutBlob;
@@ -123,7 +131,7 @@ chi::u64 ParseSize(const std::string &s) {
 void PrintUsage(const char *prog) {
   HIPRINT("Usage: {} [options]", prog);
   HIPRINT("Options:");
-  HIPRINT("  --test-case <case>     putblob, putblob_gpu, direct, or cudamemcpy (default: putblob)");
+  HIPRINT("  --test-case <case>     putblob, putblob_gpu, direct, cudamemcpy, or managed (default: putblob)");
   HIPRINT("  --rt-blocks <N>        GPU runtime orchestrator blocks (default: 1)");
   HIPRINT("  --rt-threads <N>       GPU runtime threads/block (default: 32)");
   HIPRINT("  --client-blocks <N>    GPU client kernel blocks (default: 1)");
@@ -144,8 +152,9 @@ bool ParseArgs(int argc, char **argv, BenchConfig &cfg) {
       else if (tc == "putblob_gpu") cfg.test_case = TestCase::kPutBlobGpu;
       else if (tc == "direct") cfg.test_case = TestCase::kDirect;
       else if (tc == "cudamemcpy") cfg.test_case = TestCase::kCudaMemcpy;
+      else if (tc == "managed") cfg.test_case = TestCase::kManaged;
       else {
-        HLOG(kError, "Unknown test case '{}'; use putblob, putblob_gpu, direct, or cudamemcpy", tc);
+        HLOG(kError, "Unknown test case '{}'; use putblob, putblob_gpu, direct, cudamemcpy, or managed", tc);
         return false;
       }
     } else if (arg == "--rt-blocks" && i + 1 < argc) {
@@ -199,6 +208,7 @@ int main(int argc, char **argv) {
   const char *tc_name = (cfg.test_case == TestCase::kPutBlob) ? "putblob" :
                          (cfg.test_case == TestCase::kPutBlobGpu) ? "putblob_gpu" :
                          (cfg.test_case == TestCase::kCudaMemcpy) ? "cudamemcpy" :
+                         (cfg.test_case == TestCase::kManaged) ? "managed" :
                          "direct";
 
   HIPRINT("\n=== CTE GPU Benchmark ===");
@@ -213,7 +223,27 @@ int main(int argc, char **argv) {
   float elapsed_ms = 0;
   int rc = 0;
 
-  if (cfg.test_case == TestCase::kCudaMemcpy) {
+  if (cfg.test_case == TestCase::kManaged) {
+    // Managed memory: GPU write + prefetch to host
+    float write_ms = 0, prefetch_ms = 0, total_ms = 0;
+    rc = run_cte_gpu_bench_managed(cfg.client_blocks, cfg.client_threads,
+                                    cfg.total_bytes,
+                                    &write_ms, &prefetch_ms, &total_ms);
+    if (rc != 0) {
+      HLOG(kError, "Benchmark failed with error: {}", rc);
+      return 1;
+    }
+    double bytes = cfg.total_bytes;
+    printf("\n=== %s Results ===\n", tc_name);
+    printf("GPU write:           %.3f ms  (%.3f GB/s)\n",
+           static_cast<double>(write_ms), (bytes / 1e9) / (write_ms / 1e3));
+    printf("Prefetch to host:    %.3f ms  (%.3f GB/s)\n",
+           static_cast<double>(prefetch_ms), (bytes / 1e9) / (prefetch_ms / 1e3));
+    printf("Total:               %.3f ms  (%.3f GB/s)\n",
+           static_cast<double>(total_ms), (bytes / 1e9) / (total_ms / 1e3));
+    printf("=========================\n");
+    return 0;
+  } else if (cfg.test_case == TestCase::kCudaMemcpy) {
     // cudaMemcpy baseline — theoretical PCIe maximum
     rc = run_cte_gpu_bench_cudamemcpy(cfg.total_bytes, &elapsed_ms);
   } else if (cfg.test_case == TestCase::kDirect) {
