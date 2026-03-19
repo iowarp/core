@@ -130,7 +130,6 @@ __global__ void gpu_putblob_kernel(
       // Build ShmPtr referencing the data allocator backend
       hipc::ShmPtr<> blob_shm;
       blob_shm.alloc_id_ = data_alloc_id;
-      // offset = distance from backend base
       size_t base_off = array_ptr.shm_.off_.load();
       blob_shm.off_.exchange(base_off + my_offset);
 
@@ -146,14 +145,15 @@ __global__ void gpu_putblob_kernel(
       for (int d = nd - 1; d >= 0; --d) name_buf[pos++] = digits[d];
       name_buf[pos] = '\0';
 
-      auto future = cte_client.AsyncPutBlob(
+      auto *ipc = CHI_IPC;
+      auto task = ipc->NewTask<wrp_cte::core::PutBlobTask>(
+          chi::CreateTaskId(), cte_pool_id,
+          to_cpu ? chi::PoolQuery::ToLocalCpu() : chi::PoolQuery::Local(),
           tag_id, name_buf,
-          /*offset=*/0, /*size=*/slice_size,
-          blob_shm, /*score=*/-1.0f,
-          wrp_cte::core::Context(), /*flags=*/0,
-          to_cpu ? chi::PoolQuery::ToLocalCpu()
-                 : chi::PoolQuery::Local());
-
+          (chi::u64)0, slice_size,
+          blob_shm, -1.0f,
+          wrp_cte::core::Context(), (chi::u32)0);
+      auto future = ipc->Send(task);
       future.Wait();
     }
   }
@@ -291,6 +291,15 @@ extern "C" int run_cte_gpu_bench_putblob(
   void *stream = hshm::GpuApi::CreateStream();
   cudaGetLastError();
 
+  // Zero client scratch/heap backends (device memory) so non-block-0
+  // blocks don't see stale heap_ready_ flags from previous allocations.
+  if (scratch_backend.data_ != nullptr) {
+    cudaMemset(scratch_backend.data_, 0, sizeof(hipc::ThreadAllocator));
+  }
+  if (heap_backend.data_ != nullptr) {
+    cudaMemset(heap_backend.data_, 0, sizeof(hipc::ThreadAllocator));
+  }
+
   gpu_putblob_kernel<<<
       client_blocks, client_threads, 0,
       static_cast<cudaStream_t>(stream)>>>(
@@ -307,16 +316,81 @@ extern "C" int run_cte_gpu_bench_putblob(
     return -3;
   }
 
+  // Zero debug counters before benchmark run so we only see benchmark activity
+  auto *orchestrator = static_cast<chi::gpu::WorkOrchestrator *>(
+      CHI_IPC->gpu_orchestrator_);
+  auto *ctrl = orchestrator ? orchestrator->control_ : nullptr;
+  if (ctrl) {
+    memset((void*)ctrl->dbg_poll_count, 0, sizeof(ctrl->dbg_poll_count));
+    memset((void*)ctrl->dbg_last_state, 0, sizeof(ctrl->dbg_last_state));
+    memset((void*)ctrl->dbg_num_suspended, 0, sizeof(ctrl->dbg_num_suspended));
+    memset((void*)ctrl->dbg_last_method, 0, sizeof(ctrl->dbg_last_method));
+    memset((void*)ctrl->dbg_tasks_popped, 0, sizeof(ctrl->dbg_tasks_popped));
+    memset((void*)ctrl->dbg_tasks_completed, 0, sizeof(ctrl->dbg_tasks_completed));
+    memset((void*)ctrl->dbg_tasks_resumed, 0, sizeof(ctrl->dbg_tasks_resumed));
+    memset((void*)ctrl->dbg_alloc_failures, 0, sizeof(ctrl->dbg_alloc_failures));
+    memset((void*)ctrl->dbg_queue_pops, 0, sizeof(ctrl->dbg_queue_pops));
+    memset((void*)ctrl->dbg_no_container, 0, sizeof(ctrl->dbg_no_container));
+    memset((void*)ctrl->dbg_input_tw, 0, sizeof(ctrl->dbg_input_tw));
+    memset((void*)ctrl->dbg_input_cs, 0, sizeof(ctrl->dbg_input_cs));
+    memset((void*)ctrl->dbg_dispatch_step, 0, sizeof(ctrl->dbg_dispatch_step));
+    memset((void*)ctrl->dbg_ser_total_written, 0, sizeof(ctrl->dbg_ser_total_written));
+  }
+
   CHI_IPC->ResumeGpuOrchestrator();
+  if (ctrl) {
+    int wait_ms = 0;
+    while (ctrl->running_flag == 0 && wait_ms < 5000) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      ++wait_ms;
+    }
+    if (ctrl->running_flag == 0) {
+      fprintf(stderr, "ERROR: Orchestrator failed to start after %dms\n", wait_ms);
+    }
+  }
+
   auto t_start = std::chrono::high_resolution_clock::now();
 
-  constexpr int kTimeoutUs = 60000000;  // 60s
+  constexpr int kTimeoutUs = 30000000;  // 30s
   bool completed = PollDone(d_done, static_cast<int>(total_warps), kTimeoutUs);
 
   auto t_end = std::chrono::high_resolution_clock::now();
   double elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
                           t_end - t_start).count();
   *out_elapsed_ms = static_cast<float>(elapsed_ns / 1e6);
+
+  // On timeout: pause orchestrator FIRST to flush GPU printf, then sync client
+  if (!completed) {
+    if (ctrl) {
+      fprintf(stderr, "TIMEOUT: d_done=%d/%u running_flag=%d\n",
+              *d_done, total_warps, ctrl->running_flag);
+      for (chi::u32 i = 0; i < (rt_blocks * rt_threads) / 32 && i < 32; ++i) {
+        fprintf(stderr, "  warp[%u]: polls=%llu qpop=%u pop=%u done=%u "
+                "state=%u step=%u method=%u pool=%u.%u "
+                "tail=%llu head=%llu\n",
+                i, (unsigned long long)ctrl->dbg_poll_count[i],
+                ctrl->dbg_queue_pops[i],
+                ctrl->dbg_tasks_popped[i],
+                ctrl->dbg_tasks_completed[i],
+                ctrl->dbg_last_state[i],
+                ctrl->dbg_dispatch_step[i],
+                ctrl->dbg_last_method[i],
+                (unsigned int)(ctrl->dbg_resume_checks[i] >> 32),
+                (unsigned int)(ctrl->dbg_resume_checks[i] & 0xFFFFFFFF),
+                (unsigned long long)ctrl->dbg_input_tw[i],
+                (unsigned long long)ctrl->dbg_input_cs[i]);
+      }
+      fflush(stderr);
+    }
+    // Pause orchestrator to stop the persistent kernel and flush GPU printf
+    CHI_IPC->PauseGpuOrchestrator();
+    // Now sync the client stream (client warps may be stuck in future.Wait)
+    // Use a short async approach: the client kernel will also exit since
+    // the orchestrator is gone. Force-kill by destroying the stream.
+    hshm::GpuApi::DestroyStream(stream);
+    cudaFreeHost(d_done);
+    return -4;
+  }
 
   hshm::GpuApi::Synchronize(stream);
   CHI_IPC->PauseGpuOrchestrator();

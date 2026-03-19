@@ -72,6 +72,15 @@ struct WorkOrchestratorControl {
   /** Debug: input ring buffer values */
   volatile unsigned long long dbg_input_tw[kMaxDebugWorkers];
   volatile unsigned long long dbg_input_cs[kMaxDebugWorkers];
+  /** Debug: task lifecycle counters */
+  volatile unsigned int dbg_tasks_popped[kMaxDebugWorkers];
+  volatile unsigned int dbg_tasks_completed[kMaxDebugWorkers];
+  volatile unsigned int dbg_tasks_resumed[kMaxDebugWorkers];
+  volatile unsigned int dbg_alloc_failures[kMaxDebugWorkers];
+  /** Debug: queue pop counters (before container lookup) */
+  volatile unsigned int dbg_queue_pops[kMaxDebugWorkers];
+  /** Debug: no-container counter */
+  volatile unsigned int dbg_no_container[kMaxDebugWorkers];
 };
 
 /**

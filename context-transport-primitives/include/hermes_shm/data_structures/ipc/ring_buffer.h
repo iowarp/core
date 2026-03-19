@@ -110,6 +110,10 @@ struct RingBufferEntry {
    *
    * @return True if entry is ready
    */
+  /** Device-scope check: bypasses per-SM L1 cache for cross-SM visibility. */
+  HSHM_INLINE_CROSS_FUN
+  bool IsReadyDevice() const { return flags_.AnyDevice(1); }
+
   HSHM_INLINE_CROSS_FUN
   bool IsReadySystem() const { return flags_.AnySystem(1); }
 
@@ -494,7 +498,8 @@ class ring_buffer : public ShmContainer<AllocT> {
     if constexpr (WaitForSpace) {
       size_t size = tail - head + 1;
       while (size >= queue.size()) {
-        head = head_.load();
+        // Use load_device() for cross-SM L2 visibility (see PopDevice comment)
+        head = head_.load_device();
         size = tail - head + 1;
       }
     } else if constexpr (ErrorOnNoSpace) {
@@ -515,6 +520,11 @@ class ring_buffer : public ShmContainer<AllocT> {
     size_t idx = tail % queue.size();
     auto& entry = queue[idx];
     entry.data_ = T(std::forward<Args>(args)...);
+    // Device-scope fence: ensure entry.data_ is visible in L2 before
+    // the ready flag. Without this, a consumer on a different SM (or
+    // a different concurrent kernel) could see the atomicOr on the
+    // ready flag but read stale data.
+    hipc::threadfence();
     entry.SetReady();  // Mark as ready with release semantics
 
     return true;
@@ -566,20 +576,28 @@ class ring_buffer : public ShmContainer<AllocT> {
    */
   HSHM_CROSS_FUN
   bool PopDevice(T& val) {
-    u64 head = head_.load();
-    u64 tail = tail_.load();
+    // Use L2-direct loads (ld.global.cg) to bypass per-SM L1 cache.
+    // The producer (client kernel on a different SM) writes tail via
+    // atomicAdd which goes to L2, but the consumer's volatile reads
+    // hit L1 which is NOT coherent across SMs. load_device() loads
+    // directly from L2 without contention (unlike atomicOr-based reads).
+    u64 head = head_.load_device();
+    u64 tail = tail_.load_device();
     if (head >= tail) {
       return false;
     }
     size_t idx = head % queue_.size();
     entry_type& entry = queue_[idx];
-    if (!entry.IsReady()) {
+    if (!entry.IsReadyDevice()) {
       return false;
     }
     u32 expected = 1u;
     if (!entry.flags_.bits_.compare_exchange_strong(expected, 0u)) {
       return false;
     }
+    // Device-scope fence: ensure we read the latest entry.data_ from L2
+    // after successfully claiming the entry via CAS.
+    hipc::threadfence();
     val = entry.data_;
     head_.store(head + 1);
     return true;
@@ -618,6 +636,14 @@ class ring_buffer : public ShmContainer<AllocT> {
   /** Get monotonically increasing tail (next event ID to be written) */
   HSHM_INLINE_CROSS_FUN
   u64 GetTail() const { return tail_.load(); }
+
+  /** Get head via device-scope load (bypasses L1) */
+  HSHM_INLINE_CROSS_FUN
+  u64 GetHeadDevice() const { return head_.load_device(); }
+
+  /** Get tail via device-scope load (bypasses L1) */
+  HSHM_INLINE_CROSS_FUN
+  u64 GetTailDevice() const { return tail_.load_device(); }
 
   /**
    * Clear the buffer

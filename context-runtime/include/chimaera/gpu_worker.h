@@ -171,6 +171,40 @@ class Worker {
 #endif
   }
 
+  HSHM_GPU_FUN void DbgTaskPopped() {
+    if (dbg_ctrl_ && worker_id_ < WorkOrchestratorControl::kMaxDebugWorkers) {
+      dbg_ctrl_->dbg_tasks_popped[worker_id_]++;
+    }
+  }
+  HSHM_GPU_FUN void DbgTaskCompleted() {
+    if (dbg_ctrl_ && worker_id_ < WorkOrchestratorControl::kMaxDebugWorkers) {
+      dbg_ctrl_->dbg_tasks_completed[worker_id_]++;
+    }
+  }
+  HSHM_GPU_FUN void DbgTaskResumed() {
+    if (dbg_ctrl_ && worker_id_ < WorkOrchestratorControl::kMaxDebugWorkers) {
+      dbg_ctrl_->dbg_tasks_resumed[worker_id_]++;
+    }
+  }
+  HSHM_GPU_FUN void DbgAllocFailure() {
+    if (dbg_ctrl_ && worker_id_ < WorkOrchestratorControl::kMaxDebugWorkers) {
+      dbg_ctrl_->dbg_alloc_failures[worker_id_]++;
+    }
+  }
+  HSHM_GPU_FUN void DbgQueuePop() {
+    if (dbg_ctrl_ && worker_id_ < WorkOrchestratorControl::kMaxDebugWorkers) {
+      dbg_ctrl_->dbg_queue_pops[worker_id_]++;
+    }
+  }
+  HSHM_GPU_FUN void DbgNoContainer(unsigned int pool_major, unsigned int pool_minor) {
+    if (dbg_ctrl_ && worker_id_ < WorkOrchestratorControl::kMaxDebugWorkers) {
+      dbg_ctrl_->dbg_no_container[worker_id_]++;
+      // Stash the last pool_id that failed
+      dbg_ctrl_->dbg_last_method[worker_id_] =
+          (pool_major << 16) | (pool_minor & 0xFFFF);
+    }
+  }
+
   /**
    * Process one iteration of the warp-level poll loop.
    *
@@ -212,6 +246,10 @@ class Worker {
     // ================================================================
     GpuRunContext *contexts = *active_tasks_ptr_;
     u32 num_ctx = active_num_contexts_;
+    if (contexts != nullptr && lane_id == 0) {
+      GPU_WORKER_DPRINTF("[W%u] Phase2: method %u, num_ctx %u\n",
+                         worker_id_, contexts[0].method_id, num_ctx);
+    }
     if (contexts != nullptr && lane_id < num_ctx) {
       GpuRunContext &my_ctx = contexts[lane_id];
 
@@ -252,6 +290,11 @@ class Worker {
       if (task_done) {
         // Task complete: serialize output and free contexts
         DbgState(5);
+        DbgTaskCompleted();
+        GPU_WORKER_DPRINTF("[W%u] Task DONE: pool %u.%u method %u\n",
+                           worker_id_, contexts[0].task_ptr.ptr_->pool_id_.major_,
+                           contexts[0].task_ptr.ptr_->pool_id_.minor_,
+                           contexts[0].method_id);
         if (contexts[0].is_copy_path) {
           SerializeAndComplete(contexts[0].fshm, contexts[0].container,
                                contexts[0].method_id, contexts[0].task_ptr,
@@ -265,6 +308,10 @@ class Worker {
         // Task suspended (co_await): save to suspended list
         DbgState(3);
         u32 slot = FindFreeSlot();
+        GPU_WORKER_DPRINTF("[W%u] Task SUSPEND: pool %u.%u method %u -> slot %u (nsus=%u)\n",
+                           worker_id_, contexts[0].task_ptr.ptr_->pool_id_.major_,
+                           contexts[0].task_ptr.ptr_->pool_id_.minor_,
+                           contexts[0].method_id, slot, num_suspended_ + 1);
         suspended_[slot].contexts = contexts;
         suspended_[slot].num_contexts = num_ctx;
         suspended_[slot].occupied = true;
@@ -370,9 +417,11 @@ class Worker {
       // Check if the awaited sub-task is complete
       if (ctx0.rctx.awaited_fshm_) {
         auto *awaited = reinterpret_cast<FutureShm *>(ctx0.rctx.awaited_fshm_);
-        if (!awaited->flags_.Any(FutureShm::FUTURE_COMPLETE)) {
+        if (!awaited->flags_.AnyDevice(FutureShm::FUTURE_COMPLETE)) {
           continue;  // Sub-task not done yet
         }
+        GPU_WORKER_DPRINTF("[W%u] Suspended[%u]: sub-task complete, resuming\n",
+                           worker_id_, i);
         // Deserialize sub-task output before resuming
 #if !HSHM_IS_HOST
         DeserializeAwaitedOutput(ctx0.rctx, awaited);
@@ -384,6 +433,7 @@ class Worker {
       // Check if the top-level coroutine completed (from previous resume)
       if (ctx0.coro.done()) {
         // Completed while suspended — finalize
+        DbgTaskCompleted();
         suspended_[i].occupied = false;
         --num_suspended_;
         if (ctx0.is_copy_path) {
@@ -399,6 +449,7 @@ class Worker {
       }
 
       // Ready to resume: set as active and remove from suspended list
+      DbgTaskResumed();
       *active_tasks_ptr_ = ctxs;
       active_num_contexts_ = nc;
       suspended_[i].occupied = false;
@@ -431,12 +482,30 @@ class Worker {
     if (!queue) return false;
 
     auto &lane = queue->GetLane(qlane, 0);
+
+    // Debug: snapshot ring buffer head/tail via device-scope reads (bypass L1)
+    if (is_gpu2gpu && dbg_ctrl_ &&
+        worker_id_ < WorkOrchestratorControl::kMaxDebugWorkers) {
+      u64 h = lane.GetHeadDevice();
+      u64 t = lane.GetTailDevice();
+      dbg_ctrl_->dbg_input_tw[worker_id_] = t;
+      dbg_ctrl_->dbg_input_cs[worker_id_] = h;
+      // Store queue pointer for verification (first time only)
+      if (dbg_ctrl_->dbg_ser_total_written[worker_id_] == 0) {
+        dbg_ctrl_->dbg_ser_total_written[worker_id_] =
+            reinterpret_cast<unsigned long long>(queue);
+      }
+    }
+
     Future<Task> future;
     if (is_gpu2gpu) {
       if (!lane.PopDevice(future)) return false;
     } else {
       if (!lane.Pop(future)) return false;
     }
+
+    // Count every successful pop (before sptr check)
+    DbgQueuePop();
 
     // Resolve FutureShm
     hipc::ShmPtr<FutureShm> sptr = future.GetFutureShmPtr();
@@ -451,14 +520,29 @@ class Worker {
     }
     if (!fshm) return true;
 
+    // Fence: the client's SendGpu fenced before Push, and our PopDevice
+    // used device-scope atomics. This fence ensures we see all of the
+    // client's writes to the FutureShm fields (pool_id, method_id, flags,
+    // copy_space data) that were flushed to L2 by the client's fence.
+    hipc::threadfence();
+
     // Look up target container
     PoolId pool_id = fshm->pool_id_;
     u32 method_id = fshm->method_id_;
     Container *container = pool_mgr_->GetContainer(pool_id);
     if (!container) {
+      DbgNoContainer(pool_id.major_, pool_id.minor_);
+      GPU_WORKER_DPRINTF("[W%u] PopQueue: no container for pool %u.%u method %u\n",
+                         worker_id_, pool_id.major_, pool_id.minor_, method_id);
       CompleteAndResumeParent(fshm, is_gpu2gpu);
       return true;
     }
+
+    DbgTaskPopped();
+    GPU_WORKER_DPRINTF("[W%u] PopQueue: pool %u.%u method %u (g2g=%d copy=%d)\n",
+                       worker_id_, pool_id.major_, pool_id.minor_, method_id,
+                       (int)is_gpu2gpu,
+                       (int)fshm->flags_.Any(FutureShm::FUTURE_COPY_FROM_CLIENT));
 
     bool is_copy = fshm->flags_.Any(FutureShm::FUTURE_COPY_FROM_CLIENT);
     if (is_copy) {
@@ -478,6 +562,8 @@ class Worker {
     auto *ipc = CHI_IPC;
     auto *alloc = ipc->gpu_alloc_;
 
+    GPU_WORKER_DPRINTF("[W%u] PrepCopy: start method %u\n", worker_id_, method_id);
+
     // Set allocator on container
     container->gpu_alloc_ = reinterpret_cast<HSHM_DEFAULT_ALLOC_GPU_T *>(
         static_cast<void *>(alloc));
@@ -487,7 +573,32 @@ class Worker {
     in_ctx.copy_space = fshm->copy_space;
     in_ctx.shm_info_ = &fshm->input_;
 
-    LocalLoadTaskArchive load_ar(CHI_GPU_HEAP);
+    GPU_WORKER_DPRINTF("[W%u] PrepCopy: deserializing\n", worker_id_);
+    auto *heap = CHI_GPU_HEAP;
+    if (!heap) {
+      printf("[W%u] PrepCopy: CHI_GPU_HEAP is NULL!\n", worker_id_);
+      if (is_gpu2gpu) {
+        fshm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
+      } else {
+        fshm->flags_.SetBitsSystem(FutureShm::FUTURE_COMPLETE);
+      }
+      return true;
+    }
+    // Validate copy_space data: check total_written_ is sane
+    size_t tw = fshm->input_.total_written_.load_device();
+    size_t cs = fshm->input_.copy_space_size_.load_device();
+    if (tw == 0 || tw > cs) {
+      printf("[W%u] PrepCopy: BAD input: tw=%llu cs=%llu fshm=%p\n",
+             worker_id_, (unsigned long long)tw, (unsigned long long)cs,
+             (void*)fshm);
+      if (is_gpu2gpu) {
+        fshm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
+      } else {
+        fshm->flags_.SetBitsSystem(FutureShm::FUTURE_COMPLETE);
+      }
+      return true;
+    }
+    LocalLoadTaskArchive load_ar(heap);
     if (is_gpu2gpu) {
       hshm::lbm::ShmTransport::RecvDevice(load_ar, in_ctx);
     } else {
@@ -498,6 +609,7 @@ class Worker {
     hipc::FullPtr<Task> task_ptr =
         container->LocalAllocLoadTask(method_id, load_ar);
     if (task_ptr.IsNull()) {
+      GPU_WORKER_DPRINTF("[W%u] PrepCopy: task alloc FAILED\n", worker_id_);
       if (is_gpu2gpu) {
         fshm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
       } else {
@@ -507,11 +619,23 @@ class Worker {
     }
 
     // Allocate GpuRunContexts based on method parallelism
+    GPU_WORKER_DPRINTF("[W%u] PrepCopy: allocating contexts\n", worker_id_);
     u32 num_ctx = container->GetGpuParallelism(method_id);
     GpuRunContext *ctxs = AllocContexts(
         container, method_id, task_ptr, fshm, is_gpu2gpu, true, num_ctx);
-    if (!ctxs) return true;
+    if (!ctxs) {
+      DbgAllocFailure();
+      GPU_WORKER_DPRINTF("[W%u] PrepCopy: context alloc FAILED\n", worker_id_);
+      // Must signal completion so the client doesn't spin forever
+      if (is_gpu2gpu) {
+        fshm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
+      } else {
+        fshm->flags_.SetBitsSystem(FutureShm::FUTURE_COMPLETE);
+      }
+      return true;
+    }
 
+    GPU_WORKER_DPRINTF("[W%u] PrepCopy: done\n", worker_id_);
     *active_tasks_ptr_ = ctxs;
     return true;
 #else
@@ -539,7 +663,15 @@ class Worker {
     u32 num_ctx = container->GetGpuParallelism(method_id);
     GpuRunContext *ctxs = AllocContexts(
         container, method_id, task_ptr, fshm, is_gpu2gpu, false, num_ctx);
-    if (!ctxs) return true;
+    if (!ctxs) {
+      DbgAllocFailure();
+      if (is_gpu2gpu) {
+        fshm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
+      } else {
+        fshm->flags_.SetBitsSystem(FutureShm::FUTURE_COMPLETE);
+      }
+      return true;
+    }
 
     *active_tasks_ptr_ = ctxs;
     return true;
@@ -582,7 +714,10 @@ class Worker {
 
   HSHM_GPU_FUN void CompleteAndResumeParent(FutureShm *fshm,
                                               bool is_gpu2gpu) {
+    // Fence before setting FUTURE_COMPLETE so that all prior writes
+    // (task output, FutureShm fields) are visible to the waiter.
     if (is_gpu2gpu) {
+      hipc::threadfence();
       fshm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
     } else {
       fshm->flags_.SetBitsSystem(FutureShm::FUTURE_COMPLETE);
@@ -590,48 +725,26 @@ class Worker {
     ResumeParentIfPresent(fshm);
   }
 
+  /**
+   * Signal that a sub-task is complete.
+   *
+   * Do NOT resume the parent coroutine here — the sub-task may have been
+   * processed by a different warp than the one that owns the parent.
+   * Cross-warp coroutine resumption is unsafe.  Instead, just mark the
+   * FutureShm complete and let the parent warp's CheckAndResumeSuspended
+   * pick it up on its next poll iteration.
+   */
   HSHM_GPU_FUN void ResumeParentIfPresent(FutureShm *fshm) {
-#if !HSHM_IS_HOST
-    auto *parent_rctx = reinterpret_cast<RunContext *>(fshm->parent_gpu_rctx_);
-    if (!parent_rctx) return;
-
-    DeserializeAwaitedOutput(*parent_rctx, fshm);
-    parent_rctx->awaited_fshm_ = nullptr;
-    parent_rctx->awaited_task_ = nullptr;
-    parent_rctx->is_yielded_ = false;
-
-    if (parent_rctx->coro_handle_) {
-      parent_rctx->coro_handle_.resume();
-      // Chain-resume: find the SuspendedTask that owns this RunContext
-      for (u32 i = 0; i < kMaxSuspended; ++i) {
-        if (!suspended_[i].occupied) continue;
-        GpuRunContext *ctxs = suspended_[i].contexts;
-        if (&ctxs[0].rctx == parent_rctx) {
-          ChainResumeCallers(ctxs[0]);
-          break;
-        }
-      }
-    }
-#endif
-  }
-
-  HSHM_GPU_FUN void ChainResumeCallers(GpuRunContext &ctx) {
-    while (ctx.rctx.coro_handle_ && ctx.rctx.coro_handle_.done()) {
-      auto typed = std::coroutine_handle<TaskResume::promise_type>::from_address(
-          ctx.rctx.coro_handle_.address());
-      auto caller = typed.promise().caller_handle_;
-      if (!caller) {
-        ctx.rctx.coro_handle_ = nullptr;
-        break;
-      }
-      caller.resume();
-    }
+    (void)fshm;
+    // The FutureShm FUTURE_COMPLETE flag was already set by the caller
+    // (SerializeAndComplete / CompleteAndResumeParent).  The parent warp
+    // will detect this in CheckAndResumeSuspended → DeserializeAwaitedOutput.
   }
 
 #if !HSHM_IS_HOST
   HSHM_GPU_FUN void DeserializeAwaitedOutput(RunContext &rctx,
                                               FutureShm *awaited) {
-    if (!rctx.awaited_task_ || awaited->output_.total_written_.load() == 0) {
+    if (!rctx.awaited_task_ || awaited->output_.total_written_.load_device() == 0) {
       return;
     }
     hipc::threadfence();

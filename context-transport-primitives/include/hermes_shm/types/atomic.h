@@ -135,6 +135,9 @@ struct nonatomic {
   /** System-scope load (same as load for nonatomic) */
   HSHM_INLINE_CROSS_FUN T load_system() const { return x; }
 
+  /** Device-scope load (same as load for nonatomic) */
+  HSHM_INLINE_CROSS_FUN T load_device() const { return x; }
+
   /** Get reference to x */
   HSHM_INLINE_CROSS_FUN T &ref() { return x; }
 
@@ -413,6 +416,43 @@ struct rocm_atomic {
   HSHM_INLINE_CROSS_FUN T
   load(std::memory_order order = std::memory_order_seq_cst) const {
     return *reinterpret_cast<const volatile T*>(&x);
+  }
+
+  /**
+   * Device-scope atomic load: bypasses per-SM L1 cache and loads directly
+   * from L2 using PTX ld.global.cg (cache-global). This is necessary when
+   * the producer is on a different SM or in a different concurrent kernel,
+   * because volatile loads hit L1 which is NOT coherent across SMs.
+   *
+   * Unlike atomicOr(&x, 0), this is a pure read — no read-modify-write,
+   * so it doesn't contend with writers on the same cache line.
+   *
+   * Falls back to volatile read on host.
+   */
+  HSHM_INLINE_CROSS_FUN T
+  load_device() const {
+#if HSHM_IS_GPU
+    // Device-scope atomic read: atomicAdd(&x, 0) bypasses L1 and reads
+    // from L2 (which is coherent across SMs). This is a read-modify-write
+    // but with 0 addend, so it doesn't change the value.
+    // Only use this where cross-SM/cross-kernel visibility is needed;
+    // hot spin loops (e.g. WaitForSpace) should use volatile load() instead.
+    if constexpr (sizeof(T) == 8) {
+      return (T)atomicAdd(
+          const_cast<unsigned long long*>(
+              reinterpret_cast<const unsigned long long*>(&x)),
+          0ULL);
+    } else if constexpr (sizeof(T) == 4) {
+      return (T)atomicAdd(
+          const_cast<unsigned int*>(
+              reinterpret_cast<const unsigned int*>(&x)),
+          0u);
+    } else {
+      return *reinterpret_cast<const volatile T*>(&x);
+    }
+#else
+    return *reinterpret_cast<const volatile T*>(&x);
+#endif
   }
 
   /** Atomic store wrapper */
@@ -820,6 +860,11 @@ struct std_atomic {
 
   /** System-scope load (same as load for std_atomic) */
   HSHM_INLINE T load_system() const {
+    return x.load(std::memory_order_seq_cst);
+  }
+
+  /** Device-scope load (same as load on host; PTX ld.global.cg on GPU) */
+  HSHM_INLINE T load_device() const {
     return x.load(std::memory_order_seq_cst);
   }
 

@@ -297,7 +297,12 @@ class _ThreadAllocator : public Allocator {
    */
   HSHM_CROSS_FUN void WaitReady() {
 #ifndef HSHM_IS_HOST
-    while (heap_ready_.load() != 1) {}
+    // Use load_device() (atomicAdd-based) to bypass per-SM L1 cache.
+    // Block 0's MarkReady() writes to L2 via atomicExch, but blocks on
+    // other SMs would read a stale L1 copy with volatile load().
+    while (heap_ready_.load_device() != 1) {
+      __nanosleep(100);
+    }
     __threadfence();
 #endif
   }

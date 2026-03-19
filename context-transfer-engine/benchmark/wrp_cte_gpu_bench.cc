@@ -322,6 +322,7 @@ int main(int argc, char **argv) {
     HIPRINT("Tag ID:  {}.{}", tag_id.major_, tag_id.minor_);
 
     bool to_cpu = (cfg.test_case == TestCase::kPutBlob);
+    fprintf(stderr, "DBG: entering run_cte_gpu_bench_putblob\n"); fflush(stderr);
     rc = run_cte_gpu_bench_putblob(
         cte_client.pool_id_, tag_id,
         cfg.rt_blocks, cfg.rt_threads,

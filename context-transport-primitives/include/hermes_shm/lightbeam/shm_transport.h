@@ -458,7 +458,7 @@ class ShmTransport
     size_t ring_size = ctx.shm_info_->copy_space_size_.load();
     size_t total_written = ctx.shm_info_->total_written_.load();
     while (offset < size) {
-      size_t total_read = ctx.shm_info_->total_read_.load();
+      size_t total_read = ctx.shm_info_->total_read_.load_device();
       size_t space = ring_size - (total_written - total_read);
       if (space == 0) {
 #if HSHM_IS_HOST
@@ -470,6 +470,11 @@ class ShmTransport
       size_t contig = ring_size - write_pos;
       size_t chunk = Min3(size - offset, space, contig);
       memcpy(ctx.copy_space + write_pos, data + offset, chunk);
+      // Flush copy_space data from L1 to L2 before making it visible
+      // via total_written_. Without this fence, a reader on another SM
+      // could see the updated total_written_ but read stale copy_space
+      // data still in the writer's L1 cache.
+      hshm::ipc::threadfence();
       offset += chunk;
       total_written += chunk;
       ctx.shm_info_->total_written_.store(total_written);
@@ -509,7 +514,10 @@ class ShmTransport
     size_t ring_size = ctx.shm_info_->copy_space_size_.load();
     size_t total_read = ctx.shm_info_->total_read_.load();
     while (offset < size) {
-      size_t total_written = ctx.shm_info_->total_written_.load();
+      // Use load_device() for cross-SM L2 visibility — the writer's
+      // total_written_.store() (atomicExch) lands in L2, but a volatile
+      // load() on a different SM reads stale L1.
+      size_t total_written = ctx.shm_info_->total_written_.load_device();
       size_t avail = total_written - total_read;
       if (avail == 0) {
 #if HSHM_IS_HOST
@@ -517,6 +525,9 @@ class ShmTransport
 #endif
         continue;
       }
+      // Fence before reading copy_space to ensure the writer's data
+      // (fenced before total_written_ update) is visible in L2.
+      hshm::ipc::threadfence();
       size_t read_pos = total_read % ring_size;
       size_t contig = ring_size - read_pos;
       size_t chunk = Min3(size - offset, avail, contig);

@@ -93,6 +93,7 @@ __global__ void chimaera_gpu_orchestrator(gpu::PoolManager *pool_mgr,
   // Thread 0 of block 0 signals that the orchestrator is running
   if (blockIdx.x == 0 && threadIdx.x == 0) {
     control->running_flag = 1;
+    __threadfence_system();  // Flush to CPU-visible memory
   }
 
   // Each warp polls its own lane from the gpu2gpu queue
@@ -253,12 +254,27 @@ void gpu::WorkOrchestrator::Resume(const IpcManagerGpuInfo &gpu_info) {
   control_->running_flag = 0;
 
   // On resume, skip heap re-initialization to preserve existing GPU-side
-  // container allocations.
+  // container allocations.  But re-initialize scratch allocators so they
+  // are partitioned for the (potentially new) warp count.
   IpcManagerGpuInfo resume_info = gpu_info;
   resume_info.skip_heap_init = true;
+  resume_info.skip_scratch_init = false;  // re-partition scratch for new warp count
   resume_info.gpu2gpu_num_lanes = (blocks_ * threads_per_block_) / 32;
 
+  // Zero scratch allocator headers so non-block-0 blocks spin-wait
+  // until block 0 finishes re-initialization (prevents stale ready flags).
+  // Both backends are pinned host memory (GpuShmMmap), so use CPU memset.
+  // The stream was fully synchronized in Pause(), so no race with GPU.
+  if (resume_info.backend.data_ != nullptr) {
+    memset(resume_info.backend.data_, 0, sizeof(hipc::ThreadAllocator));
+  }
+  if (resume_info.gpu2cpu_backend.data_ != nullptr) {
+    memset(resume_info.gpu2cpu_backend.data_, 0,
+           sizeof(hipc::ThreadAllocator));
+  }
+
   auto *d_pm = static_cast<gpu::PoolManager *>(d_pool_mgr_);
+
   chimaera_gpu_orchestrator<<<blocks_, threads_per_block_, 0,
       static_cast<cudaStream_t>(stream_)>>>(
       d_pm, control_, resume_info, blocks_);

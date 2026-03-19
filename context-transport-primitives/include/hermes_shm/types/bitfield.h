@@ -102,6 +102,12 @@ struct bitfield {
   /** Check if any bits are set (non-destructive: load then AND) */
   HSHM_INLINE_CROSS_FUN T Any(T mask) const { return bits_.load() & mask; }
 
+  /** Device-scope check: bypasses per-SM L1 cache via ld.global.cg so GPU
+   *  can observe writes from a different SM or concurrent kernel. */
+  HSHM_INLINE_CROSS_FUN T AnyDevice(T mask) const {
+    return bits_.load_device() & mask;
+  }
+
   /** System-scope check if any bits are set: bypasses GPU L2 so GPU can
    *  observe CPU-written flags in pinned host memory. */
   HSHM_INLINE_CROSS_FUN T AnySystem(T mask) const {

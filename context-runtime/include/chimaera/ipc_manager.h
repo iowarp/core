@@ -202,9 +202,21 @@ struct IpcManagerGpuInfo {
   /** Number of lanes in the gpu2gpu TaskQueue (one per orchestrator thread) */
   u32 gpu2gpu_num_lanes = 1;
 
-  /** When true, skip heap re-initialization (heap allocators persist across
-   *  pause/resume cycles — re-init would destroy existing allocations). */
+  /** Number of partitions for the container heap ThreadAllocator.
+   *  Each partition is a separate BuddyAllocator — must be >= the max number
+   *  of warps that will ever concurrently allocate from the heap.
+   *  Set once at initial launch; preserved across pause/resume. */
+  u32 gpu_heap_partitions = 32;
+
+  /** When true, skip GPU heap re-initialization (heap allocators persist across
+   *  pause/resume cycles — re-init would destroy existing container allocations). */
   bool skip_heap_init = false;
+
+  /** When true, skip scratch allocator re-initialization (backend + gpu2cpu).
+   *  Set to true for non-block-0 blocks (they wait for block 0 to init).
+   *  Set to false on resume when warp count changes so scratch gets
+   *  re-partitioned for the new warp count. */
+  bool skip_scratch_init = false;
 
   HSHM_CROSS_FUN IpcManagerGpuInfo() = default;
 
@@ -281,7 +293,7 @@ class IpcManager {
     gpu_backend_ = gpu_info.backend;
     gpu_backend_initialized_ = true;
     if (gpu_backend_.data_ != nullptr) {
-      if (gpu_info.skip_heap_init) {
+      if (gpu_info.skip_scratch_init) {
         gpu_alloc_ = reinterpret_cast<CHI_GPU_HEAP_T *>(gpu_backend_.data_);
         gpu_alloc_->WaitReady();
       } else {
@@ -292,7 +304,7 @@ class IpcManager {
     // Set up GPU→CPU allocator (pinned host, for ToLocalCpu FutureShm)
     if (gpu_info.gpu2cpu_backend.data_ != nullptr) {
       gpu2cpu_backend_ = gpu_info.gpu2cpu_backend;
-      if (gpu_info.skip_heap_init) {
+      if (gpu_info.skip_scratch_init) {
         gpu2cpu_alloc_ = reinterpret_cast<CHI_GPU_HEAP_T *>(gpu2cpu_backend_.data_);
         gpu2cpu_alloc_->WaitReady();
       } else {
@@ -301,16 +313,19 @@ class IpcManager {
     }
 
     // Set up GPU heap (GpuMalloc device memory, single ThreadAllocator)
+    // Uses gpu_heap_partitions to determine the number of BuddyAllocator
+    // partitions. This must be >= the max warp count that will ever
+    // concurrently allocate, since the heap persists across pause/resume.
     if (gpu_info.gpu_heap_backend.data_ != nullptr) {
       gpu_heap_backend_ = gpu_info.gpu_heap_backend;
       if (gpu_info.skip_heap_init) {
-        // Skip path (resume or non-initializing block):
-        // ThreadAllocator already initialized, just set the pointer and wait.
         gpu_heap_alloc_ =
             reinterpret_cast<CHI_GPU_HEAP_T *>(gpu_heap_backend_.data_);
         gpu_heap_alloc_->WaitReady();
       } else {
-        InitHeapAllocator(gpu_heap_backend_, num_blocks, &gpu_heap_alloc_);
+        int partitions = static_cast<int>(gpu_info.gpu_heap_partitions);
+        if (partitions < 1) partitions = 1;
+        InitHeapAllocator(gpu_heap_backend_, partitions, &gpu_heap_alloc_);
       }
     }
   }
@@ -735,6 +750,10 @@ class IpcManager {
       fshm->input_.copy_space_size_.store(copy_space_size);
       fshm->output_.copy_space_size_.store(copy_space_size);
       hshm::lbm::ShmTransport::SendDevice(save_ar, ctx);
+      // Fence: ensure all FutureShm fields (pool_id, method_id, flags,
+      // copy_space data) are flushed from L1 to L2 before the queue
+      // entry becomes visible to orchestrator warps on other SMs.
+      hipc::threadfence();
       lane.Push(task_future);
     }
     return future;
@@ -793,6 +812,8 @@ class IpcManager {
 
     // No input serialization — task is already populated in GPU memory
     // No copy_space_size needed for ring buffer
+    // Fence: ensure FutureShm fields are visible before queue entry
+    hipc::threadfence();
     lane.Push(task_future);
     return future;
   }
@@ -816,13 +837,22 @@ class IpcManager {
     bool device_scope = fshm->flags_.AnySystem(FutureShm::FUTURE_DEVICE_SCOPE);
 #if !HSHM_IS_HOST
     if (device_scope) {
-      // GPU→GPU: device-scope atomics
-      while (!fshm->flags_.Any(FutureShm::FUTURE_COMPLETE)) {
+      // GPU→GPU: device-scope L2-direct reads (bypass L1 for cross-SM visibility)
+      int spin_count = 0;
+      while (!fshm->flags_.AnyDevice(FutureShm::FUTURE_COMPLETE)) {
         HSHM_THREAD_MODEL->Yield();
+        ++spin_count;
+        if (spin_count == 1000000) {
+          u32 raw_flags = fshm->flags_.bits_.load_device();
+          printf("[RECV] warp=%u STUCK: fshm=%p flags=0x%x (device) spin=%d\n",
+                 (blockIdx.x * blockDim.x + threadIdx.x) / 32,
+                 (void*)fshm, raw_flags, spin_count);
+          spin_count = 0;
+        }
       }
       hipc::threadfence();
 
-      if (fshm->output_.total_written_.load() > 0) {
+      if (fshm->output_.total_written_.load_device() > 0) {
         hshm::lbm::LbmContext ctx;
         ctx.copy_space = fshm->copy_space;
         ctx.shm_info_ = &fshm->output_;
@@ -2500,6 +2530,9 @@ class IpcManager {
    */
   void SetGpuOrchestratorBlocks(u32 blocks, u32 threads_per_block);
 
+  /** Recreate the gpu2gpu queue with a different lane count (must be paused) */
+  void RebuildGpu2GpuQueue(u32 gpu_id, u32 new_lanes);
+
  private:
 #if HSHM_IS_HOST
   /**
@@ -2634,6 +2667,7 @@ HSHM_GPU_FUN inline hipc::ThreadAllocator *GetPrivAllocGpu() {
     /* Only block 0 initializes; others spin-wait via WaitReady() in ClientInitGpu */ \
     if (blockIdx.x != 0) {                                                     \
       block_info.skip_heap_init = true;                                        \
+      block_info.skip_scratch_init = true;                                     \
     }                                                                           \
     g_ipc_manager_ptr->ClientInitGpu(block_info, num_threads, num_warps);      \
   }                                                                             \

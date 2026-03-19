@@ -943,6 +943,15 @@ void IpcManager::PauseGpuOrchestrator() {
   }
   auto *orchestrator = static_cast<gpu::WorkOrchestrator *>(gpu_orchestrator_);
   orchestrator->Pause();
+
+  // After the kernel is stopped, check if the lane count changed.
+  // Recreate the gpu2gpu queue now so that GetClientGpuInfo() returns
+  // correct pointers before the next kernel launch.
+  u32 new_lanes = (orchestrator->blocks_ * orchestrator->threads_per_block_) / 32;
+  if (new_lanes < 1) new_lanes = 1;
+  if (new_lanes != gpu2gpu_num_lanes_ && !gpu2gpu_queue_backends_.empty()) {
+    RebuildGpu2GpuQueue(0, new_lanes);
+  }
 #endif
 }
 
@@ -966,6 +975,50 @@ void IpcManager::SetGpuOrchestratorBlocks(u32 blocks, u32 threads_per_block) {
   orchestrator->threads_per_block_ = threads_per_block;
 #endif
 }
+
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+void IpcManager::RebuildGpu2GpuQueue(u32 gpu_id, u32 new_lanes) {
+  u32 queue_depth = gpu_orchestrator_info_.gpu_queue_depth;
+
+  // Destroy old gpu2gpu queue backend (frees device memory)
+  gpu2gpu_queue_backends_[gpu_id].reset();
+  gpu2gpu_queues_[gpu_id] = hipc::FullPtr<TaskQueue>::GetNull();
+
+  // Create new backend with enough space for the new lane count
+  hipc::MemoryBackendId bid(3000 + gpu_id, 0);
+  auto backend = std::make_unique<hipc::GpuMalloc>();
+  size_t backend_size = std::max(
+      hshm::Unit<size_t>::Megabytes(4),
+      static_cast<size_t>(new_lanes) * queue_depth * 256 +
+          hshm::Unit<size_t>::Megabytes(1));
+  if (!backend->shm_init(bid, backend_size, "", gpu_id)) {
+    HLOG(kError, "RebuildGpu2GpuQueue: Failed to create backend for {} lanes",
+         new_lanes);
+    return;
+  }
+
+  hipc::FullPtr<TaskQueue> q = gpu::InitQueueOnDevice(
+      backend->data_, backend->data_capacity_, new_lanes, queue_depth);
+  if (q.IsNull()) {
+    HLOG(kError, "RebuildGpu2GpuQueue: Failed to init queue with {} lanes",
+         new_lanes);
+    return;
+  }
+
+  RegisterGpuAllocator(bid, backend->data_, backend->data_capacity_);
+  gpu2gpu_queues_[gpu_id] = q;
+  gpu2gpu_queue_backends_[gpu_id] = std::move(backend);
+  gpu2gpu_num_lanes_ = new_lanes;
+
+  // Update orchestrator info with new queue pointers
+  gpu_orchestrator_info_.gpu2gpu_queue = gpu2gpu_queues_[gpu_id].ptr_;
+  gpu_orchestrator_info_.gpu2gpu_queue_base =
+      gpu2gpu_queue_backends_[gpu_id]->data_;
+
+  HLOG(kInfo, "RebuildGpu2GpuQueue: Recreated gpu2gpu queue with {} lanes "
+       "(depth {})", new_lanes, queue_depth);
+}
+#endif
 
 TaskQueue *IpcManager::GetToGpuQueue(size_t gpu_id) {
   if (gpu_id < cpu2gpu_queues_.size()) {
