@@ -28,6 +28,7 @@ from jarvis_cd.core.pkg import Application
 from jarvis_cd.shell import Exec, LocalExecInfo
 from jarvis_cd.shell.process import Which
 import os
+import re
 
 
 class WrpCteGpuBench(Application):
@@ -131,9 +132,81 @@ class WrpCteGpuBench(Application):
         ])
 
         self.log(f"Running: {cmd}")
-        Exec(f'{cmd} 2>&1 | tee {output_file}',
-             LocalExecInfo(env=self.mod_env)).run()
+        self.exec = Exec(f'{cmd} 2>&1 | tee {output_file}',
+             LocalExecInfo(env=self.mod_env,
+                           collect_output=True)).run()
         self.log(f"Results saved to {output_file}")
+
+    def _get_stat(self, stat_dict):
+        output = self.exec.stdout['localhost']
+        elapsed = re.search(r'Elapsed:\s+([0-9.]+)\s+ms', output)
+        if elapsed:
+            stat_dict[f'{self.pkg_id}.elapsed_ms'] = float(elapsed.group(1))
+        bandwidth = re.search(r'Bandwidth:\s+([0-9.]+)\s+GB/s', output)
+        if bandwidth:
+            stat_dict[f'{self.pkg_id}.bandwidth_gbps'] = float(bandwidth.group(1))
+        stat_dict[f'{self.pkg_id}.test_case'] = self.config['test_case']
+        stat_dict[f'{self.pkg_id}.warps'] = (
+            self.config['client_blocks'] * self.config['client_threads']) // 32
+        stat_dict[f'{self.pkg_id}.io_size'] = self.config['io_size']
+
+    def _plot(self, results_csv, output_dir):
+        try:
+            import pandas as pd
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+        except ImportError:
+            self.log("Skipping plots: pandas or matplotlib not installed")
+            return
+
+        df = pd.read_csv(results_csv)
+
+        # Find bandwidth column for this package
+        bw_col = None
+        elapsed_col = None
+        warps_col = None
+        io_col = None
+        for col in df.columns:
+            if col.endswith('.bandwidth_gbps'):
+                bw_col = col
+            elif col.endswith('.elapsed_ms'):
+                elapsed_col = col
+            elif col.endswith('.warps'):
+                warps_col = col
+            elif col.endswith('.io_size'):
+                io_col = col
+
+        if not bw_col:
+            return
+
+        # Bandwidth vs warps
+        if warps_col and len(df[warps_col].dropna().unique()) > 1:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            grouped = df.groupby(warps_col)[bw_col].mean()
+            grouped.plot(kind='bar', ax=ax)
+            ax.set_xlabel('Warps')
+            ax.set_ylabel('Bandwidth (GB/s)')
+            ax.set_title('CTE GPU Bandwidth vs Warp Count')
+            fig.tight_layout()
+            fig.savefig(os.path.join(output_dir, 'bandwidth_vs_warps.png'),
+                        dpi=150)
+            plt.close(fig)
+
+        # Bandwidth vs IO size
+        if io_col and len(df[io_col].dropna().unique()) > 1:
+            fig, ax = plt.subplots(figsize=(8, 5))
+            grouped = df.groupby(io_col)[bw_col].mean()
+            grouped.plot(kind='bar', ax=ax)
+            ax.set_xlabel('I/O Size per Warp')
+            ax.set_ylabel('Bandwidth (GB/s)')
+            ax.set_title('CTE GPU Bandwidth vs I/O Size')
+            fig.tight_layout()
+            fig.savefig(os.path.join(output_dir, 'bandwidth_vs_iosize.png'),
+                        dpi=150)
+            plt.close(fig)
+
+        self.log(f"Plots saved to {output_dir}")
 
     def stop(self):
         pass
