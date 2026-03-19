@@ -119,65 +119,140 @@ __global__ void gpu_putblob_kernel(
     chi::u32 num_blocks,
     hipc::FullPtr<char> array_ptr,
     hipc::AllocatorId data_alloc_id,
-    chi::u64 total_bytes,
+    chi::u64 warp_bytes,
     chi::u32 total_warps,
+    chi::u32 iterations,
     bool to_cpu,
-    int *d_done) {
+    int *d_done,
+    volatile int *d_progress) {
   CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
 
   chi::u32 warp_id = chi::IpcManager::GetWarpId();
   chi::u32 lane_id = chi::IpcManager::GetLaneId();
 
+  // Write progress to pinned memory (visible to host immediately)
+  if (lane_id == 0 && warp_id < total_warps) {
+    d_progress[warp_id] = 1;  // init complete
+    __threadfence_system();
+  }
+  __syncwarp();
+
   if (warp_id < total_warps) {
     // Compute this warp's slice of the array
-    chi::u64 slice_size = total_bytes / total_warps;
-    chi::u64 my_offset = static_cast<chi::u64>(warp_id) * slice_size;
+    chi::u64 my_offset = static_cast<chi::u64>(warp_id) * warp_bytes;
     char *my_data = array_ptr.ptr_ + my_offset;
 
-    // All lanes participate in memset
-    for (chi::u64 i = lane_id; i < slice_size; i += 32) {
-      my_data[i] = static_cast<char>(warp_id & 0xFF);
-    }
-    __syncwarp();
+    for (chi::u32 iter = 0; iter < iterations; ++iter) {
+      // All lanes participate in memset
+      for (chi::u64 i = lane_id; i < warp_bytes; i += 32) {
+        my_data[i] = static_cast<char>((warp_id + iter) & 0xFF);
+      }
+      __syncwarp();
 
-    // Only lane 0 submits PutBlob
-    if (chi::IpcManager::IsWarpScheduler()) {
-      wrp_cte::core::Client cte_client(cte_pool_id);
+      // Only lane 0 submits PutBlob
+      if (chi::IpcManager::IsWarpScheduler()) {
+        wrp_cte::core::Client cte_client(cte_pool_id);
 
-      // Build ShmPtr referencing the data allocator backend
-      hipc::ShmPtr<> blob_shm;
-      blob_shm.alloc_id_ = data_alloc_id;
-      size_t base_off = array_ptr.shm_.off_.load();
-      blob_shm.off_.exchange(base_off + my_offset);
+        // Build ShmPtr referencing the data allocator backend
+        hipc::ShmPtr<> blob_shm;
+        blob_shm.alloc_id_ = data_alloc_id;
+        size_t base_off = array_ptr.shm_.off_.load();
+        blob_shm.off_.exchange(base_off + my_offset);
 
-      // Build blob name: "w_<id>"
-      char name_buf[32];
-      int pos = 0;
-      name_buf[pos++] = 'w';
-      name_buf[pos++] = '_';
-      chi::u32 wid = warp_id;
-      char digits[10];
-      int nd = 0;
-      do { digits[nd++] = '0' + (wid % 10); wid /= 10; } while (wid > 0);
-      for (int d = nd - 1; d >= 0; --d) name_buf[pos++] = digits[d];
-      name_buf[pos] = '\0';
+        // Build blob name: "w_<warp_id>_<iter>"
+        char name_buf[32];
+        int pos = 0;
+        name_buf[pos++] = 'w';
+        name_buf[pos++] = '_';
+        chi::u32 wid = warp_id;
+        char digits[10];
+        int nd = 0;
+        do { digits[nd++] = '0' + (wid % 10); wid /= 10; } while (wid > 0);
+        for (int d = nd - 1; d >= 0; --d) name_buf[pos++] = digits[d];
+        name_buf[pos++] = '_';
+        chi::u32 it = iter;
+        nd = 0;
+        do { digits[nd++] = '0' + (it % 10); it /= 10; } while (it > 0);
+        for (int d = nd - 1; d >= 0; --d) name_buf[pos++] = digits[d];
+        name_buf[pos] = '\0';
 
-      auto *ipc = CHI_IPC;
-      auto task = ipc->NewTask<wrp_cte::core::PutBlobTask>(
-          chi::CreateTaskId(), cte_pool_id,
-          to_cpu ? chi::PoolQuery::ToLocalCpu() : chi::PoolQuery::Local(),
-          tag_id, name_buf,
-          (chi::u64)0, slice_size,
-          blob_shm, -1.0f,
-          wrp_cte::core::Context(), (chi::u32)0);
-      auto future = ipc->Send(task);
-      future.Wait();
+        auto *ipc = CHI_IPC;
+        auto task = ipc->NewTask<wrp_cte::core::PutBlobTask>(
+            chi::CreateTaskId(), cte_pool_id,
+            to_cpu ? chi::PoolQuery::ToLocalCpu() : chi::PoolQuery::Local(),
+            tag_id, name_buf,
+            (chi::u64)0, warp_bytes,
+            blob_shm, -1.0f,
+            wrp_cte::core::Context(), (chi::u32)0);
+        auto future = ipc->Send(task);
+        future.Wait();
+      }
+      __syncwarp();
     }
   }
 
   __syncwarp();
   if (chi::IpcManager::IsWarpScheduler()) {
     __threadfence();
+    int prev = atomicAdd(d_done, 1);
+    if (prev == static_cast<int>(total_warps) - 1) {
+      __threadfence_system();
+    }
+  }
+}
+
+/**
+ * Kernel 2b: Multi-block allocator stress test.
+ * Each warp initializes, allocates from scratch and heap, then frees.
+ * Used to isolate multi-block ThreadAllocator bugs.
+ */
+__global__ void gpu_alloc_test_kernel(
+    chi::IpcManagerGpu gpu_info,
+    chi::u32 num_blocks,
+    chi::u32 total_warps,
+    int *d_done,
+    volatile int *d_progress) {
+  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+
+  chi::u32 warp_id = chi::IpcManager::GetWarpId();
+  chi::u32 lane_id = chi::IpcManager::GetLaneId();
+
+  if (lane_id == 0 && warp_id < total_warps) {
+    d_progress[warp_id] = 1;  // init done
+    __threadfence_system();
+
+    // Test scratch allocator
+    auto *scratch = CHI_IPC->gpu_alloc_;
+    if (scratch) {
+      auto p = scratch->AllocateObjs<char>(1024);
+      if (!p.IsNull()) {
+        d_progress[warp_id] = 2;  // scratch alloc ok
+        __threadfence_system();
+        hipc::OffsetPtr<> off; off = p.shm_.off_.load();
+        scratch->FreeOffset(off);
+      } else {
+        d_progress[warp_id] = -2;  // scratch alloc failed
+        __threadfence_system();
+      }
+    }
+
+    // Test heap allocator
+    auto *heap = CHI_IPC->gpu_heap_alloc_;
+    if (heap) {
+      auto p = heap->AllocateObjs<char>(256);
+      if (!p.IsNull()) {
+        d_progress[warp_id] = 3;  // heap alloc ok
+        __threadfence_system();
+        hipc::OffsetPtr<> hoff; hoff = p.shm_.off_.load();
+        heap->FreeOffset(hoff);
+      } else {
+        d_progress[warp_id] = -3;  // heap alloc failed
+        __threadfence_system();
+      }
+    }
+
+    d_progress[warp_id] = 10;  // all done
+    __threadfence_system();
     int prev = atomicAdd(d_done, 1);
     if (prev == static_cast<int>(total_warps) - 1) {
       __threadfence_system();
@@ -278,7 +353,8 @@ static int run_cte_gpu_bench_putblob(
     chi::u32 rt_threads,
     chi::u32 client_blocks,
     chi::u32 client_threads,
-    chi::u64 total_bytes,
+    chi::u64 warp_bytes,
+    chi::u32 iterations,
     bool to_cpu,
     float *out_elapsed_ms) {
   CHI_IPC->SetGpuOrchestratorBlocks(rt_blocks, rt_threads);
@@ -286,10 +362,14 @@ static int run_cte_gpu_bench_putblob(
   // Pause GPU orchestrator before any cudaDeviceSynchronize / GPU init.
   CHI_IPC->PauseGpuOrchestrator();
 
+  chi::u32 total_warps = (client_blocks * client_threads) / 32;
+  if (total_warps == 0) total_warps = 1;
+  chi::u64 total_data_bytes = warp_bytes * total_warps;
+
   // --- 1. Data backend: device memory for array A ---
   hipc::MemoryBackendId data_backend_id(200, 0);
   hipc::GpuMalloc data_backend;
-  size_t data_backend_size = total_bytes + 4 * 1024 * 1024;
+  size_t data_backend_size = total_data_bytes + 4 * 1024 * 1024;
   if (!data_backend.shm_init(data_backend_id, data_backend_size, "", 0)) {
     CHI_IPC->ResumeGpuOrchestrator();
     return -1;
@@ -322,7 +402,7 @@ static int run_cte_gpu_bench_putblob(
 
   gpu_putblob_alloc_kernel<<<1, 1>>>(
       static_cast<hipc::MemoryBackend &>(data_backend),
-      total_bytes, d_array_ptr);
+      total_data_bytes, d_array_ptr);
   cudaDeviceSynchronize();
 
   if (d_array_ptr->IsNull()) {
@@ -342,12 +422,14 @@ static int run_cte_gpu_bench_putblob(
   gpu_info.backend = scratch_backend;
   gpu_info.gpu_heap_backend = heap_backend;
 
-  chi::u32 total_warps = (client_blocks * client_threads) / 32;
-  if (total_warps == 0) total_warps = 1;
-
   int *d_done;
   cudaMallocHost(&d_done, sizeof(int));
   *d_done = 0;
+
+  // Per-warp progress array (pinned host)
+  volatile int *d_progress;
+  cudaMallocHost((void**)&d_progress, sizeof(int) * 64);
+  memset((void*)d_progress, 0, sizeof(int) * 64);
 
   void *stream = hshm::GpuApi::CreateStream();
   cudaGetLastError();
@@ -361,44 +443,40 @@ static int run_cte_gpu_bench_putblob(
     cudaMemset(heap_backend.data_, 0, sizeof(hipc::ThreadAllocator));
   }
 
+  // Record CUDA event on client stream just before kernel launch
+  cudaEvent_t ev_start, ev_end;
+  cudaEventCreate(&ev_start);
+  cudaEventCreate(&ev_end);
+  cudaEventRecord(ev_start, static_cast<cudaStream_t>(stream));
+
+  // Launch client kernel (it blocks in INIT until orchestrator starts)
   gpu_putblob_kernel<<<
       client_blocks, client_threads, 0,
       static_cast<cudaStream_t>(stream)>>>(
       gpu_info, cte_pool_id, tag_id, client_blocks,
       array_ptr,
       hipc::AllocatorId(data_backend_id.major_, data_backend_id.minor_),
-      total_bytes, total_warps, to_cpu, d_done);
+      warp_bytes, total_warps, iterations, to_cpu, d_done, d_progress);
+
+  // Record end event — fires after kernel finishes
+  cudaEventRecord(ev_end, static_cast<cudaStream_t>(stream));
 
   cudaError_t launch_err = cudaGetLastError();
   if (launch_err != cudaSuccess) {
+    fprintf(stderr, "ERROR: Client kernel launch failed: %s\n",
+            cudaGetErrorString(launch_err));
     CHI_IPC->ResumeGpuOrchestrator();
     cudaFreeHost(d_done);
+    cudaFreeHost((void*)d_progress);
     hshm::GpuApi::DestroyStream(stream);
+    cudaEventDestroy(ev_start);
+    cudaEventDestroy(ev_end);
     return -3;
   }
 
-  // Zero debug counters before benchmark run so we only see benchmark activity
   auto *orchestrator = static_cast<chi::gpu::WorkOrchestrator *>(
       CHI_IPC->gpu_orchestrator_);
   auto *ctrl = orchestrator ? orchestrator->control_ : nullptr;
-  if (ctrl) {
-    memset((void*)ctrl->dbg_poll_count, 0, sizeof(ctrl->dbg_poll_count));
-    memset((void*)ctrl->dbg_last_state, 0, sizeof(ctrl->dbg_last_state));
-    memset((void*)ctrl->dbg_num_suspended, 0, sizeof(ctrl->dbg_num_suspended));
-    memset((void*)ctrl->dbg_last_method, 0, sizeof(ctrl->dbg_last_method));
-    memset((void*)ctrl->dbg_tasks_popped, 0, sizeof(ctrl->dbg_tasks_popped));
-    memset((void*)ctrl->dbg_tasks_completed, 0, sizeof(ctrl->dbg_tasks_completed));
-    memset((void*)ctrl->dbg_tasks_resumed, 0, sizeof(ctrl->dbg_tasks_resumed));
-    memset((void*)ctrl->dbg_alloc_failures, 0, sizeof(ctrl->dbg_alloc_failures));
-    memset((void*)ctrl->dbg_queue_pops, 0, sizeof(ctrl->dbg_queue_pops));
-    memset((void*)ctrl->dbg_no_container, 0, sizeof(ctrl->dbg_no_container));
-    memset((void*)ctrl->dbg_input_tw, 0, sizeof(ctrl->dbg_input_tw));
-    memset((void*)ctrl->dbg_input_cs, 0, sizeof(ctrl->dbg_input_cs));
-    memset((void*)ctrl->dbg_dispatch_step, 0, sizeof(ctrl->dbg_dispatch_step));
-    memset((void*)ctrl->dbg_ser_total_written, 0, sizeof(ctrl->dbg_ser_total_written));
-    memset((void*)ctrl->dbg_resume_checks, 0, sizeof(ctrl->dbg_resume_checks));
-    memset((void*)ctrl->dbg_ser_method, 0, sizeof(ctrl->dbg_ser_method));
-  }
 
   CHI_IPC->ResumeGpuOrchestrator();
   if (ctrl) {
@@ -412,15 +490,16 @@ static int run_cte_gpu_bench_putblob(
     }
   }
 
-  auto t_start = std::chrono::high_resolution_clock::now();
-
   constexpr int kTimeoutUs = 30000000;  // 30s
   bool completed = PollDone(d_done, static_cast<int>(total_warps), kTimeoutUs);
 
-  auto t_end = std::chrono::high_resolution_clock::now();
-  double elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                          t_end - t_start).count();
-  *out_elapsed_ms = static_cast<float>(elapsed_ns / 1e6);
+  // Wait for end event and compute GPU-side elapsed time
+  cudaEventSynchronize(ev_end);
+  float gpu_elapsed_ms = 0;
+  cudaEventElapsedTime(&gpu_elapsed_ms, ev_start, ev_end);
+  *out_elapsed_ms = gpu_elapsed_ms;
+  cudaEventDestroy(ev_start);
+  cudaEventDestroy(ev_end);
 
   // On timeout: pause orchestrator FIRST to flush GPU printf, then sync client
   if (!completed) {
@@ -445,9 +524,16 @@ static int run_cte_gpu_bench_putblob(
       }
       fflush(stderr);
     }
+    // Print per-warp progress
+    fprintf(stderr, "Client warp progress (1=init,2=newtask,3=send,4=wait,5=done):\n");
+    for (chi::u32 i = 0; i < total_warps && i < 64; ++i) {
+      fprintf(stderr, "  warp[%u]: %d\n", i, d_progress[i]);
+    }
+    fflush(stderr);
     CHI_IPC->PauseGpuOrchestrator();
     hshm::GpuApi::DestroyStream(stream);
     cudaFreeHost(d_done);
+    cudaFreeHost((void*)d_progress);
     return -4;
   }
 
@@ -455,6 +541,7 @@ static int run_cte_gpu_bench_putblob(
   CHI_IPC->PauseGpuOrchestrator();
 
   cudaFreeHost(d_done);
+  cudaFreeHost((void*)d_progress);
   hshm::GpuApi::DestroyStream(stream);
 
   return completed ? 0 : -4;
@@ -649,7 +736,7 @@ static int run_cte_gpu_bench_cudamemcpy(
 // CLI and main()
 //==============================================================================
 
-enum class TestCase { kPutBlob, kPutBlobGpu, kDirect, kCudaMemcpy, kManaged };
+enum class TestCase { kPutBlob, kPutBlobGpu, kDirect, kCudaMemcpy, kManaged, kAllocTest };
 
 struct BenchConfig {
   TestCase test_case = TestCase::kPutBlob;
@@ -657,7 +744,8 @@ struct BenchConfig {
   chi::u32 rt_threads = 32;
   chi::u32 client_blocks = 1;
   chi::u32 client_threads = 32;
-  chi::u64 warp_bytes = 64 * 1024 * 1024;  // per-warp I/O size
+  chi::u64 warp_bytes = 128 * 1024;  // per-warp I/O size
+  chi::u32 iterations = 16;          // iterations per warp
 };
 
 namespace {
@@ -690,7 +778,8 @@ void PrintUsage(const char *prog) {
   HIPRINT("  --rt-threads <N>       GPU runtime threads/block (default: 32)");
   HIPRINT("  --client-blocks <N>    GPU client kernel blocks (default: 1)");
   HIPRINT("  --client-threads <N>   GPU client kernel threads/block (default: 32)");
-  HIPRINT("  --io-size <bytes>      Per-warp I/O size (default: 64M, supports k/m/g suffixes)");
+  HIPRINT("  --io-size <bytes>      Per-warp I/O size (default: 128K, supports k/m/g suffixes)");
+  HIPRINT("  --iterations <N>       Iterations per warp (default: 16)");
   HIPRINT("  --help, -h             Show this help");
 }
 
@@ -707,8 +796,9 @@ bool ParseArgs(int argc, char **argv, BenchConfig &cfg) {
       else if (tc == "direct") cfg.test_case = TestCase::kDirect;
       else if (tc == "cudamemcpy") cfg.test_case = TestCase::kCudaMemcpy;
       else if (tc == "managed") cfg.test_case = TestCase::kManaged;
+      else if (tc == "alloc_test") cfg.test_case = TestCase::kAllocTest;
       else {
-        HLOG(kError, "Unknown test case '{}'; use putblob, putblob_gpu, direct, cudamemcpy, or managed", tc);
+        HLOG(kError, "Unknown test case '{}'; use putblob, putblob_gpu, direct, cudamemcpy, managed, or alloc_test", tc);
         return false;
       }
     } else if (arg == "--rt-blocks" && i + 1 < argc) {
@@ -721,6 +811,8 @@ bool ParseArgs(int argc, char **argv, BenchConfig &cfg) {
       cfg.client_threads = static_cast<chi::u32>(std::stoul(argv[++i]));
     } else if (arg == "--io-size" && i + 1 < argc) {
       cfg.warp_bytes = ParseSize(argv[++i]);
+    } else if (arg == "--iterations" && i + 1 < argc) {
+      cfg.iterations = static_cast<chi::u32>(std::stoul(argv[++i]));
     } else {
       HLOG(kError, "Unknown option: {}", arg);
       PrintUsage(argv[0]);
@@ -763,6 +855,7 @@ int main(int argc, char **argv) {
                          (cfg.test_case == TestCase::kPutBlobGpu) ? "putblob_gpu" :
                          (cfg.test_case == TestCase::kCudaMemcpy) ? "cudamemcpy" :
                          (cfg.test_case == TestCase::kManaged) ? "managed" :
+                         (cfg.test_case == TestCase::kAllocTest) ? "alloc_test" :
                          "direct";
 
   HIPRINT("\n=== CTE GPU Benchmark ===");
@@ -771,20 +864,94 @@ int main(int argc, char **argv) {
   HIPRINT("RT threads/block:    {}", cfg.rt_threads);
   HIPRINT("Client blocks:       {}", cfg.client_blocks);
   HIPRINT("Client threads/block:{}", cfg.client_threads);
-  HIPRINT("Per-warp I/O size:   {} bytes ({} MB)", cfg.warp_bytes,
-          cfg.warp_bytes / (1024 * 1024));
+  HIPRINT("Per-warp I/O size:   {} bytes ({} KB)", cfg.warp_bytes,
+          cfg.warp_bytes / 1024);
+  HIPRINT("Iterations:          {}", cfg.iterations);
 
-  // Compute total I/O: fixed per-warp size x number of client warps
+  // Compute total I/O: per-warp size x warps x iterations
   chi::u32 client_warps = (cfg.client_blocks * cfg.client_threads) / 32;
   if (client_warps == 0) client_warps = 1;
-  chi::u64 total_bytes = cfg.warp_bytes * client_warps;
+  chi::u64 total_bytes = cfg.warp_bytes * client_warps * cfg.iterations;
   HIPRINT("Total I/O size:      {} bytes ({} MB)", total_bytes,
           total_bytes / (1024 * 1024));
 
   float elapsed_ms = 0;
   int rc = 0;
 
-  if (cfg.test_case == TestCase::kManaged) {
+  if (cfg.test_case == TestCase::kAllocTest) {
+    // Minimal multi-block allocator stress test
+    CHI_IPC->PauseGpuOrchestrator();
+
+    chi::u32 tw = (cfg.client_blocks * cfg.client_threads) / 32;
+    if (tw == 0) tw = 1;
+
+    // Scratch backend
+    size_t scratch_size = static_cast<size_t>(cfg.client_blocks) * 10 * 1024 * 1024;
+    hipc::MemoryBackendId scratch_id(201, 0);
+    hipc::GpuMalloc scratch_backend;
+    scratch_backend.shm_init(scratch_id, scratch_size, "", 0);
+
+    // Heap backend
+    size_t heap_size = static_cast<size_t>(cfg.client_blocks) * 4 * 1024 * 1024;
+    hipc::MemoryBackendId heap_id(202, 0);
+    hipc::GpuMalloc heap_backend;
+    heap_backend.shm_init(heap_id, heap_size, "", 0);
+
+    chi::IpcManagerGpu gpu_info = CHI_IPC->GetClientGpuInfo(0);
+    gpu_info.backend = scratch_backend;
+    gpu_info.gpu_heap_backend = heap_backend;
+    gpu_info.gpu_heap_partitions = tw;
+
+    int *d_done;
+    cudaMallocHost(&d_done, sizeof(int));
+    *d_done = 0;
+    volatile int *d_progress;
+    cudaMallocHost((void**)&d_progress, sizeof(int) * 64);
+    memset((void*)d_progress, 0, sizeof(int) * 64);
+
+    if (scratch_backend.data_ != nullptr)
+      cudaMemset(scratch_backend.data_, 0, sizeof(hipc::ThreadAllocator));
+    if (heap_backend.data_ != nullptr)
+      cudaMemset(heap_backend.data_, 0, sizeof(hipc::ThreadAllocator));
+    cudaDeviceSynchronize();
+
+    void *stream = hshm::GpuApi::CreateStream();
+    gpu_alloc_test_kernel<<<
+        cfg.client_blocks, cfg.client_threads, 0,
+        static_cast<cudaStream_t>(stream)>>>(
+        gpu_info, cfg.client_blocks, tw, d_done, d_progress);
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+      fprintf(stderr, "ERROR: alloc_test kernel launch failed: %s\n",
+              cudaGetErrorString(err));
+      cudaFreeHost(d_done);
+      cudaFreeHost((void*)d_progress);
+      hshm::GpuApi::DestroyStream(stream);
+      CHI_IPC->ResumeGpuOrchestrator();
+      return 1;
+    }
+
+    bool completed = PollDone(d_done, static_cast<int>(tw), 10000000);
+
+    // Print progress BEFORE sync (kernel may have crashed)
+    printf("\n=== alloc_test Results ===\n");
+    printf("Completed: %s (d_done=%d/%u)\n", completed ? "YES" : "NO", *d_done, tw);
+    for (chi::u32 i = 0; i < tw && i < 64; ++i) {
+      printf("  warp[%u]: progress=%d\n", i, d_progress[i]);
+    }
+
+    fflush(stdout);
+    // Don't sync if not completed — kernel may have crashed
+    if (completed) {
+      hshm::GpuApi::Synchronize(stream);
+    }
+    cudaFreeHost(d_done);
+    cudaFreeHost((void*)d_progress);
+    hshm::GpuApi::DestroyStream(stream);
+    CHI_IPC->ResumeGpuOrchestrator();
+    return completed ? 0 : 1;
+  } else if (cfg.test_case == TestCase::kManaged) {
     float write_ms = 0, prefetch_ms = 0, total_ms = 0;
     rc = run_cte_gpu_bench_managed(cfg.client_blocks, cfg.client_threads,
                                     total_bytes,
@@ -825,7 +992,8 @@ int main(int argc, char **argv) {
     std::this_thread::sleep_for(200ms);
 
     chi::PoolId bdev_pool_id(800, 0);
-    chi::u64 bdev_size = std::max(total_bytes + 64ULL * 1024 * 1024,
+    chi::u64 data_footprint = cfg.warp_bytes * client_warps;
+    chi::u64 bdev_size = std::max(data_footprint + 64ULL * 1024 * 1024,
                                     256ULL * 1024 * 1024);
     auto reg_task = cte_client.AsyncRegisterTarget(
         "pinned::cte_gpu_bench_target",
@@ -881,7 +1049,7 @@ int main(int argc, char **argv) {
         cte_client.pool_id_, tag_id,
         cfg.rt_blocks, cfg.rt_threads,
         cfg.client_blocks, cfg.client_threads,
-        total_bytes, to_cpu, &elapsed_ms);
+        cfg.warp_bytes, cfg.iterations, to_cpu, &elapsed_ms);
   }
 
   if (rc != 0) {

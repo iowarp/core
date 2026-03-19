@@ -61,7 +61,7 @@ struct TaThreadBlock {
     size_t alloc_region_size = region_size - sizeof(TaThreadBlock);
     alloc_.shm_init(backend, alloc_region_size);
     initialized_.store(1);
-#ifndef HSHM_IS_HOST
+#if !HSHM_IS_HOST
     __threadfence_system();
 #endif
     return true;
@@ -293,7 +293,7 @@ class _ThreadAllocator : public Allocator {
    */
   HSHM_CROSS_FUN void MarkReady() {
     heap_ready_.store(1);
-#ifndef HSHM_IS_HOST
+#if !HSHM_IS_HOST
     __threadfence_system();
 #endif
   }
@@ -303,7 +303,7 @@ class _ThreadAllocator : public Allocator {
    * Used by non-initializing GPU blocks to wait for block 0.
    */
   HSHM_CROSS_FUN void WaitReady() {
-#ifndef HSHM_IS_HOST
+#if !HSHM_IS_HOST
     // Use load_device() (atomicAdd-based) to bypass per-SM L1 cache.
     while (heap_ready_.load_device() != 1) {
       __nanosleep(100);
