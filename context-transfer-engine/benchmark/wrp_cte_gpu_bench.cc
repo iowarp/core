@@ -32,15 +32,15 @@
  */
 
 /**
- * CTE GPU Benchmark — host-side driver
+ * CTE GPU Benchmark
  *
  * Measures the performance of GPU-initiated PutBlob operations through CTE.
  * Supports multiple modes:
- *   putblob     — GPU client -> CTE via GPU->CPU path (ToLocalCpu)
- *   putblob_gpu — GPU client -> CTE via GPU-local path (Local)
- *   direct      — GPU kernel writes directly to pinned host memory (baseline)
- *   cudamemcpy  — cudaMemcpyAsync baseline (theoretical PCIe max)
- *   managed     — CUDA managed memory write + prefetch to host
+ *   putblob     -- GPU client -> CTE via GPU->CPU path (ToLocalCpu)
+ *   putblob_gpu -- GPU client -> CTE via GPU-local path (Local)
+ *   direct      -- GPU kernel writes directly to pinned host memory (baseline)
+ *   cudamemcpy  -- cudaMemcpyAsync baseline (theoretical PCIe max)
+ *   managed     -- CUDA managed memory write + prefetch to host
  *
  * Usage:
  *   wrp_cte_gpu_bench [options]
@@ -53,13 +53,13 @@
  *   --client-threads <N>     GPU client kernel threads per block (default: 32)
  *   --io-size <bytes>        Per-warp I/O size (default: 64M, supports k/m/g)
  *
- * GPU kernels are in wrp_cte_gpu_bench_gpu.cc (compiled with clang-cuda).
+ * Compiled as a single file via add_cuda_executable (clang-cuda dual-pass).
+ * GPU kernels and host-side launcher/main are in the same translation unit;
+ * host-only code is guarded by #if HSHM_IS_HOST.
  */
 
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 
-#include <cereal/types/vector.hpp>
-#include <cereal/types/string.hpp>
 #include <wrp_cte/core/core_client.h>
 #include <chimaera/chimaera.h>
 #include <chimaera/bdev/bdev_client.h>
@@ -68,6 +68,11 @@
 #include <hermes_shm/util/gpu_api.h>
 #include <chimaera/gpu_work_orchestrator.h>
 #include <chimaera/ipc_manager.h>
+
+// Needed for Transport::Send template (host-only, guarded by HSHM_IS_HOST
+// inside the header).  Only available when HSHM_ENABLE_LIGHTBEAM is defined,
+// which the build system now propagates from linked interface targets.
+#include <hermes_shm/lightbeam/transport_factory_impl.h>
 
 #include <chrono>
 #include <cstdlib>
@@ -78,15 +83,36 @@
 using namespace std::chrono_literals;
 
 //==============================================================================
-// extern "C" kernel launcher declarations (defined in wrp_cte_gpu_bench_gpu.cc)
+// GPU Kernels
 //==============================================================================
 
-extern "C" void launch_gpu_putblob_alloc(
+/**
+ * Kernel 1: Initialize a BuddyAllocator over device memory and allocate
+ * a contiguous array of `total_bytes` bytes.  Returns the FullPtr via
+ * pinned host memory so the CPU can read it.
+ */
+__global__ void gpu_putblob_alloc_kernel(
     hipc::MemoryBackend data_backend,
     chi::u64 total_bytes,
-    hipc::FullPtr<char> *d_out_ptr);
+    hipc::FullPtr<char> *d_out_ptr) {
+  if (threadIdx.x != 0 || blockIdx.x != 0) return;
 
-extern "C" void launch_gpu_putblob(
+  using AllocT = hipc::PrivateBuddyAllocator;
+  auto *alloc = data_backend.MakeAlloc<AllocT>(data_backend.data_capacity_);
+  if (!alloc) {
+    d_out_ptr->SetNull();
+    return;
+  }
+  auto result = alloc->AllocateObjs<char>(total_bytes);
+  *d_out_ptr = result;
+}
+
+/**
+ * Kernel 2: Each warp memsets its slice of A to a constant, then calls
+ * AsyncPutBlob to store that slice as a blob via the CTE runtime.
+ * Only the warp scheduler (lane 0) submits the PutBlob task.
+ */
+__global__ void gpu_putblob_kernel(
     chi::IpcManagerGpu gpu_info,
     chi::PoolId cte_pool_id,
     wrp_cte::core::TagId tag_id,
@@ -96,33 +122,141 @@ extern "C" void launch_gpu_putblob(
     chi::u64 total_bytes,
     chi::u32 total_warps,
     bool to_cpu,
-    int *d_done,
-    chi::u32 client_blocks,
-    chi::u32 client_threads,
-    void *stream);
+    int *d_done) {
+  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
 
-extern "C" void launch_gpu_direct_memcpy(
+  chi::u32 warp_id = chi::IpcManager::GetWarpId();
+  chi::u32 lane_id = chi::IpcManager::GetLaneId();
+
+  if (warp_id < total_warps) {
+    // Compute this warp's slice of the array
+    chi::u64 slice_size = total_bytes / total_warps;
+    chi::u64 my_offset = static_cast<chi::u64>(warp_id) * slice_size;
+    char *my_data = array_ptr.ptr_ + my_offset;
+
+    // All lanes participate in memset
+    for (chi::u64 i = lane_id; i < slice_size; i += 32) {
+      my_data[i] = static_cast<char>(warp_id & 0xFF);
+    }
+    __syncwarp();
+
+    // Only lane 0 submits PutBlob
+    if (chi::IpcManager::IsWarpScheduler()) {
+      wrp_cte::core::Client cte_client(cte_pool_id);
+
+      // Build ShmPtr referencing the data allocator backend
+      hipc::ShmPtr<> blob_shm;
+      blob_shm.alloc_id_ = data_alloc_id;
+      size_t base_off = array_ptr.shm_.off_.load();
+      blob_shm.off_.exchange(base_off + my_offset);
+
+      // Build blob name: "w_<id>"
+      char name_buf[32];
+      int pos = 0;
+      name_buf[pos++] = 'w';
+      name_buf[pos++] = '_';
+      chi::u32 wid = warp_id;
+      char digits[10];
+      int nd = 0;
+      do { digits[nd++] = '0' + (wid % 10); wid /= 10; } while (wid > 0);
+      for (int d = nd - 1; d >= 0; --d) name_buf[pos++] = digits[d];
+      name_buf[pos] = '\0';
+
+      auto *ipc = CHI_IPC;
+      auto task = ipc->NewTask<wrp_cte::core::PutBlobTask>(
+          chi::CreateTaskId(), cte_pool_id,
+          to_cpu ? chi::PoolQuery::ToLocalCpu() : chi::PoolQuery::Local(),
+          tag_id, name_buf,
+          (chi::u64)0, slice_size,
+          blob_shm, -1.0f,
+          wrp_cte::core::Context(), (chi::u32)0);
+      auto future = ipc->Send(task);
+      future.Wait();
+    }
+  }
+
+  __syncwarp();
+  if (chi::IpcManager::IsWarpScheduler()) {
+    __threadfence();
+    int prev = atomicAdd(d_done, 1);
+    if (prev == static_cast<int>(total_warps) - 1) {
+      __threadfence_system();
+    }
+  }
+}
+
+/**
+ * Kernel 3: Direct copy baseline -- all threads cooperatively copy from
+ * device memory to pinned host memory using 4-byte coalesced stores.
+ * 32 threads x 4 bytes = 128 bytes per iteration = one PCIe cache line.
+ */
+__global__ void gpu_direct_memcpy_kernel(
     const char *d_src,
     char *h_dst,
     chi::u64 total_bytes,
     chi::u32 total_threads_used,
-    int *d_done,
-    chi::u32 client_blocks,
-    chi::u32 client_threads,
-    void *stream);
+    int *d_done) {
+  chi::u32 tid = blockIdx.x * blockDim.x + threadIdx.x;
+  chi::u32 stride = blockDim.x * gridDim.x;
 
-extern "C" void launch_gpu_managed_write(
+  // Coalesced 4-byte stores across all threads
+  chi::u64 n_words = total_bytes / 4;
+  const unsigned int *src4 = reinterpret_cast<const unsigned int *>(d_src);
+  unsigned int *dst4 = reinterpret_cast<unsigned int *>(h_dst);
+  for (chi::u64 i = tid; i < n_words; i += stride) {
+    dst4[i] = src4[i];
+  }
+
+  // Tail bytes
+  if (tid == 0) {
+    chi::u64 tail = n_words * 4;
+    for (chi::u64 i = tail; i < total_bytes; ++i) {
+      h_dst[i] = d_src[i];
+    }
+  }
+
+  __threadfence_system();
+  atomicAdd(d_done, 1);
+}
+
+/**
+ * Kernel 4: Write to managed memory -- same warp structure as PutBlob.
+ * All lanes cooperatively memset their slice. Pages reside in VRAM,
+ * so writes happen at full VRAM bandwidth (~256 GB/s).
+ */
+__global__ void gpu_managed_write_kernel(
     char *managed_buf,
     chi::u64 total_bytes,
     chi::u32 total_warps,
-    int *d_done,
-    chi::u32 client_blocks,
-    chi::u32 client_threads,
-    void *stream);
+    int *d_done) {
+  chi::u32 warp_id = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
+  chi::u32 lane_id = threadIdx.x % 32;
+
+  if (warp_id < total_warps) {
+    chi::u64 slice_size = total_bytes / total_warps;
+    chi::u64 my_offset = static_cast<chi::u64>(warp_id) * slice_size;
+    char *my_data = managed_buf + my_offset;
+
+    // All lanes participate in write (same as PutBlob kernel memset)
+    for (chi::u64 i = lane_id; i < slice_size; i += 32) {
+      my_data[i] = static_cast<char>(warp_id & 0xFF);
+    }
+    __syncwarp();
+
+    if (lane_id == 0) {
+      __threadfence();
+      atomicAdd(d_done, 1);
+    }
+  }
+}
 
 //==============================================================================
-// CPU-side helpers
+// Host-only code: CPU-side launchers, CLI, and main()
 //==============================================================================
+#if HSHM_IS_HOST
+
+#include <cereal/types/vector.hpp>
+#include <cereal/types/string.hpp>
 
 static bool PollDone(volatile int *d_done, int total_warps, int timeout_us) {
   int elapsed_us = 0;
@@ -183,10 +317,10 @@ static int run_cte_gpu_bench_putblob(
 
   // --- 4. Run alloc kernel to initialize allocator + allocate A ---
   hipc::FullPtr<char> *d_array_ptr;
-  cudaMallocHost(reinterpret_cast<void**>(&d_array_ptr), sizeof(hipc::FullPtr<char>));
+  cudaMallocHost(&d_array_ptr, sizeof(hipc::FullPtr<char>));
   d_array_ptr->SetNull();
 
-  launch_gpu_putblob_alloc(
+  gpu_putblob_alloc_kernel<<<1, 1>>>(
       static_cast<hipc::MemoryBackend &>(data_backend),
       total_bytes, d_array_ptr);
   cudaDeviceSynchronize();
@@ -212,7 +346,7 @@ static int run_cte_gpu_bench_putblob(
   if (total_warps == 0) total_warps = 1;
 
   int *d_done;
-  cudaMallocHost(reinterpret_cast<void**>(&d_done), sizeof(int));
+  cudaMallocHost(&d_done, sizeof(int));
   *d_done = 0;
 
   void *stream = hshm::GpuApi::CreateStream();
@@ -227,12 +361,13 @@ static int run_cte_gpu_bench_putblob(
     cudaMemset(heap_backend.data_, 0, sizeof(hipc::ThreadAllocator));
   }
 
-  launch_gpu_putblob(
+  gpu_putblob_kernel<<<
+      client_blocks, client_threads, 0,
+      static_cast<cudaStream_t>(stream)>>>(
       gpu_info, cte_pool_id, tag_id, client_blocks,
       array_ptr,
       hipc::AllocatorId(data_backend_id.major_, data_backend_id.minor_),
-      total_bytes, total_warps, to_cpu, d_done,
-      client_blocks, client_threads, stream);
+      total_bytes, total_warps, to_cpu, d_done);
 
   cudaError_t launch_err = cudaGetLastError();
   if (launch_err != cudaSuccess) {
@@ -310,11 +445,7 @@ static int run_cte_gpu_bench_putblob(
       }
       fflush(stderr);
     }
-    // Pause orchestrator to stop the persistent kernel and flush GPU printf
     CHI_IPC->PauseGpuOrchestrator();
-    // Now sync the client stream (client warps may be stuck in future.Wait)
-    // Use a short async approach: the client kernel will also exit since
-    // the orchestrator is gone. Force-kill by destroying the stream.
     hshm::GpuApi::DestroyStream(stream);
     cudaFreeHost(d_done);
     return -4;
@@ -337,7 +468,7 @@ static int run_cte_gpu_bench_direct(
   CHI_IPC->PauseGpuOrchestrator();
 
   char *d_src = nullptr;
-  cudaError_t err = cudaMalloc(reinterpret_cast<void**>(&d_src), total_bytes);
+  cudaError_t err = cudaMalloc(&d_src, total_bytes);
   if (err != cudaSuccess || !d_src) {
     CHI_IPC->ResumeGpuOrchestrator();
     return -1;
@@ -359,15 +490,16 @@ static int run_cte_gpu_bench_direct(
   if (total_threads_used == 0) total_threads_used = 1;
 
   int *d_done;
-  cudaMallocHost(reinterpret_cast<void**>(&d_done), sizeof(int));
+  cudaMallocHost(&d_done, sizeof(int));
   *d_done = 0;
 
   void *stream = hshm::GpuApi::CreateStream();
   cudaGetLastError();
 
-  launch_gpu_direct_memcpy(
-      d_src, h_dst, total_bytes, total_threads_used, d_done,
-      client_blocks, client_threads, stream);
+  gpu_direct_memcpy_kernel<<<
+      client_blocks, client_threads, 0,
+      static_cast<cudaStream_t>(stream)>>>(
+      d_src, h_dst, total_bytes, total_threads_used, d_done);
 
   cudaError_t launch_err = cudaGetLastError();
   if (launch_err != cudaSuccess) {
@@ -410,7 +542,7 @@ static int run_cte_gpu_bench_managed(
   CHI_IPC->PauseGpuOrchestrator();
 
   char *managed_buf = nullptr;
-  cudaError_t err = cudaMallocManaged(reinterpret_cast<void**>(&managed_buf), total_bytes);
+  cudaError_t err = cudaMallocManaged(&managed_buf, total_bytes);
   if (err != cudaSuccess || !managed_buf) {
     CHI_IPC->ResumeGpuOrchestrator();
     return -1;
@@ -425,16 +557,17 @@ static int run_cte_gpu_bench_managed(
   if (total_warps == 0) total_warps = 1;
 
   int *d_done;
-  cudaMallocHost(reinterpret_cast<void**>(&d_done), sizeof(int));
+  cudaMallocHost(&d_done, sizeof(int));
   *d_done = 0;
 
   void *stream = hshm::GpuApi::CreateStream();
 
   auto t0 = std::chrono::high_resolution_clock::now();
 
-  launch_gpu_managed_write(
-      managed_buf, total_bytes, total_warps, d_done,
-      client_blocks, client_threads, stream);
+  gpu_managed_write_kernel<<<
+      client_blocks, client_threads, 0,
+      static_cast<cudaStream_t>(stream)>>>(
+      managed_buf, total_bytes, total_warps, d_done);
 
   cudaError_t launch_err = cudaGetLastError();
   if (launch_err != cudaSuccess) {
@@ -486,7 +619,7 @@ static int run_cte_gpu_bench_cudamemcpy(
   CHI_IPC->PauseGpuOrchestrator();
 
   char *d_src = nullptr;
-  cudaMalloc(reinterpret_cast<void**>(&d_src), total_bytes);
+  cudaMalloc(&d_src, total_bytes);
   cudaMemset(d_src, 0xAB, total_bytes);
 
   char *h_dst = nullptr;
@@ -676,7 +809,7 @@ int main(int argc, char **argv) {
     rc = run_cte_gpu_bench_direct(cfg.client_blocks, cfg.client_threads,
                                    total_bytes, &elapsed_ms);
   } else {
-    // CTE putblob path — need pool, target, and tag setup
+    // CTE putblob path -- need pool, target, and tag setup
     chi::PoolId gpu_pool_id(wrp_cte::core::kCtePoolId.major_ + 1,
                              wrp_cte::core::kCtePoolId.minor_);
     wrp_cte::core::Client cte_client(gpu_pool_id);
@@ -765,5 +898,7 @@ int main(int argc, char **argv) {
 
   return 0;
 }
+
+#endif  // HSHM_IS_HOST
 
 #endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM

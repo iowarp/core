@@ -45,29 +45,21 @@ else()
   message(STATUS "Skipping wrp_cte_score_bench - MPI not enabled (set WRP_CORE_ENABLE_MPI=ON)")
 endif()
 
-# GPU benchmark (requires CUDA)
+# GPU benchmark (requires CUDA) — single-file build via add_cuda_executable
 if(WRP_CORE_ENABLE_CUDA)
-  # GPU kernel library (clang-cuda dual-pass)
-  add_cuda_library(wrp_cte_gpu_bench_kernels STATIC TRUE
-      wrp_cte_gpu_bench_gpu.cc
+  add_cuda_executable(wrp_cte_gpu_bench TRUE
+      wrp_cte_gpu_bench.cc
       INCLUDE_DIRS
           ${CMAKE_SOURCE_DIR}/context-transfer-engine/core/include
           ${CMAKE_SOURCE_DIR}/context-runtime/include
           ${CMAKE_SOURCE_DIR}/context-runtime/modules/admin/include
           ${CMAKE_SOURCE_DIR}/context-runtime/modules/bdev/include
           ${CMAKE_SOURCE_DIR}/context-transport-primitives/include
+      LINK_LIBS
+          wrp_cte::core_client
+          chimaera::cxx
+          hshm::cuda_cxx
   )
-  target_link_libraries(wrp_cte_gpu_bench_kernels PUBLIC hshm::cuda_cxx)
-
-  # Host driver executable
-  add_executable(wrp_cte_gpu_bench wrp_cte_gpu_bench.cc)
-  target_link_libraries(wrp_cte_gpu_bench
-      wrp_cte::core_client
-      chimaera::cxx
-      wrp_cte_gpu_bench_kernels
-      -L${WRP_CORE_CLANG_CUDA_PATH}/lib64 -lcudart
-  )
-  target_compile_features(wrp_cte_gpu_bench PRIVATE cxx_std_17)
 
   install(TARGETS wrp_cte_gpu_bench RUNTIME DESTINATION bin)
 else()

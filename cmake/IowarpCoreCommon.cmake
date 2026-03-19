@@ -187,6 +187,100 @@ function(add_rocm_gpu_executable TARGET DO_COPY)
     target_compile_options(${TARGET} PUBLIC -fgpu-rdc)
 endfunction()
 
+# Helper: collect compile definitions for the Clang-CUDA custom command.
+#
+# The Clang custom-command path (add_custom_command) cannot inherit
+# target_compile_definitions from linked interface libraries, so we
+# must collect them explicitly.  This function:
+#   1. Builds the base HSHM/Chimaera definitions (HSHM_ENABLE_CUDA, etc.)
+#   2. Walks LINK_LIBS and recursively collects INTERFACE_COMPILE_DEFINITIONS
+#   3. Returns the combined list via ${OUT_VAR}
+#
+# Usage (inside add_cuda_library / add_cuda_executable):
+#   _wrp_core_collect_clang_cuda_defs("${CUDA_LINK_LIBS}" CLANG_CUDA_DEFS)
+#
+function(_wrp_core_collect_clang_cuda_defs LINK_LIBS OUT_VAR)
+    set(_DEFS "")
+
+    # --- Base definitions (mirroring hshm_target_compile_definitions) ---
+    if(WRP_CORE_ENABLE_CUDA)
+        list(APPEND _DEFS "-DHSHM_ENABLE_CUDA=1" "-DHSHM_ENABLE_ROCM=0")
+    elseif(WRP_CORE_ENABLE_ROCM)
+        list(APPEND _DEFS "-DHSHM_ENABLE_CUDA=0" "-DHSHM_ENABLE_ROCM=1")
+    endif()
+    if(HSHM_ENABLE_PTHREADS)
+        list(APPEND _DEFS
+            "-DHSHM_DEFAULT_THREAD_MODEL=hshm::thread::Pthread"
+            "-DHSHM_ENABLE_PTHREADS=1")
+    else()
+        list(APPEND _DEFS
+            "-DHSHM_DEFAULT_THREAD_MODEL=hshm::thread::StdThread"
+            "-DHSHM_ENABLE_PTHREADS=0")
+    endif()
+    if(WRP_CORE_ENABLE_CUDA)
+        list(APPEND _DEFS
+            "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::Cuda")
+    elseif(WRP_CORE_ENABLE_ROCM)
+        list(APPEND _DEFS
+            "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::Rocm")
+    else()
+        list(APPEND _DEFS
+            "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::StdThread")
+    endif()
+    list(APPEND _DEFS
+        "-DHSHM_DEFAULT_ALLOC_T=hipc::ThreadLocalAllocator"
+        "-DHSHM_ENABLE_WINDOWS_THREADS=0"
+        "-DHSHM_ENABLE_PROCFS_SYSINFO=1"
+        "-DHSHM_ENABLE_WINDOWS_SYSINFO=0"
+        "-DHSHM_COMPILER_MSVC=0"
+        "-DHSHM_COMPILER_GNU=0"
+        "-DHSHM_ENABLE_DOXYGEN=0"
+        "-DHSHM_DEBUG_LOCK=0"
+        "-DHSHM_LOG_LEVEL=${HSHM_LOG_LEVEL}"
+        "-DHSHM_ENABLE_DLL_EXPORT=0"
+        "-DHSHM_ENABLE_MPI=0"
+    )
+
+    # --- Collect transitive INTERFACE_COMPILE_DEFINITIONS from LINK_LIBS ---
+    # Walk the linked targets and their transitive dependencies to pick up
+    # definitions like HSHM_ENABLE_LIGHTBEAM, HSHM_ENABLE_ZMQ, etc. that
+    # interface libraries propagate.
+    set(_VISITED "")
+    set(_QUEUE ${LINK_LIBS})
+    while(_QUEUE)
+        list(POP_FRONT _QUEUE _LIB)
+        if(_LIB IN_LIST _VISITED)
+            continue()
+        endif()
+        list(APPEND _VISITED "${_LIB}")
+        if(NOT TARGET "${_LIB}")
+            continue()
+        endif()
+        get_target_property(_LIB_DEFS "${_LIB}" INTERFACE_COMPILE_DEFINITIONS)
+        if(_LIB_DEFS)
+            foreach(_DEF IN LISTS _LIB_DEFS)
+                # Skip generator expressions (they can't be evaluated here)
+                string(FIND "${_DEF}" "$<" _GE_POS)
+                if(_GE_POS EQUAL -1)
+                    list(APPEND _DEFS "-D${_DEF}")
+                endif()
+            endforeach()
+        endif()
+        # Recurse into transitive link dependencies
+        get_target_property(_LIB_LINK "${_LIB}" INTERFACE_LINK_LIBRARIES)
+        if(_LIB_LINK)
+            foreach(_DEP IN LISTS _LIB_LINK)
+                if(TARGET "${_DEP}" AND NOT "${_DEP}" IN_LIST _VISITED)
+                    list(APPEND _QUEUE "${_DEP}")
+                endif()
+            endforeach()
+        endif()
+    endwhile()
+
+    list(REMOVE_DUPLICATES _DEFS)
+    set(${OUT_VAR} ${_DEFS} PARENT_SCOPE)
+endfunction()
+
 # Function for adding a CUDA library
 #
 # When WRP_CORE_CLANG_CUDA_COMPILER is set (via wrp_core_find_clang_cuda()),
@@ -224,50 +318,8 @@ function(add_cuda_library TARGET SHARED DO_COPY)
             list(APPEND INCLUDE_FLAGS "-I${DIR}")
         endforeach()
 
-        # Collect compile definitions that NVCC targets get from linked
-        # INTERFACE libraries (hshm::cuda_cxx, hshm::thread_all, etc.).
-        # The Clang custom command cannot inherit target_compile_definitions,
-        # so we pass them explicitly via -D flags.
-        set(CLANG_CUDA_DEFS "")
-        if(WRP_CORE_ENABLE_CUDA)
-            list(APPEND CLANG_CUDA_DEFS "-DHSHM_ENABLE_CUDA=1" "-DHSHM_ENABLE_ROCM=0")
-        elseif(WRP_CORE_ENABLE_ROCM)
-            list(APPEND CLANG_CUDA_DEFS "-DHSHM_ENABLE_CUDA=0" "-DHSHM_ENABLE_ROCM=1")
-        endif()
-        # Thread model definitions (mirroring hshm::thread_all)
-        if(HSHM_ENABLE_PTHREADS)
-            list(APPEND CLANG_CUDA_DEFS
-                "-DHSHM_DEFAULT_THREAD_MODEL=hshm::thread::Pthread"
-                "-DHSHM_ENABLE_PTHREADS=1")
-        else()
-            list(APPEND CLANG_CUDA_DEFS
-                "-DHSHM_DEFAULT_THREAD_MODEL=hshm::thread::StdThread"
-                "-DHSHM_ENABLE_PTHREADS=0")
-        endif()
-        if(WRP_CORE_ENABLE_CUDA)
-            list(APPEND CLANG_CUDA_DEFS
-                "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::Cuda")
-        elseif(WRP_CORE_ENABLE_ROCM)
-            list(APPEND CLANG_CUDA_DEFS
-                "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::Rocm")
-        else()
-            list(APPEND CLANG_CUDA_DEFS
-                "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::StdThread")
-        endif()
-        # Core HSHM definitions (mirroring hshm_target_compile_definitions)
-        list(APPEND CLANG_CUDA_DEFS
-            "-DHSHM_DEFAULT_ALLOC_T=hipc::ThreadLocalAllocator"
-            "-DHSHM_ENABLE_WINDOWS_THREADS=0"
-            "-DHSHM_ENABLE_PROCFS_SYSINFO=1"
-            "-DHSHM_ENABLE_WINDOWS_SYSINFO=0"
-            "-DHSHM_COMPILER_MSVC=0"
-            "-DHSHM_COMPILER_GNU=0"
-            "-DHSHM_ENABLE_DOXYGEN=0"
-            "-DHSHM_DEBUG_LOCK=0"
-            "-DHSHM_LOG_LEVEL=${HSHM_LOG_LEVEL}"
-            "-DHSHM_ENABLE_DLL_EXPORT=0"
-            "-DHSHM_ENABLE_MPI=0"
-        )
+        # Collect all compile definitions (base + transitive from LINK_LIBS)
+        _wrp_core_collect_clang_cuda_defs("${CUDA_LINK_LIBS}" CLANG_CUDA_DEFS)
 
         set(OBJECT_FILES "")
         foreach(SRC IN LISTS SRC_FILES)
@@ -417,45 +469,8 @@ function(add_cuda_executable TARGET DO_COPY)
             list(APPEND EXTRA_DEFS "-D${DEF}")
         endforeach()
 
-        # Collect compile definitions (same as add_cuda_library)
-        set(CLANG_CUDA_DEFS "")
-        if(WRP_CORE_ENABLE_CUDA)
-            list(APPEND CLANG_CUDA_DEFS "-DHSHM_ENABLE_CUDA=1" "-DHSHM_ENABLE_ROCM=0")
-        elseif(WRP_CORE_ENABLE_ROCM)
-            list(APPEND CLANG_CUDA_DEFS "-DHSHM_ENABLE_CUDA=0" "-DHSHM_ENABLE_ROCM=1")
-        endif()
-        if(HSHM_ENABLE_PTHREADS)
-            list(APPEND CLANG_CUDA_DEFS
-                "-DHSHM_DEFAULT_THREAD_MODEL=hshm::thread::Pthread"
-                "-DHSHM_ENABLE_PTHREADS=1")
-        else()
-            list(APPEND CLANG_CUDA_DEFS
-                "-DHSHM_DEFAULT_THREAD_MODEL=hshm::thread::StdThread"
-                "-DHSHM_ENABLE_PTHREADS=0")
-        endif()
-        if(WRP_CORE_ENABLE_CUDA)
-            list(APPEND CLANG_CUDA_DEFS
-                "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::Cuda")
-        elseif(WRP_CORE_ENABLE_ROCM)
-            list(APPEND CLANG_CUDA_DEFS
-                "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::Rocm")
-        else()
-            list(APPEND CLANG_CUDA_DEFS
-                "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::StdThread")
-        endif()
-        list(APPEND CLANG_CUDA_DEFS
-            "-DHSHM_DEFAULT_ALLOC_T=hipc::ThreadLocalAllocator"
-            "-DHSHM_ENABLE_WINDOWS_THREADS=0"
-            "-DHSHM_ENABLE_PROCFS_SYSINFO=1"
-            "-DHSHM_ENABLE_WINDOWS_SYSINFO=0"
-            "-DHSHM_COMPILER_MSVC=0"
-            "-DHSHM_COMPILER_GNU=0"
-            "-DHSHM_ENABLE_DOXYGEN=0"
-            "-DHSHM_DEBUG_LOCK=0"
-            "-DHSHM_LOG_LEVEL=${HSHM_LOG_LEVEL}"
-            "-DHSHM_ENABLE_DLL_EXPORT=0"
-            "-DHSHM_ENABLE_MPI=0"
-        )
+        # Collect all compile definitions (base + transitive from LINK_LIBS)
+        _wrp_core_collect_clang_cuda_defs("${CUDA_LINK_LIBS}" CLANG_CUDA_DEFS)
 
         set(OBJECT_FILES "")
         foreach(SRC IN LISTS SRC_FILES)
