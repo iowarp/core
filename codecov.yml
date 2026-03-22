@@ -12,3 +12,4 @@ coverage:
 ignore:
   - "**/test/**"
   - "**/tests/**"
+  - "**/benchmark/**"
