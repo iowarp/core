@@ -655,7 +655,7 @@ bool IpcManager::ServerInitGpuQueues() {
     gpu2cpu_copy_backends_.reserve(num_gpus);
     cpu2gpu_copy_backends_.reserve(num_gpus);
     gpu_orchestrator_backends_.reserve(num_gpus);
-    gpu_heap_backends_.reserve(num_gpus);
+    gpu_priv_backends_.reserve(num_gpus);
     gpu2gpu_queues_.reserve(num_gpus);
     internal_queues_.reserve(num_gpus);
     gpu2cpu_queues_.reserve(num_gpus);
@@ -832,18 +832,18 @@ bool IpcManager::InitGpuBackendsForDevice(int gpu_id, u32 queue_depth) {
     gpu_orchestrator_backends_.push_back(std::move(backend));
   }
 
-  // --- 7. GPU heap backend (GpuMalloc, device memory, for ThreadAllocator) ---
-  // A single ThreadAllocator manages per-block BuddyAllocator partitions
-  // internally via blockIdx.x, eliminating cross-block contention.
+  // --- 7. GPU private backend (GpuMalloc, device memory) ---
+  // Per-block BuddyAllocator for NewObj/NewTask/CHI_PRIV_ALLOC.
+  // Not registered with the Chimaera runtime — local to client/orchestrator.
   {
     hipc::MemoryBackendId bid(9000 + gpu_id, 0);
-    std::string url = "/chi_gpu_heap_" + sid;
+    std::string url = "/chi_gpu_priv_" + sid;
     auto backend = std::make_unique<hipc::GpuMalloc>();
-    if (!backend->shm_init(bid, hshm::Unit<size_t>::Megabytes(256), url, gpu_id)) {
-      HLOG(kError, "Failed to init GPU heap backend for GPU {}", gpu_id);
+    if (!backend->shm_init(bid, hshm::Unit<size_t>::Megabytes(512), url, gpu_id)) {
+      HLOG(kError, "Failed to init GPU private backend for GPU {}", gpu_id);
       return false;
     }
-    gpu_heap_backends_.push_back(std::move(backend));
+    gpu_priv_backends_.push_back(std::move(backend));
   }
 
   // --- 8. Internal subtask queue backend (device memory, GpuMalloc) ---
@@ -898,8 +898,8 @@ void IpcManager::BuildOrchestratorInfo(u32 gpu_id, u32 queue_depth) {
   gpu_orchestrator_info_.gpu2cpu_queue = gpu2cpu_queues_[gpu_id].ptr_;
   gpu_orchestrator_info_.gpu2cpu_backend =
       static_cast<hipc::MemoryBackend &>(*gpu2cpu_copy_backends_[gpu_id]);
-  gpu_orchestrator_info_.gpu_heap_backend =
-      static_cast<hipc::MemoryBackend &>(*gpu_heap_backends_[gpu_id]);
+  gpu_orchestrator_info_.gpu_priv_backend =
+      static_cast<hipc::MemoryBackend &>(*gpu_priv_backends_[gpu_id]);
   gpu_orchestrator_info_.gpu_queue_depth = queue_depth;
 }
 
@@ -3185,14 +3185,11 @@ void IpcManager::GetGpu2GpuIpcHandle(u32 gpu_id, char *out_bytes) const {
   if (gpu_id >= gpu2gpu_queue_backends_.size()) return;
   auto *backend = gpu2gpu_queue_backends_[gpu_id].get();
   if (!backend || !backend->region_) return;
-  // Read GpuMallocPrivateHeader from device memory to get the IPC handle
-  hipc::GpuMallocPrivateHeader priv_header;
-  char *priv_header_gpu = backend->region_ + backend->priv_header_off_;
-  hshm::GpuApi::Memcpy(&priv_header,
-                        reinterpret_cast<hipc::GpuMallocPrivateHeader *>(priv_header_gpu),
-                        sizeof(hipc::GpuMallocPrivateHeader));
-  static_assert(sizeof(priv_header.ipc_handle_) <= 64, "GpuIpcMemHandle exceeds 64 bytes");
-  memcpy(out_bytes, &priv_header.ipc_handle_, sizeof(priv_header.ipc_handle_));
+  // Get IPC handle on-demand from the GPU allocation
+  hshm::GpuIpcMemHandle ipc_handle;
+  hshm::GpuApi::GetIpcMemHandle(ipc_handle, backend->region_);
+  static_assert(sizeof(ipc_handle) <= 64, "GpuIpcMemHandle exceeds 64 bytes");
+  memcpy(out_bytes, &ipc_handle, sizeof(ipc_handle));
 }
 
 //==============================================================================

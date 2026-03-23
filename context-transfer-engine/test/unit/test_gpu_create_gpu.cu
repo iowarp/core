@@ -160,7 +160,7 @@ __global__ void gpu_create_kernel(chi::IpcManagerGpu gpu_info,
  *   -1  = gpu_backend init failed
  *  -100 = gpu_backend shm_init failed
  *  -104 = g2c_backend shm_init failed
- *  -105 = gpu_heap_backend shm_init failed
+ *  -105 = gpu_priv_backend shm_init failed
  *  -200 = CUDA error after launch
  *  -201 = CUDA kernel launch error
  *  -110 = kernel stuck after CHIMAERA_GPU_INIT (stage 10)
@@ -188,8 +188,8 @@ extern "C" int run_gpu_create_test(const char *pool_name,
 
   // GPU heap backend (device memory, for BuddyAllocator serialization scratch)
   hipc::MemoryBackendId heap_backend_id(22, 0);
-  hipc::GpuMalloc gpu_heap_backend;
-  if (!gpu_heap_backend.shm_init(heap_backend_id, 4 * 1024 * 1024,
+  hipc::GpuMalloc gpu_priv_backend;
+  if (!gpu_priv_backend.shm_init(heap_backend_id, 4 * 1024 * 1024,
                                   "/gpu_create_heap", 0))
     return -105;
 
@@ -203,7 +203,7 @@ extern "C" int run_gpu_create_test(const char *pool_name,
   gpu_info.backend = static_cast<hipc::MemoryBackend &>(gpu_backend);
   gpu_info.gpu2cpu_queue = CHI_IPC->GetGpuQueue(0);
   gpu_info.gpu2cpu_backend = static_cast<hipc::MemoryBackend &>(g2c_backend);
-  gpu_info.gpu_heap_backend = static_cast<hipc::MemoryBackend &>(gpu_heap_backend);
+  gpu_info.gpu_priv_backend = static_cast<hipc::MemoryBackend &>(gpu_priv_backend);
 
   fprintf(stderr, "[GPU_CREATE_DEBUG] gpu_info set up, launching kernel\n"); fflush(stderr);
 

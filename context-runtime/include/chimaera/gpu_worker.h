@@ -56,19 +56,19 @@ namespace chi {
 namespace gpu {
 
 /**
- * Coroutine frame allocator using ThreadAllocator (gpu_heap_alloc_).
- * alloc_ctx is CHI_GPU_HEAP_T* (hipc::ThreadAllocator*).
+ * Coroutine frame allocator using CHI_PRIV_ALLOC (PrivateBuddyAllocator).
+ * alloc_ctx is hipc::PrivateBuddyAllocator* (cached per-warp pointer).
  * Stores FullPtr offset in FrameHeader::opaque_ for deallocation.
  */
 __device__ inline void *HeapCoroAlloc(size_t size, void *alloc_ctx) {
-  auto *alloc = static_cast<CHI_GPU_HEAP_T *>(alloc_ctx);
+  auto *alloc = static_cast<hipc::PrivateBuddyAllocator *>(alloc_ctx);
   auto fp = alloc->template AllocateObjs<char>(size);
   if (fp.IsNull()) return nullptr;
   return fp.ptr_;
 }
 
 __device__ inline void HeapCoroFree(void *ptr, void *alloc_ctx) {
-  auto *alloc = static_cast<CHI_GPU_HEAP_T *>(alloc_ctx);
+  auto *alloc = static_cast<hipc::PrivateBuddyAllocator *>(alloc_ctx);
   hipc::FullPtr<char> fp(static_cast<char *>(ptr));
   fp.shm_.off_ = static_cast<size_t>(
       static_cast<char *>(ptr) - alloc->GetBackendData());
@@ -172,12 +172,12 @@ class Worker {
     u32 warp_id = IpcManager::GetWarpId();
     u32 warp_lane = IpcManager::GetLaneId();
     rctx_ = RunContext(blockIdx.x, threadIdx.x, warp_id, warp_lane);
-    // Wire coroutine frame allocation to ThreadAllocator (gpu_heap)
-    auto *heap = CHI_IPC->GetGpuHeap();
-    if (heap) {
+    // Wire coroutine frame allocation to CHI_PRIV_ALLOC (cached BuddyAllocator)
+    auto *priv_alloc = CHI_PRIV_ALLOC;
+    if (priv_alloc) {
       rctx_.alloc_fn_ = HeapCoroAlloc;
       rctx_.free_fn_ = HeapCoroFree;
-      rctx_.alloc_ctx_ = heap;
+      rctx_.alloc_ctx_ = priv_alloc;
     }
 #else
     rctx_ = RunContext(0, 0, 0, 0);
@@ -213,20 +213,16 @@ class Worker {
 #ifdef HSHM_BUDDY_ALLOC_DEBUG
       u32 completed = dbg_ctrl_->dbg_tasks_completed[worker_id_];
       if (completed % 50 == 0) {
-        auto *heap = CHI_IPC->gpu_heap_alloc_;
-        if (heap) {
-          int tid = heap->GetAutoTid();
-          auto *part = heap->DbgGetPartition(tid);
-          if (part) {
-            printf("[W%u] task#%u heap[%d]: allocs=%llu frees=%llu net=%llu "
-                   "bigheap=%llu/%llu\n",
-                   worker_id_, completed, tid,
-                   (unsigned long long)part->DbgAllocCount(),
-                   (unsigned long long)part->DbgFreeCount(),
-                   (unsigned long long)part->DbgNetBytes(),
-                   (unsigned long long)part->DbgBigHeapOffset(),
-                   (unsigned long long)part->DbgBigHeapMax());
-          }
+        auto *priv = &CHI_IPC->gpu_priv_alloc_;
+        if (CHI_IPC->gpu_priv_alloc_init_) {
+          printf("[W%u] task#%u priv: allocs=%llu frees=%llu net=%llu "
+                 "bigheap=%llu/%llu\n",
+                 worker_id_, completed,
+                 (unsigned long long)priv->DbgAllocCount(),
+                 (unsigned long long)priv->DbgFreeCount(),
+                 (unsigned long long)priv->DbgNetBytes(),
+                 (unsigned long long)priv->DbgBigHeapOffset(),
+                 (unsigned long long)priv->DbgBigHeapMax());
         }
       }
 #endif
@@ -601,19 +597,12 @@ class Worker {
     Container *container = pool_mgr_->GetContainer(pool_id);
     if (!container) {
       DbgNoContainer(pool_id.major_, pool_id.minor_);
-      GPU_WORKER_DPRINTF("[W%u] PopQueue: no container for pool %u.%u method %u\n",
-                         worker_id_, pool_id.major_, pool_id.minor_, method_id);
       CompleteAndResumeParent(fshm, is_gpu2gpu);
       return true;
     }
 
     DbgTaskPopped();
-    GPU_WORKER_DPRINTF("[W%u] PopQueue: pool %u.%u method %u (g2g=%d copy=%d)\n",
-                       worker_id_, pool_id.major_, pool_id.minor_, method_id,
-                       (int)is_gpu2gpu,
-                       (int)fshm->flags_.Any(FutureShm::FUTURE_COPY_FROM_CLIENT));
-
-    bool is_copy = fshm->flags_.Any(FutureShm::FUTURE_COPY_FROM_CLIENT);
+    bool is_copy = fshm->flags_.AnyDevice(FutureShm::FUTURE_COPY_FROM_CLIENT);
     if (is_copy) {
       return PrepareTaskCopy(fshm, container, method_id, is_gpu2gpu);
     } else {
@@ -649,8 +638,8 @@ class Worker {
     in_ctx.shm_info_ = &fshm->input_;
 
     GPU_WORKER_DPRINTF("[W%u] PrepCopy: deserializing\n", worker_id_);
-    auto *heap = CHI_GPU_HEAP;
-    if (!heap) {
+    auto *priv_alloc = CHI_PRIV_ALLOC;
+    if (!priv_alloc) {
       if (is_gpu2gpu) {
         fshm->flags_.SetBits(FutureShm::FUTURE_COMPLETE);
       } else {
@@ -669,7 +658,7 @@ class Worker {
       }
       return true;
     }
-    LocalLoadTaskArchive load_ar(heap);
+    LocalLoadTaskArchive load_ar(CHI_PRIV_ALLOC);
     if (is_gpu2gpu) {
       hshm::lbm::ShmTransport::RecvDevice(load_ar, in_ctx);
     } else {
@@ -761,8 +750,7 @@ class Worker {
     out_ctx.copy_space = fshm->copy_space;
     out_ctx.shm_info_ = &fshm->output_;
 
-    auto *heap = CHI_GPU_HEAP;
-    LocalSaveTaskArchive save_ar(LocalMsgType::kSerializeOut, heap);
+    LocalSaveTaskArchive save_ar(LocalMsgType::kSerializeOut, CHI_PRIV_ALLOC);
     container->LocalSaveTask(method_id, save_ar, task_ptr);
     if (is_gpu2gpu) {
       hshm::lbm::ShmTransport::SendDevice(save_ar, out_ctx);
@@ -834,7 +822,7 @@ class Worker {
     hshm::lbm::LbmContext ctx;
     ctx.copy_space = awaited->copy_space;
     ctx.shm_info_ = &awaited->output_;
-    LocalLoadTaskArchive load_ar(CHI_GPU_HEAP);
+    LocalLoadTaskArchive load_ar(CHI_PRIV_ALLOC);
     hshm::lbm::ShmTransport::RecvDevice(load_ar, ctx);
     hipc::FullPtr<Task> sub_task_ptr;
     sub_task_ptr.ptr_ = sub_task;

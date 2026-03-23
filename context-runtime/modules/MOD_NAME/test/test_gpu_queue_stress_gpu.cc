@@ -133,10 +133,9 @@ extern "C" int run_gpu_queue_stress_test(
   // Build GPU info for client kernel
   chi::IpcManagerGpuInfo gpu_info;
   gpu_info.backend = scratch_backend;
-  gpu_info.gpu_heap_backend = heap_backend;
+  gpu_info.gpu_priv_backend = heap_backend;
   gpu_info.gpu2gpu_queue = CHI_IPC->GetGpuToGpuQueue(0);
   gpu_info.gpu2gpu_num_lanes = 1;
-  gpu_info.gpu_heap_partitions = total_warps;
 
   // Pinned host memory for completion tracking
   int *d_done;

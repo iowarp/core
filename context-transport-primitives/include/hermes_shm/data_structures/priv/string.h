@@ -719,7 +719,16 @@ class basic_string {
 
  public:
   /**
-   * Default constructor.
+   * Default constructor (no allocator).
+   * Creates an empty SSO string. Allocator is set via copy/move assignment.
+   */
+  HSHM_CROSS_FUN basic_string()
+    : size_(0), using_sso_(true), alloc_(nullptr), data_(storage_.buffer_) {
+    storage_.buffer_[0] = T();
+  }
+
+  /**
+   * Constructor with allocator.
    * Creates an empty string with SSO buffer initialized.
    *
    * @param alloc Pointer to allocator instance for memory management
@@ -2274,5 +2283,27 @@ template<typename AllocT, size_t SSOSize = 32>
 using string = basic_string<char, AllocT, SSOSize>;
 
 }  // namespace hshm::priv
+
+#include "hermes_shm/types/hash.h"
+
+namespace hshm {
+
+/** FNV-1a hash specialization for priv::string */
+template <typename AllocT, size_t SSOSize>
+struct hash<hshm::priv::basic_string<char, AllocT, SSOSize>> {
+  HSHM_INLINE_CROSS_FUN
+  std::size_t operator()(
+      const hshm::priv::basic_string<char, AllocT, SSOSize> &s) const {
+    std::size_t h = 14695981039346656037ULL;
+    const char *data = s.data();
+    for (std::size_t i = 0; i < s.size(); ++i) {
+      h ^= static_cast<std::size_t>(static_cast<unsigned char>(data[i]));
+      h *= 1099511628211ULL;
+    }
+    return h;
+  }
+};
+
+}  // namespace hshm
 
 #endif  // HSHM_DATA_STRUCTURES_PRIV_STRING_H_

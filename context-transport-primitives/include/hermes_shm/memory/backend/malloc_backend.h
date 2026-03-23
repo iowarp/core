@@ -68,29 +68,19 @@ class MallocBackend : public MemoryBackend {
       return false;
     }
 
-    region_ = ptr;  // Save allocation start for cleanup
-
-    // Layout: [header (4KB)] [priv_header (4KB)] [shared_header (4KB)] [data...]
-    // header_ is the first part of the buffer
-    header_ = reinterpret_cast<MemoryBackendHeader *>(ptr);
-    char *priv_header_ptr = ptr + kBackendHeaderSize;
-    char *shared_header_ptr = priv_header_ptr + kBackendHeaderSize;
+    region_ = ptr;
+    header_ = reinterpret_cast<MemoryBackendHeader *>(region_);
+    data_ = region_ + kBackendHeaderSize;
 
     id_ = backend_id;
     backend_size_ = backend_size;
-
-    // data_ starts after shared header
-    data_ = shared_header_ptr + kBackendHeaderSize;
-    data_capacity_ = backend_size - 3 * kBackendHeaderSize;
+    data_capacity_ = backend_size - kBackendHeaderSize;
     data_id_ = -1;
-    priv_header_off_ = static_cast<size_t>(data_ - priv_header_ptr);
     flags_.Clear();
 
-    // Copy all header fields to shared header
     new (header_) MemoryBackendHeader();
-    (*header_) = (const MemoryBackendHeader&)*this;
+    (*header_) = (const MemoryBackendHeader &)*this;
 
-    // Mark this process as the owner of the backend
     SetOwner();
 
     return true;

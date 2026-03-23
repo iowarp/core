@@ -48,21 +48,13 @@
 namespace hshm::ipc {
 
 /**
- * Header extension for GpuMalloc backend
- * Stores IPC handle for GPU memory sharing
- */
-struct GpuMallocPrivateHeader {
-  GpuIpcMemHandle ipc_handle_;  // IPC handle for data_ buffer
-};
-
-/**
  * GPU-only memory backend using cudaMalloc/hipMalloc
  *
  * Memory layout (all in GPU memory):
- *   region_ -> [MemoryBackendHeader | GpuMallocPrivateHeader | Data]
+ *   region_ -> [4KB MemoryBackendHeader | Data]
  *
  * All memory is allocated with cudaMalloc/hipMalloc on GPU.
- * IPC handle stored in private header enables sharing across processes.
+ * IPC handle is obtained on-demand via GpuApi::GetIpcMemHandle.
  */
 class GpuMalloc : public MemoryBackend, public UrlMemoryBackend {
  protected:
@@ -103,46 +95,29 @@ class GpuMalloc : public MemoryBackend, public UrlMemoryBackend {
     flags_.Clear();
     url_ = url;
 
-    // Calculate total size: backend header + private header + data
-    size_t header_size = 2 * kBackendHeaderSize;
-    size_t total_size = header_size + data_size;
-
-    // Allocate entire region with GPU memory
-    region_ = GpuApi::Malloc<char>(total_size);
+    // Allocate GPU memory
+    region_ = GpuApi::Malloc<char>(data_size);
     if (!region_) {
       HLOG(kError, "Failed to allocate GPU memory");
       return false;
     }
 
-    // Layout in region_: [MemoryBackendHeader | GpuMallocPrivateHeader | Data]
     header_ = reinterpret_cast<MemoryBackendHeader *>(region_);
-    GpuMallocPrivateHeader *priv_header =
-        reinterpret_cast<GpuMallocPrivateHeader *>(region_ + kBackendHeaderSize);
-    data_ = region_ + header_size;
+    data_ = region_ + kBackendHeaderSize;
 
-    // Initialize headers on GPU
-    MemoryBackendHeader header_init;
-    header_init.id_ = backend_id;
-    header_init.backend_size_ = total_size;
-    header_init.data_capacity_ = data_size;
-    header_init.data_id_ = gpu_id;
-    header_init.priv_header_off_ = kBackendHeaderSize;
-    header_init.flags_.Clear();
-
-    // Copy header to GPU
-    GpuApi::Memcpy(header_, &header_init, sizeof(MemoryBackendHeader));
-
-    // Initialize private header with IPC handle
-    GpuMallocPrivateHeader priv_header_init;
-    GpuApi::GetIpcMemHandle(priv_header_init.ipc_handle_, (void *)region_);
-    GpuApi::Memcpy(priv_header, &priv_header_init, sizeof(GpuMallocPrivateHeader));
-
-    // Copy to local object
     id_ = backend_id;
-    backend_size_ = total_size;
-    data_capacity_ = data_size;
+    backend_size_ = data_size;
+    data_capacity_ = data_size - kBackendHeaderSize;
     data_id_ = gpu_id;
-    priv_header_off_ = kBackendHeaderSize;
+
+    // Write header into GPU memory
+    MemoryBackendHeader hdr;
+    hdr.id_ = id_;
+    hdr.flags_ = flags_;
+    hdr.backend_size_ = backend_size_;
+    hdr.data_capacity_ = data_capacity_;
+    hdr.data_id_ = data_id_;
+    GpuApi::Memcpy(header_, &hdr, sizeof(MemoryBackendHeader));
 
     // Mark this process as the owner of the backend
     SetOwner();
@@ -170,21 +145,16 @@ class GpuMalloc : public MemoryBackend, public UrlMemoryBackend {
       return false;
     }
 
-    // Read header from GPU memory to get metadata
-    MemoryBackendHeader header_local;
-    GpuApi::Memcpy(&header_local, reinterpret_cast<MemoryBackendHeader *>(region_),
-                   sizeof(MemoryBackendHeader));
-
-    // Set up local pointers
+    // Read header from GPU memory
     header_ = reinterpret_cast<MemoryBackendHeader *>(region_);
-    data_ = region_ + 2 * kBackendHeaderSize;
+    data_ = region_ + kBackendHeaderSize;
 
-    // Copy metadata to local fields
-    id_ = header_local.id_;
-    backend_size_ = header_local.backend_size_;
-    data_capacity_ = header_local.data_capacity_;
-    data_id_ = header_local.data_id_;
-    priv_header_off_ = header_local.priv_header_off_;
+    MemoryBackendHeader hdr;
+    GpuApi::Memcpy(&hdr, header_, sizeof(MemoryBackendHeader));
+    id_ = hdr.id_;
+    backend_size_ = hdr.backend_size_;
+    data_capacity_ = hdr.data_capacity_;
+    data_id_ = hdr.data_id_;
 
     UnsetOwner();
     flags_.SetBits(MEMORY_BACKEND_INITIALIZED);

@@ -76,6 +76,9 @@ static int g_test_counter = 0;
  */
 static chi::PoolId SetupPool(const char *name_prefix) {
   if (!g_initialized) {
+    // Set GPU config for max warp count needed across all tests (4 warps).
+    setenv("CHI_GPU_BLOCKS", "1", 0);
+    setenv("CHI_GPU_THREADS", "128", 0);
     bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
     REQUIRE(success);
     g_initialized = true;

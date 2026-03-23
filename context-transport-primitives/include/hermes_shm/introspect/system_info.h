@@ -199,26 +199,6 @@ class SystemInfo {
 
   HSHM_DLL static void *MapSharedMemory(const File &fd, size_t size, i64 off);
 
-  /**
-   * Map a contiguous memory region with mixed private/shared mapping
-   *
-   * Creates a contiguous virtual memory region where:
-   * - First private_size bytes: MAP_PRIVATE | MAP_ANONYMOUS (process-local)
-   * - Remaining shared_size bytes: MAP_SHARED from fd (inter-process)
-   *
-   * @param fd File descriptor for shared memory (from shm_open)
-   * @param private_size Size of private region at the beginning
-   * @param shared_size Size of shared region following the private region
-   * @param shared_offset Offset into fd for the shared mapping (usually 0)
-   * @return Pointer to the beginning of the contiguous region (private region start),
-   *         or nullptr on failure
-   *
-   * Note: The entire region must be unmapped with a single UnmapMemory call
-   *       using total_size = private_size + shared_size
-   */
-  HSHM_DLL static void *MapMixedMemory(const File &fd, size_t private_size,
-                                        size_t shared_size, i64 shared_offset = 0);
-
   HSHM_DLL static void UnmapMemory(void *ptr, size_t size);
 
   HSHM_DLL static void *AlignedAlloc(size_t alignment, size_t size);

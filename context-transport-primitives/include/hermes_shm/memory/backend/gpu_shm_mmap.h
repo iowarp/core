@@ -66,7 +66,7 @@ namespace hshm::ipc {
  * Not shareable across processes — single-process use only.
  *
  * Memory layout:
- *   [4KB backend header] [4KB shared header] [data]
+ *   region_ -> [4KB MemoryBackendHeader | Data]
  */
 class GpuShmMmap : public MemoryBackend, public UrlMemoryBackend {
  protected:
@@ -117,13 +117,12 @@ class GpuShmMmap : public MemoryBackend, public UrlMemoryBackend {
 
     region_ = reinterpret_cast<char *>(ptr);
     header_ = reinterpret_cast<MemoryBackendHeader *>(region_);
-    data_ = region_ + 2 * kBackendHeaderSize;
+    data_ = region_ + kBackendHeaderSize;
 
     id_ = backend_id;
     backend_size_ = backend_size;
-    data_capacity_ = backend_size - 2 * kBackendHeaderSize;
+    data_capacity_ = backend_size - kBackendHeaderSize;
     data_id_ = gpu_id;
-    priv_header_off_ = static_cast<size_t>(data_ - region_);
     flags_.Clear();
 
     new (header_) MemoryBackendHeader();

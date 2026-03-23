@@ -315,12 +315,6 @@ class PrivateSlabAllocator : public Allocator {
   HSHM_CROSS_FUN void CreateTls() {}
   HSHM_CROSS_FUN void FreeTls() {}
 
-  /** Get shared header (not used) */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN HEADER_T *GetSharedHeader() {
-    return nullptr;
-  }
-
  private:
   /**
    * Get size class index for a given size (branchless).

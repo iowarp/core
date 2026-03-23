@@ -1,8 +1,11 @@
-name: chi_gpu_bench
-pkgs:
-  - pkg_type: jarvis_iowarp.wrp_chi_gpu_bench
-    pkg_name: gpu_latency
-    test_case: "latency"
-    client_blocks: 1
-    client_threads: 32
-    total_tasks: 100
+config:
+  name: chi_gpu_bench
+  pkgs:
+    - pkg_type: jarvis_iowarp.wrp_chi_gpu_bench
+      pkg_name: gpu_latency
+      test_case: "alloc_serde"
+      rt_blocks: 1
+      rt_threads: 32
+      client_blocks: 1
+      client_threads: 32
+      total_tasks: 256

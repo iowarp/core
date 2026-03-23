@@ -45,7 +45,7 @@
 #include "hermes_shm/memory/backend/gpu_shm_mmap.h"
 #include "hermes_shm/util/gpu_api.h"
 
-using hipc::ThreadAllocator;
+using hipc::PartitionedAllocator;
 using hshm::ipc::GpuShmMmap;
 using hshm::ipc::MemoryBackendId;
 
@@ -59,15 +59,15 @@ __global__ void ThreadAllocInitKernel(
     hipc::MemoryBackendId backend_id,
     int max_threads) {
 
-  auto *alloc = reinterpret_cast<hipc::_ThreadAllocator*>(backend_base);
-  new (alloc) hipc::_ThreadAllocator();
+  auto *alloc = reinterpret_cast<hshm::ipc::_PartitionedAllocator*>(backend_base);
+  new (alloc) hshm::ipc::_PartitionedAllocator();
 
   hipc::MemoryBackend sub_backend;
   sub_backend.data_ = backend_base;
   sub_backend.data_capacity_ = data_capacity;
   sub_backend.id_ = backend_id;
 
-  size_t thread_unit = (data_capacity - sizeof(hipc::_ThreadAllocator)) /
+  size_t thread_unit = (data_capacity - sizeof(hshm::ipc::_PartitionedAllocator)) /
                        max_threads;
   alloc->shm_init(sub_backend, 0, max_threads, thread_unit);
 }
@@ -115,7 +115,7 @@ __global__ void ThreadAllocWorkKernel(
     int *d_results) {
 
   int tid = static_cast<int>(blockIdx.x);
-  auto *alloc = reinterpret_cast<hipc::_ThreadAllocator*>(backend_base);
+  auto *alloc = reinterpret_cast<hshm::ipc::_PartitionedAllocator*>(backend_base);
 
   // Lazily initialize this thread's partition
   if (!alloc->LazyInitThread(tid)) {
@@ -174,7 +174,7 @@ __global__ void CrossBlockAllocKernel(
   int tid = static_cast<int>(blockIdx.x);
   if (tid != 0) return;
 
-  auto *alloc = reinterpret_cast<hipc::_ThreadAllocator*>(backend_base);
+  auto *alloc = reinterpret_cast<hshm::ipc::_PartitionedAllocator*>(backend_base);
   if (!alloc->LazyInitThread(0)) {
     d_results[0] = -1;
     return;
@@ -204,7 +204,7 @@ __global__ void CrossBlockFreeKernel(
   int tid = static_cast<int>(blockIdx.x);
   if (tid != 1) return;
 
-  auto *alloc = reinterpret_cast<hipc::_ThreadAllocator*>(backend_base);
+  auto *alloc = reinterpret_cast<hshm::ipc::_PartitionedAllocator*>(backend_base);
 
   int count = 0;
   for (int i = 0; i < num_to_free; ++i) {
@@ -229,7 +229,7 @@ __global__ void CrossBlockReallocKernel(
   int tid = static_cast<int>(blockIdx.x);
   if (tid != 0) return;
 
-  auto *alloc = reinterpret_cast<hipc::_ThreadAllocator*>(backend_base);
+  auto *alloc = reinterpret_cast<hshm::ipc::_PartitionedAllocator*>(backend_base);
   if (!alloc->LazyInitThread(0)) {
     d_results[2] = -1;
     return;

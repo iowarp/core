@@ -221,16 +221,18 @@ TEST_F(UnorderedMapLLTest, AtMethod) {
   map.insert(5, "five");
   map.insert(10, "ten");
 
-  // Access existing keys
-  EXPECT_EQ(map.at(5), "five");
-  EXPECT_EQ(map.at(10), "ten");
+  // Access existing keys via find()
+  EXPECT_NE(map.find(5), nullptr);
+  EXPECT_EQ(*map.find(5), "five");
+  EXPECT_NE(map.find(10), nullptr);
+  EXPECT_EQ(*map.find(10), "ten");
 
-  // Modify via at()
-  map.at(5) = "FIVE";
-  EXPECT_EQ(map.at(5), "FIVE");
+  // Modify via operator[]
+  map[5] = "FIVE";
+  EXPECT_EQ(*map.find(5), "FIVE");
 
-  // Access non-existent key should throw
-  EXPECT_THROW(map.at(999), std::out_of_range);
+  // Access non-existent key returns nullptr
+  EXPECT_EQ(map.find(999), nullptr);
   return 0;
 }
 
@@ -340,7 +342,7 @@ TEST_F(UnorderedMapLLTest, ForEach) {
  * NOTE: Uses external mutex for thread safety
  */
 TEST_F(UnorderedMapLLTest, ConcurrentInsertions) {
-  hshm::priv::unordered_map_ll<int, std::string> map(32);  // More buckets for better concurrency
+  hshm::priv::unordered_map_ll<int, std::string> map(2048);  // Need capacity > total insertions for open addressing
   const int num_threads = 8;
   const int insertions_per_thread = 100;
 
@@ -381,7 +383,7 @@ TEST_F(UnorderedMapLLTest, ConcurrentInsertions) {
  * NOTE: Uses external mutex for thread safety
  */
 TEST_F(UnorderedMapLLTest, ConcurrentInsertionsWithCollisions) {
-  hshm::priv::unordered_map_ll<int, int> map(16);
+  hshm::priv::unordered_map_ll<int, int> map(128);  // Need capacity > num_keys for open addressing
   const int num_threads = 10;
   const int num_keys = 50;
 
@@ -467,7 +469,7 @@ TEST_F(UnorderedMapLLTest, ConcurrentMixedOperations) {
  * Test bucket distribution
  */
 TEST_F(UnorderedMapLLTest, BucketDistribution) {
-  const size_t num_buckets = 16;
+  const size_t num_buckets = 2048;  // Need capacity > num elements for open addressing
   hshm::priv::unordered_map_ll<int, int> map(num_buckets);
 
   EXPECT_EQ(map.bucket_count(), num_buckets);

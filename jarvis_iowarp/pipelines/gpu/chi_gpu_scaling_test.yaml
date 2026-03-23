@@ -1,15 +1,15 @@
-name: chi_gpu_scaling_test
-
-pkgs:
-  - pkg_type: jarvis_iowarp.wrp_chi_gpu_bench
-    pkg_name: bench
-    test_case: "latency"
-    rt_blocks: 1
-    rt_threads: 32
-    client_blocks: 1
-    client_threads: 32
-    batch_size: 1
-    total_tasks: 100
+config:
+  name: chi_gpu_scaling_test
+  pkgs:
+    - pkg_type: jarvis_iowarp.wrp_chi_gpu_bench
+      pkg_name: bench
+      test_case: "latency"
+      rt_blocks: 1
+      rt_threads: 32
+      client_blocks: 1
+      client_threads: 32
+      batch_size: 1
+      total_tasks: 100
 
 vars:
   # Warp counts: 1, 4, 8, 16 (blocks × threads / 32)

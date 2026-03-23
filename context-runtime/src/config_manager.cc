@@ -255,6 +255,15 @@ void ConfigManager::ParseYAML(YAML::Node &yaml_conf) {
       gpu_queue_depth_ = gpu["queue_depth"].as<u32>();
     }
   }
+  // Environment variable overrides for GPU config (higher priority than YAML).
+  // Allows benchmarks to set the partition count dynamically from their
+  // thread parameters before CHIMAERA_INIT().
+  if (const char *env = std::getenv("CHI_GPU_BLOCKS")) {
+    gpu_blocks_ = static_cast<u32>(std::stoul(env));
+  }
+  if (const char *env = std::getenv("CHI_GPU_THREADS")) {
+    gpu_threads_per_block_ = static_cast<u32>(std::stoul(env));
+  }
 
   // Parse networking
   if (yaml_conf["networking"]) {

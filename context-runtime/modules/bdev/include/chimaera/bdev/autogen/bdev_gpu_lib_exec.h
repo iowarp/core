@@ -149,3 +149,28 @@ HSHM_GPU_FUN void LocalLoadTaskOutput(
     default: break;
   }
 }
+
+HSHM_GPU_FUN void LocalDestroyTask(
+    chi::u32 method, hipc::FullPtr<chi::Task> &task) override {
+  if (task.IsNull()) return;
+  switch (method) {
+    case Method::kUpdate:
+      task.template Cast<UpdateTask>().ptr_->~UpdateTask();
+      break;
+    case Method::kAllocateBlocks:
+      task.template Cast<AllocateBlocksTask>().ptr_->~AllocateBlocksTask();
+      break;
+    case Method::kFreeBlocks:
+      task.template Cast<FreeBlocksTask>().ptr_->~FreeBlocksTask();
+      break;
+    case Method::kWrite:
+      task.template Cast<WriteTask>().ptr_->~WriteTask();
+      break;
+    case Method::kRead:
+      task.template Cast<ReadTask>().ptr_->~ReadTask();
+      break;
+    default:
+      task.ptr_->~Task();
+      break;
+  }
+}

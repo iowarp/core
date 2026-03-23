@@ -81,6 +81,13 @@ struct WorkOrchestratorControl {
   volatile unsigned int dbg_queue_pops[kMaxDebugWorkers];
   /** Debug: no-container counter */
   volatile unsigned int dbg_no_container[kMaxDebugWorkers];
+  /** Debug: internal queue head/tail (separate from gpu2gpu) */
+  volatile unsigned long long dbg_iq_head[kMaxDebugWorkers];
+  volatile unsigned long long dbg_iq_tail[kMaxDebugWorkers];
+  /** Debug: internal queue pop counters */
+  volatile unsigned int dbg_iq_pops[kMaxDebugWorkers];
+  /** Debug: internal queue push counters (from SendGpu) */
+  volatile unsigned int dbg_iq_pushes[kMaxDebugWorkers];
 };
 
 /**

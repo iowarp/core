@@ -39,16 +39,16 @@
 #include "hermes_shm/memory/allocator/thread_allocator.h"
 #include "hermes_shm/memory/backend/posix_mmap.h"
 
-using hipc::ThreadAllocator;
+using hipc::PartitionedAllocator;
 
-static ThreadAllocator* MakeThreadAllocator(hipc::PosixMmap &backend,
-                                             size_t heap_size,
-                                             int max_threads = 32) {
-  size_t total_size = sizeof(ThreadAllocator) + heap_size;
+static PartitionedAllocator* MakeThreadAllocator(hipc::PosixMmap &backend,
+                                                  size_t heap_size,
+                                                  int max_threads = 32) {
+  size_t total_size = sizeof(PartitionedAllocator) + heap_size;
   backend.shm_init(hipc::MemoryBackendId(0, 0), total_size);
-  auto *alloc = backend.Cast<ThreadAllocator>();
-  new (alloc) ThreadAllocator();
-  size_t thread_unit = (total_size - sizeof(ThreadAllocator)) / max_threads;
+  auto *alloc = backend.Cast<PartitionedAllocator>();
+  new (alloc) PartitionedAllocator();
+  size_t thread_unit = (total_size - sizeof(PartitionedAllocator)) / max_threads;
   alloc->shm_init(backend, 0, max_threads, thread_unit);
   return alloc;
 }
@@ -107,7 +107,7 @@ TEST_CASE("ThreadAllocator - MultiThreadedAlloc", "[ThreadAllocator][multithread
   int num_threads = 8;
   auto *alloc = MakeThreadAllocator(backend, heap_size, num_threads);
   // Access the core allocator for the 2-arg AllocateOffset
-  auto *core = static_cast<hipc::_ThreadAllocator*>(alloc);
+  auto *core = static_cast<hipc::_PartitionedAllocator*>(alloc);
 
   std::atomic<int> tid_counter{0};
   std::vector<std::thread> threads;
@@ -149,7 +149,7 @@ TEST_CASE("ThreadAllocator - LazyInit", "[ThreadAllocator]") {
   int max_threads = 8;
   auto *alloc = MakeThreadAllocator(backend, heap_size, max_threads);
 
-  auto *core = static_cast<hipc::_ThreadAllocator*>(alloc);
+  auto *core = static_cast<hipc::_PartitionedAllocator*>(alloc);
 
   // Initially no thread blocks should be initialized
   for (int i = 0; i < max_threads; ++i) {

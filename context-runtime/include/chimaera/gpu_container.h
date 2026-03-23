@@ -129,6 +129,23 @@ class Container {
   }
 
   /**
+   * Virtual dispatch for typed task destruction.
+   * Called by Worker::SerializeAndComplete to properly destroy deserialized
+   * tasks via their derived destructor (Task has a non-virtual destructor).
+   * Without this, priv::vector/priv::string members in derived tasks leak.
+   *
+   * @param method Method ID identifying the task type
+   * @param task FullPtr to the task to destroy
+   */
+  HSHM_GPU_FUN virtual void LocalDestroyTask(
+      u32 method, hipc::FullPtr<Task> &task) {
+    (void)method;
+    if (!task.IsNull()) {
+      task.ptr_->~Task();
+    }
+  }
+
+  /**
    * Get GPU warp parallelism for a method.
    * @param method_id Method to query
    * @return 1 for lane-0-only execution, 32 for full warp parallelism

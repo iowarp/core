@@ -102,6 +102,7 @@ __global__ void chimaera_gpu_orchestrator(gpu::PoolManager *pool_mgr,
               warp_id,
               gpu_info.cpu2gpu_queue,
               gpu_info.gpu2gpu_queue,
+              gpu_info.internal_queue,
               pool_mgr,
               gpu_info.cpu2gpu_queue_base,
               control,
@@ -164,16 +165,12 @@ bool gpu::WorkOrchestrator::Launch(const IpcManagerGpuInfo &gpu_info, u32 blocks
   blocks_ = blocks;
   threads_per_block_ = threads_per_block;
 
-  // Zero the heap_ready_ flag in the shared GPU heap backend so that
-  // non-zero blocks spin-wait until block 0 finishes initialization.
-  if (gpu_info.gpu_heap_backend.data_ != nullptr) {
-    cudaMemset(gpu_info.gpu_heap_backend.data_, 0,
-               sizeof(hipc::ThreadAllocator));
-  }
-
-  // Update gpu2gpu_num_lanes to use warp count instead of thread count
+  // Update lane counts to match actual warp count
   IpcManagerGpuInfo launch_info = gpu_info;
-  launch_info.gpu2gpu_num_lanes = (blocks * threads_per_block) / 32;
+  u32 num_warps = (blocks * threads_per_block) / 32;
+  if (num_warps == 0) num_warps = 1;
+  launch_info.gpu2gpu_num_lanes = num_warps;
+  launch_info.internal_num_lanes = num_warps;
 
   // Launch persistent GPU work orchestrator.
   HLOG(kInfo, "Launching GPU work orchestrator with {} blocks, {} threads/block ({} warps)",
@@ -253,13 +250,15 @@ void gpu::WorkOrchestrator::Resume(const IpcManagerGpuInfo &gpu_info) {
   control_->exit_flag = 0;
   control_->running_flag = 0;
 
-  // On resume, skip heap re-initialization to preserve existing GPU-side
-  // container allocations.  But re-initialize scratch allocators so they
-  // are partitioned for the (potentially new) warp count.
   IpcManagerGpuInfo resume_info = gpu_info;
-  resume_info.skip_heap_init = true;
   resume_info.skip_scratch_init = false;  // re-partition scratch for new warp count
-  resume_info.gpu2gpu_num_lanes = (blocks_ * threads_per_block_) / 32;
+  u32 num_warps = (blocks_ * threads_per_block_) / 32;
+  if (num_warps == 0) num_warps = 1;
+  resume_info.gpu2gpu_num_lanes = num_warps;
+  resume_info.internal_num_lanes = num_warps;
+
+  // Skip heap re-init — per-block allocators persist across pause/resume.
+  resume_info.skip_heap_init = true;
 
   // Zero scratch allocator headers so non-block-0 blocks spin-wait
   // until block 0 finishes re-initialization (prevents stale ready flags).

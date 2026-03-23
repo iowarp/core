@@ -74,6 +74,7 @@ __global__ void gpu_putblob_getblob_kernel(
     chi::u64 blob_size,
     int *d_result) {
   *d_result = -1;
+  __threadfence_system();
   CHIMAERA_GPU_INIT(gpu_info);
 
   wrp_cte::core::Client client(pool_id);
@@ -88,9 +89,16 @@ __global__ void gpu_putblob_getblob_kernel(
       chi::PoolQuery::Local());
   if (put_future.IsNull()) {
     *d_result = -2;
+    __threadfence_system();
     return;
   }
   put_future.Wait();
+  chi::u32 put_rc = put_future->GetReturnCode();
+  if (put_rc != 0) {
+    *d_result = -10 - (int)put_rc;
+    __threadfence_system();
+    return;
+  }
 
   // GetBlob into out_data
   auto get_future = client.AsyncGetBlob(
@@ -101,19 +109,33 @@ __global__ void gpu_putblob_getblob_kernel(
       chi::PoolQuery::Local());
   if (get_future.IsNull()) {
     *d_result = -3;
+    __threadfence_system();
     return;
   }
   get_future.Wait();
+  chi::u32 get_rc = get_future->GetReturnCode();
+  if (get_rc != 0) {
+    *d_result = -20 - (int)get_rc;
+    __threadfence_system();
+    return;
+  }
 
   // Verify data roundtrip
+  __threadfence_system();  // Ensure all writes visible
+  int mismatches = 0;
   for (chi::u64 i = 0; i < blob_size; ++i) {
     if (out_data[i] != blob_data[i]) {
-      *d_result = -4;
-      return;
+      ++mismatches;
     }
+  }
+  if (mismatches > 0) {
+    *d_result = -4;
+    __threadfence_system();
+    return;
   }
 
   *d_result = 1;  // Success
+  __threadfence_system();
 }
 
 /**
@@ -155,13 +177,15 @@ extern "C" int run_gpu_initiated_putblob_getblob_test(
   // the primary backend and heap backend with our custom ones
   chi::IpcManagerGpuInfo gpu_info = CHI_IPC->GetClientGpuInfo(0);
   gpu_info.backend = gpu_backend;
-  gpu_info.gpu_heap_backend = gpu_heap;
+  gpu_info.gpu_priv_backend = gpu_heap;
 
-  // Allocate pinned host buffers (CPU+GPU accessible via UVA)
+  // Allocate UVM buffers (accessible from both CPU and GPU)
+  // Using cudaMallocManaged so device-scope fences ensure cross-warp
+  // visibility (pinned host memory would require system-scope fences).
   char *blob_data = nullptr;
   char *out_data = nullptr;
-  cudaMallocHost(&blob_data, blob_size);
-  cudaMallocHost(&out_data, blob_size);
+  cudaMallocManaged(&blob_data, blob_size);
+  cudaMallocManaged(&out_data, blob_size);
   if (!blob_data || !out_data) return -101;
 
   // Fill source with test pattern, zero output
@@ -169,8 +193,9 @@ extern "C" int run_gpu_initiated_putblob_getblob_test(
   memset(out_data, 0x00, blob_size);
 
   // Result in pinned memory (CPU polls it instead of cudaStreamSync)
-  int *d_result;
-  cudaMallocHost(&d_result, sizeof(int));
+  // Use volatile to prevent compiler from caching the read in the poll loop
+  volatile int *d_result;
+  cudaMallocHost(const_cast<int **>(&d_result), sizeof(int));
   *d_result = 0;
 
   // Pause GPU orchestrator to free SMs for kernel launch, then resume
@@ -178,7 +203,8 @@ extern "C" int run_gpu_initiated_putblob_getblob_test(
 
   void *stream = hshm::GpuApi::CreateStream();
   gpu_putblob_getblob_kernel<<<1, 1, 0, static_cast<cudaStream_t>(stream)>>>(
-      gpu_info, pool_id, tag_id, blob_data, out_data, blob_size, d_result);
+      gpu_info, pool_id, tag_id, blob_data, out_data, blob_size,
+      const_cast<int *>(d_result));
 
   cudaError_t launch_err = cudaGetLastError();
   if (launch_err != cudaSuccess) {
@@ -199,6 +225,14 @@ extern "C" int run_gpu_initiated_putblob_getblob_test(
   }
 
   int result = *d_result;
+
+  // Sync the client stream if kernel is still running
+  cudaError_t sync_err = cudaStreamQuery(static_cast<cudaStream_t>(stream));
+  if (sync_err == cudaErrorNotReady) {
+    cudaStreamSynchronize(static_cast<cudaStream_t>(stream));
+    result = *d_result;
+  }
+
   hshm::GpuApi::DestroyStream(stream);
   // Intentional leak of pinned buffers: cudaFreeHost blocks on persistent kernel
   return (result == 0) ? -4 : result;  // 0 means timeout

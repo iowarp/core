@@ -39,8 +39,10 @@
 
 namespace hshm::ipc {
 
-class _ThreadAllocator;
-typedef BaseAllocator<_ThreadAllocator> ThreadAllocator;
+class _PartitionedAllocator;
+typedef BaseAllocator<_PartitionedAllocator> PartitionedAllocator;
+// Backward-compatibility typedef
+typedef PartitionedAllocator ThreadAllocator;
 
 /**
  * Per-thread allocation partition.
@@ -69,7 +71,7 @@ struct TaThreadBlock {
 };
 
 /**
- * Thread allocator with per-thread BuddyAllocator partitions.
+ * Partitioned allocator with per-thread/block BuddyAllocator partitions.
  *
  * Designed for single-process, multi-threaded (or multi-GPU-block) use.
  * Each thread/block gets its own BuddyAllocator partition, lazily
@@ -82,13 +84,13 @@ struct TaThreadBlock {
  *   GPU: blockIdx.x % max_threads_
  *
  * Memory layout (within the backend region):
- *   [_ThreadAllocator header]
+ *   [_PartitionedAllocator header]
  *   [TaThreadBlock partition 0 (thread_unit_ bytes)]
  *   [TaThreadBlock partition 1 (thread_unit_ bytes)]
  *   ...
  *   [TaThreadBlock partition N-1 (thread_unit_ bytes)]
  */
-class _ThreadAllocator : public Allocator {
+class _PartitionedAllocator : public Allocator {
  public:
   hipc::atomic<int> heap_ready_;  /**< 0=not ready, 1=ready (grid-level sync) */
   volatile int max_threads_;     /**< Fixed thread count (set at init).
@@ -99,7 +101,7 @@ class _ThreadAllocator : public Allocator {
 
  public:
   HSHM_CROSS_FUN
-  _ThreadAllocator()
+  _PartitionedAllocator()
       : heap_ready_(0), max_threads_(0), thread_unit_(0), base_(nullptr) {}
 
   /**
@@ -129,8 +131,8 @@ class _ThreadAllocator : public Allocator {
     this_ = reinterpret_cast<char *>(this) -
             reinterpret_cast<char *>(backend.data_);
     base_ = reinterpret_cast<char *>(backend.data_);
-    alloc_header_size_ = sizeof(_ThreadAllocator);
-    data_start_ = sizeof(_ThreadAllocator);
+    alloc_header_size_ = sizeof(_PartitionedAllocator);
+    data_start_ = sizeof(_PartitionedAllocator);
     region_size_ = region_size;
     max_threads_ = max_threads;
     // Align thread_unit down to 16 bytes so partition starts stay aligned
@@ -140,7 +142,7 @@ class _ThreadAllocator : public Allocator {
     // Zero-init all partition headers so initialized_ starts at 0
     char *base = base_;
     for (int i = 0; i < max_threads_; ++i) {
-      char *part = base + sizeof(_ThreadAllocator) +
+      char *part = base + sizeof(_PartitionedAllocator) +
                    static_cast<size_t>(i) * thread_unit_;
       auto *block = reinterpret_cast<TaThreadBlock *>(part);
       block->initialized_.store(0);
@@ -157,7 +159,7 @@ class _ThreadAllocator : public Allocator {
   TaThreadBlock* GetThreadBlock(int tid) {
     char *b = base_;  // volatile read (bypasses L1)
     size_t tu = thread_unit_;  // volatile read
-    char *part = b + sizeof(_ThreadAllocator) +
+    char *part = b + sizeof(_PartitionedAllocator) +
                  static_cast<size_t>(tid) * tu;
     return reinterpret_cast<TaThreadBlock *>(part);
   }
@@ -239,7 +241,7 @@ class _ThreadAllocator : public Allocator {
   HSHM_CROSS_FUN
   void FreeOffsetNoNullCheck(OffsetPtr<> p) {
     char *ptr_addr = base_ + p.load();
-    char *partitions_base = base_ + sizeof(_ThreadAllocator);
+    char *partitions_base = base_ + sizeof(_PartitionedAllocator);
     size_t offset_in_partitions =
         static_cast<size_t>(ptr_addr - partitions_base);
     int owner = static_cast<int>(offset_in_partitions / thread_unit_);
@@ -257,6 +259,20 @@ class _ThreadAllocator : public Allocator {
     FreeOffsetNoNullCheck(p);
   }
 
+#ifdef HSHM_BUDDY_ALLOC_DEBUG
+  /** Get the BuddyAllocator for a given thread/partition (debug only) */
+  HSHM_CROSS_FUN PrivateBuddyAllocator *DbgGetPartition(int tid) {
+    if (tid >= 0 && tid < max_threads_) {
+      auto *block = GetThreadBlock(tid);
+      if (block->initialized_.load_device() == 1) {
+        return &block->alloc_;
+      }
+    }
+    return nullptr;
+  }
+  HSHM_CROSS_FUN int DbgMaxThreads() const { return max_threads_; }
+#endif
+
   /** Push arena on the current thread's BuddyAllocator */
   HSHM_CROSS_FUN bool PushArenaState(ArenaState &prior, OffsetPtr<> &block, size_t size) {
     int tid = GetAutoTid();
@@ -268,7 +284,7 @@ class _ThreadAllocator : public Allocator {
   HSHM_CROSS_FUN void PopArenaState(const ArenaState &prior, OffsetPtr<> block) {
     if (block.IsNull()) return;
     char *ptr_addr = base_ + block.load();
-    char *partitions_base = base_ + sizeof(_ThreadAllocator);
+    char *partitions_base = base_ + sizeof(_PartitionedAllocator);
     size_t offset_in_partitions =
         static_cast<size_t>(ptr_addr - partitions_base);
     int owner = static_cast<int>(offset_in_partitions / thread_unit_);
@@ -277,15 +293,21 @@ class _ThreadAllocator : public Allocator {
     }
   }
 
+  /**
+   * Get the PrivateBuddyAllocator for the current warp.
+   * Calls GetAutoTid + LazyInitThread, then returns the partition's allocator.
+   * @return Pointer to the warp's BuddyAllocator, or nullptr on failure
+   */
+  HSHM_INLINE_CROSS_FUN
+  PrivateBuddyAllocator* GetWarpAllocator() {
+    int tid = GetAutoTid();
+    if (!LazyInitThread(tid)) return nullptr;
+    return &GetThreadBlock(tid)->alloc_;
+  }
+
   /** No-op TLS management (thread IDs are caller-provided) */
   HSHM_CROSS_FUN void CreateTls() {}
   HSHM_CROSS_FUN void FreeTls() {}
-
-  /** Get shared header (not used) */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN HEADER_T *GetSharedHeader() {
-    return nullptr;
-  }
 
   /**
    * Mark the allocator as ready (grid-level sync).

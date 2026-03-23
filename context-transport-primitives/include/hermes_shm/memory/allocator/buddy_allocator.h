@@ -200,10 +200,25 @@ class _BuddyAllocator : public Allocator {
 
   ArenaState cur_arena_;  /**< Current bump arena (if active) */
 
+#ifdef HSHM_BUDDY_ALLOC_DEBUG
+  size_t dbg_alloc_count_;
+  size_t dbg_free_count_;
+  size_t dbg_net_bytes_;
+  size_t dbg_big_heap_alloc_count_;
+#endif
+
   // _MultiProcessAllocator needs access to reconstruct pointers when attaching
   friend class _MultiProcessAllocator;
 
  public:
+#ifdef HSHM_BUDDY_ALLOC_DEBUG
+  HSHM_CROSS_FUN size_t DbgAllocCount() const { return dbg_alloc_count_; }
+  HSHM_CROSS_FUN size_t DbgFreeCount() const { return dbg_free_count_; }
+  HSHM_CROSS_FUN size_t DbgNetBytes() const { return dbg_net_bytes_; }
+  HSHM_CROSS_FUN size_t DbgBigHeapOffset() const { return big_heap_.GetOffset(); }
+  HSHM_CROSS_FUN size_t DbgBigHeapMax() const { return big_heap_.GetMaxOffset(); }
+#endif
+
   /** Convert offset to raw pointer (position-independent, safe for multi-process) */
   HSHM_INLINE_CROSS_FUN PageT *OffsetToPage(size_t offset) {
     return reinterpret_cast<PageT *>(GetBackendData() + offset);
@@ -217,22 +232,36 @@ class _BuddyAllocator : public Allocator {
   /**
    * Initialize the buddy allocator
    */
-  HSHM_CROSS_FUN bool shm_init(const MemoryBackend &backend, size_t region_size = 0) {
+  HSHM_CROSS_FUN bool shm_init(const MemoryBackend &backend,
+                               size_t region_size = 0,
+                               bool shifted = false) {
     SetBackend(backend);
     alloc_header_size_ = sizeof(_BuddyAllocator);
     this_ = reinterpret_cast<char *>(this) -
             reinterpret_cast<char *>(backend.data_);
 
+    if (shifted) {
+      shift_ = this_;
+      data_start_ = 0;
+    } else {
+      shift_ = 0;
+      data_start_ = sizeof(_BuddyAllocator);
+    }
+
     if (region_size == 0) {
-      region_size = backend.data_capacity_ - this_;
+      region_size = shifted ? backend.data_capacity_
+                            : backend.data_capacity_ - this_;
     }
     region_size_ = region_size;
-    data_start_ = sizeof(_BuddyAllocator);
 
     if (region_size < kMinSize) {
       return false;
     }
 
+    regions_.Init();
+    big_heap_.Init(0, 0);
+    small_arena_.Init(0, 0);
+    cur_arena_ = ArenaState{};
     for (size_t i = 0; i < kMaxSmallPages; ++i) {
       small_pages_[i].Init();
     }
@@ -241,8 +270,12 @@ class _BuddyAllocator : public Allocator {
     }
 
     Expand(OffsetPtr<>(GetAllocatorDataOff()), GetAllocatorDataSize());
-    small_arena_.Init(0, 0);
-    cur_arena_ = ArenaState{};
+#ifdef HSHM_BUDDY_ALLOC_DEBUG
+    dbg_alloc_count_ = 0;
+    dbg_free_count_ = 0;
+    dbg_net_bytes_ = 0;
+    dbg_big_heap_alloc_count_ = 0;
+#endif
     return true;
   }
 
@@ -351,6 +384,11 @@ class _BuddyAllocator : public Allocator {
     PageT *page = OffsetToPage(page_offset);
     size_t data_size = page->GetSize();
     page->MarkFree();
+
+#ifdef HSHM_BUDDY_ALLOC_DEBUG
+    dbg_free_count_++;
+    dbg_net_bytes_ -= data_size;
+#endif
 
     size_t list_idx;
     if (data_size <= kSmallThreshold) {
@@ -495,7 +533,12 @@ class _BuddyAllocator : public Allocator {
     for (size_t i = list_idx; i < kMaxSmallPages; ++i) {
       size_t off = PopFromList(small_pages_[i]);
       if (off != 0) {
-        return FinalizeAllocation(off, size);
+        // Preserve actual page data size to prevent free-list migration.
+        // Without this, popping from a larger list and storing the smaller
+        // requested size causes the page to shrink on free, permanently
+        // losing the excess bytes.
+        PageT *page = OffsetToPage(off);
+        return FinalizeAllocation(off, page->GetSize());
       }
     }
 
@@ -511,7 +554,8 @@ class _BuddyAllocator : public Allocator {
       for (size_t i = list_idx; i < kMaxSmallPages; ++i) {
         size_t off = PopFromList(small_pages_[i]);
         if (off != 0) {
-          return FinalizeAllocation(off, size);
+          PageT *page = OffsetToPage(off);
+          return FinalizeAllocation(off, page->GetSize());
         }
       }
     }
@@ -543,8 +587,11 @@ class _BuddyAllocator : public Allocator {
             (page_total_size - total_size) > sizeof(PageT)) {
           AddRemainderToFreeList(found_offset + total_size,
                                 page_total_size - total_size);
+          return FinalizeAllocation(found_offset, size);
         }
-        return FinalizeAllocation(found_offset, size);
+        // Remainder too small to split — keep full page size to avoid
+        // permanently losing the unsplittable tail bytes.
+        return FinalizeAllocation(found_offset, page_data_size);
       }
     }
 
@@ -683,6 +730,10 @@ class _BuddyAllocator : public Allocator {
     PageT *bp = OffsetToPage(page_offset);
     bp->size_ = user_size;
     bp->MarkAllocated();
+#ifdef HSHM_BUDDY_ALLOC_DEBUG
+    dbg_alloc_count_++;
+    dbg_net_bytes_ += user_size;
+#endif
     return OffsetPtr<>(page_offset + sizeof(PageT));
   }
 

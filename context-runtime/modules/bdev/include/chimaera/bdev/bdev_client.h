@@ -50,7 +50,7 @@ namespace chimaera::bdev {
 class Client : public chi::ContainerClient {
  public:
   HSHM_CROSS_FUN Client() = default;
-  explicit Client(const chi::PoolId& pool_id) { Init(pool_id); }
+  HSHM_CROSS_FUN explicit Client(const chi::PoolId& pool_id) { Init(pool_id); }
 
   /**
    * Create bdev container - asynchronous
@@ -108,7 +108,7 @@ class Client : public chi::ContainerClient {
   }
 
   /**
-   * Free multiple blocks - asynchronous
+   * Free multiple blocks - asynchronous (host, std::vector)
    */
   chi::Future<chimaera::bdev::FreeBlocksTask> AsyncFreeBlocks(
       const chi::PoolQuery& pool_query,
@@ -116,6 +116,20 @@ class Client : public chi::ContainerClient {
     auto* ipc_manager = CHI_IPC;
 
     // Create task with std::vector constructor (constructor parameter uses std::vector)
+    auto task = ipc_manager->NewTask<chimaera::bdev::FreeBlocksTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, blocks);
+
+    return ipc_manager->Send(task);
+  }
+
+  /**
+   * Free multiple blocks - asynchronous (GPU-compatible, priv::vector)
+   */
+  HSHM_CROSS_FUN chi::Future<chimaera::bdev::FreeBlocksTask> AsyncFreeBlocks(
+      const chi::PoolQuery& pool_query,
+      const chi::priv::vector<Block>& blocks) {
+    auto* ipc_manager = CHI_IPC;
+
     auto task = ipc_manager->NewTask<chimaera::bdev::FreeBlocksTask>(
         chi::CreateTaskId(), pool_id_, pool_query, blocks);
 

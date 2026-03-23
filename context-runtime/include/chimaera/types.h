@@ -461,27 +461,20 @@ constexpr PoolId kAdminPoolId =
 #define CHI_PRIV_ALLOC    HSHM_MALLOC
 #else
 #define CHI_TASK_ALLOC_T  hipc::BuddyAllocator
-// GPU: CHI_PRIV_ALLOC uses the ThreadAllocator (gpu_heap_alloc_), which
-// provides per-block BuddyAllocator partitions to avoid cross-block contention.
-#define CHI_PRIV_ALLOC_T  hipc::ThreadAllocator
+// GPU: CHI_PRIV_ALLOC uses a cached PrivateBuddyAllocator* per warp.
+// The pointer is resolved once during GPU init (from ThreadAllocator) and
+// cached in IpcManager::warp_priv_alloc_[], eliminating the per-allocation
+// ThreadAllocator indirection (GetAutoTid + LazyInitThread + GetThreadBlock).
+#define CHI_PRIV_ALLOC_T  hipc::PrivateBuddyAllocator
 /**
- * Get the GPU private allocator (ThreadAllocator from GPU heap).
+ * Get the GPU private allocator (cached PrivateBuddyAllocator for this warp).
  * Declared here; defined in ipc_manager.h after CHI_IPC is available.
  *
- * @return Pointer to the GPU heap ThreadAllocator
+ * @return Pointer to the warp's cached BuddyAllocator
  */
-HSHM_GPU_FUN hipc::ThreadAllocator *GetPrivAllocGpu();
+HSHM_GPU_FUN hipc::PrivateBuddyAllocator *GetPrivAllocGpu();
 #define CHI_PRIV_ALLOC    (::chi::GetPrivAllocGpu())
 #endif
-
-// CHI_GPU_HEAP_T: allocator for GPU serialization scratch buffers.
-// Uses ThreadAllocator which internally manages per-block BuddyAllocator
-// partitions, eliminating cross-block allocator contention (CUDA Error 700).
-#define CHI_GPU_HEAP_T hipc::ThreadAllocator
-
-// CHI_GPU_HEAP: single ThreadAllocator from the GpuMalloc heap.
-// Valid in GPU device code after CHIMAERA_GPU_ORCHESTRATOR_INIT.
-#define CHI_GPU_HEAP (CHI_IPC->GetGpuHeap())
 
 // Memory segment identifiers
 enum MemorySegment {
@@ -588,6 +581,9 @@ typedef hshm::priv::string<CHI_PRIV_ALLOC_T> string;
 
 template <typename T>
 using vector = hshm::priv::vector<T, CHI_PRIV_ALLOC_T>;
+
+template <typename Key, typename T>
+using unordered_map = hshm::priv::unordered_map_ll<Key, T, CHI_PRIV_ALLOC_T>;
 }  // namespace chi::priv
 
 namespace chi::ipc {

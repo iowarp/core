@@ -96,6 +96,33 @@ if(WRP_CORE_ENABLE_CUDA)
   set_tests_properties(cte_gpu_bench_cudamemcpy PROPERTIES
     TIMEOUT 60 LABELS "msan_skip")
 
+  add_test(NAME cte_gpu_bench_putblob_gpu_stress
+    COMMAND wrp_cte_gpu_bench
+      --test-case putblob_gpu
+      --rt-blocks 1 --rt-threads 128
+      --client-blocks 1 --client-threads 128
+      --io-size 16k --iterations 1024)
+  set_tests_properties(cte_gpu_bench_putblob_gpu_stress PROPERTIES
+    TIMEOUT 120 LABELS "msan_skip")
+
+  add_test(NAME cte_gpu_bench_putblob_gpu_64warp
+    COMMAND wrp_cte_gpu_bench
+      --test-case putblob_gpu
+      --rt-blocks 64 --rt-threads 32
+      --client-blocks 8 --client-threads 256
+      --io-size 1m --iterations 16)
+  set_tests_properties(cte_gpu_bench_putblob_gpu_64warp PROPERTIES
+    TIMEOUT 120 LABELS "msan_skip")
+
+  add_test(NAME cte_gpu_bench_putblob_gpu_64warp_stress
+    COMMAND wrp_cte_gpu_bench
+      --test-case putblob_gpu
+      --rt-blocks 64 --rt-threads 32
+      --client-blocks 8 --client-threads 256
+      --io-size 16k --iterations 1024)
+  set_tests_properties(cte_gpu_bench_putblob_gpu_64warp_stress PROPERTIES
+    TIMEOUT 600 LABELS "msan_skip")
+
   add_test(NAME cte_gpu_bench_alloc_test
     COMMAND wrp_cte_gpu_bench
       --test-case alloc_test

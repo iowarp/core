@@ -112,6 +112,11 @@ class Allocator {
   size_t this_; /**< Offset of this allocator object within backend data (this -
                    backend.data_) */
   size_t region_size_; /**< Size of the region this allocator manages */
+  size_t shift_; /**< Displacement for remote allocators not co-located with
+                     their data (e.g., allocator in GPU __shared__, data in
+                     global memory).  Set to this_ so that offset calculations
+                     resolve to the backend data instead of the allocator's
+                     address space. */
 
  private:
   MemoryBackend
@@ -121,7 +126,8 @@ class Allocator {
   /** Default constructor */
   HSHM_INLINE_CROSS_FUN
   Allocator()
-      : alloc_header_size_(0), data_start_(0), this_(0), region_size_(0) {}
+      : alloc_header_size_(0), data_start_(0), this_(0), region_size_(0),
+        shift_(0) {}
 
   /** Get the allocator identifier from backend */
   HSHM_INLINE_CROSS_FUN
@@ -135,40 +141,22 @@ class Allocator {
    * Get backend data pointer (reconstructs from allocator position)
    */
   HSHM_INLINE_CROSS_FUN
-  char *GetBackendData() { return reinterpret_cast<char *>(this) - this_; }
+  char *GetBackendData() {
+    // Cast through size_t to break GPU address space inference
+    // (prevents __shared__ address space from propagating to device pointers)
+    size_t addr = reinterpret_cast<size_t>(this) - this_;
+    return reinterpret_cast<char *>(addr);
+  }
 
   /**
    * Get backend data pointer (reconstructs from allocator position)
    */
   HSHM_INLINE_CROSS_FUN
   char *GetBackendData() const {
-    return reinterpret_cast<char *>(const_cast<Allocator *>(this)) - this_;
+    size_t addr = reinterpret_cast<size_t>(this) - this_;
+    return reinterpret_cast<char *>(addr);
   }
 
-  /**
-   * Get typed private header (process-local storage)
-   * This region is kBackendHeaderSize bytes and is NOT shared between processes
-   * Uses GetBackend() to access the proper priv_header_off_ for correct
-   * calculation
-   * @return Pointer to private header of type HEADER_T
-   */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN HEADER_T *GetPrivateHeader() {
-    return const_cast<HEADER_T *>(
-        static_cast<const Allocator *>(this)->GetPrivateHeader<HEADER_T>());
-  }
-
-  /**
-   * Get typed private header (process-local storage) - const version
-   * This region is kBackendHeaderSize bytes and is NOT shared between processes
-   * Uses GetBackend() to access the proper priv_header_off_ for correct
-   * calculation
-   * @return Const pointer to private header of type HEADER_T
-   */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN const HEADER_T *GetPrivateHeader() const {
-    return backend_.GetPrivateHeader<HEADER_T>(GetBackendData());
-  }
 
   /**
    * Get a copy of the memory backend
@@ -179,29 +167,6 @@ class Allocator {
     MemoryBackend backend = backend_;
     backend.data_ = GetBackendData();
     return backend;
-  }
-
-  /**
-   * Get the shared header of the shared-memory allocator
-   * The shared header is located in the backend's shared header region
-   * Uses GetBackendData() to access the proper offset for correct calculation
-   *
-   * @return Shared header pointer
-   */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN HEADER_T *GetSharedHeader() {
-    return backend_.GetSharedHeader<HEADER_T>(GetBackendData());
-  }
-
-  /**
-   * Get the shared header of the shared-memory allocator (const)
-   * Uses GetBackendData() to access the proper offset for correct calculation
-   *
-   * @return Shared header pointer
-   */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN const HEADER_T *GetSharedHeader() const {
-    return backend_.GetSharedHeader<HEADER_T>(GetBackendData());
   }
 
   /**
@@ -221,8 +186,7 @@ class Allocator {
    */
   HSHM_INLINE_CROSS_FUN
   char *GetAllocatorDataStart() const {
-    return reinterpret_cast<char *>(const_cast<Allocator *>(this)) +
-           data_start_;
+    return GetBackendData() + GetAllocatorDataOff();
   }
 
   /**
@@ -232,7 +196,7 @@ class Allocator {
    * @return Offset from backend data_ to allocator data start
    */
   HSHM_INLINE_CROSS_FUN
-  size_t GetAllocatorDataOff() const { return this_ + data_start_; }
+  size_t GetAllocatorDataOff() const { return this_ + data_start_ - shift_; }
 
   /**
    * Get the size of the allocator's data region (excluding allocator object and
@@ -252,11 +216,13 @@ class Allocator {
    * */
   template <typename T = void>
   HSHM_INLINE_CROSS_FUN bool ContainsPtr(const T *ptr) const {
-    MemoryBackend backend = GetBackend();
-    const char *shared_header = backend.GetSharedHeader<char>();
+    if (backend_.data_capacity_ == SIZE_MAX) {
+      return true;
+    }
     const char *char_ptr = reinterpret_cast<const char *>(ptr);
-    size_t off = char_ptr - shared_header;
-    return char_ptr >= shared_header && off < backend.data_capacity_;
+    const char *data = GetBackendData();
+    size_t off = char_ptr - data;
+    return char_ptr >= data && off < backend_.data_capacity_;
   }
 
   /**
@@ -1461,16 +1427,6 @@ class BaseAllocator : public CoreAllocT {
   /**====================================
    * Helpers
    * ===================================*/
-
-  /**
-   * Get the shared header of the shared-memory allocator
-   *
-   * @return Shared header pointer
-   * */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN HEADER_T *GetSharedHeader() {
-    return CoreAllocT::template GetSharedHeader<HEADER_T>();
-  }
 
   /**
    * Determine whether or not this allocator contains a process-specific

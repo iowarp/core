@@ -369,6 +369,15 @@ struct FreeBlocksTask : public chi::Task {
     }
   }
 
+  /** Emplace constructor for GPU (priv::vector) */
+  HSHM_CROSS_FUN explicit FreeBlocksTask(const chi::TaskId &task_node,
+                          const chi::PoolId &pool_id,
+                          const chi::PoolQuery &pool_query,
+                          const chi::priv::vector<Block> &blocks)
+      : chi::Task(task_node, pool_id, pool_query, Method::kFreeBlocks),
+        blocks_(blocks) {
+  }
+
   /** Serialize IN and INOUT parameters */
   template <typename Archive>
   HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
