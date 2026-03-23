@@ -79,7 +79,7 @@ class ZmqFiredAction : public EventAction {
   void Run(const EventInfo &event) override {
     (void)event;
     int zmq_events = 0;
-    size_t opt_len = sizeof(zmq_events);
+    ::size_t opt_len = sizeof(zmq_events);
     zmq_getsockopt(socket_, ZMQ_EVENTS, &zmq_events, &opt_len);
   }
 };
@@ -484,8 +484,8 @@ class ZeroMqTransport : public Transport {
 
   void RegisterEventManager(EventManager &em) {
     int fd;
-    size_t fd_size = sizeof(fd);
-    zmq_getsockopt(socket_, ZMQ_FD, &fd, reinterpret_cast<::size_t *>(&fd_size));
+    ::size_t fd_size = sizeof(fd);
+    zmq_getsockopt(socket_, ZMQ_FD, &fd, &fd_size);
     if (fd >= 0) {
       em.AddEvent(fd, kDefaultReadEvent, nullptr);
     }
