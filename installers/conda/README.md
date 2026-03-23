@@ -82,7 +82,7 @@ cp variants/custom.yaml variants/my-config.yaml
 | `release` | Standard release build | `release` |
 | `debug` | Debug build with symbols | `debug` |
 | `conda` | Conda-optimized build | `conda` |
-| `cuda` | CUDA-enabled (Linux) | `cuda-debug` |
+| `cuda` | CUDA-enabled (Linux) | `cuda-release` |
 | `rocm` | ROCm-enabled (Linux) | `rocm-debug` |
 | `mpi` | MPI-enabled build | `custom` |
 | `full` | All features enabled | `custom` |
@@ -280,17 +280,31 @@ If you get errors about missing submodules:
 git submodule update --init --recursive
 ```
 
-### CUDA/ROCm builds fail
+### CUDA builds fail
 
-GPU builds are only supported on Linux. Check that you have the appropriate toolkit installed:
+GPU builds are only supported on Linux. The CUDA toolkit is installed
+automatically from conda-forge/nvidia channels, but you need an NVIDIA driver
+on the host (525+). If the build cannot find `nvcc`:
 
 ```bash
-# For CUDA
-conda install cuda-toolkit -c nvidia
+# Ensure both channels are available
+conda install cuda-toolkit -c conda-forge -c nvidia
 
-# For ROCm
-# Follow AMD's ROCm installation guide
+# Verify
+which nvcc && nvcc --version
 ```
+
+After a successful CUDA build, verify the UVM library was installed:
+
+```bash
+ls $CONDA_PREFIX/lib/libwrp_cte_uvm.so
+ls $CONDA_PREFIX/include/wrp_cte/uvm/gpu_vmm.h
+```
+
+### ROCm builds fail
+
+ROCm builds require the AMD ROCm toolkit installed on the host.
+Follow AMD's ROCm installation guide for your distribution.
 
 ## Requirements
 
