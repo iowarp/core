@@ -9,7 +9,10 @@ pkgs:
   - pkg_type: jarvis_iowarp.wrp_cte_gpu_bench
     pkg_name: gpu_local
     test_case: "putblob_gpu"
-    client_blocks: 1
-    client_threads: 512
-    io_size: "128k"
+    runtime_blocks: 32
+    runtime_threads: 32
+    client_blocks: 32
+    client_threads: 32
+    io_size: "16m"
     iterations: 16
+    bdev_type: "pinned"

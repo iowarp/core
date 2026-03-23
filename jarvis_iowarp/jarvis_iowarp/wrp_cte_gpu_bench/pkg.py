@@ -52,8 +52,8 @@ class WrpCteGpuBench(Application):
                 'msg': 'Benchmark test case',
                 'type': str,
                 'choices': [
-                    'putblob', 'putblob_gpu', 'direct',
-                    'cudamemcpy', 'alloc_test'
+                    'putblob', 'putblob_gpu', 'putget_gpu',
+                    'direct', 'cudamemcpy', 'alloc_test'
                 ],
                 'default': 'putblob_gpu',
             },
@@ -94,6 +94,13 @@ class WrpCteGpuBench(Application):
                 'default': 16,
             },
             {
+                'name': 'bdev_type',
+                'msg': 'Storage backend type',
+                'type': str,
+                'choices': ['pinned', 'hbm', 'ram'],
+                'default': 'pinned',
+            },
+            {
                 'name': 'output_dir',
                 'msg': 'Output directory for benchmark results',
                 'type': str,
@@ -114,6 +121,7 @@ class WrpCteGpuBench(Application):
                  f"{self.config['client_threads']}t ({warps} warps)")
         self.log(f"  IO/warp:        {self.config['io_size']}")
         self.log(f"  Iterations:     {self.config['iterations']}")
+        self.log(f"  Bdev type:      {self.config['bdev_type']}")
 
     def _kill_stale_processes(self):
         """Kill any leftover wrp_cte_gpu_bench or chimaera processes and
@@ -160,6 +168,7 @@ class WrpCteGpuBench(Application):
             f'--client-threads {self.config["client_threads"]}',
             f'--io-size {self.config["io_size"]}',
             f'--iterations {self.config["iterations"]}',
+            f'--bdev-type {self.config["bdev_type"]}',
         ])
 
         self.log(f"Running: {cmd}")
@@ -177,6 +186,7 @@ class WrpCteGpuBench(Application):
         stat_dict[f'{self.pkg_id}.warps'] = (
             self.config['client_blocks'] * self.config['client_threads']) // 32
         stat_dict[f'{self.pkg_id}.io_size'] = self.config['io_size']
+        stat_dict[f'{self.pkg_id}.bdev_type'] = self.config['bdev_type']
 
     def _plot(self, results_csv, output_dir):
         try:

@@ -1,11 +1,12 @@
 # CTE GPU Benchmark — Full Scaling Study (Pipeline Test)
 #
-# Cartesian product of three independent dimensions:
+# Cartesian product of four independent dimensions:
 #   1. Client warps:   1, 4, 16, 32, 64  (blocks×threads zipped)
-#   2. I/O size/warp:  4k, 64k, 128k, 256k, 1m
+#   2. I/O size/warp:  16k, 64k, 128k, 256k, 1m  (iterations scaled to 16MB/warp, max 1024)
 #   3. Runtime warps:  1, 4, 16  (scale via blocks, max 128 threads/block)
+#   4. Storage backend: pinned, hbm
 #
-# Total: 5 × 5 × 3 = 75 configs × 3 repeats = 225 runs
+# Total: 5 × 5 × 3 × 2 = 150 configs × 3 repeats = 450 runs
 #
 # Requirements: wrp_cte_gpu_bench in PATH, CUDA-capable GPU
 #
@@ -24,6 +25,7 @@ config:
       rt_threads: 32
       io_size: "128k"
       iterations: 16
+      bdev_type: "pinned"
 
 vars:
   # Client warp count (blocks × threads / 32)
@@ -31,8 +33,9 @@ vars:
   bench.client_blocks:  [1, 1,   1,   4,   8  ]
   bench.client_threads: [32, 128, 512, 256, 256]
 
-  # Per-warp I/O size
-  bench.io_size: ["1k", "4k", "64k", "128k", "256k", "1m"]
+  # Per-warp I/O size and iterations (16MB total per warp per transfer size)
+  bench.io_size:    ["16k",  "64k", "128k", "256k", "1m"]
+  bench.iterations: [1024,   256,   128,    64,     16 ]
 
   # Runtime orchestrator warp count (blocks × threads / 32)
   # Max ~128 threads/block due to 32KB stack per thread.
@@ -40,10 +43,14 @@ vars:
   bench.rt_blocks:  [1, 1,   4  ]
   bench.rt_threads: [32, 128, 128]
 
+  # Storage backend type
+  bench.bdev_type: ["pinned", "hbm"]
+
 loop:
   - [bench.client_blocks, bench.client_threads]
-  - [bench.io_size]
+  - [bench.io_size, bench.iterations]
   - [bench.rt_blocks, bench.rt_threads]
+  - bench.bdev_type
 
 repeat: 3
 output: "${HOME}/cte_gpu_scaling_results"
