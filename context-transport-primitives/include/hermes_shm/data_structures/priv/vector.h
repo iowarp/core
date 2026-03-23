@@ -47,18 +47,22 @@
 namespace hshm::priv {
 
 /**
- * Private-memory vector container with allocator integration
+ * Private-memory vector container with allocator integration and SVO
  *
  * This vector class provides dynamic array functionality for private memory,
  * using the library's allocator API with FullPtr for proper memory management.
  * It supports both POD (Plain Old Data) types and complex class types.
  * POD types use optimized memcpy/memset operations for better performance.
- * The vector integrates with the library's memory allocation system.
+ *
+ * Simple Vector Optimization (SVO): small vectors (up to SVO_SIZE elements)
+ * are stored inline in a stack-local buffer, avoiding allocator calls entirely.
+ * When the vector grows beyond SVO_SIZE, it transitions to heap allocation.
  *
  * @tparam T The element type
  * @tparam AllocT The allocator type (must have Allocate/AllocateObjs/Free methods)
+ * @tparam SVO_SIZE Number of elements stored inline before heap allocation (default 8)
  */
-template<typename T, typename AllocT>
+template<typename T, typename AllocT, size_t SVO_SIZE = 8>
 class vector {
  public:
   using allocator_type = AllocT;
@@ -559,11 +563,40 @@ class vector {
   size_type size_;         /**< Current number of elements */
   size_type capacity_;     /**< Allocated capacity */
   AllocT* alloc_;          /**< Pointer to allocator for memory management */
+  alignas(alignof(T)) char svo_[SVO_SIZE * sizeof(T)];  /**< Inline SVO buffer */
 
   /**
    * Helper to determine if type is POD
    */
   static constexpr bool kIsPod = std::is_trivial_v<T>;
+
+  /**
+   * Get typed pointer to the SVO buffer
+   */
+  HSHM_INLINE_CROSS_FUN
+  T* svo_data() { return reinterpret_cast<T*>(svo_); }
+
+  /**
+   * Get const typed pointer to the SVO buffer
+   */
+  HSHM_INLINE_CROSS_FUN
+  const T* svo_data() const { return reinterpret_cast<const T*>(svo_); }
+
+  /**
+   * Check if vector is currently using the inline SVO buffer
+   */
+  HSHM_INLINE_CROSS_FUN
+  bool IsUsingSvo() const { return data_.ptr_ == svo_data(); }
+
+  /**
+   * Initialize data_ to point to the SVO buffer with null shm
+   */
+  HSHM_INLINE_CROSS_FUN
+  void InitSvo() {
+    data_ = hipc::FullPtr<T>::GetNull();
+    data_.ptr_ = svo_data();
+    capacity_ = SVO_SIZE;
+  }
 
   /**
    * Grow the capacity to accommodate new elements.
@@ -644,31 +677,34 @@ class vector {
  public:
   /**
    * Default constructor (no allocator).
-   * Creates an empty vector. Allocator is set via copy/move assignment.
+   * Creates an empty vector with SVO buffer available.
    */
   HSHM_INLINE_CROSS_FUN
   vector()
-    : data_(hipc::FullPtr<T>::GetNull()), size_(0), capacity_(0), alloc_(nullptr) {}
+    : size_(0), alloc_(nullptr) {
+    InitSvo();
+  }
 
   /**
    * Constructor with allocator.
-   * Creates an empty vector with zero capacity.
+   * Creates an empty vector with SVO buffer available.
    *
    * @param alloc Pointer to allocator instance for memory management
    */
   HSHM_INLINE_CROSS_FUN
   explicit vector(AllocT* alloc)
-    : data_(hipc::FullPtr<T>::GetNull()), size_(0), capacity_(0), alloc_(alloc) {}
+    : size_(0), alloc_(alloc) {
+    InitSvo();
+  }
 
   /**
    * Destructor.
-   * Destroys all elements and deallocates memory using allocator.
-   * Note: Does not deallocate the allocator itself (managed externally).
+   * Destroys all elements and deallocates heap memory if not using SVO.
    */
   HSHM_INLINE_CROSS_FUN
   ~vector() {
     clear();
-    if (!data_.IsNull() && alloc_ != nullptr) {
+    if (!IsUsingSvo() && !data_.IsNull() && alloc_ != nullptr) {
       alloc_->Free(data_);
     }
   }
@@ -683,7 +719,8 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   explicit vector(size_type count, AllocT* alloc)
-      : data_(hipc::FullPtr<T>::GetNull()), size_(0), capacity_(0), alloc_(alloc) {
+      : size_(0), alloc_(alloc) {
+    InitSvo();
     reserve(count);
     if constexpr (!kIsPod) {
       for (size_type i = 0; i < count; ++i) {
@@ -706,7 +743,8 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   vector(size_type count, const T& value, AllocT* alloc)
-      : data_(hipc::FullPtr<T>::GetNull()), size_(0), capacity_(0), alloc_(alloc) {
+      : size_(0), alloc_(alloc) {
+    InitSvo();
     reserve(count);
     for (size_type i = 0; i < count; ++i) {
       push_back(value);
@@ -722,7 +760,8 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   vector(std::initializer_list<T> init, AllocT* alloc)
-      : data_(hipc::FullPtr<T>::GetNull()), size_(0), capacity_(0), alloc_(alloc) {
+      : size_(0), alloc_(alloc) {
+    InitSvo();
     reserve(init.size());
     for (const auto& val : init) {
       push_back(val);
@@ -737,8 +776,9 @@ class vector {
    */
   HSHM_INLINE_CROSS_FUN
   vector(const vector& other)
-      : data_(hipc::FullPtr<T>::GetNull()), size_(0), capacity_(0), alloc_(other.alloc_) {
-    if (alloc_ != nullptr) {
+      : size_(0), alloc_(other.alloc_) {
+    InitSvo();
+    if (alloc_ != nullptr || other.size_ <= SVO_SIZE) {
       reserve(other.size_);
       for (const auto& val : other) {
         push_back(val);
@@ -749,17 +789,33 @@ class vector {
   /**
    * Move constructor.
    * Transfers ownership of data from other vector to this one.
+   * If source uses SVO, elements are moved to this vector's SVO buffer.
    *
    * @param other Vector to move from
    */
   HSHM_INLINE_CROSS_FUN
   vector(vector&& other) noexcept
-      : data_(other.data_), size_(other.size_), capacity_(other.capacity_),
-        alloc_(other.alloc_) {
-    other.data_ = hipc::FullPtr<T>::GetNull();
-    other.size_ = 0;
-    other.capacity_ = 0;
-    other.alloc_ = nullptr;
+      : size_(0), alloc_(other.alloc_) {
+    if (other.IsUsingSvo()) {
+      InitSvo();
+      if constexpr (kIsPod) {
+        memcpy(svo_, other.svo_, other.size_ * sizeof(T));
+      } else {
+        for (size_type i = 0; i < other.size_; ++i) {
+          new (&data_.ptr_[i]) T(std::move(other.data_.ptr_[i]));
+          other.Destroy(i);
+        }
+      }
+      size_ = other.size_;
+      other.size_ = 0;
+    } else {
+      data_ = other.data_;
+      size_ = other.size_;
+      capacity_ = other.capacity_;
+      other.InitSvo();
+      other.size_ = 0;
+      other.alloc_ = nullptr;
+    }
   }
 
   /**
@@ -773,8 +829,12 @@ class vector {
   vector& operator=(const vector& other) {
     if (this != &other) {
       clear();
+      if (!IsUsingSvo() && !data_.IsNull() && alloc_ != nullptr) {
+        alloc_->Free(data_);
+      }
       alloc_ = other.alloc_;
-      if (alloc_ != nullptr) {
+      InitSvo();
+      if (alloc_ != nullptr || other.size_ <= SVO_SIZE) {
         reserve(other.size_);
         for (const auto& val : other) {
           push_back(val);
@@ -795,17 +855,30 @@ class vector {
   vector& operator=(vector&& other) noexcept {
     if (this != &other) {
       clear();
-      if (!data_.IsNull() && alloc_ != nullptr) {
+      if (!IsUsingSvo() && !data_.IsNull() && alloc_ != nullptr) {
         alloc_->Free(data_);
       }
-      data_ = other.data_;
-      size_ = other.size_;
-      capacity_ = other.capacity_;
       alloc_ = other.alloc_;
-      other.data_ = hipc::FullPtr<T>::GetNull();
-      other.size_ = 0;
-      other.capacity_ = 0;
-      other.alloc_ = nullptr;
+      if (other.IsUsingSvo()) {
+        InitSvo();
+        if constexpr (kIsPod) {
+          memcpy(svo_, other.svo_, other.size_ * sizeof(T));
+        } else {
+          for (size_type i = 0; i < other.size_; ++i) {
+            new (&data_.ptr_[i]) T(std::move(other.data_.ptr_[i]));
+            other.Destroy(i);
+          }
+        }
+        size_ = other.size_;
+        other.size_ = 0;
+      } else {
+        data_ = other.data_;
+        size_ = other.size_;
+        capacity_ = other.capacity_;
+        other.InitSvo();
+        other.size_ = 0;
+        other.alloc_ = nullptr;
+      }
     }
     return *this;
   }
@@ -1106,8 +1179,9 @@ class vector {
 
   /**
    * Reserve capacity for elements.
-   * Allocates new memory if new_capacity exceeds current capacity.
-   * Uses allocator's AllocateObjs method for proper memory management.
+   * If new_capacity fits within SVO, no allocation occurs.
+   * Otherwise allocates new memory using the allocator, copying
+   * existing elements from SVO or old heap allocation.
    *
    * @param new_capacity Desired capacity
    */
@@ -1122,7 +1196,8 @@ class vector {
       return false;
     }
 
-    if (!data_.IsNull()) {
+    // Copy existing elements from current buffer (SVO or heap)
+    if (size_ > 0) {
       if constexpr (kIsPod) {
         memcpy(new_data.ptr_, data_.ptr_, size_ * sizeof(T));
       } else {
@@ -1131,6 +1206,10 @@ class vector {
           Destroy(i);
         }
       }
+    }
+
+    // Free old heap allocation (SVO has IsNull()==true, so this is skipped)
+    if (!data_.IsNull()) {
       alloc_->Free(data_);
     }
 
@@ -1141,21 +1220,33 @@ class vector {
 
   /**
    * Shrink capacity to match size.
-   * Reduces capacity to match current size, freeing unused memory.
-   * Uses allocator's AllocateObjs and Free methods for proper management.
+   * If on heap, reduces capacity to match current size.
+   * If size fits in SVO, moves data back to SVO buffer.
    */
   HSHM_INLINE_CROSS_FUN
   void shrink_to_fit() {
-    if (size_ < capacity_ && alloc_ != nullptr) {
-      if (size_ == 0) {
+    if (size_ <= capacity_ && alloc_ != nullptr) {
+      if (size_ == 0 && !IsUsingSvo()) {
         if (!data_.IsNull()) {
           alloc_->Free(data_);
-          data_ = hipc::FullPtr<T>::GetNull();
         }
-        capacity_ = 0;
-      } else {
+        InitSvo();
+      } else if (!IsUsingSvo() && size_ <= SVO_SIZE) {
+        // Move from heap back to SVO
+        if constexpr (kIsPod) {
+          memcpy(svo_, data_.ptr_, size_ * sizeof(T));
+        } else {
+          for (size_type i = 0; i < size_; ++i) {
+            new (svo_data() + i) T(std::move(data_.ptr_[i]));
+            Destroy(i);
+          }
+        }
+        alloc_->Free(data_);
+        data_ = hipc::FullPtr<T>::GetNull();
+        data_.ptr_ = svo_data();
+        capacity_ = SVO_SIZE;
+      } else if (!IsUsingSvo() && size_ < capacity_) {
         auto new_data = alloc_->template AllocateObjs<T>(size_);
-
         if constexpr (kIsPod) {
           memcpy(new_data.ptr_, data_.ptr_, size_ * sizeof(T));
         } else {
@@ -1164,7 +1255,6 @@ class vector {
             Destroy(i);
           }
         }
-
         alloc_->Free(data_);
         data_ = new_data;
         capacity_ = size_;
@@ -1439,15 +1529,25 @@ class vector {
   }
 
   /**
-   * Swap contents with another vector
+   * Swap contents with another vector.
+   * Handles SVO and heap combinations correctly.
    *
    * @param other Vector to swap with
    */
   HSHM_INLINE_CROSS_FUN
   void swap(vector& other) noexcept {
-    std::swap(data_, other.data_);
-    std::swap(size_, other.size_);
-    std::swap(capacity_, other.capacity_);
+    if (!IsUsingSvo() && !other.IsUsingSvo()) {
+      // Both on heap — simple pointer swap
+      std::swap(data_, other.data_);
+      std::swap(size_, other.size_);
+      std::swap(capacity_, other.capacity_);
+      std::swap(alloc_, other.alloc_);
+    } else {
+      // At least one is SVO — use move through temporary
+      vector temp(std::move(*this));
+      *this = std::move(other);
+      other = std::move(temp);
+    }
   }
 
   /**
@@ -1460,7 +1560,7 @@ class vector {
   template<class Archive>
   HSHM_INLINE_CROSS_FUN
   void save(Archive& ar) const {
-    hshm::ipc::save_vec<Archive, vector<T, AllocT>, T>(ar, *this);
+    hshm::ipc::save_vec<Archive, vector<T, AllocT, SVO_SIZE>, T>(ar, *this);
   }
 
   /**
@@ -1473,7 +1573,7 @@ class vector {
   template<class Archive>
   HSHM_INLINE_CROSS_FUN
   void load(Archive& ar) {
-    hshm::ipc::load_vec<Archive, vector<T, AllocT>, T>(ar, *this);
+    hshm::ipc::load_vec<Archive, vector<T, AllocT, SVO_SIZE>, T>(ar, *this);
   }
 };
 

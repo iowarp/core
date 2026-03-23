@@ -93,6 +93,11 @@ extern "C" int run_gpu_bench_serde(chi::PoolId pool_id,
                                     chi::u32 client_threads,
                                     chi::u32 total_tasks,
                                     float *out_elapsed_ms);
+extern "C" int run_gpu_bench_alloc_serde(chi::PoolId pool_id,
+                                          chi::u32 client_blocks,
+                                          chi::u32 client_threads,
+                                          chi::u32 total_tasks,
+                                          float *out_elapsed_ms);
 extern "C" int run_gpu_bench_string_alloc(chi::u32 total_tasks,
                                            float *out_elapsed_ms);
 extern "C" int run_gpu_bench_putblob(chi::PoolId cte_pool_id,
@@ -125,6 +130,11 @@ extern "C" __attribute__((weak)) int run_gpu_bench_serde(
     chi::u32, float *) {
   return -200;  // No GPU support compiled
 }
+extern "C" __attribute__((weak)) int run_gpu_bench_alloc_serde(
+    chi::PoolId, chi::u32, chi::u32,
+    chi::u32, float *) {
+  return -200;  // No GPU support compiled
+}
 extern "C" __attribute__((weak)) int run_gpu_bench_string_alloc(
     chi::u32, float *) {
   return -200;  // No GPU support compiled
@@ -137,7 +147,7 @@ extern "C" __attribute__((weak)) int run_gpu_bench_putblob(
 #endif
 
 /** Supported benchmark test cases */
-enum class TestCase { kLatency, kCoroutine, kAlloc, kSerde, kStringAlloc, kPutBlob, kPutBlobGpu };
+enum class TestCase { kLatency, kCoroutine, kAlloc, kAllocSerde, kSerde, kStringAlloc, kPutBlob, kPutBlobGpu };
 
 /**
  * Configuration for the GPU runtime benchmark.
@@ -163,7 +173,7 @@ struct BenchmarkConfig {
 static void PrintHelp(const char *prog) {
   HIPRINT("Usage: {} [options]", prog);
   HIPRINT("Options:");
-  HIPRINT("  --test-case <case>     Test case: 'latency', 'coroutine', 'alloc', 'serde', 'string_alloc', 'putblob', or 'putblob_gpu' (default: latency)");
+  HIPRINT("  --test-case <case>     Test case: 'latency', 'coroutine', 'alloc', 'alloc_serde', 'serde', 'string_alloc', 'putblob', or 'putblob_gpu' (default: latency)");
   HIPRINT("  --rt-blocks <N>        GPU runtime orchestrator blocks (default: 1)");
   HIPRINT("  --rt-threads <N>       GPU runtime orchestrator threads/block (default: 32)");
   HIPRINT("  --client-blocks <N>    GPU client kernel blocks (default: 1)");
@@ -197,6 +207,8 @@ static bool ParseArgs(int argc, char **argv, BenchmarkConfig &cfg) {
         cfg.test_case = TestCase::kCoroutine;
       } else if (tc == "alloc") {
         cfg.test_case = TestCase::kAlloc;
+      } else if (tc == "alloc_serde") {
+        cfg.test_case = TestCase::kAllocSerde;
       } else if (tc == "serde") {
         cfg.test_case = TestCase::kSerde;
       } else if (tc == "string_alloc") {
@@ -206,7 +218,7 @@ static bool ParseArgs(int argc, char **argv, BenchmarkConfig &cfg) {
       } else if (tc == "putblob_gpu") {
         cfg.test_case = TestCase::kPutBlobGpu;
       } else {
-        HLOG(kError, "Unknown test case '{}'; use 'latency', 'coroutine', 'alloc', 'serde', 'string_alloc', 'putblob', or 'putblob_gpu'", tc);
+        HLOG(kError, "Unknown test case '{}'; use 'latency', 'coroutine', 'alloc', 'alloc_serde', 'serde', 'string_alloc', 'putblob', or 'putblob_gpu'", tc);
         return false;
       }
     } else if (arg == "--rt-blocks" && i + 1 < argc) {
@@ -266,6 +278,7 @@ static void PrintResults(const BenchmarkConfig &cfg, float elapsed_ms) {
   double latency_us = (elapsed_ms * 1000.0) / cfg.total_tasks; // us per task per warp
 
   const char *tc_name = (cfg.test_case == TestCase::kSerde) ? "serde" :
+                         (cfg.test_case == TestCase::kAllocSerde) ? "alloc_serde" :
                          (cfg.test_case == TestCase::kAlloc) ? "alloc" :
                          (cfg.test_case == TestCase::kStringAlloc) ? "string_alloc" :
                          (cfg.test_case == TestCase::kCoroutine) ? "coroutine" :
@@ -314,6 +327,9 @@ static int RunBenchmark(const BenchmarkConfig &cfg) {
   // (matches CTE benchmark pattern — kClient + env CHI_WITH_RUNTIME=1)
   HIPRINT("Initializing Chimaera runtime...");
   setenv("CHI_WITH_RUNTIME", "1", 1);
+  // Set GPU orchestrator dimensions so heap partitions match warp count.
+  setenv("CHI_GPU_BLOCKS", std::to_string(cfg.rt_blocks).c_str(), 1);
+  setenv("CHI_GPU_THREADS", std::to_string(cfg.rt_threads).c_str(), 1);
   if (!chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient)) {
     HLOG(kError, "Failed to initialize Chimaera");
     return 1;
@@ -326,13 +342,19 @@ static int RunBenchmark(const BenchmarkConfig &cfg) {
     // String alloc test doesn't need Chimaera runtime at all
     CHI_IPC->PauseGpuOrchestrator();
     rc = run_gpu_bench_string_alloc(cfg.total_tasks, &elapsed_ms);
-  } else if (cfg.test_case == TestCase::kSerde || cfg.test_case == TestCase::kAlloc) {
+  } else if (cfg.test_case == TestCase::kSerde ||
+             cfg.test_case == TestCase::kAllocSerde ||
+             cfg.test_case == TestCase::kAlloc) {
     // Client-only tests: kill the orchestrator immediately, no pool needed
     CHI_IPC->PauseGpuOrchestrator();
     if (cfg.test_case == TestCase::kSerde) {
       rc = run_gpu_bench_serde(pool_id,
                                 cfg.client_blocks, cfg.client_threads,
                                 cfg.total_tasks, &elapsed_ms);
+    } else if (cfg.test_case == TestCase::kAllocSerde) {
+      rc = run_gpu_bench_alloc_serde(pool_id,
+                                      cfg.client_blocks, cfg.client_threads,
+                                      cfg.total_tasks, &elapsed_ms);
     } else {
       rc = run_gpu_bench_alloc(pool_id,
                                 cfg.client_blocks, cfg.client_threads,

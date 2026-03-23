@@ -57,8 +57,8 @@ class WrpChiGpuBench(Application):
                 'msg': 'Benchmark test case',
                 'type': str,
                 'choices': [
-                    'latency', 'coroutine', 'alloc', 'serde',
-                    'string_alloc', 'putblob', 'putblob_gpu'
+                    'latency', 'coroutine', 'alloc', 'alloc_serde',
+                    'serde', 'string_alloc', 'putblob', 'putblob_gpu'
                 ],
                 'default': 'latency',
             },

@@ -102,6 +102,47 @@ class SimpleHeapAllocator {
   }
 };
 
+/**
+ * Counting allocator that tracks allocation and free counts.
+ * Used to verify SVO avoids allocator calls for small vectors.
+ */
+class CountingAllocator {
+ public:
+  size_t alloc_count = 0;
+  size_t free_count = 0;
+
+  template <typename T>
+  hipc::FullPtr<T> AllocateObjs(size_t count) {
+    ++alloc_count;
+    size_t size = count * sizeof(T);
+    T* ptr = static_cast<T*>(malloc(size));
+    hipc::FullPtr<T> result;
+    result.ptr_ = ptr;
+    result.shm_.off_ = 0;
+    result.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
+    return result;
+  }
+
+  template <typename T = char>
+  hipc::FullPtr<T> Allocate(size_t size) {
+    ++alloc_count;
+    T* ptr = static_cast<T*>(malloc(size));
+    hipc::FullPtr<T> result;
+    result.ptr_ = ptr;
+    result.shm_.off_ = 0;
+    result.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
+    return result;
+  }
+
+  template <typename T, bool ATOMIC = false>
+  void Free(const hipc::FullPtr<T, ATOMIC>& ptr) {
+    if (ptr.ptr_ != nullptr) {
+      ++free_count;
+      free(ptr.ptr_);
+    }
+  }
+};
+
 // ============================================================================
 // Global allocator instances for all tests
 // ============================================================================
@@ -115,9 +156,9 @@ TEST_CASE("Vector: constructor default", "[priv_vector]") {
   vector<int, SimpleHeapAllocator> vec(&g_allocator);
 
   REQUIRE(vec.size() == 0);
-  REQUIRE(vec.capacity() == 0);
+  REQUIRE(vec.capacity() == 8);  // SVO_SIZE default
   REQUIRE(vec.empty());
-  REQUIRE(vec.data() == nullptr);
+  REQUIRE(vec.data() != nullptr);  // points to SVO buffer
 }
 
 TEST_CASE("Vector: constructor with count and value", "[priv_vector]") {
@@ -301,22 +342,22 @@ TEST_CASE("Vector: push_back multiple elements", "[priv_vector]") {
 TEST_CASE("Vector: push_back with capacity growth", "[priv_vector]") {
   vector<int, SimpleHeapAllocator> vec(&g_allocator);
 
-  REQUIRE(vec.capacity() == 0);
+  REQUIRE(vec.capacity() == 8);  // SVO_SIZE
 
-  vec.push_back(1);
-  REQUIRE(vec.capacity() >= 1);
+  // Fill SVO buffer
+  for (int i = 0; i < 8; ++i) {
+    vec.push_back(i + 1);
+  }
+  REQUIRE(vec.capacity() == 8);  // still SVO
 
-  vec.push_back(2);
-  size_t cap_after_2 = vec.capacity();
-  REQUIRE(cap_after_2 >= 2);
+  // Trigger heap allocation
+  vec.push_back(9);
+  REQUIRE(vec.capacity() > 8);  // now on heap
 
-  vec.push_back(3);
-  REQUIRE(vec.capacity() >= cap_after_2);
-
-  REQUIRE(vec.size() == 3);
-  REQUIRE(vec[0] == 1);
-  REQUIRE(vec[1] == 2);
-  REQUIRE(vec[2] == 3);
+  REQUIRE(vec.size() == 9);
+  for (int i = 0; i < 9; ++i) {
+    REQUIRE(vec[i] == i + 1);
+  }
 }
 
 TEST_CASE("Vector: pop_back", "[priv_vector]") {
@@ -555,7 +596,7 @@ TEST_CASE("Vector: reserve", "[priv_vector]") {
   REQUIRE(vec.size() == 0);
 }
 
-TEST_CASE("Vector: shrink_to_fit", "[priv_vector]") {
+TEST_CASE("Vector: shrink_to_fit empty", "[priv_vector]") {
   vector<int, SimpleHeapAllocator> vec(&g_allocator);
   vec.reserve(100);
 
@@ -563,11 +604,12 @@ TEST_CASE("Vector: shrink_to_fit", "[priv_vector]") {
 
   vec.shrink_to_fit();
 
-  REQUIRE(vec.capacity() == 0);
+  // Shrinks back to SVO
+  REQUIRE(vec.capacity() == 8);
   REQUIRE(vec.empty());
 }
 
-TEST_CASE("Vector: shrink_to_fit with elements", "[priv_vector]") {
+TEST_CASE("Vector: shrink_to_fit with elements fitting SVO", "[priv_vector]") {
   vector<int, SimpleHeapAllocator> vec({1, 2, 3, 4, 5}, &g_allocator);
   vec.reserve(100);
 
@@ -575,10 +617,29 @@ TEST_CASE("Vector: shrink_to_fit with elements", "[priv_vector]") {
 
   vec.shrink_to_fit();
 
-  REQUIRE(vec.capacity() >= 5);
+  // 5 elements fit in SVO (8), so moves back to SVO
+  REQUIRE(vec.capacity() == 8);
   REQUIRE(vec.size() == 5);
   REQUIRE(vec[0] == 1);
   REQUIRE(vec[4] == 5);
+}
+
+TEST_CASE("Vector: shrink_to_fit with elements exceeding SVO", "[priv_vector]") {
+  vector<int, SimpleHeapAllocator> vec(&g_allocator);
+  for (int i = 0; i < 20; ++i) {
+    vec.push_back(i);
+  }
+  vec.reserve(100);
+
+  REQUIRE(vec.capacity() >= 100);
+
+  vec.shrink_to_fit();
+
+  // 20 elements > SVO_SIZE, so stays on heap but capacity shrinks to 20
+  REQUIRE(vec.capacity() == 20);
+  REQUIRE(vec.size() == 20);
+  REQUIRE(vec[0] == 0);
+  REQUIRE(vec[19] == 19);
 }
 
 // ============================================================================
@@ -708,6 +769,218 @@ TEST_CASE("Vector: large capacity growth", "[priv_vector][stress]") {
   REQUIRE(vec.size() == 10000);
   REQUIRE(vec[0] == 0);
   REQUIRE(vec[9999] == 9999);
+}
+
+// ============================================================================
+// SVO (Simple Vector Optimization) Tests
+// ============================================================================
+
+TEST_CASE("Vector: SVO default capacity is SVO_SIZE", "[priv_vector][svo]") {
+  vector<int, SimpleHeapAllocator> vec(&g_allocator);
+
+  REQUIRE(vec.capacity() == 8);
+  REQUIRE(vec.data() != nullptr);
+  REQUIRE(vec.empty());
+}
+
+TEST_CASE("Vector: SVO no allocator calls for small vectors", "[priv_vector][svo]") {
+  CountingAllocator alloc;
+  vector<int, CountingAllocator> vec(&alloc);
+
+  // Push up to SVO_SIZE elements — no allocator calls
+  for (int i = 0; i < 8; ++i) {
+    vec.push_back(i);
+  }
+
+  REQUIRE(alloc.alloc_count == 0);
+  REQUIRE(alloc.free_count == 0);
+  REQUIRE(vec.size() == 8);
+  for (int i = 0; i < 8; ++i) {
+    REQUIRE(vec[i] == i);
+  }
+}
+
+TEST_CASE("Vector: SVO transitions to heap on overflow", "[priv_vector][svo]") {
+  CountingAllocator alloc;
+  vector<int, CountingAllocator> vec(&alloc);
+
+  // Fill SVO
+  for (int i = 0; i < 8; ++i) {
+    vec.push_back(i);
+  }
+  REQUIRE(alloc.alloc_count == 0);
+
+  // Push 9th element — triggers heap allocation
+  vec.push_back(8);
+  REQUIRE(alloc.alloc_count == 1);
+  REQUIRE(vec.capacity() > 8);
+
+  // All elements preserved after transition
+  for (int i = 0; i < 9; ++i) {
+    REQUIRE(vec[i] == i);
+  }
+}
+
+TEST_CASE("Vector: SVO move constructor copies elements", "[priv_vector][svo]") {
+  CountingAllocator alloc;
+  vector<int, CountingAllocator> vec1(&alloc);
+  vec1.push_back(10);
+  vec1.push_back(20);
+  vec1.push_back(30);
+  REQUIRE(alloc.alloc_count == 0);  // still in SVO
+
+  vector<int, CountingAllocator> vec2(std::move(vec1));
+
+  // No heap allocation for move of SVO vector
+  REQUIRE(alloc.alloc_count == 0);
+  REQUIRE(vec2.size() == 3);
+  REQUIRE(vec2[0] == 10);
+  REQUIRE(vec2[1] == 20);
+  REQUIRE(vec2[2] == 30);
+  REQUIRE(vec1.size() == 0);
+}
+
+TEST_CASE("Vector: SVO move constructor steals heap pointer", "[priv_vector][svo]") {
+  CountingAllocator alloc;
+  vector<int, CountingAllocator> vec1(&alloc);
+  // Force onto heap
+  for (int i = 0; i < 20; ++i) {
+    vec1.push_back(i);
+  }
+  REQUIRE(alloc.alloc_count > 0);
+  size_t allocs_before = alloc.alloc_count;
+
+  vector<int, CountingAllocator> vec2(std::move(vec1));
+
+  // No new allocation — pointer was stolen
+  REQUIRE(alloc.alloc_count == allocs_before);
+  REQUIRE(vec2.size() == 20);
+  for (int i = 0; i < 20; ++i) {
+    REQUIRE(vec2[i] == i);
+  }
+  REQUIRE(vec1.size() == 0);
+}
+
+TEST_CASE("Vector: SVO swap two SVO vectors", "[priv_vector][svo]") {
+  vector<int, SimpleHeapAllocator> vec1({1, 2, 3}, &g_allocator);
+  vector<int, SimpleHeapAllocator> vec2({4, 5}, &g_allocator);
+
+  // Both should be in SVO (size <= 8)
+  REQUIRE(vec1.capacity() == 8);
+  REQUIRE(vec2.capacity() == 8);
+
+  vec1.swap(vec2);
+
+  REQUIRE(vec1.size() == 2);
+  REQUIRE(vec1[0] == 4);
+  REQUIRE(vec1[1] == 5);
+  REQUIRE(vec2.size() == 3);
+  REQUIRE(vec2[0] == 1);
+  REQUIRE(vec2[2] == 3);
+}
+
+TEST_CASE("Vector: SVO swap SVO with heap vector", "[priv_vector][svo]") {
+  vector<int, SimpleHeapAllocator> svo_vec({1, 2, 3}, &g_allocator);
+  vector<int, SimpleHeapAllocator> heap_vec(&g_allocator);
+  for (int i = 10; i < 25; ++i) {
+    heap_vec.push_back(i);
+  }
+  REQUIRE(heap_vec.capacity() > 8);
+
+  svo_vec.swap(heap_vec);
+
+  REQUIRE(svo_vec.size() == 15);
+  REQUIRE(svo_vec[0] == 10);
+  REQUIRE(svo_vec[14] == 24);
+  REQUIRE(heap_vec.size() == 3);
+  REQUIRE(heap_vec[0] == 1);
+  REQUIRE(heap_vec[2] == 3);
+}
+
+TEST_CASE("Vector: SVO with custom size", "[priv_vector][svo]") {
+  // Use SVO_SIZE = 4 instead of default 8
+  CountingAllocator alloc;
+  vector<int, CountingAllocator, 4> vec(&alloc);
+
+  REQUIRE(vec.capacity() == 4);
+
+  for (int i = 0; i < 4; ++i) {
+    vec.push_back(i);
+  }
+  REQUIRE(alloc.alloc_count == 0);
+
+  vec.push_back(4);
+  REQUIRE(alloc.alloc_count == 1);  // now on heap
+  REQUIRE(vec.size() == 5);
+  for (int i = 0; i < 5; ++i) {
+    REQUIRE(vec[i] == i);
+  }
+}
+
+TEST_CASE("Vector: SVO copy constructor small vector", "[priv_vector][svo]") {
+  CountingAllocator alloc;
+  vector<int, CountingAllocator> vec1(&alloc);
+  vec1.push_back(1);
+  vec1.push_back(2);
+  vec1.push_back(3);
+  REQUIRE(alloc.alloc_count == 0);
+
+  vector<int, CountingAllocator> vec2(vec1);
+
+  REQUIRE(alloc.alloc_count == 0);  // copy stays in SVO
+  REQUIRE(vec2.size() == 3);
+  REQUIRE(vec2[0] == 1);
+  REQUIRE(vec2[1] == 2);
+  REQUIRE(vec2[2] == 3);
+
+  vec2[0] = 99;
+  REQUIRE(vec1[0] == 1);
+}
+
+TEST_CASE("Vector: SVO complex type (string) in SVO", "[priv_vector][svo]") {
+  CountingAllocator alloc;
+  vector<std::string, CountingAllocator> vec(&alloc);
+
+  vec.push_back("hello");
+  vec.push_back("world");
+
+  REQUIRE(alloc.alloc_count == 0);  // strings fit in SVO
+  REQUIRE(vec.size() == 2);
+  REQUIRE(vec[0] == "hello");
+  REQUIRE(vec[1] == "world");
+}
+
+TEST_CASE("Vector: SVO clear stays in SVO", "[priv_vector][svo]") {
+  CountingAllocator alloc;
+  vector<int, CountingAllocator> vec(&alloc);
+  vec.push_back(1);
+  vec.push_back(2);
+  vec.push_back(3);
+
+  vec.clear();
+
+  REQUIRE(alloc.alloc_count == 0);
+  REQUIRE(alloc.free_count == 0);
+  REQUIRE(vec.size() == 0);
+  REQUIRE(vec.capacity() == 8);
+
+  // Can reuse SVO after clear
+  vec.push_back(10);
+  REQUIRE(vec[0] == 10);
+  REQUIRE(alloc.alloc_count == 0);
+}
+
+TEST_CASE("Vector: SVO reserve within SVO_SIZE is no-op", "[priv_vector][svo]") {
+  CountingAllocator alloc;
+  vector<int, CountingAllocator> vec(&alloc);
+
+  vec.reserve(4);
+  REQUIRE(alloc.alloc_count == 0);
+  REQUIRE(vec.capacity() == 8);
+
+  vec.reserve(8);
+  REQUIRE(alloc.alloc_count == 0);
+  REQUIRE(vec.capacity() == 8);
 }
 
 // ============================================================================

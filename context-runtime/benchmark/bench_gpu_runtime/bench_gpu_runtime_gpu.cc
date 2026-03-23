@@ -186,6 +186,145 @@ __global__ void gpu_bench_alloc_kernel(
 }
 
 /**
+ * GPU alloc+free benchmark kernel for PutBlobTask + LocalSaveTaskArchive.
+ *
+ * Each warp scheduler does total_tasks cycles of:
+ *   1. NewTask<PutBlobTask> — allocate task
+ *   2. NewObj<LocalSaveTaskArchive> — allocate save archive
+ *   3. DelObj(ar_save) + DelTask(task) — free both
+ *
+ * No serialization — purely measures allocation/deallocation cost of the
+ * two objects that SendToGpu's copy path must create.
+ *
+ * Requires gpu_heap_backend for LocalSaveTaskArchive (CHI_PRIV_ALLOC).
+ */
+__global__ void gpu_bench_alloc_serde_kernel(
+    chi::IpcManagerGpu gpu_info,
+    chi::PoolId pool_id,
+    chi::u32 num_blocks,
+    chi::u32 total_tasks,
+    int *d_done,
+    chi::u32 total_threads) {
+  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+
+  auto *ipc = CHI_IPC;
+
+  // Only warp scheduler runs — BuddyAllocator is not thread-safe
+  if (chi::IpcManager::IsWarpScheduler()) {
+    long long t_push_arena = 0, t_pop_arena = 0;
+    long long t_alloc_task = 0, t_ctor_save = 0, t_ctor_load = 0, t_alloc_task2 = 0;
+    long long t_free_task2 = 0, t_dtor_load = 0, t_dtor_save = 0, t_free_task = 0;
+
+    // Push arenas once (same as serde kernel)
+    long long tc = clock64();
+    const size_t arena_bytes = static_cast<size_t>(4096) *
+                               static_cast<size_t>(total_tasks + 8);
+    auto heap_arena = ipc->PushHeapArena(arena_bytes);
+    auto arena = ipc->PushArena(arena_bytes);
+    t_push_arena += clock64() - tc;
+
+    for (chi::u32 i = 0; i < total_tasks; ++i) {
+      // --- Alloc task ---
+      tc = clock64();
+      auto task = ipc->NewTask<wrp_cte::core::PutBlobTask>();
+      task->pool_id_ = pool_id;
+      task->size_ = 0;
+      t_alloc_task += clock64() - tc;
+
+      // --- Construct SaveArchive on stack ---
+      tc = clock64();
+      chi::LocalSaveTaskArchive ar_save(chi::LocalMsgType::kSerializeIn);
+      t_ctor_save += clock64() - tc;
+
+      // --- (skip serialize) ---
+
+      // --- Construct LoadArchive on stack ---
+      tc = clock64();
+      chi::LocalLoadTaskArchive ar_load(ar_save.GetData());
+      ar_load.SetMsgType(chi::LocalMsgType::kSerializeIn);
+      t_ctor_load += clock64() - tc;
+
+      // --- Alloc task2 ---
+      tc = clock64();
+      auto task2 = ipc->NewObj<wrp_cte::core::PutBlobTask>();
+      t_alloc_task2 += clock64() - tc;
+
+      // --- (skip deserialize) ---
+
+      // --- Free / Destroy ---
+      tc = clock64(); ipc->DelObj(task2);
+      t_free_task2 += clock64() - tc;
+      tc = clock64(); ar_load.~LocalLoadTaskArchive();
+      t_dtor_load += clock64() - tc;
+      tc = clock64(); ar_save.~LocalSaveTaskArchive();
+      t_dtor_save += clock64() - tc;
+      tc = clock64(); ipc->DelTask(task);
+      t_free_task += clock64() - tc;
+    }
+
+    // --- Arena pop (once) ---
+    tc = clock64();
+    arena.Release();
+    heap_arena.Release();
+    t_pop_arena += clock64() - tc;
+
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+      printf("=== Alloc+Free serde objects, no serialize/deserialize (%u tasks) ===\n",
+             total_tasks);
+      printf("  sizeof(PutBlobTask):    %llu bytes\n",
+             (unsigned long long)sizeof(wrp_cte::core::PutBlobTask));
+      printf("  PushArena:              %llu  (%llu/task)\n",
+             (unsigned long long)t_push_arena,
+             (unsigned long long)(t_push_arena / total_tasks));
+      printf("  NewTask<PutBlob>:       %llu  (%llu/task)\n",
+             (unsigned long long)t_alloc_task,
+             (unsigned long long)(t_alloc_task / total_tasks));
+      printf("  LocalSaveTaskArchive(): %llu  (%llu/task)\n",
+             (unsigned long long)t_ctor_save,
+             (unsigned long long)(t_ctor_save / total_tasks));
+      printf("  LocalLoadTaskArchive(): %llu  (%llu/task)\n",
+             (unsigned long long)t_ctor_load,
+             (unsigned long long)(t_ctor_load / total_tasks));
+      printf("  NewObj<PutBlob> task2:  %llu  (%llu/task)\n",
+             (unsigned long long)t_alloc_task2,
+             (unsigned long long)(t_alloc_task2 / total_tasks));
+      printf("  Free:\n");
+      printf("    DelObj(task2):        %llu  (%llu/task)\n",
+             (unsigned long long)t_free_task2,
+             (unsigned long long)(t_free_task2 / total_tasks));
+      printf("    ~LoadArchive():       %llu  (%llu/task)\n",
+             (unsigned long long)t_dtor_load,
+             (unsigned long long)(t_dtor_load / total_tasks));
+      printf("    ~SaveArchive():       %llu  (%llu/task)\n",
+             (unsigned long long)t_dtor_save,
+             (unsigned long long)(t_dtor_save / total_tasks));
+      printf("    DelTask(task):        %llu  (%llu/task)\n",
+             (unsigned long long)t_free_task,
+             (unsigned long long)(t_free_task / total_tasks));
+      long long t_free_total = t_free_task2 + t_dtor_load + t_dtor_save + t_free_task;
+      printf("    SUBTOTAL:             %llu  (%llu/task)\n",
+             (unsigned long long)t_free_total,
+             (unsigned long long)(t_free_total / total_tasks));
+      printf("  PopArena:               %llu  (%llu/task)\n",
+             (unsigned long long)t_pop_arena,
+             (unsigned long long)(t_pop_arena / total_tasks));
+      long long total = t_push_arena + t_alloc_task + t_ctor_save +
+                         t_ctor_load + t_alloc_task2 +
+                         t_free_total + t_pop_arena;
+      printf("  TOTAL:                  %llu  (%llu/task)\n",
+             (unsigned long long)total,
+             (unsigned long long)(total / total_tasks));
+    }
+  }
+
+  __threadfence();
+  int prev = atomicAdd(d_done, 1);
+  if (prev == static_cast<int>(total_threads) - 1) {
+    __threadfence_system();
+  }
+}
+
+/**
  * GPU alloc+serialize+deserialize+free benchmark kernel.
  *
  * Each thread does total_tasks cycles of:
@@ -206,6 +345,11 @@ __global__ void gpu_bench_serde_kernel(
   CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
 
   auto *ipc = CHI_IPC;
+
+  // BuddyAllocator is not thread-safe for concurrent access by multiple
+  // threads within a warp.  Only the warp scheduler (lane 0) runs the
+  // serde benchmarks to avoid corrupting the allocator free lists.
+  if (chi::IpcManager::IsWarpScheduler()) {
 
   // === Baseline 1: 8x memcpy with offset tracking (stack→stack) ===
   long long t_memcpy_stack = 0;
@@ -230,7 +374,7 @@ __global__ void gpu_bench_serde_kernel(
     sink = stack_buf[0];
   }
 
-  // === Baseline 2: LocalSerialize 8 scalars (stack locals, no arena) ===
+// === Baseline 2: LocalSerialize 8 scalars (stack locals, no arena) ===
   long long t_ls_vec_alloc = 0, t_ls_serialize = 0;
   {
     chi::u64 f0 = 0x1111111111111111ULL, f1 = 0x2222222222222222ULL;
@@ -268,7 +412,7 @@ __global__ void gpu_bench_serde_kernel(
     }
   }
 
-  // === Baseline 3: LocalSerialize 8 scalars WITH arena (should be faster) ===
+// === Baseline 3: LocalSerialize 8 scalars WITH arena (should be faster) ===
   long long t_ls_arena_alloc = 0, t_ls_arena_ser = 0, t_ls_arena_free = 0;
   long long t_ls_arena_push = 0, t_ls_arena_pop = 0;
   {
@@ -299,7 +443,7 @@ __global__ void gpu_bench_serde_kernel(
     }
   }
 
-  // === Baseline 4: LocalSerialize 8 scalars from HEAP object ===
+// === Baseline 4: LocalSerialize 8 scalars from HEAP object ===
   struct HeapFields {
     chi::u64 f0, f1; chi::u32 f2, f3;
     chi::u64 f4, f5; chi::u32 f6, f7;
@@ -328,7 +472,7 @@ __global__ void gpu_bench_serde_kernel(
     }
   }
 
-  // === Baseline 5: LocalSerialize 8 scalars via POINTER to stack struct ===
+// === Baseline 5: LocalSerialize 8 scalars via POINTER to stack struct ===
   long long t_ls_ptr_ser = 0;
   {
     HeapFields stack_obj;
@@ -345,7 +489,7 @@ __global__ void gpu_bench_serde_kernel(
     }
   }
 
-  // === Baseline 7: Copy struct fields to locals, THEN serialize locals ===
+// === Baseline 7: Copy struct fields to locals, THEN serialize locals ===
   // Tests register-promotion theory: if overhead is pointer indirection,
   // copying to locals first should match baseline 2 speed.
   long long t_ls_copy_locals_ser = 0;
@@ -369,7 +513,7 @@ __global__ void gpu_bench_serde_kernel(
     }
   }
 
-  // === Baseline 6: Serialize 8 scalars one-at-a-time (separate clock64 per field) ===
+// === Baseline 6: Serialize 8 scalars one-at-a-time (separate clock64 per field) ===
   // Tests if clock64() granularity / per-call overhead inflates measurements
   long long t_ls_1by1_total = 0;
   long long t_ls_1by1_fields[8] = {};
@@ -393,7 +537,7 @@ __global__ void gpu_bench_serde_kernel(
     for (int j = 0; j < 8; ++j) t_ls_1by1_total += t_ls_1by1_fields[j];
   }
 
-  // === Baseline 8: String serialization cost ===
+// === Baseline 8: String serialization cost ===
   long long t_str_ser = 0, t_str_deser = 0;
   long long t_str_alloc = 0, t_str_free = 0;
   {
@@ -432,7 +576,7 @@ __global__ void gpu_bench_serde_kernel(
   long long t_str_buddy_alloc = 0, t_str_buddy_free = 0;
   long long t_str_thread_alloc = 0, t_str_thread_free = 0;
 
-  // === Baseline 8c: LocalSerialize 8 scalars into stack array (range, no allocator) ===
+// === Baseline 8c: LocalSerialize 8 scalars into stack array (range, no allocator) ===
   long long t_ls_array_ser = 0;
   {
     struct Fields {
@@ -455,7 +599,7 @@ __global__ void gpu_bench_serde_kernel(
     }
   }
 
-  // === Baseline 8d: LocalSerialize 8 scalars + string into stack array (range) ===
+// === Baseline 8d: LocalSerialize 8 scalars + string into stack array (range) ===
   long long t_ls_array_str_ser = 0, t_ls_array_str_deser = 0;
   {
     struct Fields {
@@ -492,7 +636,7 @@ __global__ void gpu_bench_serde_kernel(
     }
   }
 
-  // === Baseline 8e: Matrix A = B + C (global memory, varying sizes) ===
+// === Baseline 8e: Matrix A = B + C (global memory, varying sizes) ===
   // Tests raw global memory throughput for comparison
   long long t_mat_64 = 0, t_mat_256 = 0, t_mat_1024 = 0, t_mat_4096 = 0;
   {
@@ -551,7 +695,7 @@ __global__ void gpu_bench_serde_kernel(
     }
   }
 
-  // === Baseline 9: CHI_IPC singleton access latency ===
+// === Baseline 9: CHI_IPC singleton access latency ===
   long long t_ipc_access = 0;
   {
     volatile void *sink_ptr = nullptr;
@@ -625,11 +769,11 @@ __global__ void gpu_bench_serde_kernel(
     }
   }
 
-  // Full serde timing accumulators
+// Full serde timing accumulators
   long long t_push_arena = 0, t_pop_arena = 0;
-  long long t_alloc_task = 0, t_alloc_save = 0, t_alloc_load = 0, t_alloc_task2 = 0;
+  long long t_alloc_task = 0, t_ctor_save = 0, t_ctor_load = 0, t_alloc_task2 = 0;
   long long t_serialize = 0, t_deserialize = 0;
-  long long t_free_task2 = 0, t_free_load = 0, t_free_save = 0, t_free_task = 0;
+  long long t_free_task2 = 0, t_dtor_load = 0, t_dtor_save = 0, t_free_task = 0;
 
   // Push arenas once to avoid per-iteration push/pop overhead.
   // The benchmark is intended to measure task/archive allocation and serde,
@@ -650,23 +794,21 @@ __global__ void gpu_bench_serde_kernel(
     task->size_ = 0;
     t_alloc_task += clock64() - tc;
 
-    // --- Alloc SaveArchive ---
+    // --- Construct SaveArchive on stack ---
     tc = clock64();
-    auto ar_save = ipc->NewObj<chi::LocalSaveTaskArchive>(
-        chi::LocalMsgType::kSerializeIn);
-    t_alloc_save += clock64() - tc;
+    chi::LocalSaveTaskArchive ar_save(chi::LocalMsgType::kSerializeIn);
+    t_ctor_save += clock64() - tc;
 
     // --- Serialize via SerializeIn (uses write_range batching) ---
     tc = clock64();
-    ar_save.ptr_->operator<<(*task.ptr_);
+    ar_save << (*task.ptr_);
     t_serialize += clock64() - tc;
 
-    // --- Alloc LoadArchive ---
+    // --- Construct LoadArchive on stack ---
     tc = clock64();
-    auto ar_load = ipc->NewObj<chi::LocalLoadTaskArchive>(
-        ar_save->GetData());
-    ar_load->SetMsgType(chi::LocalMsgType::kSerializeIn);
-    t_alloc_load += clock64() - tc;
+    chi::LocalLoadTaskArchive ar_load(ar_save.GetData());
+    ar_load.SetMsgType(chi::LocalMsgType::kSerializeIn);
+    t_ctor_load += clock64() - tc;
 
     // --- Alloc task2 ---
     tc = clock64();
@@ -675,16 +817,16 @@ __global__ void gpu_bench_serde_kernel(
 
     // --- Deserialize via SerializeIn (uses read_range batching) ---
     tc = clock64();
-    ar_load.ptr_->operator>>(*task2.ptr_);
+    ar_load >> (*task2.ptr_);
     t_deserialize += clock64() - tc;
 
-    // --- Free (individual) ---
+    // --- Free / Destroy ---
     tc = clock64(); ipc->DelObj(task2);
     t_free_task2 += clock64() - tc;
-    tc = clock64(); ipc->DelObj(ar_load);
-    t_free_load += clock64() - tc;
-    tc = clock64(); ipc->DelObj(ar_save);
-    t_free_save += clock64() - tc;
+    tc = clock64(); ar_load.~LocalLoadTaskArchive();
+    t_dtor_load += clock64() - tc;
+    tc = clock64(); ar_save.~LocalSaveTaskArchive();
+    t_dtor_save += clock64() - tc;
     tc = clock64(); ipc->DelTask(task);
     t_free_task += clock64() - tc;
   }
@@ -804,24 +946,26 @@ __global__ void gpu_bench_serde_kernel(
     printf("--- Full PutBlobTask serde (with write_range batching) ---\n");
     printf("  PushArena:              %llu  (%llu/task)\n", (unsigned long long)t_push_arena, (unsigned long long)(t_push_arena/total_tasks));
     printf("  NewTask<PutBlob>:       %llu  (%llu/task)\n", (unsigned long long)t_alloc_task, (unsigned long long)(t_alloc_task/total_tasks));
-    printf("  NewObj<SaveArchive>:    %llu  (%llu/task)\n", (unsigned long long)t_alloc_save, (unsigned long long)(t_alloc_save/total_tasks));
+    printf("  LocalSaveTaskArchive(): %llu  (%llu/task)\n", (unsigned long long)t_ctor_save, (unsigned long long)(t_ctor_save/total_tasks));
     printf("  Serialize (full):       %llu  (%llu/task)\n", (unsigned long long)t_serialize, (unsigned long long)(t_serialize/total_tasks));
-    printf("  NewObj<LoadArchive>:    %llu  (%llu/task)\n", (unsigned long long)t_alloc_load, (unsigned long long)(t_alloc_load/total_tasks));
+    printf("  LocalLoadTaskArchive(): %llu  (%llu/task)\n", (unsigned long long)t_ctor_load, (unsigned long long)(t_ctor_load/total_tasks));
     printf("  NewObj<PutBlob> task2:  %llu  (%llu/task)\n", (unsigned long long)t_alloc_task2, (unsigned long long)(t_alloc_task2/total_tasks));
     printf("  Deserialize (full):     %llu  (%llu/task)\n", (unsigned long long)t_deserialize, (unsigned long long)(t_deserialize/total_tasks));
     printf("  Free:\n");
     printf("    DelObj(task2):        %llu  (%llu/task)\n", (unsigned long long)t_free_task2, (unsigned long long)(t_free_task2/total_tasks));
-    printf("    DelObj(ar_load):      %llu  (%llu/task)\n", (unsigned long long)t_free_load, (unsigned long long)(t_free_load/total_tasks));
-    printf("    DelObj(ar_save):      %llu  (%llu/task)\n", (unsigned long long)t_free_save, (unsigned long long)(t_free_save/total_tasks));
+    printf("    ~LoadArchive():       %llu  (%llu/task)\n", (unsigned long long)t_dtor_load, (unsigned long long)(t_dtor_load/total_tasks));
+    printf("    ~SaveArchive():       %llu  (%llu/task)\n", (unsigned long long)t_dtor_save, (unsigned long long)(t_dtor_save/total_tasks));
     printf("    DelTask(task):        %llu  (%llu/task)\n", (unsigned long long)t_free_task, (unsigned long long)(t_free_task/total_tasks));
-    long long t_free_total = t_free_task2 + t_free_load + t_free_save + t_free_task;
+    long long t_free_total = t_free_task2 + t_dtor_load + t_dtor_save + t_free_task;
     printf("    SUBTOTAL:             %llu  (%llu/task)\n", (unsigned long long)t_free_total, (unsigned long long)(t_free_total/total_tasks));
     printf("  PopArena:               %llu  (%llu/task)\n", (unsigned long long)t_pop_arena, (unsigned long long)(t_pop_arena/total_tasks));
-    long long total = t_push_arena + t_alloc_task + t_alloc_save +
-                      t_serialize + t_alloc_load + t_alloc_task2 +
+    long long total = t_push_arena + t_alloc_task + t_ctor_save +
+                      t_serialize + t_ctor_load + t_alloc_task2 +
                       t_deserialize + t_free_total + t_pop_arena;
     printf("  TOTAL:                  %llu  (%llu/task)\n", (unsigned long long)total, (unsigned long long)(total / total_tasks));
   }
+
+  }  // IsWarpScheduler
 
   __threadfence();
   int prev = atomicAdd(d_done, 1);
@@ -1128,7 +1272,9 @@ extern "C" int run_gpu_bench_serde(
     chi::u32 client_threads,
     chi::u32 total_tasks,
     float *out_elapsed_ms) {
-  constexpr size_t kPerBlockBytes = 10 * 1024 * 1024;
+  // Primary backend: sized to hold arena allocations for all threads.
+  // Each thread bump-allocates ~4KB * total_tasks in the serde loop.
+  constexpr size_t kPerBlockBytes = 32 * 1024 * 1024;
   size_t backend_size = static_cast<size_t>(client_blocks) * kPerBlockBytes;
 
   hipc::MemoryBackendId backend_id(105, 0);
@@ -1137,8 +1283,10 @@ extern "C" int run_gpu_bench_serde(
     return -1;
   }
 
-  // Heap backend for serialization scratch (CHI_GPU_HEAP / CHI_PRIV_ALLOC)
-  constexpr size_t kPerBlockHeapBytes = 4 * 1024 * 1024;
+  // Heap backend for serialization scratch (CHI_GPU_HEAP / CHI_PRIV_ALLOC).
+  // Arena allocations are bump-only (frees are no-ops), so the heap must
+  // hold all baseline + full-serde allocations across all threads.
+  constexpr size_t kPerBlockHeapBytes = 32 * 1024 * 1024;
   size_t heap_backend_size = static_cast<size_t>(client_blocks) * kPerBlockHeapBytes;
 
   hipc::MemoryBackendId heap_backend_id(106, 0);
@@ -1151,8 +1299,10 @@ extern "C" int run_gpu_bench_serde(
   gpu_info.backend = gpu_backend;
   gpu_info.gpu_heap_backend = gpu_heap_backend;
 
-  // Archives and tasks are heap-allocated in the kernel to avoid stack overflow.
-  // Default GPU stack size (1KB) is sufficient.
+  // The serde kernel has many local variables and deep call stacks
+  // (serialization, allocator, vector operations).  32KB stack is needed.
+  cudaDeviceSetLimit(cudaLimitStackSize, 32768);
+  cudaDeviceSetLimit(cudaLimitPrintfFifoSize, 8 * 1024 * 1024);
 
   int *d_done;
   cudaMallocHost(&d_done, sizeof(int));
@@ -1192,6 +1342,85 @@ extern "C" int run_gpu_bench_serde(
     printf("serde kernel error: %s\n", cudaGetErrorString(sync_err));
   }
 
+  cudaFreeHost(d_done);
+  hshm::GpuApi::DestroyStream(stream);
+
+  return completed ? 0 : -4;
+}
+
+/**
+ * Run the GPU alloc+free benchmark for PutBlobTask + LocalSaveTaskArchive.
+ *
+ * Same backend setup as run_gpu_bench_serde but launches
+ * gpu_bench_alloc_serde_kernel (alloc/free only, no serialization).
+ */
+extern "C" int run_gpu_bench_alloc_serde(
+    chi::PoolId pool_id,
+    chi::u32 client_blocks,
+    chi::u32 client_threads,
+    chi::u32 total_tasks,
+    float *out_elapsed_ms) {
+  // Primary backend for NewTask (ThreadAllocator)
+  constexpr size_t kPerBlockBytes = 10 * 1024 * 1024;
+  size_t backend_size = static_cast<size_t>(client_blocks) * kPerBlockBytes;
+
+  hipc::MemoryBackendId backend_id(107, 0);
+  hipc::GpuMalloc gpu_backend;
+  if (!gpu_backend.shm_init(backend_id, backend_size, "", 0)) {
+    return -1;
+  }
+
+  // Heap backend for NewObj<LocalSaveTaskArchive> (BuddyAllocator)
+  constexpr size_t kPerBlockHeapBytes = 4 * 1024 * 1024;
+  size_t heap_backend_size = static_cast<size_t>(client_blocks) * kPerBlockHeapBytes;
+
+  hipc::MemoryBackendId heap_backend_id(108, 0);
+  hipc::GpuMalloc gpu_heap_backend;
+  if (!gpu_heap_backend.shm_init(heap_backend_id, heap_backend_size, "", 0)) {
+    return -1;
+  }
+
+  chi::IpcManagerGpu gpu_info{};
+  gpu_info.backend = gpu_backend;
+  gpu_info.gpu_heap_backend = gpu_heap_backend;
+
+  cudaDeviceSetLimit(cudaLimitStackSize, 32768);
+  cudaDeviceSetLimit(cudaLimitPrintfFifoSize, 4 * 1024 * 1024);
+
+  int *d_done;
+  cudaMallocHost(&d_done, sizeof(int));
+  *d_done = 0;
+
+  chi::u32 total_threads = client_blocks * client_threads;
+
+  void *stream = hshm::GpuApi::CreateStream();
+  cudaGetLastError();
+
+  chi_bench::gpu_bench_alloc_serde_kernel<<<
+      client_blocks, client_threads, 0,
+      static_cast<cudaStream_t>(stream)>>>(
+      gpu_info, pool_id, client_blocks, total_tasks, d_done, total_threads);
+
+  cudaError_t launch_err = cudaGetLastError();
+  if (launch_err != cudaSuccess) {
+    printf("alloc_serde kernel launch error: %s\n",
+           cudaGetErrorString(launch_err));
+    cudaFreeHost(d_done);
+    hshm::GpuApi::DestroyStream(stream);
+    return -3;
+  }
+
+  auto t_start = std::chrono::high_resolution_clock::now();
+
+  constexpr int kTimeoutUs = 60000000;
+  bool completed = PollDone(d_done, static_cast<int>(total_threads), kTimeoutUs);
+
+  auto t_end = std::chrono::high_resolution_clock::now();
+  double elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          t_end - t_start).count();
+  *out_elapsed_ms = static_cast<float>(elapsed_ns / 1e6);
+
+  cudaStreamSynchronize(static_cast<cudaStream_t>(stream));
   cudaFreeHost(d_done);
   hshm::GpuApi::DestroyStream(stream);
 
