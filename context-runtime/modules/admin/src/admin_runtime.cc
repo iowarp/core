@@ -465,6 +465,9 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
     chi::u64 this_node_id = ipc_manager->GetNodeId();
     task_copy->pool_query_.SetReturnNode(this_node_id);
 
+    // For local node, execute via lightbeam self-send (same path as remote)
+    // This ensures the local replica goes through RecvIn → Execute → SendOut → RecvOut
+
     // Check aliveness before sending
     if (!ipc_manager->IsAlive(target_node_id)) {
       float net_timeout = origin_task->pool_query_.GetNetTimeout();
@@ -509,11 +512,9 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
     // Send using Lightbeam asynchronously (non-blocking)
     // Note: No lock needed - single net worker processes all Send/Recv tasks
     hshm::lbm::LbmContext ctx(0);  // Non-blocking async send
-    HLOG(kDebug, "[SendIn] Task {} sending to node {} via lightbeam",
-         origin_task->task_id_, target_node_id);
+    HLOG(kDebug, "[SendIn] Task {} sending method={} to node {} via lightbeam",
+         origin_task->task_id_, origin_task->method_, target_node_id);
     int rc = lbm_transport->Send(archive, ctx);
-    HLOG(kDebug, "[SendIn] Task {} lightbeam Send rc={}", origin_task->task_id_,
-         rc);
 
     if (rc != 0) {
       HLOG(kError,
@@ -525,6 +526,9 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
       continue;
     }
   }
+  HLOG(kDebug, "[SendIn] Done: method={}, completed_replicas={}, subtasks={}",
+       origin_task->method_, origin_task_rctx->completed_replicas_,
+       origin_task_rctx->subtasks_.size());
 }
 
 /**
@@ -907,7 +911,9 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
     // Aggregate replica results into origin task via container dispatch
     container->Aggregate(origin_task->method_, origin_task, replica);
 
-    HLOG(kDebug, "[RecvOut] Task {}", origin_task->task_id_);
+    HLOG(kDebug, "[RecvOut] Task {} method={} completed={}/{}",
+         origin_task->task_id_, origin_task->method_,
+         origin_rctx->completed_replicas_, origin_rctx->subtasks_.size());
 
     // Increment completed replicas counter in origin's rctx
     origin_rctx->completed_replicas_++;
@@ -934,6 +940,9 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
       // Remove origin from send_map
       // Note: No lock needed - single net worker processes all Send/Recv tasks
       send_map_.erase(net_key);
+
+      // Clear TASK_AWAITING_REPLICAS so EndTask proceeds normally
+      origin_task->ClearFlags(TASK_AWAITING_REPLICAS);
 
       // Set container in origin RunContext (may be null if task was routed
       // globally without passing through RouteLocal, e.g. TASK_FORCE_NET)

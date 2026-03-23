@@ -826,6 +826,15 @@ void Worker::EndTask(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
     return;
   }
 
+  // If task was routed globally (broadcast/scatter), don't complete here.
+  // The origin task is stored in send_map_ and will be completed by
+  // RecvOut after all remote replicas have been aggregated.
+  // We detect this by checking TASK_AWAITING_REPLICAS, which is set
+  // by RouteGlobal when the task is enqueued to the net queue.
+  if (task_ptr->task_flags_.Any(TASK_AWAITING_REPLICAS) && !is_remote && !is_periodic) {
+    return;
+  }
+
   // Copy variables from future_shm to stack BEFORE any SetComplete() call
   // This prevents use-after-free since client may free future_shm after
   // SetComplete()

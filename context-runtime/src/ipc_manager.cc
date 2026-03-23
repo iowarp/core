@@ -2315,10 +2315,16 @@ bool IpcManager::RouteGlobal(Future<Task> &future,
   }
 
   // Enqueue the original task directly to net_queue_ priority 0 (SendIn)
+  HLOG(kDebug, "[RouteGlobal] method={} pool={} queries={}",
+       task_ptr->method_, task_ptr->pool_id_, pool_queries.size());
   EnqueueNetTask(future, NetQueuePriority::kSendIn);
 
-  // Set TASK_ROUTED flag on original task
+  // Set TASK_ROUTED flag. Only set TASK_AWAITING_REPLICAS for multi-replica
+  // tasks (broadcasts) — single-replica tasks complete via normal EndTask path.
   task_ptr->SetFlags(TASK_ROUTED);
+  if (pool_queries.size() > 1) {
+    task_ptr->SetFlags(TASK_AWAITING_REPLICAS);
+  }
 
   Worker *worker = CHI_CUR_WORKER;
   HLOG(kDebug, "Worker {}: RouteGlobal - task enqueued to net_queue",

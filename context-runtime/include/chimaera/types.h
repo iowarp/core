@@ -409,6 +409,10 @@ struct AddressHash {
   BIT_OPT(chi::u32, 7)  ///< Task does not need a response. Wait/co_await return
                         ///< instantly; SendOut, ClientSend, and
                         ///< EndTaskShmTransfer are skipped.
+#define TASK_AWAITING_REPLICAS \
+  BIT_OPT(chi::u32, 8)  ///< Task has been routed globally and is awaiting
+                        ///< remote replica results via RecvOut/Aggregate.
+                        ///< EndTask must not complete this task; RecvOut will.
 
 // Bulk transfer flags are defined in hermes_shm/lightbeam/lightbeam.h:
 // - BULK_EXPOSE: Bulk is exposed (sender exposes for reading)
