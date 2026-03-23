@@ -513,6 +513,12 @@ private:
    */
   chi::TaskResume SemanticQuery(hipc::FullPtr<SemanticQueryTask> task,
                                 chi::RunContext &ctx);
+
+  /**
+   * Sync knowledge graph - collects local df stats for global IDF
+   */
+  chi::TaskResume SyncKnowledgeGraph(hipc::FullPtr<SyncKnowledgeGraphTask> task,
+                                      chi::RunContext &ctx);
 #endif  // WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
 
 private:

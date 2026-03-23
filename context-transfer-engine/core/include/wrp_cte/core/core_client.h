@@ -519,12 +519,13 @@ class Client : public chi::ContainerClient {
    */
   chi::Future<UpdateKnowledgeGraphTask> AsyncUpdateKnowledgeGraph(
       const TagId &tag_id,
+      const std::string &tag_name,
       const std::string &summary,
       const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
     auto *ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<UpdateKnowledgeGraphTask>(
-        chi::CreateTaskId(), pool_id_, pool_query, tag_id, summary);
+        chi::CreateTaskId(), pool_id_, pool_query, tag_id, tag_name, summary);
 
     return ipc_manager->Send(task);
   }
@@ -543,6 +544,47 @@ class Client : public chi::ContainerClient {
 
     auto task = ipc_manager->NewTask<SemanticQueryTask>(
         chi::CreateTaskId(), pool_id_, pool_query, prompt, top_k);
+
+    return ipc_manager->Send(task);
+  }
+
+  /**
+   * Synchronize global IDF statistics across all nodes.
+   * Each node returns its local df counts; Aggregate merges them.
+   * After completion, the aggregated global stats are applied to all nodes
+   * via a second broadcast.
+   */
+  /**
+   * Collect mode: broadcast to all nodes, each returns local df stats.
+   * Aggregate merges into global stats.
+   */
+  chi::Future<SyncKnowledgeGraphTask> AsyncSyncKnowledgeGraph(
+      const chi::PoolQuery &pool_query = chi::PoolQuery::Broadcast()) {
+    auto *ipc_manager = CHI_IPC;
+
+    auto task = ipc_manager->NewTask<SyncKnowledgeGraphTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, false);
+
+    return ipc_manager->Send(task);
+  }
+
+  /**
+   * Distribute mode: broadcast aggregated global IDF stats to all nodes.
+   * Each node calls SetGlobalIdf on its local KG.
+   */
+  chi::Future<SyncKnowledgeGraphTask> AsyncSyncKnowledgeGraph(
+      const chi::PoolQuery &pool_query,
+      bool is_distribute,
+      size_t global_n,
+      size_t global_total_terms,
+      const std::unordered_map<std::string, size_t> &global_df) {
+    auto *ipc_manager = CHI_IPC;
+
+    auto task = ipc_manager->NewTask<SyncKnowledgeGraphTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, is_distribute);
+    task->global_n_ = global_n;
+    task->global_total_terms_ = global_total_terms;
+    task->global_df_ = global_df;
 
     return ipc_manager->Send(task);
   }

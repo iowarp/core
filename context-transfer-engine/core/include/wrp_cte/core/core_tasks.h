@@ -1970,12 +1970,14 @@ struct FlushDataTask : public chi::Task {
  */
 struct UpdateKnowledgeGraphTask : public chi::Task {
   IN TagId tag_id_;                    // Tag ID to associate summary with
+  IN chi::priv::string tag_name_;      // Tag name for hash-based routing
   IN chi::priv::string summary_;       // Summary text to store
 
   // SHM constructor
   UpdateKnowledgeGraphTask()
       : chi::Task(),
         tag_id_(TagId::GetNull()),
+        tag_name_(HSHM_MALLOC),
         summary_(HSHM_MALLOC) {}
 
   // Emplace constructor
@@ -1983,9 +1985,11 @@ struct UpdateKnowledgeGraphTask : public chi::Task {
                                     const chi::PoolId &pool_id,
                                     const chi::PoolQuery &pool_query,
                                     const TagId &tag_id,
+                                    const std::string &tag_name,
                                     const std::string &summary)
       : chi::Task(task_id, pool_id, pool_query, Method::kUpdateKnowledgeGraph),
         tag_id_(tag_id),
+        tag_name_(HSHM_MALLOC, tag_name),
         summary_(HSHM_MALLOC, summary) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -1997,7 +2001,7 @@ struct UpdateKnowledgeGraphTask : public chi::Task {
   template <typename Archive>
   void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
-    ar(tag_id_, summary_);
+    ar(tag_id_, tag_name_, summary_);
   }
 
   template <typename Archive>
@@ -2008,6 +2012,7 @@ struct UpdateKnowledgeGraphTask : public chi::Task {
   void Copy(const hipc::FullPtr<UpdateKnowledgeGraphTask> &other) {
     Task::Copy(other.template Cast<Task>());
     tag_id_ = other->tag_id_;
+    tag_name_ = other->tag_name_;
     summary_ = other->summary_;
   }
 
@@ -2075,24 +2080,24 @@ struct SemanticQueryTask : public chi::Task {
   void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
     Task::Aggregate(other_base);
     auto replica = other_base.template Cast<SemanticQueryTask>();
-    // Merge results from replica
-    size_t orig_size = result_tags_.size();
+
+    // Merge replica results. KG is partitioned so entries are unique
+    // per node — no dedup needed. Sort by confidence, keep top_k.
     result_tags_.insert(result_tags_.end(),
                         replica->result_tags_.begin(),
                         replica->result_tags_.end());
     result_scores_.insert(result_scores_.end(),
                           replica->result_scores_.begin(),
                           replica->result_scores_.end());
-    // Sort by score descending, keep only top_k
+
+    // Sort by confidence descending
     size_t n = result_tags_.size();
     if (n > 1) {
-      // Build index array and sort by score
       std::vector<size_t> idx(n);
       std::iota(idx.begin(), idx.end(), 0);
       std::sort(idx.begin(), idx.end(), [this](size_t a, size_t b) {
         return result_scores_[a] > result_scores_[b];
       });
-      // Reorder in-place via sorted indices
       std::vector<TagId> sorted_tags(n);
       std::vector<float> sorted_scores(n);
       for (size_t i = 0; i < n; ++i) {
@@ -2102,10 +2107,86 @@ struct SemanticQueryTask : public chi::Task {
       result_tags_ = std::move(sorted_tags);
       result_scores_ = std::move(sorted_scores);
     }
+
     // Truncate to top_k
     if (result_tags_.size() > top_k_) {
       result_tags_.resize(top_k_);
       result_scores_.resize(top_k_);
+    }
+  }
+};
+
+/**
+ * SyncKnowledgeGraph task - Synchronize global IDF statistics across nodes.
+ *
+ * Two modes based on is_distribute_:
+ * - Collect (is_distribute_=false): Broadcasts to all nodes, each returns
+ *   local df counts and doc count. Aggregate merges into global stats.
+ * - Distribute (is_distribute_=true): Broadcasts aggregated global stats
+ *   to all nodes so each node calls SetGlobalIdf on its KG.
+ */
+struct SyncKnowledgeGraphTask : public chi::Task {
+  IN bool is_distribute_;                                  // false=collect, true=distribute
+  INOUT size_t global_n_;                                  // Document count
+  INOUT size_t global_total_terms_;                        // Total terms
+  INOUT std::unordered_map<std::string, size_t> global_df_; // Term -> df
+
+  // SHM constructor
+  SyncKnowledgeGraphTask()
+      : chi::Task(),
+        is_distribute_(false),
+        global_n_(0),
+        global_total_terms_(0),
+        global_df_() {}
+
+  // Emplace constructor
+  explicit SyncKnowledgeGraphTask(const chi::TaskId &task_id,
+                                   const chi::PoolId &pool_id,
+                                   const chi::PoolQuery &pool_query,
+                                   bool is_distribute = false)
+      : chi::Task(task_id, pool_id, pool_query, Method::kSyncKnowledgeGraph),
+        is_distribute_(is_distribute),
+        global_n_(0),
+        global_total_terms_(0),
+        global_df_() {
+    task_id_ = task_id;
+    pool_id_ = pool_id;
+    method_ = Method::kSyncKnowledgeGraph;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+    ar(is_distribute_, global_n_, global_total_terms_, global_df_);
+  }
+
+  template <typename Archive>
+  void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+    ar(global_n_, global_total_terms_, global_df_);
+  }
+
+  void Copy(const hipc::FullPtr<SyncKnowledgeGraphTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    is_distribute_ = other->is_distribute_;
+    global_n_ = other->global_n_;
+    global_total_terms_ = other->global_total_terms_;
+    global_df_ = other->global_df_;
+  }
+
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+    Task::Aggregate(other_base);
+    auto replica = other_base.template Cast<SyncKnowledgeGraphTask>();
+
+    // Only aggregate in collect mode
+    if (!is_distribute_) {
+      global_n_ += replica->global_n_;
+      global_total_terms_ += replica->global_total_terms_;
+      for (const auto &[term, df] : replica->global_df_) {
+        global_df_[term] += df;
+      }
     }
   }
 };

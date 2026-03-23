@@ -418,6 +418,22 @@ chi::PoolQuery Runtime::ScheduleTask(const hipc::FullPtr<chi::Task> &task) {
     case Method::kBlobQuery:
       return chi::PoolQuery::Broadcast();
 
+#ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+    // Partition KG: hash tag_name to same container as GetOrCreateTag
+    case Method::kUpdateKnowledgeGraph: {
+      auto typed = task.template Cast<UpdateKnowledgeGraphTask>();
+      std::string tag_name = typed->tag_name_.str();
+      std::hash<std::string> string_hasher;
+      chi::u32 hash_value = static_cast<chi::u32>(string_hasher(tag_name));
+      return chi::PoolQuery::DirectHash(hash_value);
+    }
+    // Search all nodes, aggregate top-K
+    case Method::kSemanticQuery:
+      return chi::PoolQuery::Broadcast();
+    case Method::kSyncKnowledgeGraph:
+      return chi::PoolQuery::Broadcast();
+#endif
+
     default:
       return task->pool_query_;
   }
@@ -3167,6 +3183,33 @@ chi::TaskResume Runtime::SemanticQuery(
     task->SetReturnCode(0);
   } catch (const std::exception &e) {
     HLOG(kError, "SemanticQuery failed: {}", e.what());
+    task->SetReturnCode(1);
+  }
+  co_return;
+}
+
+chi::TaskResume Runtime::SyncKnowledgeGraph(
+    hipc::FullPtr<SyncKnowledgeGraphTask> task, chi::RunContext &ctx) {
+  try {
+    if (task->is_distribute_) {
+      // Distribute mode: apply global IDF stats to local KG
+      chi::ScopedCoRwWriteLock write_lock(kg_lock_);
+      float global_avg_dl = (task->global_n_ > 0)
+          ? static_cast<float>(task->global_total_terms_) /
+            static_cast<float>(task->global_n_)
+          : 1.0f;
+      knowledge_graph_.SetGlobalIdf(
+          task->global_n_, std::move(task->global_df_), global_avg_dl);
+    } else {
+      // Collect mode: return local stats for aggregation
+      chi::ScopedCoRwReadLock read_lock(kg_lock_);
+      task->global_n_ = knowledge_graph_.GetLocalN();
+      task->global_total_terms_ = knowledge_graph_.GetLocalTotalTerms();
+      task->global_df_ = knowledge_graph_.GetLocalDf();
+    }
+    task->SetReturnCode(0);
+  } catch (const std::exception &e) {
+    HLOG(kError, "SyncKnowledgeGraph failed: {}", e.what());
     task->SetReturnCode(1);
   }
   co_return;

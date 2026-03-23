@@ -113,8 +113,51 @@ class KnowledgeGraph {
   }
 
   /**
+   * Get local document frequency counts for all terms.
+   * Used to build global IDF by aggregating across nodes.
+   * @return Map of term -> local document frequency
+   */
+  std::unordered_map<std::string, size_t> GetLocalDf() const {
+    std::unordered_map<std::string, size_t> local_df;
+    for (const auto &[term, doc_set] : inverted_index_) {
+      local_df[term] = doc_set.size();
+    }
+    return local_df;
+  }
+
+  /** Get the number of local documents */
+  size_t GetLocalN() const { return entries_.size(); }
+
+  /** Get the total term count across all local documents */
+  size_t GetLocalTotalTerms() const {
+    size_t total = 0;
+    for (const auto &e : entries_) {
+      total += e.total_terms;
+    }
+    return total;
+  }
+
+  /**
+   * Set global IDF statistics collected from all nodes.
+   * When set, Search() uses these instead of local stats.
+   * @param global_n Total document count across all nodes
+   * @param global_df Per-term document frequency across all nodes
+   * @param global_avg_dl Average document length across all nodes
+   */
+  void SetGlobalIdf(size_t global_n,
+                    std::unordered_map<std::string, size_t> global_df,
+                    float global_avg_dl) {
+    global_n_ = global_n;
+    global_df_ = std::move(global_df);
+    global_avg_dl_ = global_avg_dl;
+    use_global_idf_ = true;
+  }
+
+  /**
    * Search the knowledge graph for entries matching a text prompt.
    * Uses BM25 ranking to score entries against the query.
+   * When global IDF stats are set (via SetGlobalIdf), uses global N and df
+   * for IDF calculation so scores are comparable across distributed nodes.
    * @param prompt The search query text
    * @param top_k Maximum number of results to return
    * @return Vector of SearchResult sorted by descending confidence score
@@ -129,31 +172,43 @@ class KnowledgeGraph {
       return {};
     }
 
+    // Use global stats if available, otherwise local
+    const size_t N = use_global_idf_ ? global_n_ : entries_.size();
+    const float avg_dl = use_global_idf_ ? global_avg_dl_ : ComputeAvgDocLen();
+
     // Score each entry using BM25
     std::vector<SearchResult<Key>> results;
     results.reserve(entries_.size());
-
-    const float avg_dl = ComputeAvgDocLen();
-    const size_t N = entries_.size();
 
     for (size_t i = 0; i < entries_.size(); ++i) {
       if (entries_[i].total_terms == 0) continue;
 
       float score = 0.0f;
       for (const auto &[term, _] : query_terms) {
-        auto inv_it = inverted_index_.find(term);
-        if (inv_it == inverted_index_.end()) continue;
+        // Check if this entry contains the term (local TF)
+        auto tc_it = entries_[i].term_counts.find(term);
+        if (tc_it == entries_[i].term_counts.end()) continue;
+
+        // Get df: global if available, otherwise local
+        size_t df = 0;
+        if (use_global_idf_) {
+          auto gdf_it = global_df_.find(term);
+          if (gdf_it != global_df_.end()) {
+            df = gdf_it->second;
+          }
+        } else {
+          auto inv_it = inverted_index_.find(term);
+          if (inv_it != inverted_index_.end()) {
+            df = inv_it->second.size();
+          }
+        }
+        if (df == 0) continue;
 
         // IDF: log((N - df + 0.5) / (df + 0.5) + 1)
-        size_t df = inv_it->second.size();
         float idf = std::log(
             (static_cast<float>(N) - static_cast<float>(df) + 0.5f) /
                 (static_cast<float>(df) + 0.5f) +
             1.0f);
-
-        // Check if this entry contains the term
-        auto tc_it = entries_[i].term_counts.find(term);
-        if (tc_it == entries_[i].term_counts.end()) continue;
 
         float tf = static_cast<float>(tc_it->second);
         float dl = static_cast<float>(entries_[i].total_terms);
@@ -223,6 +278,12 @@ class KnowledgeGraph {
   std::vector<KnowledgeGraphEntry<Key>> entries_;
   std::unordered_map<Key, size_t, Hash> key_to_idx_;
   std::unordered_map<std::string, std::unordered_set<size_t>> inverted_index_;
+
+  // Global IDF stats (set by SetGlobalIdf after distributed sync)
+  bool use_global_idf_ = false;
+  size_t global_n_ = 0;
+  std::unordered_map<std::string, size_t> global_df_;
+  float global_avg_dl_ = 1.0f;
 
   /**
    * Tokenize text into lowercase words, updating term counts.

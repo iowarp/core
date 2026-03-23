@@ -242,11 +242,17 @@ int main() {
 
     wrp_cte::core::Tag tag(full_tag);
 
-    // Store description as a blob
-    tag.PutBlob("description", ds.description.c_str(), ds.description.size());
+    // Store description as a blob (best-effort — not required for KG benchmark)
+    try {
+      tag.PutBlob("description", ds.description.c_str(), ds.description.size());
+    } catch (const std::exception& e) {
+      HLOG(kWarning, "  PutBlob skipped for {}: {}", full_tag, e.what());
+    }
 
-    tag_ids[ds.tag_name] = tag.GetTagId();
-    HLOG(kInfo, "  {}: desc={} bytes", full_tag, ds.description.size());
+    auto tid = tag.GetTagId();
+    tag_ids[ds.tag_name] = tid;
+    HLOG(kInfo, "  {}: desc={} bytes, tag_id={}.{}", full_tag,
+         ds.description.size(), tid.major_, tid.minor_);
   }
   auto t_ingest_end = Clock::now();
   double ingest_ms = Ms(t_ingest_end - t_ingest_start).count();
@@ -261,12 +267,32 @@ int main() {
   auto t_kg_start = Clock::now();
   for (const auto& ds : datasets) {
     auto tag_id = tag_ids[ds.tag_name];
-    auto fut = WRP_CTE_CLIENT->AsyncUpdateKnowledgeGraph(tag_id, ds.description);
+    std::string full_tag = kTagPrefix + ds.tag_name;
+    auto fut = WRP_CTE_CLIENT->AsyncUpdateKnowledgeGraph(
+        tag_id, full_tag, ds.description);
     fut.Wait();
   }
   auto t_kg_end = Clock::now();
   double kg_ms = Ms(t_kg_end - t_kg_start).count();
   HLOG(kInfo, "  {} descriptions indexed ({:.1f} ms)", datasets.size(), kg_ms);
+
+  // ============================================================
+  // Phase 2.5: Sync Global IDF
+  // ============================================================
+  HLOG(kInfo, "");
+  HLOG(kInfo, "=== Phase 2.5: Sync Global IDF ===");
+
+  auto sync_fut = WRP_CTE_CLIENT->AsyncSyncKnowledgeGraph();
+  sync_fut.Wait();
+  auto* sync_result = sync_fut.get();
+
+  auto dist_fut = WRP_CTE_CLIENT->AsyncSyncKnowledgeGraph(
+      chi::PoolQuery::Broadcast(), true,
+      sync_result->global_n_, sync_result->global_total_terms_,
+      sync_result->global_df_);
+  dist_fut.Wait();
+  HLOG(kInfo, "  Global IDF synced: N={}, unique_terms={}",
+       sync_result->global_n_, sync_result->global_df_.size());
 
   // ============================================================
   // Phase 3: Query

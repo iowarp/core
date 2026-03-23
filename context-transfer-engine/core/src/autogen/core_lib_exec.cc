@@ -194,6 +194,11 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       co_await SemanticQuery(typed_task, rctx);
       break;
     }
+    case Method::kSyncKnowledgeGraph: {
+      hipc::FullPtr<SyncKnowledgeGraphTask> typed_task = task_ptr.template Cast<SyncKnowledgeGraphTask>();
+      co_await SyncKnowledgeGraph(typed_task, rctx);
+      break;
+    }
 #endif
     default: {
       // Unknown method - do nothing
@@ -338,6 +343,11 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
       archive << *typed_task.ptr_;
       break;
     }
+    case Method::kSyncKnowledgeGraph: {
+      auto typed_task = task_ptr.template Cast<SyncKnowledgeGraphTask>();
+      archive << *typed_task.ptr_;
+      break;
+    }
 #endif
     default: {
       // Unknown method - do nothing
@@ -477,6 +487,11 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
     }
     case Method::kSemanticQuery: {
       auto typed_task = task_ptr.template Cast<SemanticQueryTask>();
+      archive >> *typed_task.ptr_;
+      break;
+    }
+    case Method::kSyncKnowledgeGraph: {
+      auto typed_task = task_ptr.template Cast<SyncKnowledgeGraphTask>();
       archive >> *typed_task.ptr_;
       break;
     }
@@ -654,6 +669,11 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
       archive >> *typed_task.ptr_;
       break;
     }
+    case Method::kSyncKnowledgeGraph: {
+      auto typed_task = task_ptr.template Cast<SyncKnowledgeGraphTask>();
+      archive >> *typed_task.ptr_;
+      break;
+    }
 #endif
     default: {
       // Unknown method - do nothing
@@ -825,6 +845,11 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
     }
     case Method::kSemanticQuery: {
       auto typed_task = task_ptr.template Cast<SemanticQueryTask>();
+      archive << *typed_task.ptr_;
+      break;
+    }
+    case Method::kSyncKnowledgeGraph: {
+      auto typed_task = task_ptr.template Cast<SyncKnowledgeGraphTask>();
       archive << *typed_task.ptr_;
       break;
     }
@@ -1126,6 +1151,15 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       }
       break;
     }
+    case Method::kSyncKnowledgeGraph: {
+      auto new_task_ptr = ipc_manager->NewTask<SyncKnowledgeGraphTask>();
+      if (!new_task_ptr.IsNull()) {
+        auto task_typed = orig_task_ptr.template Cast<SyncKnowledgeGraphTask>();
+        new_task_ptr->Copy(task_typed);
+        return new_task_ptr.template Cast<chi::Task>();
+      }
+      break;
+    }
 #endif
     default: {
       // For unknown methods, create base Task copy
@@ -1252,6 +1286,10 @@ hipc::FullPtr<chi::Task> Runtime::NewTask(chi::u32 method) {
     }
     case Method::kSemanticQuery: {
       auto new_task_ptr = ipc_manager->NewTask<SemanticQueryTask>();
+      return new_task_ptr.template Cast<chi::Task>();
+    }
+    case Method::kSyncKnowledgeGraph: {
+      auto new_task_ptr = ipc_manager->NewTask<SyncKnowledgeGraphTask>();
       return new_task_ptr.template Cast<chi::Task>();
     }
 #endif
@@ -1396,6 +1434,11 @@ void Runtime::Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> orig_task,
       typed_task->Aggregate(replica_task);
       break;
     }
+    case Method::kSyncKnowledgeGraph: {
+      auto typed_task = orig_task.template Cast<SyncKnowledgeGraphTask>();
+      typed_task->Aggregate(replica_task);
+      break;
+    }
 #endif
     default: {
       orig_task->Aggregate(replica_task);
@@ -1511,6 +1554,10 @@ void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
     }
     case Method::kSemanticQuery: {
       ipc_manager->DelTask(task_ptr.template Cast<SemanticQueryTask>());
+      break;
+    }
+    case Method::kSyncKnowledgeGraph: {
+      ipc_manager->DelTask(task_ptr.template Cast<SyncKnowledgeGraphTask>());
       break;
     }
 #endif

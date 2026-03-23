@@ -43,7 +43,8 @@ GLOBAL_CONST chi::u32 kFlushData = 34;
 #ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
 GLOBAL_CONST chi::u32 kUpdateKnowledgeGraph = 35;
 GLOBAL_CONST chi::u32 kSemanticQuery = 36;
-GLOBAL_CONST chi::u32 kMaxMethodId = 37;
+GLOBAL_CONST chi::u32 kSyncKnowledgeGraph = 37;
+GLOBAL_CONST chi::u32 kMaxMethodId = 38;
 #else
 GLOBAL_CONST chi::u32 kMaxMethodId = 35;
 #endif
@@ -78,6 +79,7 @@ inline const std::vector<std::string>& GetMethodNames() {
 #ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
     v[35] = "UpdateKnowledgeGraph";
     v[36] = "SemanticQuery";
+    v[37] = "SyncKnowledgeGraph";
 #endif
     return v;
   }();
