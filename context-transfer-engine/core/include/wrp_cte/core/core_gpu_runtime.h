@@ -95,7 +95,6 @@ class GpuRuntime : public chi::gpu::Container {
   GpuMetadata *meta_{nullptr};
   hshm::Mutex init_lock_;  // Protects lazy init of meta_
   chi::u32 next_tag_minor_{0};
-  chi::u32 meta_gen_{0};  // Scratch generation when meta_ was created
 
   HSHM_GPU_FUN GpuRuntime() = default;
   HSHM_GPU_FUN ~GpuRuntime() override = default;

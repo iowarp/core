@@ -286,13 +286,12 @@ void gpu::WorkOrchestrator::Resume(const IpcManagerGpuInfo &gpu_info) {
 
   control_->exit_flag = 0;
   control_->running_flag = 0;
-  // Scratch allocator will be reinitialized — bump generation so GPU
-  // containers know their scratch-backed metadata (e.g. CTE GpuMetadata)
-  // is invalid and must be recreated.
-  control_->scratch_gen = control_->scratch_gen + 1;
+  // Do NOT bump scratch_gen or reinit scratch — GPU container metadata
+  // (e.g. CTE GpuMetadata with targets, tags, blobs) must persist
+  // across pause/resume cycles.
 
   IpcManagerGpuInfo resume_info = gpu_info;
-  resume_info.skip_scratch_init = false;  // re-partition scratch for new warp count
+  resume_info.skip_scratch_init = true;  // preserve scratch allocator state
   u32 num_warps = (blocks_ * threads_per_block_) / 32;
   if (num_warps == 0) num_warps = 1;
   resume_info.gpu2gpu_num_lanes = num_warps;
@@ -355,17 +354,8 @@ void gpu::WorkOrchestrator::Resume(const IpcManagerGpuInfo &gpu_info) {
   resume_info.skip_heap_init = true;
   resume_info.scratch_gen = control_->scratch_gen;
 
-  // Zero scratch allocator headers so non-block-0 blocks spin-wait
-  // until block 0 finishes re-initialization (prevents stale ready flags).
-  // Both backends are pinned host memory (GpuShmMmap), so use CPU memset.
-  // The stream was fully synchronized in Pause(), so no race with GPU.
-  if (resume_info.backend.data_ != nullptr) {
-    memset(resume_info.backend.data_, 0, sizeof(hipc::ThreadAllocator));
-  }
-  if (resume_info.gpu2cpu_backend.data_ != nullptr) {
-    memset(resume_info.gpu2cpu_backend.data_, 0,
-           sizeof(hipc::ThreadAllocator));
-  }
+  // Do NOT zero scratch allocator headers — scratch state persists
+  // across pause/resume to preserve GPU container metadata.
 
   auto *d_pm = static_cast<gpu::PoolManager *>(d_pool_mgr_);
 

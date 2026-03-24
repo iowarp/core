@@ -214,12 +214,7 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::StatTargets(
 //==============================================================================
 
 HSHM_GPU_FUN void GpuRuntime::EnsureMetaInit() {
-  // Check if scratch was reinitialized (stale metadata)
-  chi::u32 cur_gen = CHI_IPC->scratch_gen_;
-  if (meta_ != nullptr && meta_gen_ != cur_gen) {
-    meta_ = nullptr;  // Force recreation
-    __threadfence();
-  }
+  // Scratch persists across pause/resume — metadata is never invalidated.
   GpuMetadata *m = *reinterpret_cast<GpuMetadata *volatile *>(&meta_);
   if (m != nullptr) return;
   hshm::ScopedMutex guard(init_lock_, 0);
@@ -229,10 +224,9 @@ HSHM_GPU_FUN void GpuRuntime::EnsureMetaInit() {
       CHI_IPC->NewObj<GpuMetadata>(chi::AllocScope::kShared);
   __threadfence();
   meta_ = ptr.ptr_;
-  meta_gen_ = cur_gen;
   __threadfence();
-  printf("[META] W%u init meta=%p gen=%u\n",
-         chi::IpcManager::GetWarpId(), (void*)meta_, cur_gen);
+  printf("[META] W%u init meta=%p\n",
+         chi::IpcManager::GetWarpId(), (void*)meta_);
 }
 
 //==============================================================================
