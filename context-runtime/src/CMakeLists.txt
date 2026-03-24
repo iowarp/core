@@ -47,7 +47,29 @@ add_library(${CHIMAERA_LIB_NAME} SHARED ${CHIMAERA_CPU_SOURCES})
 # Build GPU work orchestrator library if CUDA/ROCm enabled and GPU sources exist
 if(CHIMAERA_GPU_SOURCES)
   if(WRP_CORE_ENABLE_CUDA)
-    add_cuda_library(${CHIMAERA_LIB_NAME}_gpu SHARED TRUE ${CHIMAERA_GPU_SOURCES})
+    # Collect transitive include dirs from dependencies that Clang CUDA
+    # custom commands cannot resolve via generator expressions.
+    set(_CHIMAERA_GPU_EXTRA_INCLUDES "")
+    foreach(_dep yaml-cpp::yaml-cpp ZeroMQ::libzmq)
+      if(TARGET "${_dep}")
+        get_target_property(_dep_incs "${_dep}" INTERFACE_INCLUDE_DIRECTORIES)
+        if(_dep_incs)
+          list(APPEND _CHIMAERA_GPU_EXTRA_INCLUDES ${_dep_incs})
+        endif()
+      endif()
+    endforeach()
+    add_cuda_library(${CHIMAERA_LIB_NAME}_gpu SHARED TRUE ${CHIMAERA_GPU_SOURCES}
+      INCLUDE_DIRS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../modules/admin/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../modules/MOD_NAME/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../modules/bdev/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../context-transport-primitives/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../context-transfer-engine/core/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../compiler/include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${_CHIMAERA_GPU_EXTRA_INCLUDES}
+    )
     target_include_directories(${CHIMAERA_LIB_NAME}_gpu PUBLIC
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../modules/admin/include>
@@ -55,6 +77,7 @@ if(CHIMAERA_GPU_SOURCES)
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../modules/bdev/include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../context-transport-primitives/include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../context-transfer-engine/core/include>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../compiler/include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     )
     target_link_libraries(${CHIMAERA_LIB_NAME}_gpu PUBLIC hshm::cuda_cxx)
