@@ -47,6 +47,16 @@ endif()
 
 # GPU benchmark (requires CUDA) — single-file build via add_cuda_executable
 if(WRP_CORE_ENABLE_CUDA)
+  # Collect transitive include dirs from dependencies for Clang CUDA
+  set(_CTE_GPU_BENCH_EXTRA_INCLUDES "")
+  foreach(_dep yaml-cpp::yaml-cpp ZeroMQ::libzmq)
+    if(TARGET "${_dep}")
+      get_target_property(_dep_incs "${_dep}" INTERFACE_INCLUDE_DIRECTORIES)
+      if(_dep_incs)
+        list(APPEND _CTE_GPU_BENCH_EXTRA_INCLUDES ${_dep_incs})
+      endif()
+    endif()
+  endforeach()
   add_cuda_executable(wrp_cte_gpu_bench TRUE
       wrp_cte_gpu_bench.cc
       INCLUDE_DIRS
