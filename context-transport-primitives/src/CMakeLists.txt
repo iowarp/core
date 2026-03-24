@@ -65,7 +65,16 @@ list(APPEND HSHM_LIBS cxx)
 
 # BUILD HSHM FOR CUDA ONLY
 if(WRP_CORE_ENABLE_CUDA)
-    add_cuda_library(hermes_shm_cuda SHARED TRUE ${SRC_FILES})
+    add_cuda_library(hermes_shm_cuda SHARED TRUE ${SRC_FILES}
+      INCLUDE_DIRS
+        ${HSHM_ROOT}/include
+        ${PROJECT_BINARY_DIR}/include
+    )
+    target_include_directories(hermes_shm_cuda PUBLIC
+        $<BUILD_INTERFACE:${HSHM_ROOT}/include>
+        $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    )
     target_link_libraries(hermes_shm_cuda PUBLIC host_deps)
     target_compile_definitions(hermes_shm_cuda PUBLIC HSHM_ENABLE_CUDA=1)
     hshm_target_compile_definitions(hermes_shm_cuda)
