@@ -7,6 +7,7 @@ set(CHIMAERA_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 # Enable CUDA if requested
 if(WRP_CORE_ENABLE_CUDA)
     wrp_core_enable_cuda(17)
+    wrp_core_find_clang_cuda()
 endif()
 
 # Enable ROCm if requested
@@ -58,6 +59,11 @@ message(STATUS "Chimaera namespace: ${CHIMAERA_NAMESPACE}")
 
 # Add utilities subdirectory FIRST so chimaera repo refresh builds before everything else
 add_subdirectory(util)
+
+# Add compiler subdirectory (Clang-compiled GPU coroutine headers)
+if(WRP_CORE_ENABLE_CUDA AND WRP_CORE_CLANG_CUDA_COMPILER)
+    add_subdirectory(compiler)
+endif()
 
 # Add source subdirectory to build main library
 add_subdirectory(src)
@@ -111,8 +117,14 @@ if(TARGET cereal)
     set(_CEREAL_TARGET cereal)
 endif()
 
-# Install main library
-install(TARGETS ${CHIMAERA_NAMESPACE}_cxx ${_CEREAL_TARGET}
+# Collect GPU target if it exists
+set(_GPU_TARGET "")
+if(TARGET ${CHIMAERA_NAMESPACE}_cxx_gpu)
+  set(_GPU_TARGET ${CHIMAERA_NAMESPACE}_cxx_gpu)
+endif()
+
+# Install main library (and GPU library if built)
+install(TARGETS ${CHIMAERA_NAMESPACE}_cxx ${_GPU_TARGET} ${_CEREAL_TARGET}
   EXPORT ${MAIN_EXPORT_NAME}
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib

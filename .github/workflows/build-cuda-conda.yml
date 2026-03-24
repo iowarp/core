@@ -1,0 +1,75 @@
+name: Build CUDA Conda Package
+
+on:
+  push:
+    branches: main
+  pull_request:
+    branches: main
+  workflow_dispatch:
+
+jobs:
+  build-cuda-conda:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          python-version: '3.12'
+          channels: conda-forge,nvidia,defaults
+          channel-priority: flexible
+
+      - name: Install build tools and CUDA toolkit
+        shell: bash -l {0}
+        run: |
+          conda install -y rattler-build cuda-toolkit cmake ninja -c conda-forge -c nvidia
+
+      - name: Verify CUDA compiler
+        shell: bash -l {0}
+        run: |
+          which nvcc
+          nvcc --version
+
+      - name: Build CUDA conda package
+        shell: bash -l {0}
+        run: |
+          rattler-build build \
+            --recipe installers/conda/ \
+            --variant-config installers/conda/variants/cuda.yaml \
+            --output-dir build/conda-output \
+            -c conda-forge -c nvidia
+
+      - name: Verify package was built
+        shell: bash -l {0}
+        run: |
+          echo "Built packages:"
+          find build/conda-output -name "iowarp-core-*.conda" -o -name "iowarp-core-*.tar.bz2" | head -5
+          PACKAGE=$(find build/conda-output -name "iowarp-core-*.conda" -o -name "iowarp-core-*.tar.bz2" | head -1)
+          [ -n "$PACKAGE" ] && echo "Package found: $PACKAGE" || (echo "ERROR: No package found" && exit 1)
+
+      - name: Install package and verify libraries
+        shell: bash -l {0}
+        run: |
+          conda index build/conda-output 2>/dev/null || python -m conda_index build/conda-output 2>/dev/null || true
+          conda install -c build/conda-output -c conda-forge -c nvidia iowarp-core -y
+          echo "--- Verifying installed libraries ---"
+          test -f "$CONDA_PREFIX/lib/libchimaera_cxx.so" && echo "OK: libchimaera_cxx.so"
+          test -f "$CONDA_PREFIX/lib/libwrp_cte_uvm.so" && echo "OK: libwrp_cte_uvm.so"
+          test -f "$CONDA_PREFIX/include/wrp_cte/uvm/gpu_vmm.h" && echo "OK: gpu_vmm.h header"
+
+      - name: Build external CUDA UVM test
+        shell: bash -l {0}
+        run: |
+          echo "=== Building external project that links against installed wrp_cte_uvm ==="
+          cmake -S CI/external_tests/cuda_uvm -B build/external_uvm_test \
+            -DCMAKE_PREFIX_PATH="$CONDA_PREFIX" \
+            -DCMAKE_CUDA_ARCHITECTURES=86
+          cmake --build build/external_uvm_test --parallel
+          echo "External CUDA UVM build test: PASSED"

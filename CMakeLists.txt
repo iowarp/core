@@ -112,6 +112,8 @@ option(WRP_CORE_ENABLE_ELF "Enable ELF support (required for CTE adapters)" OFF)
 option(WRP_CORE_ENABLE_OPENMP "Enable the use of OpenMP" OFF)
 option(WRP_CORE_ENABLE_CUDA "Enable CUDA support" OFF)
 option(WRP_CORE_ENABLE_ROCM "Enable ROCm support" OFF)
+option(WRP_CORE_ENABLE_NIXL "Enable NIXL (NVIDIA Inference Xfer Library) transport" OFF)
+option(WRP_CORE_ENABLE_NVSHMEM "Enable NVSHMEM GPU-to-GPU communication library" OFF)
 option(WRP_CORE_ENABLE_JARVIS "Enable Jarvis CI infrastructure installation" OFF)
 
 #------------------------------------------------------------------------------
@@ -181,6 +183,8 @@ set(HSHM_ENABLE_ELF ${WRP_CORE_ENABLE_ELF} CACHE BOOL "Enable ELF (controlled by
 set(HSHM_ENABLE_CUDA ${WRP_CORE_ENABLE_CUDA} CACHE BOOL "Enable CUDA (controlled by WRP_CORE_ENABLE_CUDA)" FORCE)
 set(HSHM_ENABLE_ROCM ${WRP_CORE_ENABLE_ROCM} CACHE BOOL "Enable ROCm (controlled by WRP_CORE_ENABLE_ROCM)" FORCE)
 set(HSHM_ENABLE_IO_URING ${WRP_CORE_ENABLE_IO_URING} CACHE BOOL "Enable io_uring (controlled by WRP_CORE_ENABLE_IO_URING)" FORCE)
+set(HSHM_ENABLE_NIXL ${WRP_CORE_ENABLE_NIXL} CACHE BOOL "Enable NIXL (controlled by WRP_CORE_ENABLE_NIXL)" FORCE)
+set(HSHM_ENABLE_NVSHMEM ${WRP_CORE_ENABLE_NVSHMEM} CACHE BOOL "Enable NVSHMEM (controlled by WRP_CORE_ENABLE_NVSHMEM)" FORCE)
 # Note: Coverage is handled globally via add_compile_options when WRP_CORE_ENABLE_COVERAGE=ON
 # No need for component-level HSHM_ENABLE_COVERAGE
 
@@ -865,7 +869,10 @@ if(WRP_CORE_ENABLE_ELF)
     set(ELF_LIB_DIRS ${libelf_LIBRARY_DIRS})
 endif()
 
+set(_WRP_ENABLED_COMPONENT_DIRS "")
+
 add_subdirectory(context-transport-primitives)
+list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-transport-primitives")
 # Set HSHM_ROOT for cross-component access
 set(HSHM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/context-transport-primitives" CACHE PATH "Root directory for context-transport-primitives")
 
@@ -873,6 +880,7 @@ set(HSHM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/context-transport-primitives" CACHE P
 if(WRP_CORE_ENABLE_RUNTIME)
     message(STATUS "Building runtime component")
     add_subdirectory(context-runtime)
+    list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-runtime")
     # Set CHIMAERA_ROOT for cross-component access (e.g., CTE needs bdev includes)
     set(CHIMAERA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/context-runtime" CACHE PATH "Root directory for runtime component")
 else()
@@ -883,6 +891,7 @@ endif()
 if(WRP_CORE_ENABLE_CTE)
     message(STATUS "Building context-transfer-engine component")
     add_subdirectory(context-transfer-engine)
+    list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-transfer-engine")
 else()
     message(STATUS "Context-transfer-engine component disabled")
 endif()
@@ -891,6 +900,7 @@ endif()
 if(WRP_CORE_ENABLE_CAE)
     message(STATUS "Building context-assimilation-engine component")
     add_subdirectory(context-assimilation-engine)
+    list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-assimilation-engine")
 else()
     message(STATUS "Context-assimilation-engine component disabled")
 endif()
@@ -899,6 +909,7 @@ endif()
 if(WRP_CORE_ENABLE_CEE)
     message(STATUS "Building context-exploration-engine component")
     add_subdirectory(context-exploration-engine)
+    list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-exploration-engine")
 else()
     message(STATUS "Context-exploration-engine component disabled")
 endif()
@@ -960,16 +971,8 @@ if(WRP_CORE_ENABLE_TESTS)
         endforeach()
     endfunction()
 
-    foreach(_component_dir
-            context-runtime
-            context-transfer-engine
-            context-assimilation-engine
-            context-exploration-engine)
-        if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${_component_dir}")
-            _chimaera_lock_tests_recursive(
-                "${CMAKE_CURRENT_SOURCE_DIR}/${_component_dir}"
-                "${_lsan_opts}")
-        endif()
+    foreach(_component_dir ${_WRP_ENABLED_COMPONENT_DIRS})
+        _chimaera_lock_tests_recursive("${_component_dir}" "${_lsan_opts}")
     endforeach()
 endif()
 

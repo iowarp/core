@@ -1,0 +1,21 @@
+# CTE GPU Benchmark — single quick run
+# Usage:
+#   jarvis pipeline create gpu/cte_gpu_bench.yaml
+#   jarvis pipeline run cte_gpu_bench
+
+name: cte_gpu_bench
+
+pkgs:
+  - pkg_type: jarvis_iowarp.wrp_cte_gpu_bench
+    pkg_name: gpu_local
+    test_case: "putblob_gpu"
+    # test_case: "bdev_read_write"
+    # test_case: "bdev_read_write"
+    rt_blocks: 1
+    rt_threads: 32
+    client_blocks: 1
+    client_threads: 32
+    io_size: "1m"
+    iterations: 1024
+    bdev_type: "hbm"
+    timeout: 120

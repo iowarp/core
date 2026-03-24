@@ -60,14 +60,14 @@ struct ChiModInfo {
   std::string name;
   std::string lib_path;
   hshm::SharedLibrary lib;
-  
+
   // Function pointers
   alloc_chimod_t alloc_func;
   new_chimod_t new_func;
   get_chimod_name_t name_func;
   destroy_chimod_t destroy_func;
-  
-  ChiModInfo() : alloc_func(nullptr), new_func(nullptr), 
+
+  ChiModInfo() : alloc_func(nullptr), new_func(nullptr),
                  name_func(nullptr), destroy_func(nullptr) {}
 };
 

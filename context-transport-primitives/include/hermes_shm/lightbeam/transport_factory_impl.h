@@ -45,6 +45,9 @@
 #if HSHM_ENABLE_LIBFABRIC
 #include "libfabric_transport.h"
 #endif
+#if HSHM_ENABLE_NIXL
+#include "nixl_transport.h"
+#endif
 
 namespace hshm::lbm {
 
@@ -64,6 +67,11 @@ inline void TransportDeleter::operator()(Transport* t) const {
     case TransportType::kShm:
       delete static_cast<ShmTransport*>(t);
       break;
+#if HSHM_ENABLE_NIXL
+    case TransportType::kNixl:
+      delete static_cast<NixlTransport*>(t);
+      break;
+#endif
     default:
       delete t;
       break;
@@ -81,6 +89,10 @@ inline Bulk Transport::Expose(const hipc::FullPtr<char>& ptr, size_t data_size, 
       return static_cast<SocketTransport*>(this)->Expose(ptr, data_size, flags);
     case TransportType::kShm:
       return static_cast<ShmTransport*>(this)->Expose(ptr, data_size, flags);
+#if HSHM_ENABLE_NIXL
+    case TransportType::kNixl:
+      return static_cast<NixlTransport*>(this)->Expose(ptr, data_size, flags);
+#endif
     default:
       return Bulk{};
   }
@@ -96,6 +108,10 @@ inline std::string Transport::GetAddress() const {
       return static_cast<const SocketTransport*>(this)->GetAddress();
     case TransportType::kShm:
       return static_cast<const ShmTransport*>(this)->GetAddress();
+#if HSHM_ENABLE_NIXL
+    case TransportType::kNixl:
+      return static_cast<const NixlTransport*>(this)->GetAddress();
+#endif
     default:
       return "";
   }
@@ -114,6 +130,11 @@ inline void Transport::ClearRecvHandles(LbmMeta<>& meta) {
     case TransportType::kShm:
       static_cast<ShmTransport*>(this)->ClearRecvHandles(meta);
       break;
+#if HSHM_ENABLE_NIXL
+    case TransportType::kNixl:
+      static_cast<NixlTransport*>(this)->ClearRecvHandles(meta);
+      break;
+#endif
     default:
       break;
   }
@@ -132,6 +153,11 @@ inline void Transport::RegisterEventManager(EventManager &em) {
     case TransportType::kShm:
       /* no-op for SHM */
       break;
+#if HSHM_ENABLE_NIXL
+    case TransportType::kNixl:
+      static_cast<NixlTransport*>(this)->RegisterEventManager(em);
+      break;
+#endif
     default:
       break;
   }
@@ -147,6 +173,10 @@ inline bool Transport::IsServerAlive(const LbmContext& ctx) const {
       return static_cast<const SocketTransport*>(this)->IsServerAlive(ctx);
     case TransportType::kShm:
       return static_cast<const ShmTransport*>(this)->IsServerAlive(ctx);
+#if HSHM_ENABLE_NIXL
+    case TransportType::kNixl:
+      return static_cast<const NixlTransport*>(this)->IsServerAlive(ctx);
+#endif
     default:
       return false;
   }
@@ -166,6 +196,10 @@ int Transport::Send(MetaT& meta, const LbmContext& ctx) {
       return static_cast<SocketTransport*>(this)->Send(meta, ctx);
     case TransportType::kShm:
       return static_cast<ShmTransport*>(this)->Send(meta, ctx);
+#if HSHM_ENABLE_NIXL
+    case TransportType::kNixl:
+      return static_cast<NixlTransport*>(this)->Send(meta, ctx);
+#endif
     default:
       return -1;
   }
@@ -182,6 +216,10 @@ ClientInfo Transport::Recv(MetaT& meta, const LbmContext& ctx) {
       return static_cast<SocketTransport*>(this)->Recv(meta, ctx);
     case TransportType::kShm:
       return static_cast<ShmTransport*>(this)->Recv(meta, ctx);
+#if HSHM_ENABLE_NIXL
+    case TransportType::kNixl:
+      return static_cast<NixlTransport*>(this)->Recv(meta, ctx);
+#endif
     default:
       return ClientInfo{-1, -1, {}};
   }
@@ -204,6 +242,10 @@ inline TransportPtr TransportFactory::Get(
           port == 0 ? 8193 : port));
     case TransportType::kShm:
       return TransportPtr(new ShmTransport(mode));
+#if HSHM_ENABLE_NIXL
+    case TransportType::kNixl:
+      return TransportPtr(new NixlTransport(mode, addr));
+#endif
     default:
       return nullptr;
   }
@@ -226,6 +268,10 @@ inline TransportPtr TransportFactory::Get(
           port == 0 ? 8193 : port));
     case TransportType::kShm:
       return TransportPtr(new ShmTransport(mode));
+#if HSHM_ENABLE_NIXL
+    case TransportType::kNixl:
+      return TransportPtr(new NixlTransport(mode, addr));
+#endif
     default:
       return nullptr;
   }

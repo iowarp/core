@@ -50,13 +50,12 @@ using pid_t = int;
 #include "chimaera/types.h"
 #include "hermes_shm/data_structures/ipc/shm_container.h"
 #include "hermes_shm/data_structures/ipc/vector.h"
-#include "hermes_shm/memory/allocator/allocator.h"
 #include "hermes_shm/lightbeam/shm_transport.h"
+#include "hermes_shm/memory/allocator/allocator.h"
 #include "hermes_shm/util/logging.h"
 
-// Include cereal for serialization
-#include <cereal/archives/binary.hpp>
-#include <cereal/cereal.hpp>
+// Include GlobalSerialize for architecture-portable serialization
+#include <hermes_shm/data_structures/serialization/global_serialize.h>
 
 // Forward declare chi::priv::string for cereal support
 namespace hshm::priv {
@@ -100,8 +99,12 @@ struct TaskGroup {
   HSHM_CROSS_FUN bool IsNull() const { return id_ == -1; }
 
   /** Equality operators */
-  HSHM_CROSS_FUN bool operator==(const TaskGroup& o) const { return id_ == o.id_; }
-  HSHM_CROSS_FUN bool operator!=(const TaskGroup& o) const { return id_ != o.id_; }
+  HSHM_CROSS_FUN bool operator==(const TaskGroup& o) const {
+    return id_ == o.id_;
+  }
+  HSHM_CROSS_FUN bool operator!=(const TaskGroup& o) const {
+    return id_ != o.id_;
+  }
 };
 
 /**
@@ -111,9 +114,10 @@ struct TaskGroup {
  * the individual task) and are used to route all group tasks consistently.
  */
 struct TaskStat {
-  size_t io_size_{0};    /**< I/O size in bytes */
-  size_t compute_{0};    /**< Normalized compute time in microseconds */
-  float wall_time_{0};   /**< Normalized wall time input for InferWallClockTime */
+  size_t io_size_{0};  /**< I/O size in bytes */
+  size_t compute_{0};  /**< Normalized compute time in microseconds */
+  float wall_time_{0}; /**< Normalized wall time input for InferWallClockTime */
+  u32 parallelism{1};  /**< GPU warp parallelism: 1 (lane 0 only) or 32 (full warp) */
 };
 
 // Define macros for container template
@@ -129,21 +133,23 @@ struct TaskStat {
  */
 class Task {
  public:
-  typedef CHI_MAIN_ALLOC_T AllocT;
+  typedef CHI_QUEUE_ALLOC_T AllocT;
   IN PoolId pool_id_;       /**< Pool identifier for task execution */
   IN TaskId task_id_;       /**< Task identifier for task routing */
   IN PoolQuery pool_query_; /**< Pool query for execution location */
   IN MethodId method_;      /**< Method identifier for task type */
   IN ibitfield task_flags_; /**< Task properties and flags */
   IN double period_ns_;     /**< Period in nanoseconds for periodic tasks */
-#if HSHM_IS_HOST
-  IN std::unique_ptr<RunContext> run_ctx_; /**< Runtime context owned by task (RAII) - Host only */
-#endif
+  IN TaskGroup
+      task_group_; /**< Scheduling affinity group (null = no affinity) */
   OUT hipc::atomic<u32>
       return_code_; /**< Task return code (0=success, non-zero=error) */
   OUT hipc::atomic<ContainerId>
       completer_; /**< Container ID that completed this task */
-  TaskGroup task_group_; /**< Scheduling affinity group (null = no affinity) */
+#if HSHM_IS_HOST
+  TEMP std::unique_ptr<RunContext>
+      run_ctx_; /**< Runtime context owned by task (RAII) - Host only */
+#endif
 
   /**
    * Non-virtual destructor - tasks are deleted via Container::DelTask
@@ -160,7 +166,8 @@ class Task {
    * Emplace constructor with task initialization
    */
   HSHM_CROSS_FUN explicit Task(const TaskId& task_id, const PoolId& pool_id,
-                                const PoolQuery& pool_query, const MethodId& method) {
+                               const PoolQuery& pool_query,
+                               const MethodId& method) {
     // Initialize task
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -208,7 +215,8 @@ class Task {
     task_flags_.Clear();
     period_ns_ = 0.0;
 #if HSHM_IS_HOST
-    run_ctx_.reset();  // Reset the unique_ptr (destroys RunContext if allocated)
+    run_ctx_
+        .reset();  // Reset the unique_ptr (destroys RunContext if allocated)
 #endif
     return_code_.store(0);  // Initialize as success
     completer_.store(0);    // Initialize as null (0 is invalid container ID)
@@ -274,35 +282,34 @@ class Task {
   HSHM_CROSS_FUN void ClearFlags(u32 flags) { task_flags_.UnsetBits(flags); }
 
   /**
-   * Serialize data structures to chi::priv::string using cereal
-   * @param alloc Malloc allocator for memory management (private data)
+   * Serialize data structures to chi::priv::string using GlobalSerialize
+   * @param alloc Allocator for memory management (CHI_PRIV_ALLOC_T)
    * @param output_str The string to store serialized data
    * @param args The arguments to serialize
    */
   template <typename... Args>
-  static void Serialize(hipc::MallocAllocator* alloc, chi::priv::string& output_str,
-                        const Args&... args) {
-    std::ostringstream os;
-    cereal::BinaryOutputArchive archive(os);
-    archive(args...);
-
-    std::string serialized = os.str();
+  static void Serialize(CHI_PRIV_ALLOC_T* alloc,
+                        chi::priv::string& output_str, const Args&... args) {
+    std::vector<char> buffer;
+    hshm::ipc::GlobalSerialize<std::vector<char>> ar(buffer);
+    ar(args...);
+    ar.Finalize();
+    std::string serialized(buffer.begin(), buffer.end());
     output_str = chi::priv::string(alloc, serialized);
   }
 
   /**
-   * Deserialize data structure from chi::ipc::string using cereal
+   * Deserialize data structure from chi::ipc::string using GlobalDeserialize
    * @param input_str The string containing serialized data
    * @return The deserialized object
    */
   template <typename OutT>
   static OutT Deserialize(const chi::priv::string& input_str) {
-    std::string data = input_str.str();
-    std::istringstream is(data);
-    cereal::BinaryInputArchive archive(is);
-
+    std::vector<char> data(input_str.data(),
+                           input_str.data() + input_str.size());
+    hshm::ipc::GlobalDeserialize<std::vector<char>> ar(data);
     OutT result;
-    archive(result);
+    ar(result);
     return result;
   }
 
@@ -318,9 +325,8 @@ class Task {
    */
   template <typename Archive>
   HSHM_CROSS_FUN void SerializeIn(Archive& ar) {
-    // Serialize base Task fields (IN and INOUT parameters)
-    ar(pool_id_, task_id_, pool_query_, method_, task_flags_, period_ns_,
-       return_code_);
+    ar.range(pool_id_, task_id_, pool_query_, method_, task_flags_,
+             period_ns_, task_group_, return_code_, completer_);
   }
 
   /**
@@ -335,12 +341,7 @@ class Task {
    */
   template <typename Archive>
   HSHM_CROSS_FUN void SerializeOut(Archive& ar) {
-    // Serialize base Task OUT fields only
-    // Only serialize OUT fields - do NOT re-serialize IN fields
-    // (pool_id_, task_id_, pool_query_, method_, task_flags_, period_ns_ are
-    // all IN) Only return_code_ and completer_ are OUT fields that need to be
-    // sent back
-    ar(return_code_, completer_);
+    ar.range(return_code_, completer_);
   }
 
   /**
@@ -432,8 +433,9 @@ class Task {
 /**
  * FutureShm - Fixed-size shared memory structure for task futures
  *
- * This structure contains metadata and a copy space buffer for task serialization.
- * The copy space is a flexible array member allocated as part of the structure.
+ * This structure contains metadata and a copy space buffer for task
+ * serialization. The copy space is a flexible array member allocated as part of
+ * the structure.
  *
  * Memory layout:
  * - Fixed-size header fields (pool_id, method_id, etc.)
@@ -443,15 +445,20 @@ class Task {
  */
 struct FutureShm {
   // Bitfield flags for flags_
-  static constexpr u32 FUTURE_COMPLETE = 1;      /**< Task execution is complete */
-  static constexpr u32 FUTURE_NEW_DATA = 2;      /**< New output data available */
-  static constexpr u32 FUTURE_COPY_FROM_CLIENT = 4; /**< Task needs to be copied from client serialization */
-  static constexpr u32 FUTURE_WAS_COPIED = 8;    /**< Task was already copied from client (don't re-copy) */
+  static constexpr u32 FUTURE_COMPLETE = 1; /**< Task execution is complete */
+  static constexpr u32 FUTURE_NEW_DATA = 2; /**< New output data available */
+  static constexpr u32 FUTURE_COPY_FROM_CLIENT =
+      4; /**< Task needs to be copied from client serialization */
+  static constexpr u32 FUTURE_WAS_COPIED =
+      8; /**< Task was already copied from client (don't re-copy) */
+  static constexpr u32 FUTURE_DEVICE_SCOPE =
+      16; /**< GPU→GPU path: use device-scope atomics (no system fence) */
 
   // Origin constants: how the client submitted this task
-  static constexpr u32 FUTURE_CLIENT_SHM = 0;    /**< Client used shared memory */
-  static constexpr u32 FUTURE_CLIENT_TCP = 1;    /**< Client used ZMQ TCP */
-  static constexpr u32 FUTURE_CLIENT_IPC = 2;    /**< Client used ZMQ IPC (Unix domain socket) */
+  static constexpr u32 FUTURE_CLIENT_SHM = 0; /**< Client used shared memory */
+  static constexpr u32 FUTURE_CLIENT_TCP = 1; /**< Client used ZMQ TCP */
+  static constexpr u32 FUTURE_CLIENT_IPC =
+      2; /**< Client used ZMQ IPC (Unix domain socket) */
 
   /** Pool ID for the task */
   PoolId pool_id_;
@@ -487,6 +494,15 @@ struct FutureShm {
   /** Atomic bitfield for completion and data availability flags */
   hshm::abitfield32_t flags_;
 
+  /**
+   * Opaque pointer to the parent's GPU RunContext (chi::gpu::RunContext*).
+   * Set by Future::await_suspend on GPU so that the worker completing
+   * this sub-task can directly resume the parent coroutine (same thread,
+   * no event queue needed). Null for top-level (client-originated) tasks.
+   * Typed as void* to avoid circular dependency with gpu_coroutine.h.
+   */
+  void *parent_gpu_rctx_;
+
   /** Copy space for serialized task data (flexible array member) */
   char copy_space[];
 
@@ -503,6 +519,7 @@ struct FutureShm {
     response_transport_ = nullptr;
     response_fd_ = -1;
     response_identity_len_ = 0;
+    parent_gpu_rctx_ = nullptr;
     flags_.Clear();
   }
 };
@@ -514,9 +531,9 @@ struct FutureShm {
  * the caller to check completion status and retrieve results.
  *
  * @tparam TaskT The task type (e.g., CreateTask, CustomTask)
- * @tparam AllocT The allocator type (defaults to CHI_MAIN_ALLOC_T)
+ * @tparam AllocT The allocator type (defaults to CHI_QUEUE_ALLOC_T)
  */
-template <typename TaskT, typename AllocT = CHI_MAIN_ALLOC_T>
+template <typename TaskT, typename AllocT = CHI_QUEUE_ALLOC_T>
 class Future {
  public:
   using FutureT = FutureShm;
@@ -552,26 +569,13 @@ class Future {
    * @param task_ptr FullPtr to the task (wraps private memory with null
    * allocator)
    */
-  HSHM_CROSS_FUN Future(hipc::ShmPtr<FutureT> future_shm, const hipc::FullPtr<TaskT> &task_ptr)
-      : future_shm_(future_shm),
-        parent_task_(nullptr),
-        consumed_(false) {
-#if HSHM_IS_GPU
-    printf("Future constructor ENTRY\n");
-#endif
-    // Manually initialize task_ptr_ to avoid FullPtr copy constructor bug on GPU
-    // Copy shm_ directly, then reconstruct ptr_ from it
-#if HSHM_IS_GPU
-    printf("Future constructor: copying shm_\n");
-#endif
+  HSHM_CROSS_FUN Future(hipc::ShmPtr<FutureT> future_shm,
+                        const hipc::FullPtr<TaskT>& task_ptr)
+      : future_shm_(future_shm), parent_task_(nullptr), consumed_(false) {
+    // Manually initialize task_ptr_ to avoid FullPtr copy constructor bug on
+    // GPU Copy shm_ directly, then reconstruct ptr_ from it
     task_ptr_.shm_ = task_ptr.shm_;
-#if HSHM_IS_GPU
-    printf("Future constructor: copying ptr_\n");
-#endif
     task_ptr_.ptr_ = task_ptr.ptr_;
-#if HSHM_IS_GPU
-    printf("Future constructor: copies complete\n");
-#endif
   }
 
   /**
@@ -585,16 +589,15 @@ class Future {
    * @param future_shm_ptr ShmPtr to FutureShm object
    */
   HSHM_CROSS_FUN explicit Future(const hipc::ShmPtr<FutureT>& future_shm_ptr)
-      : future_shm_(future_shm_ptr),
-        parent_task_(nullptr),
-        consumed_(false) {
+      : future_shm_(future_shm_ptr), parent_task_(nullptr), consumed_(false) {
     // Task pointer starts null - will be set in ProcessNewTasks
     task_ptr_.SetNull();
   }
 
   /**
-   * Destructor - frees the task if this Future was consumed (via Wait/await_resume)
-   * Defined out-of-line in ipc_manager.h where CHI_IPC is available
+   * Destructor - frees the task if this Future was consumed (via
+   * Wait/await_resume) Defined out-of-line in ipc_manager.h where CHI_IPC is
+   * available
    */
   HSHM_CROSS_FUN ~Future();
 
@@ -680,7 +683,7 @@ class Future {
    * Get raw pointer to the task
    * @return Pointer to the task object
    */
-  TaskT* get() const { return task_ptr_.ptr_; }
+  HSHM_CROSS_FUN TaskT* get() const { return task_ptr_.ptr_; }
 
   /**
    * Get the FullPtr to the task (non-const version)
@@ -698,19 +701,19 @@ class Future {
    * Dereference operator - access task members
    * @return Reference to the task object
    */
-  TaskT& operator*() const { return *task_ptr_.ptr_; }
+  HSHM_CROSS_FUN TaskT& operator*() const { return *task_ptr_.ptr_; }
 
   /**
    * Arrow operator - access task members
    * @return Pointer to the task object
    */
-  TaskT* operator->() const { return task_ptr_.ptr_; }
+  HSHM_CROSS_FUN TaskT* operator->() const { return task_ptr_.ptr_; }
 
   /**
    * Check if the task is complete
    * @return True if task has completed, false otherwise
    */
-  bool IsComplete() const {
+  HSHM_CROSS_FUN bool IsComplete() const {
     if (future_shm_.IsNull()) {
       return false;
     }
@@ -730,6 +733,7 @@ class Future {
    */
   HSHM_CROSS_FUN bool Wait(float max_sec = 0);
 
+  /**
   /**
    * Mark the task as complete
    */
@@ -767,7 +771,7 @@ class Future {
    * @return FullPtr to the FutureShm object
    * Note: Implementation provided in ipc_manager.h where CHI_IPC is defined
    */
-  hipc::FullPtr<FutureT> GetFutureShm() const;
+  HSHM_CROSS_FUN hipc::FullPtr<FutureT> GetFutureShm() const;
 
   /**
    * Get the pool ID from the FutureShm
@@ -846,7 +850,11 @@ class Future {
    * If the task is already complete, the coroutine won't suspend.
    * @return True if task is complete, false if coroutine should suspend
    */
-  bool await_ready() const noexcept {
+  HSHM_CROSS_FUN bool await_ready() const noexcept {
+    // A null future (e.g. SendGpu allocation failure) is immediately ready
+    // to prevent suspending with awaited_fshm_=nullptr, which would resume
+    // the coroutine into a null task_ptr_ dereference.
+    if (future_shm_.IsNull() && task_ptr_.IsNull()) return true;
     if (IsComplete()) return true;
     if (!task_ptr_.IsNull() &&
         task_ptr_->task_flags_.Any(TASK_FIRE_AND_FORGET)) {
@@ -858,32 +866,53 @@ class Future {
   /**
    * Suspend the coroutine and register for resumption (coroutine await_suspend)
    *
-   * This is called when await_ready returns false. It stores the coroutine
-   * handle in the RunContext so the worker can resume it when the task
-   * completes. Also marks this Future as the owner of the task.
-   *
-   * Uses type-erased coroutine handle and gets RunContext from thread-local
-   * Worker storage rather than from the promise to ensure proper template
-   * instantiation.
+   * CPU: stores the coroutine handle in RunContext for the worker to resume
+   * when the task completes.
+   * GPU: stores coroutine handle + FutureShm pointer in RunContext so the
+   * Worker can check FUTURE_COMPLETE and resume without spin-waiting.
    *
    * @param handle The coroutine handle to resume when task completes
    * @return True to suspend, false to continue without suspending
    */
-  bool await_suspend(std::coroutine_handle<> handle) noexcept {
+  template <typename PromiseT>
+  HSHM_CROSS_FUN bool await_suspend(
+      std::coroutine_handle<PromiseT> handle) noexcept {
+#if HSHM_IS_HOST
     // Get RunContext via helper function (defined in worker.cc)
     // This avoids needing RunContext to be complete at this point
     return await_suspend_impl(handle);
+#else
+    // GPU: genuinely suspend — store handle and FutureShm in RunContext.
+    // Also store parent RunContext on FutureShm so the worker completing
+    // the sub-task can directly resume the parent (same thread, no polling).
+    if constexpr (requires { handle.promise().get_run_context(); }) {
+      auto *ctx = handle.promise().get_run_context();
+      if (ctx) {
+        ctx->coro_handle_ = handle;
+        ctx->is_yielded_ = true;
+        // Store FutureShm pointer so Worker checks FUTURE_COMPLETE before resume
+        auto fshm_full = GetFutureShm();
+        ctx->awaited_fshm_ = fshm_full.IsNull() ? nullptr : fshm_full.ptr_;
+        // Store sub-task pointer so Worker can deserialize output before resume
+        ctx->awaited_task_ = task_ptr_.IsNull() ? nullptr : task_ptr_.ptr_;
+        // Store parent RunContext on FutureShm for direct parent resumption
+        if (!fshm_full.IsNull()) {
+          fshm_full.ptr_->parent_gpu_rctx_ = ctx;
+        }
+        return true;  // Genuinely suspend
+      }
+    }
+    return false;  // Fallback: no RunContext, can't suspend
+#endif
   }
 
   /**
    * Get the result after resumption (coroutine await_resume)
    *
-   * Returns void to avoid GCC 11 "statement has no effect" warning
-   * which causes the compiler to skip the await machinery entirely.
-   * Marks this Future as the owner if not already set (for await_ready=true
-   * case). Calls PostWait() on the task for post-completion actions.
+   * CPU: calls Destroy(true) to clean up after worker-driven resumption.
+   * GPU: Worker already confirmed FUTURE_COMPLETE; deserialize output and cleanup.
    */
-  void await_resume() noexcept {
+  HSHM_CROSS_FUN void await_resume() noexcept {
     if (!task_ptr_.IsNull() &&
         task_ptr_->task_flags_.Any(TASK_FIRE_AND_FORGET)) {
       // Fire-and-forget: detach without destroying. The task is still
@@ -892,7 +921,13 @@ class Future {
       future_shm_.SetNull();
       return;
     }
+#if HSHM_IS_HOST
     Destroy(true);
+#else
+    // GPU: Worker already deserialized output before resuming this coroutine.
+    // Just mark consumed.
+    Destroy(true);
+#endif
   }
 };
 
@@ -939,7 +974,7 @@ struct TaskQueueHeader {
 // TaskQueue class) Worker queues store Future<Task> objects directly
 using TaskLane =
     hipc::multi_mpsc_ring_buffer<Future<Task>,
-                                 CHI_MAIN_ALLOC_T>::ring_buffer_type;
+                                 CHI_QUEUE_ALLOC_T>::ring_buffer_type;
 
 /**
  * Simple wrapper around hipc::multi_mpsc_ring_buffer
@@ -948,7 +983,7 @@ using TaskLane =
  * compatibility with existing code that expects the multi_mpsc_ring_buffer
  * interface.
  */
-typedef hipc::multi_mpsc_ring_buffer<Future<Task>, CHI_MAIN_ALLOC_T> TaskQueue;
+typedef hipc::multi_mpsc_ring_buffer<Future<Task>, CHI_QUEUE_ALLOC_T> TaskQueue;
 
 // ============================================================================
 // RunContext (uses Future<Task> and TaskLane* - both must be complete above)
@@ -973,21 +1008,23 @@ struct RunContext {
   TaskLane* lane_;              /**< Current lane being processed */
   void* event_queue_;           /**< Pointer to worker's event queue */
   std::vector<PoolQuery>
-      pool_queries_;            /**< Pool queries for task distribution */
+      pool_queries_; /**< Pool queries for task distribution */
   std::vector<FullPtr<Task>> subtasks_; /**< Replica tasks for this execution */
   u32 completed_replicas_;              /**< Count of completed replicas */
   u32 yield_count_;                     /**< Number of times task has yielded */
-  Future<Task, CHI_MAIN_ALLOC_T>
-      future_;               /**< Future for async completion tracking */
+  Future<Task, CHI_QUEUE_ALLOC_T>
+      future_;                    /**< Future for async completion tracking */
   std::atomic<bool> is_notified_; /**< Atomic flag to prevent duplicate event
                                      queue additions */
-  double true_period_ns_;       /**< Original period from task->period_ns_ */
-  bool did_work_;               /**< Whether task did work in last execution */
-  hshm::CpuTimer cpu_timer_;   /**< Accumulates thread CPU time across yields */
-  float predicted_load_ = 0;   /**< Predicted CPU time from InferModel (us) */
-  hshm::HighResMonotonicTimer wall_timer_;  /**< Wall clock time across yields */
-  float predicted_wall_us_ = 0;  /**< Predicted wall time from InferWallClockTime */
-  TaskStat predicted_stat_;      /**< TaskStat used for prediction (for reinforcement) */
+  double true_period_ns_;         /**< Original period from task->period_ns_ */
+  bool did_work_;            /**< Whether task did work in last execution */
+  hshm::CpuTimer cpu_timer_; /**< Accumulates thread CPU time across yields */
+  float predicted_load_ = 0; /**< Predicted CPU time from InferModel (us) */
+  hshm::HighResMonotonicTimer wall_timer_; /**< Wall clock time across yields */
+  float predicted_wall_us_ =
+      0; /**< Predicted wall time from InferWallClockTime */
+  TaskStat
+      predicted_stat_; /**< TaskStat used for prediction (for reinforcement) */
 
   RunContext()
       : coro_handle_(nullptr),
@@ -1094,11 +1131,13 @@ struct RunContext {
 };
 
 // ============================================================================
-// Future::await_suspend_impl implementation (must be after RunContext definition)
+// Future::await_suspend_impl implementation (must be after RunContext
+// definition)
 // ============================================================================
 
 template <typename TaskT, typename AllocT>
-bool Future<TaskT, AllocT>::await_suspend_impl(std::coroutine_handle<> handle) noexcept {
+bool Future<TaskT, AllocT>::await_suspend_impl(
+    std::coroutine_handle<> handle) noexcept {
   // Get RunContext from the current worker's thread-local storage
   // Uses helper function to avoid circular dependency with worker.h
   RunContext* run_ctx = GetCurrentRunContextFromWorker();

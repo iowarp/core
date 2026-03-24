@@ -441,8 +441,9 @@ bool Config::ParseStorageConfig(const YAML::Node &node) {
     device_config.bdev_type_ = device_node["bdev_type"].as<std::string>();
     
     // Validate bdev_type
-    if (device_config.bdev_type_ != "file" && device_config.bdev_type_ != "ram") {
-      HLOG(kError, "Config error: Invalid bdev_type '{}' (must be 'file' or 'ram')", device_config.bdev_type_);
+    if (device_config.bdev_type_ != "file" && device_config.bdev_type_ != "ram" &&
+        device_config.bdev_type_ != "hbm" && device_config.bdev_type_ != "pinned") {
+      HLOG(kError, "Config error: Invalid bdev_type '{}' (must be 'file', 'ram', 'hbm', or 'pinned')", device_config.bdev_type_);
       return false;
     }
     

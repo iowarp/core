@@ -36,7 +36,7 @@ build:
       CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: ONLY
       CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: ONLY
     content:
-      - cmake --preset=${{ preset }} -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_PREFIX_PATH=${PREFIX} -DCMAKE_FIND_ROOT_PATH=${PREFIX} -DWRP_CORE_ENABLE_CONDA=ON
+      - cmake --preset=${{ preset }} -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_PREFIX_PATH=${PREFIX} -DCMAKE_FIND_ROOT_PATH=${PREFIX} -DWRP_CORE_ENABLE_CONDA=ON -DCMAKE_CUDA_HOST_COMPILER=${CXX}
       - cmake --build build --parallel
       - cmake --install build
 
@@ -46,6 +46,8 @@ requirements:
     - cmake >=3.20
     - ninja
     - pkg-config
+    - if: cuda_enabled == "ON"
+      then: cuda-toolkit
   host:
     - python
     - zeromq
@@ -56,6 +58,8 @@ requirements:
     - catch2
     - libaio
     - liburing
+    - if: cuda_enabled == "ON"
+      then: cuda-toolkit
   run:
     - python
     - zeromq
@@ -69,11 +73,15 @@ requirements:
     - pyyaml
     - msgpack-python
     - flask
+    - if: cuda_enabled == "ON"
+      then: cuda-cudart
 
 tests:
   - script:
-      # Just verify the library files exist (chimaera runtime start is a daemon)
+      # Verify core library files exist (chimaera runtime start is a daemon)
       - test -f $PREFIX/lib/libchimaera_cxx.so || test -f $PREFIX/lib/libchimaera_cxx.dylib
+      # Verify CUDA UVM library and headers when built with CUDA
+      - if [ "${{ cuda_enabled }}" = "ON" ]; then test -f $PREFIX/lib/libwrp_cte_uvm.so && test -f $PREFIX/include/wrp_cte/uvm/gpu_vmm.h; fi
 
 about:
   homepage: https://www.iowarp.ai

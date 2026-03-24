@@ -65,7 +65,10 @@ struct Mutex {
     min_u64 tkt = lock_.fetch_add(1);
     do {
       for (int i = 0; i < 1; ++i) {
-        if (tkt == head_.load()) {
+        // Use load_device() for cross-SM L2 visibility on GPU.
+        // Unlock() advances head_ via fetch_add (L2 atomic), but
+        // a volatile load() on a different SM reads stale L1 data.
+        if (tkt == head_.load_device()) {
           return;
         }
       }
@@ -76,7 +79,7 @@ struct Mutex {
   /** Try to acquire the lock */
   HSHM_INLINE_CROSS_FUN
   bool TryLock(u32 owner) {
-    if (try_lock_.fetch_add(1) > 0 || lock_.load() > head_.load()) {
+    if (try_lock_.fetch_add(1) > 0 || lock_.load_device() > head_.load_device()) {
       try_lock_.fetch_sub(1);
       return false;
     }

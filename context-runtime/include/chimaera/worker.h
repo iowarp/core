@@ -55,7 +55,7 @@ namespace chi {
 
 // Forward declaration to avoid circular dependency
 using WorkQueue =
-    hshm::ipc::mpsc_ring_buffer<hipc::ShmPtr<TaskLane>, CHI_MAIN_ALLOC_T>;
+    hshm::ipc::mpsc_ring_buffer<hipc::ShmPtr<TaskLane>, CHI_QUEUE_ALLOC_T>;
 
 // Forward declarations
 class Task;
@@ -277,7 +277,6 @@ class Worker {
    */
   TaskLane *GetLane() const;
 
-#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
   /**
    * Set GPU lanes for this worker to process
    * @param lanes Vector of TaskLane pointers for GPU queues
@@ -289,7 +288,6 @@ class Worker {
    * @return Reference to vector of GPU TaskLanes
    */
   const std::vector<TaskLane *> &GetGpuLanes() const;
-#endif
 
  private:
   /**
@@ -428,10 +426,8 @@ class Worker {
   // Single lane assigned to this worker (one lane per worker)
   TaskLane *assigned_lane_;
 
-#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
-  // GPU lanes assigned to this worker (one lane per GPU)
+  // GPU lanes assigned to this worker (one lane per GPU, empty when no GPU)
   std::vector<TaskLane *> gpu_lanes_;
-#endif
 
   // Note: RunContext cache removed - RunContext is now embedded in Task
 
@@ -456,7 +452,7 @@ class Worker {
   // Stores Future<Task> objects to set FUTURE_COMPLETE, avoiding stale RunContext* pointers
   // Allocated from malloc allocator (temporary runtime data, not IPC)
   static constexpr u32 EVENT_QUEUE_DEPTH = 1024;
-  hshm::ipc::mpsc_ring_buffer<Future<Task, CHI_MAIN_ALLOC_T>, hshm::ipc::MallocAllocator> *event_queue_;
+  hshm::ipc::mpsc_ring_buffer<Future<Task, CHI_QUEUE_ALLOC_T>, hshm::ipc::MallocAllocator> *event_queue_;
 
   // Periodic queue system for time-based periodic tasks:
   // - Queue[0]: Tasks with yield_time_us_ <= 50us (checked every 16 iterations)

@@ -126,6 +126,7 @@
 // Private data structures (single-process containers)
 #include "data_structures/priv/string.h"
 #include "data_structures/priv/vector.h"
+#include "data_structures/priv/unordered_map_ll.h"
 
 // Serialization support
 #include "data_structures/serialization/local_serialize.h"

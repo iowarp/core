@@ -17,6 +17,7 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include "hermes_shm/data_structures/serialization/global_serialize.h"
 
 // Include Chimaera headers
 #include <chimaera/chimaera.h>
@@ -10574,7 +10575,7 @@ TEST_CASE("Autogen - Bdev PerfMetrics serialization", "[autogen][bdev][perfmetri
     INFO("PerfMetrics default constructor verified");
   }
 
-  SECTION("PerfMetrics cereal serialization") {
+  SECTION("PerfMetrics GlobalSerialize serialization") {
     auto* ipc_manager = CHI_IPC;
     if (!ipc_manager) {
       INFO("IPC manager not available - skipping");
@@ -10585,16 +10586,17 @@ TEST_CASE("Autogen - Bdev PerfMetrics serialization", "[autogen][bdev][perfmetri
     chimaera::bdev::CreateParams orig_params(
         chimaera::bdev::BdevType::kFile, (chi::u64)8192);
 
-    // Use cereal serialization
-    std::stringstream ss;
+    // Use GlobalSerialize serialization
+    std::vector<char> buf;
     {
-      cereal::BinaryOutputArchive oar(ss);
+      hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
       orig_params.serialize(oar);
+      oar.Finalize();
     }
 
     chimaera::bdev::CreateParams loaded_params;
     {
-      cereal::BinaryInputArchive iar(ss);
+      hshm::ipc::GlobalDeserialize<std::vector<char>> iar(buf);
       loaded_params.serialize(iar);
     }
 
@@ -10606,7 +10608,7 @@ TEST_CASE("Autogen - Bdev PerfMetrics serialization", "[autogen][bdev][perfmetri
             orig_params.perf_metrics_.read_bandwidth_mbps_);
     REQUIRE(loaded_params.perf_metrics_.write_bandwidth_mbps_ ==
             orig_params.perf_metrics_.write_bandwidth_mbps_);
-    INFO("PerfMetrics cereal round-trip verified");
+    INFO("PerfMetrics GlobalSerialize round-trip verified");
   }
 }
 
@@ -10685,7 +10687,7 @@ TEST_CASE("Autogen - Bdev CreateParams LoadConfig", "[autogen][bdev][createparam
 // NOTE: CAE LocalSaveTask/LocalLoadTask tests skipped because CAE tasks
 // (GetOrCreatePoolTask<CreateParams>) contain priv::string fields that
 // crash with binary serialization (LocalTaskArchive).
-// Use cereal-based SaveTask/LoadTask for CAE tasks instead.
+// Use GlobalSerialize-based SaveTask/LoadTask for CAE tasks instead.
 
 //==============================================================================
 // Admin Additional Task Coverage - StopRuntimeTask, SendTask, RecvTask, etc.
@@ -10704,15 +10706,17 @@ TEST_CASE("Autogen - Admin StopRuntimeTask full coverage", "[autogen][admin][sto
     auto task = ipc_manager->NewTask<chimaera::admin::StopRuntimeTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
     if (!task.IsNull()) {
-      // Test cereal serialization
-      std::stringstream ss;
+      // Test GlobalSerialize serialization
+      std::vector<char> buf;
       {
-        cereal::BinaryOutputArchive oar(ss);
+        hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
         task->SerializeIn(oar);
+        oar.Finalize();
       }
       {
-        cereal::BinaryOutputArchive oar(ss);
+        hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
         task->SerializeOut(oar);
+        oar.Finalize();
       }
 
       // Test Copy
@@ -10750,15 +10754,17 @@ TEST_CASE("Autogen - Admin SendTask full coverage", "[autogen][admin][sendtask][
     auto task = ipc_manager->NewTask<chimaera::admin::SendTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
     if (!task.IsNull()) {
-      // Test cereal serialization
-      std::stringstream ss;
+      // Test GlobalSerialize serialization
+      std::vector<char> buf;
       {
-        cereal::BinaryOutputArchive oar(ss);
+        hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
         task->SerializeIn(oar);
+        oar.Finalize();
       }
       {
-        cereal::BinaryOutputArchive oar(ss);
+        hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
         task->SerializeOut(oar);
+        oar.Finalize();
       }
 
       // Test Copy
@@ -10796,15 +10802,17 @@ TEST_CASE("Autogen - Admin RecvTask full coverage", "[autogen][admin][recvtask][
     auto task = ipc_manager->NewTask<chimaera::admin::RecvTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
     if (!task.IsNull()) {
-      // Test cereal serialization
-      std::stringstream ss;
+      // Test GlobalSerialize serialization
+      std::vector<char> buf;
       {
-        cereal::BinaryOutputArchive oar(ss);
+        hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
         task->SerializeIn(oar);
+        oar.Finalize();
       }
       {
-        cereal::BinaryOutputArchive oar(ss);
+        hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
         task->SerializeOut(oar);
+        oar.Finalize();
       }
 
       // Test Copy
@@ -10834,15 +10842,17 @@ TEST_CASE("Autogen - Admin WreapDeadIpcsTask full coverage", "[autogen][admin][w
     auto task = ipc_manager->NewTask<chimaera::admin::WreapDeadIpcsTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
     if (!task.IsNull()) {
-      // Test cereal serialization
-      std::stringstream ss;
+      // Test GlobalSerialize serialization
+      std::vector<char> buf;
       {
-        cereal::BinaryOutputArchive oar(ss);
+        hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
         task->SerializeIn(oar);
+        oar.Finalize();
       }
       {
-        cereal::BinaryOutputArchive oar(ss);
+        hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
         task->SerializeOut(oar);
+        oar.Finalize();
       }
 
       // Test Copy
@@ -10880,15 +10890,17 @@ TEST_CASE("Autogen - Admin SubmitBatchTask full coverage", "[autogen][admin][sub
     auto task = ipc_manager->NewTask<chimaera::admin::SubmitBatchTask>(
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
     if (!task.IsNull()) {
-      // Test cereal serialization
-      std::stringstream ss;
+      // Test GlobalSerialize serialization
+      std::vector<char> buf;
       {
-        cereal::BinaryOutputArchive oar(ss);
+        hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
         task->SerializeIn(oar);
+        oar.Finalize();
       }
       {
-        cereal::BinaryOutputArchive oar(ss);
+        hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
         task->SerializeOut(oar);
+        oar.Finalize();
       }
 
       // Test Copy
@@ -12182,8 +12194,8 @@ TEST_CASE("Autogen - PoolConfig operations", "[autogen][poolconfig]") {
 // CTE Context and Telemetry struct serialization coverage
 // ============================================================================
 
-TEST_CASE("Autogen - CTE Context struct cereal", "[autogen][cte][context][cereal]") {
-  SECTION("Context cereal roundtrip") {
+TEST_CASE("Autogen - CTE Context struct GlobalSerialize", "[autogen][cte][context][globalserialize]") {
+  SECTION("Context GlobalSerialize roundtrip") {
     wrp_cte::core::Context ctx;
     ctx.dynamic_compress_ = 2;
     ctx.compress_lib_ = 3;
@@ -12197,14 +12209,15 @@ TEST_CASE("Autogen - CTE Context struct cereal", "[autogen][cte][context][cereal
     ctx.trace_key_ = 12345;
     ctx.trace_node_ = 3;
 
-    std::stringstream ss;
+    std::vector<char> buf;
     {
-      cereal::BinaryOutputArchive oar(ss);
+      hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
       oar(ctx);
+      oar.Finalize();
     }
     wrp_cte::core::Context loaded;
     {
-      cereal::BinaryInputArchive iar(ss);
+      hshm::ipc::GlobalDeserialize<std::vector<char>> iar(buf);
       iar(loaded);
     }
     REQUIRE(loaded.dynamic_compress_ == 2);
@@ -12213,30 +12226,31 @@ TEST_CASE("Autogen - CTE Context struct cereal", "[autogen][cte][context][cereal
     REQUIRE(loaded.target_psnr_ == 40);
     REQUIRE(loaded.max_performance_ == true);
     REQUIRE(loaded.trace_key_ == 12345);
-    INFO("Context cereal roundtrip completed");
+    INFO("Context GlobalSerialize roundtrip completed");
   }
 
-  SECTION("CteTelemetry cereal roundtrip") {
+  SECTION("CteTelemetry GlobalSerialize roundtrip") {
     wrp_cte::core::CteTelemetry telem;
     telem.op_ = wrp_cte::core::CteOp::kPutBlob;
     telem.off_ = 100;
     telem.size_ = 200;
     telem.logical_time_ = 42;
 
-    std::stringstream ss;
+    std::vector<char> buf;
     {
-      cereal::BinaryOutputArchive oar(ss);
+      hshm::ipc::GlobalSerialize<std::vector<char>> oar(buf);
       oar(telem);
+      oar.Finalize();
     }
     wrp_cte::core::CteTelemetry loaded;
     {
-      cereal::BinaryInputArchive iar(ss);
+      hshm::ipc::GlobalDeserialize<std::vector<char>> iar(buf);
       iar(loaded);
     }
     REQUIRE(loaded.off_ == 100);
     REQUIRE(loaded.size_ == 200);
     REQUIRE(loaded.logical_time_ == 42);
-    INFO("CteTelemetry cereal roundtrip completed");
+    INFO("CteTelemetry GlobalSerialize roundtrip completed");
   }
 
   SECTION("Context default constructor") {
@@ -12249,7 +12263,8 @@ TEST_CASE("Autogen - CTE Context struct cereal", "[autogen][cte][context][cereal
   }
 
   SECTION("CteTelemetry parameterized constructor") {
-    auto now = std::chrono::steady_clock::now();
+    auto now_tp = std::chrono::steady_clock::now();
+    auto now = static_cast<chi::u64>(now_tp.time_since_epoch().count());
     wrp_cte::core::CteTelemetry telem(
         wrp_cte::core::CteOp::kGetBlob, 10, 20,
         wrp_cte::core::TagId::GetNull(), now, now, 99);
@@ -12312,7 +12327,7 @@ TEST_CASE("Autogen - SystemInfo MapMixedMemory", "[autogen][systeminfo][mixedmem
 // ============================================================================
 
 // NOTE: CTE Container SaveTask tests removed - CTE tasks with priv::string fields
-// cause SEGFAULT with cereal-based bulk transfer (SaveTaskArchive) without a
+// cause SEGFAULT with GlobalSerialize-based bulk transfer (SaveTaskArchive) without a
 // running network server. Use direct SerializeIn/SerializeOut tests above instead.
 
 TEST_CASE("Autogen - CTE Container NewTask/DelTask", "[autogen][cte][container][newtask]") {

@@ -51,6 +51,7 @@ struct CoRwLockTestTask;
 struct WaitTestTask;
 struct TestLargeOutputTask;
 struct GpuSubmitTask;
+struct SubtaskTestTask;
 
 /**
  * Runtime implementation for MOD_NAME container
@@ -140,6 +141,8 @@ public:
    * Returns TaskResume for coroutine-based async operations
    */
   chi::TaskResume GpuSubmit(hipc::FullPtr<GpuSubmitTask> task, chi::RunContext& rctx);
+
+  chi::TaskResume SubtaskTest(hipc::FullPtr<SubtaskTestTask> task, chi::RunContext& rctx);
 
   /**
    * Handle Monitor task - return msgpack-encoded test data

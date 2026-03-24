@@ -32,6 +32,15 @@ endif()
 
 message(STATUS "Found Chimaera framework - building full ChiMod implementation")
 
+# Ensure CUDA language is enabled in this directory scope so that chimod
+# subdirectories (core, compressor) can use add_cuda_library when
+# WRP_CORE_ENABLE_CUDA is ON.  enable_language() is idempotent; the
+# architecture and flag variables set by wrp_core_enable_cuda() in
+# context-transport-primitives are already in the CMake cache.
+if(WRP_CORE_ENABLE_CUDA)
+    enable_language(CUDA)
+endif()
+
 # Add the core ChiMod
 add_subdirectory(core)
 

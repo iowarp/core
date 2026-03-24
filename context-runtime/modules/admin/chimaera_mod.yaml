@@ -40,3 +40,8 @@ kProbeRequest: 29        # Indirect probe request to helper node
 kRecoverContainers: 30   # Leader broadcasts recovery plan to surviving nodes
 kSystemMonitor: 31       # Periodic system resource utilization monitor
 kAnnounceShutdown: 32    # Broadcast shutdown announcement to all nodes
+kRegisterGpuContainer: 33  # Register a GPU container with the GPU orchestrator
+
+# GPU support (all methods are no-ops on GPU)
+has_gpu: true
+gpu_methods: []

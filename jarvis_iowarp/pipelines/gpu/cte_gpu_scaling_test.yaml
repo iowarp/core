@@ -1,0 +1,46 @@
+# CTE GPU Benchmark — Full Scaling Study (Pipeline Test)
+#
+# Dimensions:
+#   1. Client/RT warp pairs:  (client_blocks, rt_blocks) with rt <= client
+#   2. I/O size/warp:         16k..32m (iterations scaled to 1GB/warp)
+#   3. Storage backend:       hbm
+#
+# Requirements: wrp_cte_gpu_bench in PATH, CUDA-capable GPU
+#
+# Usage:
+#   jarvis pipeline test gpu/cte_gpu_scaling_test.yaml
+
+config:
+  name: cte_gpu_scaling
+  pkgs:
+    - pkg_type: jarvis_iowarp.wrp_cte_gpu_bench
+      pkg_name: bench
+      test_case: "putblob_gpu"
+      client_blocks: 1
+      client_threads: 32
+      rt_blocks: 1
+      rt_threads: 32
+      io_size: "128k"
+      iterations: 16
+      bdev_type: "pinned"
+
+vars:
+  # Client and RT warp counts (zipped: rt_blocks <= client_blocks)
+  # Each pair: (client_blocks, rt_blocks) with 32 threads/block = 1 warp/block
+  bench.client_blocks:  [1, 1, 8,  8, 16, 16, 32, 32, 32, 64, 64, 64]
+  bench.rt_blocks:      [1, 1, 4,  8, 4,  16, 8,  16, 32, 16, 32, 64]
+
+  # Per-warp I/O size and iterations (1GB total per warp per transfer size)
+  bench.io_size:    ["16k",  "64k",  "128k", "256k", "1m",  "8m", "16m", "32m"]
+  bench.iterations: [65536,  16384,  8192,   4096,   1024,  128,  64,    32   ]
+
+  # Storage backend type
+  bench.bdev_type: ["hbm"]
+
+loop:
+  - [bench.client_blocks, bench.rt_blocks]
+  - [bench.io_size, bench.iterations]
+  - [bench.bdev_type]
+
+repeat: 1
+output: "${HOME}/cte_gpu_scaling_results"

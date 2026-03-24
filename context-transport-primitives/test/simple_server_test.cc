@@ -39,7 +39,7 @@
 #include <atomic>
 #include <cstring>
 #include <string>
-#include <cereal/types/string.hpp>
+#include "hermes_shm/data_structures/serialization/global_serialize.h"
 
 // Global running flag
 std::atomic<bool> running{true};

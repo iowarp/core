@@ -23,8 +23,9 @@ GLOBAL_CONST chi::u32 kFreeBlocks = 11;
 GLOBAL_CONST chi::u32 kWrite = 12;
 GLOBAL_CONST chi::u32 kRead = 13;
 GLOBAL_CONST chi::u32 kGetStats = 14;
+GLOBAL_CONST chi::u32 kUpdate = 15;
 
-GLOBAL_CONST chi::u32 kMaxMethodId = 15;
+GLOBAL_CONST chi::u32 kMaxMethodId = 16;
 
 inline const std::vector<std::string>& GetMethodNames() {
   static const std::vector<std::string> names = [] {
@@ -37,6 +38,7 @@ inline const std::vector<std::string>& GetMethodNames() {
     v[12] = "Write";
     v[13] = "Read";
     v[14] = "GetStats";
+    v[15] = "Update";
     return v;
   }();
   return names;

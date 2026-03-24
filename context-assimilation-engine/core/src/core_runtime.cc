@@ -39,10 +39,8 @@
 #include <wrp_cae/core/factory/hdf5_file_assimilator.h>
 #endif
 
-#include <cereal/archives/binary.hpp>
-#include <cereal/types/vector.hpp>
+#include "hermes_shm/data_structures/serialization/global_serialize.h"
 #include <fstream>
-#include <sstream>
 #include <vector>
 
 // Include wrp_cte headers before opening namespace to avoid Method namespace
@@ -90,8 +88,9 @@ chi::TaskResume Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task,
   // Deserialize the vector of AssimilationCtx
   std::vector<AssimilationCtx> assimilation_contexts;
   try {
-    std::stringstream ss(task->serialized_ctx_.str());
-    cereal::BinaryInputArchive ar(ss);
+    std::string data = task->serialized_ctx_.str();
+    std::vector<char> buf(data.begin(), data.end());
+    hshm::ipc::GlobalDeserialize<std::vector<char>> ar(buf);
     ar(assimilation_contexts);
   } catch (const std::exception& e) {
     HLOG(kError, "ParseOmni: Failed to deserialize AssimilationCtx vector: {}",

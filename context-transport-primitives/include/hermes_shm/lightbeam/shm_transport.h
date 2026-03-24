@@ -43,7 +43,6 @@
 #endif
 #endif
 #include <csignal>
-
 #include "hermes_shm/data_structures/serialization/local_serialize.h"
 #include "hermes_shm/thread/thread_model_manager.h"
 #include "lightbeam.h"
@@ -55,14 +54,15 @@ namespace hshm::lbm {
 // The copy space is treated as a ring buffer indexed by total_written_ and
 // total_read_ modulo copy_space_size_.
 struct ShmTransferInfo {
-  hipc::atomic<size_t> total_written_;  // Total bytes written by producer
-  hipc::atomic<size_t> total_read_;     // Total bytes read by consumer
-  size_t copy_space_size_;              // Ring buffer capacity
+  hipc::atomic<size_t> total_written_;   // Total bytes written by producer
+  hipc::atomic<size_t> total_read_;      // Total bytes read by consumer
+  hipc::atomic<size_t> copy_space_size_; // Ring buffer capacity (atomic so
+                                         // GPU can bypass L2 cache on read)
 
   HSHM_CROSS_FUN ShmTransferInfo() {
     total_written_.store(0);
     total_read_.store(0);
-    copy_space_size_ = 0;
+    copy_space_size_.store(0);
   }
 };
 
@@ -126,9 +126,10 @@ class ShmTransport
 
     // 1. Serialize metadata using LocalSerialize with allocator-backed buffer
     CharVec meta_buf(meta.alloc_);
-    meta_buf.reserve(ctx.shm_info_->copy_space_size_);
+    meta_buf.reserve(ctx.shm_info_->copy_space_size_.load());
     hshm::ipc::LocalSerialize<CharVec> ar(meta_buf);
     ar(meta);
+    ar.Finalize();
 
     // 2. Transfer serialized size then metadata
     uint32_t meta_len = static_cast<uint32_t>(meta_buf.size());
@@ -198,11 +199,129 @@ class ShmTransport
 
     // 5. Receive bulk data
     RecvBulksImpl(meta, ctx);
+
     info.rc = 0;
     return info;
   }
 
- private:
+  /**
+   * Device-scope Send for GPU→GPU on same device.
+   * Uses device-scope atomics and plain memcpy (no volatile).
+   */
+  template <typename MetaT>
+  HSHM_CROSS_FUN
+  static int SendDevice(MetaT& meta, const LbmContext& ctx) {
+    using AllocT = typename MetaT::allocator_type;
+    using CharVec = hshm::priv::vector<char, AllocT>;
+
+    CharVec meta_buf(meta.alloc_);
+    meta_buf.reserve(ctx.shm_info_->copy_space_size_.load());
+    hshm::ipc::LocalSerialize<CharVec> ar(meta_buf);
+    ar(meta);
+    ar.Finalize();
+
+    uint32_t meta_len = static_cast<uint32_t>(meta_buf.size());
+    WriteTransferDevice(reinterpret_cast<const char*>(&meta_len),
+                        sizeof(meta_len), ctx);
+    WriteTransferDevice(meta_buf.data(), meta_buf.size(), ctx);
+
+    for (size_t i = 0; i < meta.send.size(); ++i) {
+      if (meta.send[i].flags.Any(BULK_EXPOSE)) {
+        WriteTransferDevice(
+            reinterpret_cast<const char*>(&meta.send[i].data.shm_),
+            sizeof(meta.send[i].data.shm_), ctx);
+      } else if (meta.send[i].flags.Any(BULK_XFER)) {
+        WriteTransferDevice(
+            reinterpret_cast<const char*>(&meta.send[i].data.shm_),
+            sizeof(meta.send[i].data.shm_), ctx);
+        if (meta.send[i].data.shm_.alloc_id_.IsNull()) {
+          WriteTransferDevice(meta.send[i].data.ptr_, meta.send[i].size, ctx);
+        }
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * Device-scope Recv for GPU→GPU on same device.
+   * Uses device-scope atomics and plain memcpy (no volatile).
+   */
+  template <typename MetaT>
+  HSHM_CROSS_FUN
+  static ClientInfo RecvDevice(MetaT& meta, const LbmContext& ctx) {
+    using AllocT = typename MetaT::allocator_type;
+    using CharVec = hshm::priv::vector<char, AllocT>;
+    ClientInfo info;
+
+    uint32_t meta_len = 0;
+    ReadTransferDevice(reinterpret_cast<char*>(&meta_len), sizeof(meta_len),
+                       ctx);
+
+    CharVec meta_buf(meta_len, meta.alloc_);
+    ReadTransferDevice(meta_buf.data(), meta_len, ctx);
+
+    hshm::ipc::LocalDeserialize<CharVec> ar(meta_buf);
+    ar(meta);
+
+    for (size_t i = 0; i < meta.send.size(); ++i) {
+      Bulk recv_bulk;
+      recv_bulk.size = meta.send[i].size;
+      recv_bulk.flags = meta.send[i].flags;
+      recv_bulk.data = hipc::FullPtr<char>::GetNull();
+      meta.recv.push_back(recv_bulk);
+    }
+
+    RecvBulksImplDevice(meta, ctx);
+
+    info.rc = 0;
+    return info;
+  }
+
+ public:
+  /**
+   * GPU-compatible static bulk data receiver (device-scope).
+   */
+  template <typename MetaT>
+  HSHM_CROSS_FUN
+  static int RecvBulksImplDevice(MetaT& meta, const LbmContext& ctx) {
+    for (size_t i = 0; i < meta.recv.size(); ++i) {
+      if (meta.recv[i].flags.Any(BULK_EXPOSE)) {
+        hipc::ShmPtr<char> shm;
+        ReadTransferDevice(reinterpret_cast<char*>(&shm), sizeof(shm), ctx);
+        meta.recv[i].data.shm_ = shm;
+        meta.recv[i].data.ptr_ = nullptr;
+      } else if (meta.recv[i].flags.Any(BULK_XFER)) {
+        hipc::ShmPtr<char> shm;
+        ReadTransferDevice(reinterpret_cast<char*>(&shm), sizeof(shm), ctx);
+
+        if (!shm.alloc_id_.IsNull()) {
+          meta.recv[i].data.shm_ = shm;
+          meta.recv[i].data.ptr_ = nullptr;
+        } else {
+          char* buf = meta.recv[i].data.ptr_;
+          bool allocated = false;
+          if (!buf) {
+#if HSHM_IS_HOST
+            buf = static_cast<char*>(std::malloc(meta.recv[i].size));
+#else
+            auto alloc_ptr =
+                meta.alloc_->template AllocateObjs<char>(meta.recv[i].size);
+            buf = alloc_ptr.ptr_;
+#endif
+            allocated = true;
+          }
+          ReadTransferDevice(buf, meta.recv[i].size, ctx);
+          if (allocated) {
+            meta.recv[i].data.ptr_ = buf;
+            meta.recv[i].data.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
+            meta.recv[i].data.shm_.off_ = reinterpret_cast<size_t>(buf);
+          }
+        }
+      }
+    }
+    return 0;
+  }
+
   /**
    * GPU-compatible static bulk data receiver.
    * Allocates receive buffers using the meta's allocator for private memory.
@@ -254,7 +373,7 @@ class ShmTransport
     return 0;
   }
 
- public:
+ private:
   // GPU-safe min of three values
   HSHM_CROSS_FUN
   static size_t Min3(size_t a, size_t b, size_t c) {
@@ -276,8 +395,32 @@ class ShmTransport
 #endif
 #endif
 #else
-    for (size_t i = 0; i < n; ++i) {
-      dst[i] = src[i];
+    // Use volatile reads to bypass GPU L2 cache for cross-device visibility.
+    // Copy 8 bytes at a time for performance, then handle remainder.
+    // Both src and dst must be 8-byte aligned for the fast path.
+    bool aligned = ((reinterpret_cast<uintptr_t>(src) % 8) == 0) &&
+                   ((reinterpret_cast<uintptr_t>(dst) % 8) == 0);
+    if (aligned) {
+      size_t chunks8 = n / 8;
+      if (chunks8 > 0) {
+        const volatile unsigned long long* vsrc8 =
+            reinterpret_cast<const volatile unsigned long long*>(src);
+        unsigned long long* dst8 = reinterpret_cast<unsigned long long*>(dst);
+        for (size_t i = 0; i < chunks8; ++i) {
+          dst8[i] = vsrc8[i];
+        }
+      }
+      size_t tail = chunks8 * 8;
+      const volatile char* vsrc = src;
+      for (size_t i = tail; i < n; ++i) {
+        dst[i] = vsrc[i];
+      }
+    } else {
+      // Byte-by-byte fallback for misaligned addresses (e.g., host-mapped mem)
+      const volatile char* vsrc = src;
+      for (size_t i = 0; i < n; ++i) {
+        dst[i] = vsrc[i];
+      }
     }
 #endif
   }
@@ -286,19 +429,19 @@ class ShmTransport
   HSHM_CROSS_FUN
   static void WriteTransfer(const char* data, size_t size, const LbmContext& ctx) {
     size_t offset = 0;
+    size_t ring_size = ctx.shm_info_->copy_space_size_.load_system();
     size_t total_written = ctx.shm_info_->total_written_.load_system();
     while (offset < size) {
       size_t total_read = ctx.shm_info_->total_read_.load_system();
-      size_t space =
-          ctx.shm_info_->copy_space_size_ - (total_written - total_read);
+      size_t space = ring_size - (total_written - total_read);
       if (space == 0) {
 #if HSHM_IS_HOST
         HSHM_THREAD_MODEL->Yield();
 #endif
         continue;
       }
-      size_t write_pos = total_written % ctx.shm_info_->copy_space_size_;
-      size_t contig = ctx.shm_info_->copy_space_size_ - write_pos;
+      size_t write_pos = total_written % ring_size;
+      size_t contig = ring_size - write_pos;
       size_t chunk = Min3(size - offset, space, contig);
       MemCopy(ctx.copy_space + write_pos, data + offset, chunk);
       offset += chunk;
@@ -307,10 +450,42 @@ class ShmTransport
     }
   }
 
+  // SPSC ring buffer write (device-scope atomics for GPU→GPU on same device)
+  HSHM_CROSS_FUN
+  static void WriteTransferDevice(const char* data, size_t size,
+                                   const LbmContext& ctx) {
+    size_t offset = 0;
+    size_t ring_size = ctx.shm_info_->copy_space_size_.load();
+    size_t total_written = ctx.shm_info_->total_written_.load();
+    while (offset < size) {
+      size_t total_read = ctx.shm_info_->total_read_.load_device();
+      size_t space = ring_size - (total_written - total_read);
+      if (space == 0) {
+#if HSHM_IS_HOST
+        HSHM_THREAD_MODEL->Yield();
+#endif
+        continue;
+      }
+      size_t write_pos = total_written % ring_size;
+      size_t contig = ring_size - write_pos;
+      size_t chunk = Min3(size - offset, space, contig);
+      memcpy(ctx.copy_space + write_pos, data + offset, chunk);
+      // Flush copy_space data from L1 to L2 before making it visible
+      // via total_written_. Without this fence, a reader on another SM
+      // could see the updated total_written_ but read stale copy_space
+      // data still in the writer's L1 cache.
+      hshm::ipc::threadfence();
+      offset += chunk;
+      total_written += chunk;
+      ctx.shm_info_->total_written_.store(total_written);
+    }
+  }
+
   // SPSC ring buffer read (system-scope atomics for GPU/CPU visibility)
   HSHM_CROSS_FUN
   static void ReadTransfer(char* buf, size_t size, const LbmContext& ctx) {
     size_t offset = 0;
+    size_t ring_size = ctx.shm_info_->copy_space_size_.load_system();
     size_t total_read = ctx.shm_info_->total_read_.load_system();
     while (offset < size) {
       size_t total_written = ctx.shm_info_->total_written_.load_system();
@@ -321,13 +496,45 @@ class ShmTransport
 #endif
         continue;
       }
-      size_t read_pos = total_read % ctx.shm_info_->copy_space_size_;
-      size_t contig = ctx.shm_info_->copy_space_size_ - read_pos;
+      size_t read_pos = total_read % ring_size;
+      size_t contig = ring_size - read_pos;
       size_t chunk = Min3(size - offset, avail, contig);
       MemCopy(buf + offset, ctx.copy_space + read_pos, chunk);
       offset += chunk;
       total_read += chunk;
       ctx.shm_info_->total_read_.store_system(total_read);
+    }
+  }
+
+  // SPSC ring buffer read (device-scope atomics for GPU→GPU on same device)
+  HSHM_CROSS_FUN
+  static void ReadTransferDevice(char* buf, size_t size,
+                                  const LbmContext& ctx) {
+    size_t offset = 0;
+    size_t ring_size = ctx.shm_info_->copy_space_size_.load();
+    size_t total_read = ctx.shm_info_->total_read_.load();
+    while (offset < size) {
+      // Use load_device() for cross-SM L2 visibility — the writer's
+      // total_written_.store() (atomicExch) lands in L2, but a volatile
+      // load() on a different SM reads stale L1.
+      size_t total_written = ctx.shm_info_->total_written_.load_device();
+      size_t avail = total_written - total_read;
+      if (avail == 0) {
+#if HSHM_IS_HOST
+        HSHM_THREAD_MODEL->Yield();
+#endif
+        continue;
+      }
+      // Fence before reading copy_space to ensure the writer's data
+      // (fenced before total_written_ update) is visible in L2.
+      hshm::ipc::threadfence();
+      size_t read_pos = total_read % ring_size;
+      size_t contig = ring_size - read_pos;
+      size_t chunk = Min3(size - offset, avail, contig);
+      memcpy(buf + offset, ctx.copy_space + read_pos, chunk);
+      offset += chunk;
+      total_read += chunk;
+      ctx.shm_info_->total_read_.store(total_read);
     }
   }
 };

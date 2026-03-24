@@ -41,7 +41,7 @@ macro(wrp_core_enable_cuda CXX_STANDARD)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
     if(NOT CMAKE_CUDA_ARCHITECTURES)
-        set(CMAKE_CUDA_ARCHITECTURES native)
+        set(CMAKE_CUDA_ARCHITECTURES native CACHE STRING "CUDA architectures to compile for" FORCE)
     endif()
 
     message(STATUS "USING CUDA ARCH: ${CMAKE_CUDA_ARCHITECTURES}")
@@ -187,49 +187,410 @@ function(add_rocm_gpu_executable TARGET DO_COPY)
     target_compile_options(${TARGET} PUBLIC -fgpu-rdc)
 endfunction()
 
-# Function for adding a CUDA library
-function(add_cuda_library TARGET SHARED DO_COPY)
-    set(SRC_FILES ${ARGN})
-    set(CUDA_SOURCE_FILES "")
-    set_cuda_sources("${DO_COPY}" "${SRC_FILES}" CUDA_SOURCE_FILES)
-    add_library(${TARGET} ${SHARED} ${CUDA_SOURCE_FILES})
+# Helper: collect compile definitions for the Clang-CUDA custom command.
+#
+# The Clang custom-command path (add_custom_command) cannot inherit
+# target_compile_definitions from linked interface libraries, so we
+# must collect them explicitly.  This function:
+#   1. Builds the base HSHM/Chimaera definitions (HSHM_ENABLE_CUDA, etc.)
+#   2. Walks LINK_LIBS and recursively collects INTERFACE_COMPILE_DEFINITIONS
+#   3. Returns the combined list via ${OUT_VAR}
+#
+# Usage (inside add_cuda_library / add_cuda_executable):
+#   _wrp_core_collect_clang_cuda_defs("${CUDA_LINK_LIBS}" CLANG_CUDA_DEFS)
+#
+function(_wrp_core_collect_clang_cuda_defs LINK_LIBS OUT_VAR)
+    set(_DEFS "")
 
-    target_compile_options(${TARGET} PUBLIC
-        $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
-
-    if(SHARED STREQUAL "SHARED")
-        set_target_properties(${TARGET} PROPERTIES
-            CUDA_SEPARABLE_COMPILATION ON
-            POSITION_INDEPENDENT_CODE ON
-            CUDA_RUNTIME_LIBRARY Shared
-        )
+    # --- Base definitions (mirroring hshm_target_compile_definitions) ---
+    if(WRP_CORE_ENABLE_CUDA)
+        list(APPEND _DEFS "-DHSHM_ENABLE_CUDA=1" "-DHSHM_ENABLE_ROCM=0")
+    elseif(WRP_CORE_ENABLE_ROCM)
+        list(APPEND _DEFS "-DHSHM_ENABLE_CUDA=0" "-DHSHM_ENABLE_ROCM=1")
+    endif()
+    if(HSHM_ENABLE_PTHREADS)
+        list(APPEND _DEFS
+            "-DHSHM_DEFAULT_THREAD_MODEL=hshm::thread::Pthread"
+            "-DHSHM_ENABLE_PTHREADS=1")
     else()
-        set_target_properties(${TARGET} PROPERTIES
-            CUDA_SEPARABLE_COMPILATION ON
-            POSITION_INDEPENDENT_CODE ON
-            CUDA_RUNTIME_LIBRARY Static
+        list(APPEND _DEFS
+            "-DHSHM_DEFAULT_THREAD_MODEL=hshm::thread::StdThread"
+            "-DHSHM_ENABLE_PTHREADS=0")
+    endif()
+    if(WRP_CORE_ENABLE_CUDA)
+        list(APPEND _DEFS
+            "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::Cuda")
+    elseif(WRP_CORE_ENABLE_ROCM)
+        list(APPEND _DEFS
+            "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::Rocm")
+    else()
+        list(APPEND _DEFS
+            "-DHSHM_DEFAULT_THREAD_MODEL_GPU=hshm::thread::StdThread")
+    endif()
+    list(APPEND _DEFS
+        "-DHSHM_DEFAULT_ALLOC_T=hipc::ThreadLocalAllocator"
+        "-DHSHM_ENABLE_WINDOWS_THREADS=0"
+        "-DHSHM_ENABLE_PROCFS_SYSINFO=1"
+        "-DHSHM_ENABLE_WINDOWS_SYSINFO=0"
+        "-DHSHM_COMPILER_MSVC=0"
+        "-DHSHM_COMPILER_GNU=0"
+        "-DHSHM_ENABLE_DOXYGEN=0"
+        "-DHSHM_DEBUG_LOCK=0"
+        "-DHSHM_LOG_LEVEL=${HSHM_LOG_LEVEL}"
+        "-DHSHM_ENABLE_DLL_EXPORT=0"
+        "-DHSHM_ENABLE_MPI=0"
+    )
+
+    # --- Collect transitive INTERFACE_COMPILE_DEFINITIONS from LINK_LIBS ---
+    # Walk the linked targets and their transitive dependencies to pick up
+    # definitions like HSHM_ENABLE_LIGHTBEAM, HSHM_ENABLE_ZMQ, etc. that
+    # interface libraries propagate.
+    set(_VISITED "")
+    set(_QUEUE ${LINK_LIBS})
+    while(_QUEUE)
+        list(POP_FRONT _QUEUE _LIB)
+        if(_LIB IN_LIST _VISITED)
+            continue()
+        endif()
+        list(APPEND _VISITED "${_LIB}")
+        if(NOT TARGET "${_LIB}")
+            continue()
+        endif()
+        get_target_property(_LIB_DEFS "${_LIB}" INTERFACE_COMPILE_DEFINITIONS)
+        if(_LIB_DEFS)
+            foreach(_DEF IN LISTS _LIB_DEFS)
+                # Skip generator expressions (they can't be evaluated here)
+                string(FIND "${_DEF}" "$<" _GE_POS)
+                if(_GE_POS EQUAL -1)
+                    list(APPEND _DEFS "-D${_DEF}")
+                endif()
+            endforeach()
+        endif()
+        # Recurse into transitive link dependencies
+        get_target_property(_LIB_LINK "${_LIB}" INTERFACE_LINK_LIBRARIES)
+        if(_LIB_LINK)
+            foreach(_DEP IN LISTS _LIB_LINK)
+                if(TARGET "${_DEP}" AND NOT "${_DEP}" IN_LIST _VISITED)
+                    list(APPEND _QUEUE "${_DEP}")
+                endif()
+            endforeach()
+        endif()
+    endwhile()
+
+    list(REMOVE_DUPLICATES _DEFS)
+    set(${OUT_VAR} ${_DEFS} PARENT_SCOPE)
+endfunction()
+
+# Function for adding a CUDA library
+#
+# When WRP_CORE_CLANG_CUDA_COMPILER is set (via wrp_core_find_clang_cuda()),
+# compiles with Clang (C++20, coroutines in device code).  Otherwise uses
+# NVCC via CMake's native CUDA language support.  The choice is transparent
+# to callers -- source code should be portable across both compilers.
+#
+# Usage:
+#   add_cuda_library(TARGET SHARED|STATIC DO_COPY source1.cu ...
+#       [INCLUDE_DIRS dir1 dir2 ...]
+#       [LINK_LIBS lib1 lib2 ...])
+function(add_cuda_library TARGET SHARED DO_COPY)
+    cmake_parse_arguments(CUDA "" "" "INCLUDE_DIRS;LINK_LIBS" ${ARGN})
+    set(SRC_FILES ${CUDA_UNPARSED_ARGUMENTS})
+
+    # Resolve "native" to the detected GPU architecture before add_library so
+    # CMake does not attempt to re-detect the GPU at configure time for targets
+    # created in subdirectories processed after the first enable_language(CUDA)
+    # call.  CMAKE_CUDA_ARCHITECTURES_NATIVE is set by CMake during that first
+    # language-enable pass (e.g. in context-transport-primitives or
+    # context-runtime) and contains the concrete arch list (e.g. "89-real").
+    # We must update the CACHE variable (not just a local variable) because
+    # add_library reads the global CMAKE_CUDA_ARCHITECTURES value.
+    if(CMAKE_CUDA_ARCHITECTURES STREQUAL "native" AND CMAKE_CUDA_ARCHITECTURES_NATIVE)
+        set(CMAKE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES_NATIVE}"
+            CACHE STRING "CUDA architectures to compile for" FORCE)
+    endif()
+
+    if(WRP_CORE_CLANG_CUDA_COMPILER)
+        # ---- Clang path ----
+        _wrp_core_get_clang_gpu_arch(GPU_ARCH_FLAGS)
+
+        set(INCLUDE_FLAGS "")
+        foreach(DIR IN LISTS CUDA_INCLUDE_DIRS)
+            list(APPEND INCLUDE_FLAGS "-I${DIR}")
+        endforeach()
+
+        # Collect all compile definitions (base + transitive from LINK_LIBS)
+        _wrp_core_collect_clang_cuda_defs("${CUDA_LINK_LIBS}" CLANG_CUDA_DEFS)
+
+        set(OBJECT_FILES "")
+        foreach(SRC IN LISTS SRC_FILES)
+            get_filename_component(SRC_NAME ${SRC} NAME_WE)
+            get_filename_component(SRC_ABS ${SRC} ABSOLUTE)
+            set(OBJ_FILE "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda/${SRC_NAME}.o")
+
+            add_custom_command(
+                OUTPUT ${OBJ_FILE}
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda"
+                COMMAND ${WRP_CORE_CLANG_CUDA_COMPILER}
+                    -x cuda
+                    -std=c++20
+                    --cuda-path=${WRP_CORE_CLANG_CUDA_PATH}
+                    ${GPU_ARCH_FLAGS}
+                    -Wno-unknown-cuda-version
+                    -fPIC
+                    -fgpu-rdc
+                    ${CLANG_CUDA_DEFS}
+                    ${INCLUDE_FLAGS}
+                    -c ${SRC_ABS}
+                    -o ${OBJ_FILE}
+                    "$<$<CONFIG:Debug>:-g>"
+                    "$<$<CONFIG:Debug>:-O1>"
+                    "$<$<CONFIG:Release>:-O2>"
+                    "$<$<CONFIG:RelWithDebInfo>:-O2>"
+                    "$<$<CONFIG:RelWithDebInfo>:-g>"
+                DEPENDS ${SRC_ABS}
+                COMMENT "Clang CUDA: Compiling ${SRC}"
+                VERBATIM
+            )
+            list(APPEND OBJECT_FILES ${OBJ_FILE})
+        endforeach()
+
+        # Save source object files (before device link) for fatbin extraction
+        set(_CUDA_SRC_OBJ_FILES ${OBJECT_FILES})
+
+        # Device link step: nvcc -dlink resolves __cudaRegisterLinkedBinary__nv_*
+        # symbols that clang-cuda -fgpu-rdc compilation leaves undefined.
+        set(DEVICE_LINK_OBJ "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda/device_link.o")
+        set(NVCC_ARCH_FLAGS "")
+        if(CMAKE_CUDA_ARCHITECTURES)
+            foreach(ARCH IN LISTS CMAKE_CUDA_ARCHITECTURES)
+                if(NOT "${ARCH}" STREQUAL "native")
+                    string(REGEX REPLACE "-real|-virtual" "" ARCH_NUM "${ARCH}")
+                    list(APPEND NVCC_ARCH_FLAGS
+                        "--generate-code=arch=compute_${ARCH_NUM},code=[compute_${ARCH_NUM},sm_${ARCH_NUM}]")
+                endif()
+            endforeach()
+        endif()
+        if(NOT NVCC_ARCH_FLAGS)
+            list(APPEND NVCC_ARCH_FLAGS "--generate-code=arch=compute_80,code=[compute_80,sm_80]")
+        endif()
+        add_custom_command(
+            OUTPUT ${DEVICE_LINK_OBJ}
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda"
+            COMMAND ${CMAKE_CUDA_COMPILER}
+                -dlink
+                -shared
+                ${NVCC_ARCH_FLAGS}
+                -Xcompiler=-fPIC
+                ${OBJECT_FILES}
+                -o ${DEVICE_LINK_OBJ}
+                -L${WRP_CORE_CLANG_CUDA_PATH}/lib64
+                -lcudadevrt
+                -lcudart
+            DEPENDS ${OBJECT_FILES}
+            COMMENT "NVCC: Device link for ${TARGET}"
+            VERBATIM
         )
+        list(APPEND OBJECT_FILES ${DEVICE_LINK_OBJ})
+
+        add_library(${TARGET} ${SHARED} ${OBJECT_FILES})
+        set_target_properties(${TARGET} PROPERTIES
+            LINKER_LANGUAGE CXX
+            POSITION_INDEPENDENT_CODE ON
+        )
+        set_property(TARGET ${TARGET} APPEND PROPERTY
+            LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart")
+
+        # Export the Clang-CUDA object files (excluding device_link.o) to parent scope
+        # so embed_gpu_device_code() can extract fatbins from them.
+        set(${TARGET}_CUDA_OBJ_FILES ${_CUDA_SRC_OBJ_FILES} PARENT_SCOPE)
+    else()
+        # ---- NVCC path ----
+        set(CUDA_SOURCE_FILES "")
+        set_cuda_sources("${DO_COPY}" "${SRC_FILES}" CUDA_SOURCE_FILES)
+
+        add_library(${TARGET} ${SHARED} ${CUDA_SOURCE_FILES})
+
+        set_target_properties(${TARGET} PROPERTIES
+            CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+
+        target_compile_options(${TARGET} PUBLIC
+            $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+
+        if(SHARED STREQUAL "SHARED")
+            set_target_properties(${TARGET} PROPERTIES
+                CUDA_SEPARABLE_COMPILATION ON
+                POSITION_INDEPENDENT_CODE ON
+                CUDA_RUNTIME_LIBRARY Shared
+            )
+        else()
+            set_target_properties(${TARGET} PROPERTIES
+                CUDA_SEPARABLE_COMPILATION ON
+                POSITION_INDEPENDENT_CODE ON
+                CUDA_RUNTIME_LIBRARY Static
+            )
+        endif()
+
+        if(CUDA_INCLUDE_DIRS)
+            target_include_directories(${TARGET} PUBLIC ${CUDA_INCLUDE_DIRS})
+        endif()
+    endif()
+
+    if(CUDA_LINK_LIBS)
+        target_link_libraries(${TARGET} ${CUDA_LINK_LIBS})
     endif()
 endfunction()
 
 # Function for adding a CUDA executable
+#
+# When WRP_CORE_CLANG_CUDA_COMPILER is set (via wrp_core_find_clang_cuda()),
+# compiles with Clang (C++20, coroutines in device code).  Otherwise uses
+# NVCC via CMake's native CUDA language support.
+#
+# Usage:
+#   add_cuda_executable(TARGET DO_COPY source1.cu ...
+#       [INCLUDE_DIRS dir1 dir2 ...]
+#       [LINK_LIBS lib1 lib2 ...])
 function(add_cuda_executable TARGET DO_COPY)
-    set(SRC_FILES ${ARGN})
-    set(CUDA_SOURCE_FILES "")
-    set_cuda_sources("${DO_COPY}" "${SRC_FILES}" CUDA_SOURCE_FILES)
-    add_executable(${TARGET} ${CUDA_SOURCE_FILES})
-    set_target_properties(${TARGET} PROPERTIES
-        CUDA_SEPARABLE_COMPILATION ON
-        POSITION_INDEPENDENT_CODE ON
-    )
+    cmake_parse_arguments(CUDA "" "" "INCLUDE_DIRS;LINK_LIBS;DEFS" ${ARGN})
+    set(SRC_FILES ${CUDA_UNPARSED_ARGUMENTS})
 
-    # When copying sources, we need to add the include path back to the original source directory
-    if(${DO_COPY})
-        target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    if(WRP_CORE_CLANG_CUDA_COMPILER)
+        # ---- Clang path ----
+        _wrp_core_get_clang_gpu_arch(GPU_ARCH_FLAGS)
+
+        set(INCLUDE_FLAGS "")
+        foreach(DIR IN LISTS CUDA_INCLUDE_DIRS)
+            list(APPEND INCLUDE_FLAGS "-I${DIR}")
+        endforeach()
+
+        # Collect extra per-target definitions passed via DEFS argument
+        set(EXTRA_DEFS "")
+        foreach(DEF IN LISTS CUDA_DEFS)
+            list(APPEND EXTRA_DEFS "-D${DEF}")
+        endforeach()
+
+        # Collect all compile definitions (base + transitive from LINK_LIBS)
+        _wrp_core_collect_clang_cuda_defs("${CUDA_LINK_LIBS}" CLANG_CUDA_DEFS)
+
+        set(OBJECT_FILES "")
+        foreach(SRC IN LISTS SRC_FILES)
+            get_filename_component(SRC_NAME ${SRC} NAME_WE)
+            get_filename_component(SRC_ABS ${SRC} ABSOLUTE)
+            set(OBJ_FILE "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda/${SRC_NAME}.o")
+
+            add_custom_command(
+                OUTPUT ${OBJ_FILE}
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda"
+                COMMAND ${WRP_CORE_CLANG_CUDA_COMPILER}
+                    -x cuda
+                    -std=c++20
+                    --cuda-path=${WRP_CORE_CLANG_CUDA_PATH}
+                    ${GPU_ARCH_FLAGS}
+                    -Wno-unknown-cuda-version
+                    ${CLANG_CUDA_DEFS}
+                    ${EXTRA_DEFS}
+                    ${INCLUDE_FLAGS}
+                    -c ${SRC_ABS}
+                    -o ${OBJ_FILE}
+                    "$<$<CONFIG:Debug>:-g>"
+                    "$<$<CONFIG:Debug>:-O1>"
+                    "$<$<CONFIG:Release>:-O2>"
+                    "$<$<CONFIG:RelWithDebInfo>:-O2>"
+                    "$<$<CONFIG:RelWithDebInfo>:-g>"
+                DEPENDS ${SRC_ABS}
+                COMMENT "Clang CUDA: Compiling ${SRC}"
+                VERBATIM
+            )
+            list(APPEND OBJECT_FILES ${OBJ_FILE})
+        endforeach()
+
+        add_executable(${TARGET} ${OBJECT_FILES})
+        set_target_properties(${TARGET} PROPERTIES
+            LINKER_LANGUAGE CXX
+        )
+        set_property(TARGET ${TARGET} APPEND PROPERTY
+            LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart")
+    else()
+        # ---- NVCC path ----
+        set(CUDA_SOURCE_FILES "")
+        set_cuda_sources("${DO_COPY}" "${SRC_FILES}" CUDA_SOURCE_FILES)
+        add_executable(${TARGET} ${CUDA_SOURCE_FILES})
+        set_target_properties(${TARGET} PROPERTIES
+            CUDA_SEPARABLE_COMPILATION ON
+            POSITION_INDEPENDENT_CODE ON
+        )
+
+        if(${DO_COPY})
+            target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        endif()
+
+        target_compile_options(${TARGET} PUBLIC
+            $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+
+        if(CUDA_INCLUDE_DIRS)
+            target_include_directories(${TARGET} PUBLIC ${CUDA_INCLUDE_DIRS})
+        endif()
     endif()
 
-    target_compile_options(${TARGET} PUBLIC
-        $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+    if(CUDA_LINK_LIBS)
+        target_link_libraries(${TARGET} ${CUDA_LINK_LIBS})
+    endif()
+endfunction()
+
+#------------------------------------------------------------------------------
+# Clang CUDA Detection (for C++20 coroutines on GPU)
+#------------------------------------------------------------------------------
+
+# Find the Clang compiler for CUDA compilation.
+# When found, add_cuda_library() and add_cuda_executable() will automatically
+# use Clang instead of NVCC, enabling C++20 features (coroutines, concepts,
+# etc.) in device code.
+macro(wrp_core_find_clang_cuda)
+    if(NOT WRP_CORE_CLANG_CUDA_COMPILER)
+        find_program(WRP_CORE_CLANG_CUDA_COMPILER
+            NAMES clang++-18 clang++-19 clang++-20 clang++
+            PATHS /usr/bin /usr/local/bin
+            DOC "Clang compiler for CUDA compilation"
+        )
+    endif()
+
+    # Derive --cuda-path from CMAKE_CUDA_COMPILER (e.g., /usr/local/cuda-12.6/bin/nvcc -> /usr/local/cuda-12.6)
+    if(NOT WRP_CORE_CLANG_CUDA_PATH)
+        if(CMAKE_CUDA_COMPILER)
+            get_filename_component(_cuda_bin_dir "${CMAKE_CUDA_COMPILER}" DIRECTORY)
+            get_filename_component(WRP_CORE_CLANG_CUDA_PATH "${_cuda_bin_dir}" DIRECTORY)
+        elseif(CUDAToolkit_BIN_DIR)
+            get_filename_component(WRP_CORE_CLANG_CUDA_PATH "${CUDAToolkit_BIN_DIR}" DIRECTORY)
+        else()
+            set(WRP_CORE_CLANG_CUDA_PATH "/usr/local/cuda")
+        endif()
+        set(WRP_CORE_CLANG_CUDA_PATH "${WRP_CORE_CLANG_CUDA_PATH}" CACHE PATH "CUDA toolkit root for Clang")
+    endif()
+
+    if(WRP_CORE_CLANG_CUDA_COMPILER)
+        message(STATUS "Found Clang for CUDA: ${WRP_CORE_CLANG_CUDA_COMPILER}")
+        message(STATUS "  CUDA path for Clang: ${WRP_CORE_CLANG_CUDA_PATH}")
+    else()
+        message(WARNING "Clang not found -- GPU coroutine targets will be unavailable")
+    endif()
+endmacro()
+
+# Get the GPU architecture flag for Clang from CMAKE_CUDA_ARCHITECTURES.
+# Converts CMake architecture numbers (e.g., 89) to Clang's --cuda-gpu-arch=sm_XX.
+function(_wrp_core_get_clang_gpu_arch OUTPUT_VAR)
+    set(ARCH_FLAGS "")
+    if(CMAKE_CUDA_ARCHITECTURES)
+        foreach(ARCH IN LISTS CMAKE_CUDA_ARCHITECTURES)
+            if(NOT "${ARCH}" STREQUAL "native")
+                list(APPEND ARCH_FLAGS "--cuda-gpu-arch=sm_${ARCH}")
+            endif()
+        endforeach()
+    endif()
+    # If no explicit architectures (or only "native"), default to sm_80
+    if(NOT ARCH_FLAGS)
+        list(APPEND ARCH_FLAGS "--cuda-gpu-arch=sm_80")
+    endif()
+    set(${OUTPUT_VAR} "${ARCH_FLAGS}" PARENT_SCOPE)
 endfunction()
 
 #------------------------------------------------------------------------------
@@ -550,6 +911,8 @@ function(add_chimod_client)
 endfunction()
 
 #------------------------------------------------------------------------------
+# GPU Device Code Embedding Function
+#------------------------------------------------------------------------------
 # ChiMod Runtime Library Function
 #------------------------------------------------------------------------------
 
@@ -584,8 +947,41 @@ function(add_chimod_runtime)
   # Create target name
   set(TARGET_NAME "${CHIMAERA_NAMESPACE}_${CHIMAERA_MODULE_NAME}_runtime")
 
-  # Create the library
-  add_library(${TARGET_NAME} SHARED ${ARG_SOURCES})
+  # Separate _gpu.cc sources from regular sources
+  set(CPU_SOURCES "")
+  set(GPU_SOURCES "")
+  foreach(SRC ${ARG_SOURCES})
+    if(SRC MATCHES "_gpu\\.cc$")
+      list(APPEND GPU_SOURCES ${SRC})
+    else()
+      list(APPEND CPU_SOURCES ${SRC})
+    endif()
+  endforeach()
+
+  # Create the library (CPU sources only)
+  add_library(${TARGET_NAME} SHARED ${CPU_SOURCES})
+
+  # Build GPU companion library if GPU sources exist and GPU is enabled
+  set(GPU_TARGET_NAME "${TARGET_NAME}_gpu")
+  if(GPU_SOURCES)
+    if(WRP_CORE_ENABLE_CUDA)
+      add_cuda_library(${GPU_TARGET_NAME} SHARED TRUE ${GPU_SOURCES})
+      target_link_libraries(${GPU_TARGET_NAME} PUBLIC ${TARGET_NAME} hshm::cuda_cxx)
+      target_include_directories(${GPU_TARGET_NAME} PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      )
+      message(STATUS "GPU companion ${GPU_TARGET_NAME} created with CUDA for: ${GPU_SOURCES}")
+    elseif(WRP_CORE_ENABLE_ROCM)
+      add_rocm_gpu_library(${GPU_TARGET_NAME} SHARED TRUE ${GPU_SOURCES})
+      target_link_libraries(${GPU_TARGET_NAME} PUBLIC ${TARGET_NAME} hshm::cxx)
+      target_include_directories(${GPU_TARGET_NAME} PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      )
+      message(STATUS "GPU companion ${GPU_TARGET_NAME} created with ROCm for: ${GPU_SOURCES}")
+    else()
+      message(STATUS "GPU sources found but no GPU backend enabled, skipping: ${GPU_SOURCES}")
+    endif()
+  endif()
 
   # Set C++ standard
   set(CHIMAERA_CXX_STANDARD 20)

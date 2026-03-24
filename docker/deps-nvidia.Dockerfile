@@ -59,6 +59,38 @@ ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 #------------------------------------------------------------
+# NIXL (NVIDIA Inference Xfer Library) Installation
+#------------------------------------------------------------
+
+USER root
+
+# Install build dependencies for NIXL
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnuma-dev \
+    ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install meson and pybind11 in the iowarp venv
+RUN /bin/bash -c "source /home/iowarp/venv/bin/activate && \
+    pip install meson pybind11"
+
+# Build and install NIXL (POSIX backend only; GDS/UCX optional)
+RUN mkdir -p /tmp/nixl_src /tmp/nixl_build && \
+    git clone https://github.com/ai-dynamo/nixl.git --depth=1 /tmp/nixl_src && \
+    cd /tmp/nixl_build && \
+    /bin/bash -c "source /home/iowarp/venv/bin/activate && \
+        meson setup /tmp/nixl_src \
+            --prefix=/usr/local \
+            -Ddisable_gds_backend=true \
+            -Dbuild_tests=false \
+            -Dbuild_examples=false \
+            -Denable_plugins=POSIX \
+            -Drust=false && \
+        ninja -j$(nproc) && \
+        ninja install" && \
+    rm -rf /tmp/nixl_src /tmp/nixl_build
+
+#------------------------------------------------------------
 # User Configuration
 #------------------------------------------------------------
 

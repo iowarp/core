@@ -79,7 +79,7 @@ class ZmqFiredAction : public EventAction {
   void Run(const EventInfo &event) override {
     (void)event;
     int zmq_events = 0;
-    size_t opt_len = sizeof(zmq_events);
+    ::size_t opt_len = sizeof(zmq_events);
     zmq_getsockopt(socket_, ZMQ_EVENTS, &zmq_events, &opt_len);
   }
 };
@@ -270,12 +270,13 @@ class ZeroMqTransport : public Transport {
       }
     }
 
-    std::ostringstream oss(std::ios::binary);
+    std::vector<char> meta_buf;
     {
-      cereal::BinaryOutputArchive ar(oss);
+      hshm::ipc::GlobalSerialize<std::vector<char>> ar(meta_buf);
       ar(meta);
+      ar.Finalize();
     }
-    std::string meta_str = oss.str();
+    std::string meta_str(meta_buf.begin(), meta_buf.end());
     size_t write_bulk_count = meta.send_bulks;
 
     // ROUTER mode: prepend identity frame + empty delimiter
@@ -418,9 +419,9 @@ class ZeroMqTransport : public Transport {
 
     size_t msg_size = zmq_msg_size(&msg);
     try {
-      std::string meta_str(static_cast<char*>(zmq_msg_data(&msg)), msg_size);
-      std::istringstream iss(meta_str, std::ios::binary);
-      cereal::BinaryInputArchive ar(iss);
+      std::vector<char> meta_buf(static_cast<char*>(zmq_msg_data(&msg)),
+                                  static_cast<char*>(zmq_msg_data(&msg)) + msg_size);
+      hshm::ipc::GlobalDeserialize<std::vector<char>> ar(meta_buf);
       ar(meta);
     } catch (const std::exception& e) {
       HLOG(kFatal,
@@ -483,8 +484,8 @@ class ZeroMqTransport : public Transport {
 
   void RegisterEventManager(EventManager &em) {
     int fd;
-    size_t fd_size = sizeof(fd);
-    zmq_getsockopt(socket_, ZMQ_FD, &fd, reinterpret_cast<::size_t *>(&fd_size));
+    ::size_t fd_size = sizeof(fd);
+    zmq_getsockopt(socket_, ZMQ_FD, &fd, &fd_size);
     if (fd >= 0) {
       em.AddEvent(fd, kDefaultReadEvent, nullptr);
     }

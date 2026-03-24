@@ -179,31 +179,55 @@ void WorkOrchestrator::StopWorkers() {
     }
   }
 
-  // Join all threads with per-thread 5-second timed timeout
-  auto thread_model = HSHM_THREAD_MODEL;
+  // Wait for worker threads with a hard 5-second deadline per thread.
+  // hshm::Thread uses pthread_create internally, so we use pthread_thread_
+  // directly — std_thread_ is never populated when using the Pthread model.
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+
   size_t joined_count = 0;
   for (auto &thread : worker_threads_) {
-#if HSHM_ENABLE_PTHREADS
-    struct timespec deadline;
-    clock_gettime(CLOCK_REALTIME, &deadline);
-    deadline.tv_sec += 5;  // 5-second deadline per thread
-
-    int ret = pthread_timedjoin_np(thread.pthread_thread_, nullptr, &deadline);
-    if (ret == ETIMEDOUT) {
-      HLOG(kError, "Warning: Worker thread join timed out; force-canceling.");
-      pthread_cancel(thread.pthread_thread_);
-      pthread_join(thread.pthread_thread_, nullptr);
-    } else {
-      joined_count++;
+    // pthread_thread_ is 0 when the hshm Thread was never started
+    if (thread.pthread_thread_ == 0) {
+      ++joined_count;
+      continue;
     }
-#else
-    thread_model->Join(thread);
-    joined_count++;
-#endif
+
+    // Compute absolute deadline for this join attempt.
+    auto remaining =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            deadline - std::chrono::steady_clock::now()).count();
+    if (remaining <= 0) {
+      HLOG(kError, "StopWorkers: deadline exceeded, detaching remaining "
+                   "worker threads");
+      pthread_detach(thread.pthread_thread_);
+      thread.pthread_thread_ = 0;
+      continue;
+    }
+
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec  += remaining / 1000000000LL;
+    ts.tv_nsec += remaining % 1000000000LL;
+    if (ts.tv_nsec >= 1000000000LL) {
+      ts.tv_sec++;
+      ts.tv_nsec -= 1000000000LL;
+    }
+
+    int r = pthread_timedjoin_np(thread.pthread_thread_, nullptr, &ts);
+    if (r == 0) {
+      ++joined_count;
+      thread.pthread_thread_ = 0;
+    } else {
+      // ETIMEDOUT or other error — detach so the destructor doesn't block.
+      HLOG(kError, "StopWorkers: thread join timed out (err={}), detaching",
+           r);
+      pthread_detach(thread.pthread_thread_);
+      thread.pthread_thread_ = 0;
+    }
   }
 
   HLOG(kDebug, "Joined {} of {} worker threads", joined_count,
-        worker_threads_.size());
+       worker_threads_.size());
   workers_running_ = false;
 }
 
@@ -276,7 +300,6 @@ bool WorkOrchestrator::SpawnWorkerThreads() {
     }
   }
 
-#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
   // Assign GPU lanes only to the designated GPU worker
   size_t num_gpus = ipc->GetGpuQueueCount();
   if (num_gpus > 0 && scheduler_) {
@@ -300,7 +323,6 @@ bool WorkOrchestrator::SpawnWorkerThreads() {
            num_gpus);
     }
   }
-#endif
 
   // Use HSHM thread model to spawn worker threads
   auto thread_model = HSHM_THREAD_MODEL;

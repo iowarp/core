@@ -340,6 +340,12 @@ public:
   chi::TaskResume SystemMonitor(hipc::FullPtr<SystemMonitorTask> task, chi::RunContext &rctx);
 
   /**
+   * Handle RegisterGpuContainer - Register a GPU container with the GPU orchestrator
+   * The GPU orchestrator's gpu::PoolManager will be updated with the new container
+   */
+  chi::TaskResume RegisterGpuContainer(hipc::FullPtr<RegisterGpuContainerTask> task, chi::RunContext &rctx);
+
+  /**
    * Helper: Receive task inputs from remote node
    */
   void RecvIn(hipc::FullPtr<RecvTask> task, chi::LoadTaskArchive& archive, hshm::lbm::Transport* lbm_transport);

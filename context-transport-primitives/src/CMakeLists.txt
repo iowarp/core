@@ -81,6 +81,18 @@ if(WRP_CORE_ENABLE_CUDA)
     hshm_target_compile_definitions(cudacxx)
     add_library(hshm::cuda_cxx ALIAS cudacxx)
     list(APPEND HSHM_LIBS cudacxx)
+
+    # GPU Linker library (CUDA driver API for runtime device code linking)
+    add_library(hermes_shm_gpu_linker gpu_linker.cc)
+    target_link_libraries(hermes_shm_gpu_linker PUBLIC hermes_shm_host cuda)
+    target_compile_definitions(hermes_shm_gpu_linker PUBLIC HSHM_ENABLE_CUDA=1)
+    hshm_target_compile_definitions(hermes_shm_gpu_linker)
+    if(CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES)
+      target_include_directories(hermes_shm_gpu_linker PUBLIC
+          ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+    endif()
+    list(APPEND HSHM_LIBS hermes_shm_gpu_linker)
+    add_library(hshm::gpu_linker ALIAS hermes_shm_gpu_linker)
 endif()
 
 # BUILD HSHM FOR ROCM ONLY

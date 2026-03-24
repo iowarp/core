@@ -53,33 +53,36 @@ namespace hshm::ipc {
  *
  * Bit 63 of size_ is the free flag (kFreeMask). All size reads must use
  * GetSize() to mask out this bit.
+ *
+ * @tparam MODE MemMode::kShared uses offset-based slist_node,
+ *              MemMode::kPrivate uses raw-pointer priv_slist_node.
  */
-struct BuddyPage : public pre::slist_node {
+template <MemMode MODE = MemMode::kShared>
+struct BuddyPage : public std::conditional_t<MODE == MemMode::kPrivate,
+                                              pre::priv_slist_node,
+                                              pre::slist_node> {
+  using BaseNodeT = std::conditional_t<MODE == MemMode::kPrivate,
+                                        pre::priv_slist_node,
+                                        pre::slist_node>;
   size_t size_;  /**< Size of data portion (always excludes BuddyPage header).
                   *   Bit 63 is the free flag (kFreeMask). */
 
   static constexpr size_t kFreeMask = (size_t)1 << (sizeof(size_t) * 8 - 1);
 
-  BuddyPage() : pre::slist_node(), size_(0) {}
-  explicit BuddyPage(size_t size) : pre::slist_node(), size_(size) {}
+  HSHM_INLINE_CROSS_FUN BuddyPage() : BaseNodeT(), size_(0) {}
+  HSHM_INLINE_CROSS_FUN explicit BuddyPage(size_t size) : BaseNodeT(), size_(size) {}
 
-  inline void MarkFree()      { size_ |=  kFreeMask; }
-  inline void MarkAllocated() { size_ &= ~kFreeMask; }
-  inline bool IsFree()  const { return (size_ & kFreeMask) != 0; }
-  inline size_t GetSize() const { return size_ & ~kFreeMask; }
+  HSHM_INLINE_CROSS_FUN void MarkFree()      { size_ |=  kFreeMask; }
+  HSHM_INLINE_CROSS_FUN void MarkAllocated() { size_ &= ~kFreeMask; }
+  HSHM_INLINE_CROSS_FUN bool IsFree()  const { return (size_ & kFreeMask) != 0; }
+  HSHM_INLINE_CROSS_FUN size_t GetSize() const { return size_ & ~kFreeMask; }
 };
 
-/**
- * Free page node for small allocations (<16KB)
- * NOTE: Now a simple type alias for BuddyPage since BuddyPage inherits from slist_node
- */
-using FreeSmallBuddyPage = BuddyPage;
-
-/**
- * Free page node for large allocations (>16KB)
- * NOTE: Now a simple type alias for BuddyPage since BuddyPage inherits from slist_node
- */
-using FreeLargeBuddyPage = BuddyPage;
+/** Type aliases for readability */
+template <MemMode MODE = MemMode::kShared>
+using FreeSmallBuddyPage = BuddyPage<MODE>;
+template <MemMode MODE = MemMode::kShared>
+using FreeLargeBuddyPage = BuddyPage<MODE>;
 
 /**
  * Coalesce page node for RB tree-based coalescing
@@ -158,9 +161,22 @@ class ForwardingTable {
  * This allocator manages memory using segregated free lists for different
  * size classes. Small allocations (<16KB) use round-up sizing, while large
  * allocations (>16KB) use round-down sizing with best-fit search.
+ *
+ * @tparam MODE MemMode::kShared uses offset-based slist (shared memory safe),
+ *              MemMode::kPrivate uses raw-pointer priv_slist with cached base
+ *              pointer (faster, not shared-memory safe).
  */
+template <MemMode MODE = MemMode::kShared>
 class _BuddyAllocator : public Allocator {
+ public:
+  using PageT = BuddyPage<MODE>;
+
  private:
+  /** Free list type: shared uses offset-based slist, private uses raw-pointer priv_slist */
+  using PageListT = std::conditional_t<MODE == MemMode::kPrivate,
+                                        pre::priv_slist<PageT>,
+                                        pre::slist<PageT, false>>;
+
   static constexpr size_t kMinSize = 32;           /**< Minimum allocation size (2^5) */
   static constexpr size_t kSmallThreshold = 16384; /**< 16KB threshold (2^14) */
   static constexpr size_t kMaxSize = 1048576;      /**< Maximum size class (2^20 = 1MB) */
@@ -178,49 +194,74 @@ class _BuddyAllocator : public Allocator {
   Heap<false> big_heap_;   /**< Heap for large allocations */
   Heap<false> small_arena_; /**< Arena for small allocations */
 
-  pre::slist<BuddyPage, false> small_pages_[kMaxSmallPages];   /**< Free lists for sizes 32B - 16KB */
-  pre::slist<BuddyPage, false>
-      large_pages_[kMaxLargePages]; /**< Free lists for sizes 16KB - 1MB */
-  pre::slist<BuddyPage, false> regions_;   /**< List of big_heap_ regions */
+  PageListT small_pages_[kMaxSmallPages];   /**< Free lists for sizes 32B - 16KB */
+  PageListT large_pages_[kMaxLargePages]; /**< Free lists for sizes 16KB - 1MB */
+  PageListT regions_;   /**< List of big_heap_ regions */
+
+  ArenaState cur_arena_;  /**< Current bump arena (if active) */
+
+#ifdef HSHM_BUDDY_ALLOC_DEBUG
+  size_t dbg_alloc_count_;
+  size_t dbg_free_count_;
+  size_t dbg_net_bytes_;
+  size_t dbg_big_heap_alloc_count_;
+#endif
 
   // _MultiProcessAllocator needs access to reconstruct pointers when attaching
   friend class _MultiProcessAllocator;
 
  public:
+#ifdef HSHM_BUDDY_ALLOC_DEBUG
+  HSHM_CROSS_FUN size_t DbgAllocCount() const { return dbg_alloc_count_; }
+  HSHM_CROSS_FUN size_t DbgFreeCount() const { return dbg_free_count_; }
+  HSHM_CROSS_FUN size_t DbgNetBytes() const { return dbg_net_bytes_; }
+  HSHM_CROSS_FUN size_t DbgBigHeapOffset() const { return big_heap_.GetOffset(); }
+  HSHM_CROSS_FUN size_t DbgBigHeapMax() const { return big_heap_.GetMaxOffset(); }
+#endif
+
+  /** Convert offset to raw pointer (position-independent, safe for multi-process) */
+  HSHM_INLINE_CROSS_FUN PageT *OffsetToPage(size_t offset) {
+    return reinterpret_cast<PageT *>(GetBackendData() + offset);
+  }
+
+  /** Convert raw pointer back to offset (position-independent, safe for multi-process) */
+  HSHM_INLINE_CROSS_FUN size_t PageToOffset(PageT *ptr) {
+    return reinterpret_cast<char *>(ptr) - GetBackendData();
+  }
+
   /**
    * Initialize the buddy allocator
-   *
-   * @param backend Memory backend
-   * @param region_size Size of the region in bytes. If 0, defaults to backend.data_capacity_
-   * @return true on success, false on failure
    */
-  bool shm_init(const MemoryBackend &backend, size_t region_size = 0) {
-    // Store backend
+  HSHM_CROSS_FUN bool shm_init(const MemoryBackend &backend,
+                               size_t region_size = 0,
+                               bool shifted = false) {
     SetBackend(backend);
     alloc_header_size_ = sizeof(_BuddyAllocator);
-
-    // Calculate and store the offset of this allocator object within the
-    // backend data This must be calculated BEFORE any GetBackendData() calls
     this_ = reinterpret_cast<char *>(this) -
             reinterpret_cast<char *>(backend.data_);
 
-    // Default region_size to data_capacity_ if not specified
-    if (region_size == 0) {
-      region_size = backend.data_capacity_ - this_;
+    if (shifted) {
+      shift_ = this_;
+      data_start_ = 0;
+    } else {
+      shift_ = 0;
+      data_start_ = sizeof(_BuddyAllocator);
     }
 
-    // Store region_size for use in GetAllocatorDataSize()
+    if (region_size == 0) {
+      region_size = shifted ? backend.data_capacity_
+                            : backend.data_capacity_ - this_;
+    }
     region_size_ = region_size;
 
-    // Calculate data_start_ - where the allocator's managed region begins
-    // For BuddyAllocator, data starts immediately after the allocator object
-    data_start_ = sizeof(_BuddyAllocator);
-
     if (region_size < kMinSize) {
-      return false;  // Not enough space
+      return false;
     }
 
-    // Initialize all free lists
+    regions_.Init();
+    big_heap_.Init(0, 0);
+    small_arena_.Init(0, 0);
+    cur_arena_ = ArenaState{};
     for (size_t i = 0; i < kMaxSmallPages; ++i) {
       small_pages_[i].Init();
     }
@@ -228,99 +269,100 @@ class _BuddyAllocator : public Allocator {
       large_pages_[i].Init();
     }
 
-    // Big heap gets all available space initially
     Expand(OffsetPtr<>(GetAllocatorDataOff()), GetAllocatorDataSize());
-
-    // Small arena is initially empty - will be populated on first small allocation
-    small_arena_.Init(0, 0);
-
+#ifdef HSHM_BUDDY_ALLOC_DEBUG
+    dbg_alloc_count_ = 0;
+    dbg_free_count_ = 0;
+    dbg_net_bytes_ = 0;
+    dbg_big_heap_alloc_count_ = 0;
+#endif
     return true;
   }
 
   /**
    * Attach to an existing buddy allocator
-   *
-   * BuddyAllocator does not require any process-specific initialization,
-   * so this is a no-op. The allocator state is fully shared.
-   *
-   * @param backend Memory backend (unused)
-   * @return true (always succeeds)
    */
   bool shm_attach(const MemoryBackend &backend) {
-    (void)backend;  // Unused - no process-specific initialization needed
+    (void)backend;
     return true;
   }
 
   /**
    * Allocate memory of specified size
-   *
-   * @param requested_size Size in bytes to allocate (excluding BuddyPage header)
-   * @return Offset pointer to allocated memory (after BuddyPage header)
    */
-  OffsetPtr<> AllocateOffset(size_t requested_size) {
+  HSHM_CROSS_FUN OffsetPtr<> AllocateOffset(size_t requested_size) {
+    // Fast path: bump-allocate from active arena
+    if (cur_arena_.IsActive()) {
+      constexpr size_t kAlign = 16;
+#if HSHM_IS_GPU
+      // GPU: multiple threads in a warp may share this allocator partition.
+      // Use atomicCAS loop for thread-safe bump allocation.
+      while (true) {
+        size_t cur = *(volatile size_t *)&cur_arena_.arena_cur_;
+        size_t aligned_cur = (cur + kAlign - 1) & ~(kAlign - 1);
+        size_t new_cur = aligned_cur + requested_size;
+        if (new_cur > cur_arena_.arena_end_) break;
+        size_t old = atomicCAS(
+            reinterpret_cast<unsigned long long *>(&cur_arena_.arena_cur_),
+            static_cast<unsigned long long>(cur),
+            static_cast<unsigned long long>(new_cur));
+        if (old == cur) {
+          return OffsetPtr<>(aligned_cur);
+        }
+      }
+#else
+      size_t aligned_cur = (cur_arena_.arena_cur_ + kAlign - 1) & ~(kAlign - 1);
+      if (aligned_cur + requested_size <= cur_arena_.arena_end_) {
+        cur_arena_.arena_cur_ = aligned_cur + requested_size;
+        return OffsetPtr<>(aligned_cur);
+      }
+#endif
+    }
+
+    // Slow path: regular BuddyAllocator
     if (requested_size < kMinSize) {
       requested_size = kMinSize;
     }
-    // Round up to BuddyPage alignment so every heap bump stays aligned
-    constexpr size_t kAlign = alignof(BuddyPage);
+    constexpr size_t kAlign = alignof(PageT);
     requested_size = (requested_size + kAlign - 1) & ~(kAlign - 1);
 
-    OffsetPtr<> ptr;
     if (requested_size <= kSmallThreshold) {
-      ptr = AllocateSmall(requested_size);
-    } else {
-      ptr = AllocateLarge(requested_size);
+      return AllocateSmall(requested_size);
     }
-
-    return ptr;
+    return AllocateLarge(requested_size);
   }
 
   /**
    * Reallocate previously allocated memory to a new size
-   *
-   * @param offset Offset pointer to existing memory (after BuddyPage header)
-   * @param new_size New size in bytes (excluding BuddyPage header)
-   * @return Offset pointer to reallocated memory (may be same or different location)
    */
-  OffsetPtr<> ReallocateOffset(OffsetPtr<> offset, size_t new_size) {
-    // Handle null pointer case
+  HSHM_CROSS_FUN OffsetPtr<> ReallocateOffset(OffsetPtr<> offset, size_t new_size) {
     if (offset.IsNull()) {
       return AllocateOffset(new_size);
     }
 
-    // Get the BuddyPage header (offset points after header)
-    size_t page_offset = offset.load() - sizeof(BuddyPage);
-    hipc::FullPtr<BuddyPage> page(this, OffsetPtr<BuddyPage>(page_offset));
-    size_t old_size = page.ptr_->GetSize();  // Size without header
+    size_t page_offset = offset.load() - sizeof(PageT);
+    PageT *page = OffsetToPage(page_offset);
+    size_t old_size = page->GetSize();
 
-    // If new size fits in existing allocation, reuse it
     if (new_size <= old_size) {
       return offset;
     }
 
-    // Allocate new memory
     OffsetPtr<> new_offset = AllocateOffset(new_size);
     if (new_offset.IsNull()) {
-      return new_offset;  // Allocation failed
+      return new_offset;
     }
 
-    // Copy old data to new location
-    hipc::FullPtr<char> old_data(this, OffsetPtr<char>(offset.load()));
-    hipc::FullPtr<char> new_data(this, OffsetPtr<char>(new_offset.load()));
-    memcpy(new_data.ptr_, old_data.ptr_, old_size);
-
-    // Free old allocation
+    char *base = GetBackendData();
+    memcpy(base + new_offset.load(), base + offset.load(), old_size);
     FreeOffset(offset);
-
     return new_offset;
   }
 
   /**
    * Free previously allocated memory
-   *
-   * @param offset Offset pointer to memory (after BuddyPage header)
    */
-  void FreeOffset(OffsetPtr<> offset) {
+  HSHM_CROSS_FUN void FreeOffset(OffsetPtr<> offset) {
     if (offset.IsNull()) {
       return;
     }
@@ -329,410 +371,381 @@ class _BuddyAllocator : public Allocator {
 
   /**
    * Free previously allocated memory (without null check)
-   *
-   * @param offset Offset pointer to memory (after BuddyPage header) - must not be null
    */
-  void FreeOffsetNoNullCheck(OffsetPtr<> offset) {
-    // Get the BuddyPage header (offset points after header)
-    size_t page_offset = offset.load() - sizeof(BuddyPage);
-    hipc::FullPtr<BuddyPage> page(this, OffsetPtr<BuddyPage>(page_offset));
-    size_t data_size = page.ptr_->GetSize();  // Size without header
-    page.ptr_->MarkFree();
+  HSHM_CROSS_FUN void FreeOffsetNoNullCheck(OffsetPtr<> offset) {
+    size_t off = offset.load();
+    // No-op for arena allocations
+    if (cur_arena_.IsActive() &&
+        off >= cur_arena_.arena_off_ && off < cur_arena_.arena_end_) {
+      return;
+    }
 
-    // Determine which free list to add to based on data size
+    size_t page_offset = off - sizeof(PageT);
+    PageT *page = OffsetToPage(page_offset);
+    size_t data_size = page->GetSize();
+    page->MarkFree();
+
+#ifdef HSHM_BUDDY_ALLOC_DEBUG
+    dbg_free_count_++;
+    dbg_net_bytes_ -= data_size;
+#endif
+
+    size_t list_idx;
     if (data_size <= kSmallThreshold) {
-      // Small page - add to small_pages_ list using exact size match
-      size_t list_idx = GetSmallPageListIndexForFree(data_size);
-
-      // Initialize BuddyPage as a free list node
-      hipc::FullPtr<BuddyPage> free_page(this, OffsetPtr<BuddyPage>(page_offset));
-      free_page.ptr_->next_ = OffsetPtr<>::GetNull();  // Initialize slist_node
-      // size_ already contains data_size|kFreeMask, keep it as-is
-
-      // Add to free list - BuddyPage inherits from slist_node
-      FullPtr<BuddyPage> node_ptr(this, OffsetPtr<BuddyPage>(page_offset));
-      small_pages_[list_idx].emplace(this, node_ptr);
+      list_idx = GetSmallPageListIndexForFree(data_size);
+      EmplaceToList(small_pages_[list_idx], page_offset);
     } else {
-      // Large page - add to large_pages_ list
-      size_t list_idx = GetLargePageListIndexForFree(data_size);
+      list_idx = GetLargePageListIndexForFree(data_size);
+      EmplaceToList(large_pages_[list_idx], page_offset);
+    }
+  }
 
-      // Initialize BuddyPage as a free list node
-      hipc::FullPtr<BuddyPage> free_page(this, OffsetPtr<BuddyPage>(page_offset));
-      free_page.ptr_->next_ = OffsetPtr<>::GetNull();  // Initialize slist_node
-      // size_ already contains data_size|kFreeMask, keep it as-is
+  /** Push a new bump arena */
+  HSHM_CROSS_FUN bool PushArenaState(ArenaState &prior, OffsetPtr<> &block, size_t size) {
+    prior = cur_arena_;
+    cur_arena_ = ArenaState{};
+    block = AllocateOffset(size);
+    if (block.IsNull()) {
+      cur_arena_ = prior;
+      return false;
+    }
+    cur_arena_.arena_off_ = block.load();
+    cur_arena_.arena_cur_ = block.load();
+    cur_arena_.arena_end_ = block.load() + size;
+    return true;
+  }
 
-      // Add to free list - BuddyPage inherits from slist_node
-      FullPtr<BuddyPage> node_ptr(this, OffsetPtr<BuddyPage>(page_offset));
-      large_pages_[list_idx].emplace(this, node_ptr);
+  /** Pop a bump arena */
+  HSHM_CROSS_FUN void PopArenaState(const ArenaState &prior, OffsetPtr<> block) {
+    cur_arena_ = prior;
+    if (!block.IsNull()) {
+      FreeOffset(block);
     }
   }
 
   /**
    * Expand the allocator with new memory region
-   *
-   * This method expands the big_heap_ to include a new memory region,
-   * making it available for allocation and arena repopulation.
-   *
-   * @param region Offset pointer to the new region
-   * @param region_size Size of the new region in bytes
    */
-  void Expand(OffsetPtr<> region, size_t region_size) {
+  HSHM_CROSS_FUN void Expand(OffsetPtr<> region, size_t region_size) {
     if (region.IsNull() || region_size == 0) {
       return;
     }
-    FullPtr<BuddyPage> node(this, OffsetPtr<BuddyPage>(region.load()));
+    if (region_size <= sizeof(PageT)) {
+      return;
+    }
+    PageT *node = OffsetToPage(region.load());
     node->size_ = region_size;
-    regions_.emplace(this, node);
-    region += sizeof(BuddyPage);
-    region_size -= sizeof(BuddyPage);
+    EmplaceToList(regions_, region.load());
+    region += sizeof(PageT);
+    region_size -= sizeof(PageT);
     DivideArenaIntoPages(big_heap_);
     big_heap_.Init(region.load(),
                    region.load() + region_size);
   }
 
   /**
-   * Compact the heap by physically moving all live allocations to the low end.
-   *
-   * Algorithm:
-   *   Phase 1 – Linear scan from heap start to big_heap_.GetOffset():
-   *             For each live (non-free) BuddyPage block, memmove it to
-   *             write_pos and record {old_user_off → new_user_off} in the table.
-   *   Phase 2 – Reset all free lists and set big_heap_ to start at write_pos,
-   *             reclaiming the formerly-fragmented space.
-   *
-   * Preconditions:
-   *   - Caller must ensure exclusive access (no concurrent alloc/free).
-   *   - Only supports single-region allocators (one Expand() call).
-   *
-   * Returns a ForwardingTable. Caller MUST update every stored OffsetPtr via
-   *   new_ptr = table.Resolve(old_ptr);
-   *
-   * @return ForwardingTable mapping old user-data offsets to new offsets.
+   * Compact the heap (host-only, shared mode only)
    */
   ForwardingTable Compact() {
-    char   *base       = GetBackendData();
-    // Scan from just after the regions_ node that Expand() placed at data_start
-    size_t  scan_start = GetAllocatorDataOff() + sizeof(BuddyPage);
-    size_t  scan_end   = big_heap_.GetOffset();
-
-    // Unallocated tail of small_arena_: raw bump space with no BuddyPage headers
-    size_t  arena_tail_start = small_arena_.GetOffset();
-    size_t  arena_tail_end   = small_arena_.GetMaxOffset();
+    char *base = GetBackendData();
+    size_t scan_start = GetAllocatorDataOff() + sizeof(PageT);
+    size_t scan_end = big_heap_.GetOffset();
+    size_t arena_tail_start = small_arena_.GetOffset();
+    size_t arena_tail_end = small_arena_.GetMaxOffset();
 
     ForwardingTable table;
-    size_t cursor    = scan_start;
+    size_t cursor = scan_start;
     size_t write_pos = scan_start;
 
     while (cursor < scan_end) {
-      // Skip the small_arena_ unallocated tail (no BuddyPage headers here)
       if (cursor == arena_tail_start && arena_tail_start < arena_tail_end) {
         cursor = arena_tail_end;
         continue;
       }
 
-      BuddyPage *page      = reinterpret_cast<BuddyPage *>(base + cursor);
-      size_t     data_size = page->GetSize();
-      size_t     blk_size  = sizeof(BuddyPage) + data_size;
+      PageT *page = reinterpret_cast<PageT *>(base + cursor);
+      size_t data_size = page->GetSize();
+      size_t blk_size = sizeof(PageT) + data_size;
 
       if (!page->IsFree()) {
-        // Live block: pack it towards write_pos
-        size_t old_user_off = cursor    + sizeof(BuddyPage);
-        size_t new_user_off = write_pos + sizeof(BuddyPage);
+        size_t old_user_off = cursor + sizeof(PageT);
+        size_t new_user_off = write_pos + sizeof(PageT);
 
         if (write_pos != cursor) {
           memmove(base + write_pos, base + cursor, blk_size);
         }
-        // Ensure the (possibly moved) header has allocated state
-        reinterpret_cast<BuddyPage *>(base + write_pos)->MarkAllocated();
+        reinterpret_cast<PageT *>(base + write_pos)->MarkAllocated();
         table.Record(old_user_off, new_user_off);
         write_pos += blk_size;
       }
       cursor += blk_size;
     }
 
-    // Reset free lists — all free blocks have been reclaimed
     for (size_t i = 0; i < kMaxSmallPages; ++i) small_pages_[i].Init();
     for (size_t i = 0; i < kMaxLargePages; ++i) large_pages_[i].Init();
-
-    // Reset small_arena_ (empty)
     small_arena_.Init(0, 0);
-
-    // Reclaim fragmented space: reset big_heap_ bump pointer to write_pos
     big_heap_.Init(write_pos, big_heap_.GetMaxOffset());
-
     return table;
   }
 
  private:
   /**
+   * Add a page to a free list. In private mode, uses raw pointers.
+   * In shared mode, uses FullPtr + offset-based slist.
+   */
+  HSHM_INLINE_CROSS_FUN void EmplaceToList(PageListT &list, size_t page_offset) {
+    PageT *page = OffsetToPage(page_offset);
+    if constexpr (MODE == MemMode::kPrivate) {
+      page->next_ = nullptr;
+      list.emplace(page);
+    } else {
+      page->next_ = OffsetPtr<>::GetNull();
+      FullPtr<PageT> node_ptr(this, page_offset);
+      list.emplace(this, node_ptr);
+    }
+  }
+
+  /**
+   * Pop from a free list. Returns offset of popped page, or 0 if empty.
+   */
+  HSHM_INLINE_CROSS_FUN size_t PopFromList(PageListT &list) {
+    if (list.empty()) {
+      return 0;
+    }
+    if constexpr (MODE == MemMode::kPrivate) {
+      PageT *node = list.pop();
+      if (!node) return 0;
+      return PageToOffset(node);
+    } else {
+      auto node = list.pop(this);
+      if (node.IsNull()) return 0;
+      return node.shm_.off_.load();
+    }
+  }
+
+  /**
    * Allocate small memory (<16KB) using round-up sizing
    */
-  OffsetPtr<> AllocateSmall(size_t size) {
-    // Step 1: Get the free list for this size (round up to next largest)
-    // This also modifies size to be the rounded-up value
+  HSHM_CROSS_FUN OffsetPtr<> AllocateSmall(size_t size) {
     size_t list_idx = GetSmallPageListIndexForAlloc(size);
 
-    // Step 2: Check if page exists in this free list
-    if (!small_pages_[list_idx].empty()) {
-      auto node = small_pages_[list_idx].pop(this);
-      if (!node.IsNull()) {
-        return FinalizeAllocation(node.shm_.off_.load(), size);
+    // Check free lists from this size class upward
+    for (size_t i = list_idx; i < kMaxSmallPages; ++i) {
+      size_t off = PopFromList(small_pages_[i]);
+      if (off != 0) {
+        // Preserve actual page data size to prevent free-list migration.
+        // Without this, popping from a larger list and storing the smaller
+        // requested size causes the page to shrink on free, permanently
+        // losing the excess bytes.
+        PageT *page = OffsetToPage(off);
+        return FinalizeAllocation(off, page->GetSize());
       }
-      // If pop returned null despite list not being empty, fall through to next step
     }
 
-    // Step 3: Try allocating from small_arena_
-    size_t total_size = size + sizeof(BuddyPage);
+    // Try allocating from small_arena_
+    size_t total_size = size + sizeof(PageT);
     size_t arena_offset = small_arena_.Allocate(total_size);
     if (arena_offset != 0) {
       return FinalizeAllocation(arena_offset, size);
     }
 
-    // Step 4: Repopulate the small arena
+    // Repopulate the small arena
     if (RepopulateSmallArena()) {
-      // After repopulating, the pages are in free lists, not in the arena
-      // Retry allocation from the free list
-      if (!small_pages_[list_idx].empty()) {
-        auto node = small_pages_[list_idx].pop(this);
-        if (!node.IsNull()) {
-          return FinalizeAllocation(node.shm_.off_.load(), size);
+      for (size_t i = list_idx; i < kMaxSmallPages; ++i) {
+        size_t off = PopFromList(small_pages_[i]);
+        if (off != 0) {
+          PageT *page = OffsetToPage(off);
+          return FinalizeAllocation(off, page->GetSize());
         }
       }
     }
 
-    // Step 5: Allocate directly from big_heap_ if all else fails
-    // This handles the case where free lists and arena don't have suitable pages
+    // Allocate directly from big_heap_
     size_t heap_offset = big_heap_.Allocate(total_size);
     if (heap_offset != 0) {
       return FinalizeAllocation(heap_offset, size);
     }
 
-    // Step 6: Out of memory
     return OffsetPtr<>::GetNull();
   }
 
   /**
    * Allocate large memory (>16KB) using round-down sizing with best-fit
    */
-  OffsetPtr<> AllocateLarge(size_t size) {
-    size_t total_size = size + sizeof(BuddyPage);
-
-    // Step 1: Identify the free list using round down
+  HSHM_CROSS_FUN OffsetPtr<> AllocateLarge(size_t size) {
+    size_t total_size = size + sizeof(PageT);
     size_t list_idx = GetLargePageListIndexForAlloc(size);
 
-    // Step 2: Check each entry in this list for a fit
     for (size_t i = list_idx; i < kMaxLargePages; ++i) {
-        size_t found_offset = FindFirstFit(list_idx, total_size);
-        if (found_offset != 0) {
-        hipc::FullPtr<FreeLargeBuddyPage> free_page(this, OffsetPtr<FreeLargeBuddyPage>(found_offset));
-        size_t page_data_size = free_page.ptr_->GetSize();
-        size_t page_total_size = page_data_size + sizeof(BuddyPage);
+      size_t found_offset = FindFirstFit(i, total_size);
+      if (found_offset != 0) {
+        PageT *page = OffsetToPage(found_offset);
+        size_t page_data_size = page->GetSize();
+        size_t page_total_size = page_data_size + sizeof(PageT);
 
-        // If there's remainder, add it back to appropriate list using exact size
-        if (page_total_size > total_size) {
-            AddRemainderToFreeList(found_offset + total_size, page_total_size - total_size);
+        if (page_total_size > total_size &&
+            (page_total_size - total_size) > sizeof(PageT)) {
+          AddRemainderToFreeList(found_offset + total_size,
+                                page_total_size - total_size);
+          return FinalizeAllocation(found_offset, size);
         }
-
-        return FinalizeAllocation(found_offset, size);
-        }
+        // Remainder too small to split — keep full page size to avoid
+        // permanently losing the unsplittable tail bytes.
+        return FinalizeAllocation(found_offset, page_data_size);
+      }
     }
 
-    // Step 4: Try allocating from heap
     size_t heap_offset = big_heap_.Allocate(total_size);
     if (heap_offset != 0) {
       return FinalizeAllocation(heap_offset, size);
     }
-
-    // Step 5: Out of memory
     return OffsetPtr<>::GetNull();
   }
 
   /**
    * Find the first fit in a large page free list
-   *
-   * Iterates through all entries in the specified free list to find the first
-   * entry with size >= required_size. Removes the entry from the list using PopAt.
-   *
-   * @param list_idx Index of the free list to search
-   * @param required_size Minimum size required (including BuddyPage header)
-   * @return Offset to the found page, or 0 if no fit found
    */
-  size_t FindFirstFit(size_t list_idx, size_t required_size) {
+  HSHM_CROSS_FUN size_t FindFirstFit(size_t list_idx, size_t required_size) {
     if (large_pages_[list_idx].empty()) {
       return 0;
     }
 
-    // Iterate through all entries in the list using the iterator
-    for (auto it = large_pages_[list_idx].begin(this);
-         it != large_pages_[list_idx].end(); ++it) {
-      hipc::FullPtr<FreeLargeBuddyPage> free_page(
-          this, OffsetPtr<FreeLargeBuddyPage>(it.GetCurrent().load()));
-
-      // Check if this page size (including header) is large enough
-      size_t page_total_size = free_page.ptr_->GetSize() + sizeof(BuddyPage);
-      if (page_total_size >= required_size) {
-        // Found a fit - capture offset before removing from list
-        size_t offset = it.GetCurrent().load();
-        // Remove from list using PopAt (iterator is invalidated after this)
-        (void)large_pages_[list_idx].PopAt(this, it);
-        return offset;
+    if constexpr (MODE == MemMode::kPrivate) {
+      for (auto it = large_pages_[list_idx].begin();
+           it != large_pages_[list_idx].end(); ++it) {
+        PageT *page = it.Get();
+        size_t page_total_size = page->GetSize() + sizeof(PageT);
+        if (page_total_size >= required_size) {
+          size_t offset = PageToOffset(page);
+          (void)large_pages_[list_idx].PopAt(it);
+          return offset;
+        }
+      }
+    } else {
+      for (auto it = large_pages_[list_idx].begin(this);
+           it != large_pages_[list_idx].end(); ++it) {
+        hipc::FullPtr<PageT> free_page(this, it.GetCurrent().load());
+        size_t page_total_size = free_page.ptr_->GetSize() + sizeof(PageT);
+        if (page_total_size >= required_size) {
+          size_t offset = it.GetCurrent().load();
+          (void)large_pages_[list_idx].PopAt(this, it);
+          return offset;
+        }
       }
     }
-
-    return 0;  // No fit found
+    return 0;
   }
 
   /**
    * Repopulate small arena with more space
-   * @return true if arena was successfully repopulated
    */
-  bool RepopulateSmallArena() {
-    size_t arena_size = kSmallArenaSize + kSmallArenaPages * sizeof(BuddyPage);
+  HSHM_CROSS_FUN bool RepopulateSmallArena() {
+    size_t arena_size = kSmallArenaSize + kSmallArenaPages * sizeof(PageT);
 
-    // Divide small arena into pages
     DivideArenaIntoPages(small_arena_);
 
-    // Step 4.2.1: Try allocating from big_heap_ first
     size_t heap_offset = big_heap_.Allocate(arena_size);
-
     if (heap_offset != 0) {
-      // Step 4.1: Set arena bounds
       small_arena_.Init(heap_offset, heap_offset + arena_size);
-
       return true;
     }
 
-    // Step 4.2.2: If heap fails, search all large_pages_ lists for space
-    {
-      for (size_t list_idx = 0; list_idx < kMaxLargePages; ++list_idx) {
-        size_t offset = FindFirstFit(list_idx, arena_size);
-        if (offset != 0) {
-          small_arena_.Init(offset, offset + arena_size);
-          return true;
+    for (size_t list_idx = 0; list_idx < kMaxLargePages; ++list_idx) {
+      size_t offset = FindFirstFit(list_idx, arena_size);
+      if (offset != 0) {
+        PageT *page = OffsetToPage(offset);
+        size_t page_total_size = page->size_ + sizeof(PageT);
+
+        small_arena_.Init(offset, offset + arena_size);
+
+        if (page_total_size > arena_size &&
+            (page_total_size - arena_size) > sizeof(PageT)) {
+          AddRemainderToFreeList(offset + arena_size,
+                                page_total_size - arena_size);
         }
+        return true;
       }
     }
-
-    return false;  // Could not repopulate
+    return false;
   }
 
   /**
    * Divide the current small_arena_ into pages using greedy algorithm
-   *
-   * This function operates on the current small_arena_ state and divides
-   * the arena space into free pages, adding them to the appropriate free lists.
-   * After this function, the arena is marked as fully consumed.
    */
-  void DivideArenaIntoPages(Heap<false> &heap) {
-    // Get the arena bounds from the heap
-    // After Init(), heap_ points to the beginning and hasn't moved yet
+  HSHM_CROSS_FUN void DivideArenaIntoPages(Heap<false> &heap) {
     size_t arena_begin = heap.GetOffset();
     size_t arena_end = heap.GetMaxOffset();
     size_t remaining_offset = arena_begin;
     size_t remaining_size = arena_end - arena_begin;
 
-    // Check if arena is empty
     if (remaining_size == 0) {
-      // Arena is empty, nothing to divide
       return;
     }
 
-    // Greedy algorithm: divide by largest page sizes first
-    // Start from largest small page (16KB) down to smallest (32B)
     for (int i = static_cast<int>(kMaxSmallPages) - 1; i >= 0; --i) {
-      size_t page_data_size = static_cast<size_t>(1) << (i + kMinLog2);  // 2^(i+5)
-      size_t page_total_size = page_data_size + sizeof(BuddyPage);
+      size_t page_data_size = static_cast<size_t>(1) << (i + kMinLog2);
+      size_t page_total_size = page_data_size + sizeof(PageT);
 
       while (remaining_size >= page_total_size) {
-        // Create a free page
-        hipc::FullPtr<BuddyPage> free_page(this, OffsetPtr<BuddyPage>(remaining_offset));
-        if (free_page.IsNull()) {
-          break;
-        }
-        free_page.ptr_->next_ = OffsetPtr<>::GetNull();  // Initialize slist_node
-        free_page.ptr_->size_ = page_data_size;  // Data size excluding header
-        free_page.ptr_->MarkFree();
-
-        // Add to free list
-        FullPtr<BuddyPage> node_ptr(this, OffsetPtr<BuddyPage>(remaining_offset));
-        small_pages_[i].emplace(this, node_ptr);
-
+        PageT *page = OffsetToPage(remaining_offset);
+        page->size_ = page_data_size;
+        page->MarkFree();
+        EmplaceToList(small_pages_[i], remaining_offset);
         remaining_offset += page_total_size;
         remaining_size -= page_total_size;
       }
     }
 
-    // Any remaining space smaller than kMinSize + sizeof(BuddyPage) is wasted
-
-    // Mark arena as fully consumed by setting it to point to the end
     heap.Init(arena_end, arena_end);
   }
 
   /**
    * Add a remainder page back to the appropriate free list
-   *
-   * @param page_offset Offset to the remainder page
-   * @param total_size Total size of remainder (including BuddyPage header)
    */
-  void AddRemainderToFreeList(size_t page_offset, size_t total_size) {
-    size_t data_size = total_size - sizeof(BuddyPage);
+  HSHM_CROSS_FUN void AddRemainderToFreeList(size_t page_offset,
+                                               size_t total_size) {
+    if (total_size <= sizeof(PageT)) {
+      return;
+    }
+    size_t data_size = total_size - sizeof(PageT);
+
+    PageT *page = OffsetToPage(page_offset);
+    page->size_ = data_size;
+    page->MarkFree();
 
     if (data_size <= kSmallThreshold) {
-      // Small remainder - use exact size match (round down)
-      size_t rem_list_idx = GetSmallPageListIndexForFree(data_size);
-
-      hipc::FullPtr<BuddyPage> remainder(this, OffsetPtr<BuddyPage>(page_offset));
-      remainder.ptr_->next_ = OffsetPtr<>::GetNull();  // Initialize slist_node
-      remainder.ptr_->size_ = data_size;  // Data size excluding header
-      remainder.ptr_->MarkFree();
-
-      FullPtr<BuddyPage> rem_node(this, OffsetPtr<BuddyPage>(page_offset));
-      small_pages_[rem_list_idx].emplace(this, rem_node);
+      size_t list_idx = GetSmallPageListIndexForFree(data_size);
+      EmplaceToList(small_pages_[list_idx], page_offset);
     } else {
-      // Large remainder - use exact size match
-      size_t rem_list_idx = GetLargePageListIndexForFree(data_size);
-
-      hipc::FullPtr<BuddyPage> remainder(this, OffsetPtr<BuddyPage>(page_offset));
-      remainder.ptr_->next_ = OffsetPtr<>::GetNull();  // Initialize slist_node
-      remainder.ptr_->size_ = data_size;  // Data size excluding header
-      remainder.ptr_->MarkFree();
-
-      FullPtr<BuddyPage> rem_node(this, OffsetPtr<BuddyPage>(page_offset));
-      large_pages_[rem_list_idx].emplace(this, rem_node);
+      size_t list_idx = GetLargePageListIndexForFree(data_size);
+      EmplaceToList(large_pages_[list_idx], page_offset);
     }
   }
 
   /**
    * Finalize allocation by setting page header and returning user offset
-   *
-   * @param page_offset Offset to the page (including BuddyPage header)
-   * @param user_size Size of the data portion (excluding BuddyPage header)
-   * @return Offset pointer to usable memory (after BuddyPage header)
    */
-  OffsetPtr<> FinalizeAllocation(size_t page_offset, size_t user_size) {
-    hipc::FullPtr<BuddyPage> page(this, OffsetPtr<BuddyPage>(page_offset));
-    page.ptr_->size_ = user_size;   // Store size without header
-    page.ptr_->MarkAllocated();     // Clear free bit
-
-    size_t result_offset = page_offset + sizeof(BuddyPage);
-    return OffsetPtr<>(result_offset);
+  HSHM_CROSS_FUN OffsetPtr<> FinalizeAllocation(size_t page_offset,
+                                                  size_t user_size) {
+    PageT *bp = OffsetToPage(page_offset);
+    bp->size_ = user_size;
+    bp->MarkAllocated();
+#ifdef HSHM_BUDDY_ALLOC_DEBUG
+    dbg_alloc_count_++;
+    dbg_net_bytes_ += user_size;
+#endif
+    return OffsetPtr<>(page_offset + sizeof(PageT));
   }
 
   /**
-   * Get free list index for small allocations when allocating (round up to next largest)
-   *
-   * @param alloc_size Reference to size - will be modified to the rounded-up power-of-2 size
-   * @return Index into the small_pages_ array
+   * Get free list index for small allocations (round up)
    */
-  static size_t GetSmallPageListIndexForAlloc(size_t &alloc_size) {
+  static HSHM_CROSS_FUN size_t GetSmallPageListIndexForAlloc(size_t &alloc_size) {
     if (alloc_size <= kMinSize) {
       alloc_size = kMinSize;
       return 0;
     }
-
-    // Round up to next power of 2
-    size_t log2 = static_cast<size_t>(std::ceil(std::log2(static_cast<double>(alloc_size))));
-
+    size_t log2 = hshm::CeilLog2(alloc_size);
     if (log2 < kMinLog2) {
       alloc_size = kMinSize;
       return 0;
@@ -741,64 +754,57 @@ class _BuddyAllocator : public Allocator {
       alloc_size = kSmallThreshold;
       return kMaxSmallPages - 1;
     }
-
-    // Calculate the rounded-up size
-    alloc_size = static_cast<size_t>(1) << log2;  // 2^log2
+    alloc_size = static_cast<size_t>(1) << log2;
     return log2 - kMinLog2;
   }
 
   /**
-   * Get free list index for small pages when freeing (round down to exact or next smallest)
+   * Get free list index for small pages when freeing (round down)
    */
-  static size_t GetSmallPageListIndexForFree(size_t size) {
+  static HSHM_CROSS_FUN size_t GetSmallPageListIndexForFree(size_t size) {
     if (size <= kMinSize) {
       return 0;
     }
-
-    // Round down to exact power of 2
-    size_t log2 = static_cast<size_t>(std::floor(std::log2(static_cast<double>(size))));
-
+    size_t log2 = hshm::FloorLog2(size);
     if (log2 < kMinLog2) {
       return 0;
     }
     if (log2 > kSmallLog2) {
       return kMaxSmallPages - 1;
     }
-
     return log2 - kMinLog2;
   }
 
   /**
-   * Get free list index for large allocations when allocating (round down)
+   * Get free list index for large allocations (round down)
    */
-  static size_t GetLargePageListIndexForAlloc(size_t size) {
+  static HSHM_CROSS_FUN size_t GetLargePageListIndexForAlloc(size_t size) {
     if (size <= kSmallThreshold) {
       return 0;
     }
-
-    // Round down to previous power of 2
-    size_t log2 = static_cast<size_t>(std::floor(std::log2(static_cast<double>(size))));
-
+    size_t log2 = hshm::FloorLog2(size);
     if (log2 <= kSmallLog2) {
       return 0;
     }
     if (log2 > kMaxLog2) {
       return kMaxLargePages - 1;
     }
-
     return log2 - kSmallLog2 - 1;
   }
 
   /**
-   * Get free list index for large pages when freeing (round down to exact)
+   * Get free list index for large pages when freeing
    */
-  size_t GetLargePageListIndexForFree(size_t size) {
-    return GetLargePageListIndexForAlloc(size);  // Same logic for large pages
+  HSHM_CROSS_FUN size_t GetLargePageListIndexForFree(size_t size) {
+    return GetLargePageListIndexForAlloc(size);
   }
 };
 
 /** Typedef for the complete BuddyAllocator with BaseAllocator wrapper */
-using BuddyAllocator = BaseAllocator<_BuddyAllocator>;
+using BuddyAllocator = BaseAllocator<_BuddyAllocator<>>;
+
+/** Private-mode BuddyAllocator (raw pointers, cached base, for ThreadAllocator) */
+using PrivateBuddyAllocator = BaseAllocator<_BuddyAllocator<MemMode::kPrivate>>;
 
 }  // namespace hshm::ipc
 

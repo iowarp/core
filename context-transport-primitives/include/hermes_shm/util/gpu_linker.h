@@ -30,3 +30,47 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+
+#ifndef HSHM_UTIL_GPU_LINKER_H
+#define HSHM_UTIL_GPU_LINKER_H
+
+#include <string>
+#include <vector>
+#include "hermes_shm/constants/macros.h"
+
+namespace hshm {
+
+struct GpuDeviceCode {
+  std::string name;
+  const void *data;
+  size_t size;
+};
+
+class GpuLinker {
+ public:
+  HSHM_DLL GpuLinker();
+  HSHM_DLL ~GpuLinker();
+
+  GpuLinker(const GpuLinker &) = delete;
+  GpuLinker &operator=(const GpuLinker &) = delete;
+
+  HSHM_DLL void AddModule(const std::string &name, const void *fatbin,
+                           size_t size);
+  HSHM_DLL bool Link();
+  HSHM_DLL void *GetFunction(const char *kernel_name);
+  HSHM_DLL bool LaunchKernel(void *func, unsigned gridX, unsigned gridY,
+                              unsigned gridZ, unsigned blockX, unsigned blockY,
+                              unsigned blockZ, unsigned sharedMem,
+                              void *stream, void **params);
+  HSHM_DLL void Unload();
+  HSHM_DLL bool IsLinked() const;
+
+ private:
+  std::vector<GpuDeviceCode> modules_;
+  void *cu_module_ = nullptr;
+  bool linked_ = false;
+};
+
+}  // namespace hshm
+
+#endif  // HSHM_UTIL_GPU_LINKER_H

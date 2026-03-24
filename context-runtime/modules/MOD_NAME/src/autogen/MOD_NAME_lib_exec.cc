@@ -87,6 +87,11 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       co_await GpuSubmit(typed_task, rctx);
       break;
     }
+    case Method::kSubtaskTest: {
+      hipc::FullPtr<SubtaskTestTask> typed_task = task_ptr.template Cast<SubtaskTestTask>();
+      co_await SubtaskTest(typed_task, rctx);
+      break;
+    }
     default: {
       // Unknown method - do nothing
       break;
@@ -144,6 +149,11 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
       archive << *typed_task.ptr_;
       break;
     }
+    case Method::kSubtaskTest: {
+      auto typed_task = task_ptr.template Cast<SubtaskTestTask>();
+      archive << *typed_task.ptr_;
+      break;
+    }
     default: {
       // Unknown method - do nothing
       break;
@@ -196,6 +206,11 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
     }
     case Method::kGpuSubmit: {
       auto typed_task = task_ptr.template Cast<GpuSubmitTask>();
+      archive >> *typed_task.ptr_;
+      break;
+    }
+    case Method::kSubtaskTest: {
+      auto typed_task = task_ptr.template Cast<SubtaskTestTask>();
       archive >> *typed_task.ptr_;
       break;
     }
@@ -271,6 +286,11 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
       archive >> *typed_task.ptr_;
       break;
     }
+    case Method::kSubtaskTest: {
+      auto typed_task = task_ptr.template Cast<SubtaskTestTask>();
+      archive >> *typed_task.ptr_;
+      break;
+    }
     default: {
       // Unknown method - do nothing
       break;
@@ -340,6 +360,11 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
     case Method::kGpuSubmit: {
       auto typed_task = task_ptr.template Cast<GpuSubmitTask>();
       // Use archive operator which respects msg_type
+      archive << *typed_task.ptr_;
+      break;
+    }
+    case Method::kSubtaskTest: {
+      auto typed_task = task_ptr.template Cast<SubtaskTestTask>();
       archive << *typed_task.ptr_;
       break;
     }
@@ -456,6 +481,15 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       }
       break;
     }
+    case Method::kSubtaskTest: {
+      auto new_task_ptr = ipc_manager->NewTask<SubtaskTestTask>();
+      if (!new_task_ptr.IsNull()) {
+        auto task_typed = orig_task_ptr.template Cast<SubtaskTestTask>();
+        new_task_ptr->Copy(task_typed);
+        return new_task_ptr.template Cast<chi::Task>();
+      }
+      break;
+    }
     default: {
       // For unknown methods, create base Task copy
       auto new_task_ptr = ipc_manager->NewTask<chi::Task>();
@@ -514,6 +548,10 @@ hipc::FullPtr<chi::Task> Runtime::NewTask(chi::u32 method) {
       auto new_task_ptr = ipc_manager->NewTask<GpuSubmitTask>();
       return new_task_ptr.template Cast<chi::Task>();
     }
+    case Method::kSubtaskTest: {
+      auto new_task_ptr = ipc_manager->NewTask<SubtaskTestTask>();
+      return new_task_ptr.template Cast<chi::Task>();
+    }
     default: {
       // For unknown methods, return null pointer
       return hipc::FullPtr<chi::Task>();
@@ -569,6 +607,11 @@ void Runtime::Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> orig_task,
       typed_task->Aggregate(replica_task);
       break;
     }
+    case Method::kSubtaskTest: {
+      auto typed_task = orig_task.template Cast<SubtaskTestTask>();
+      typed_task->Aggregate(replica_task);
+      break;
+    }
     default: {
       orig_task->Aggregate(replica_task);
       break;
@@ -614,6 +657,10 @@ void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
     }
     case Method::kGpuSubmit: {
       ipc_manager->DelTask(task_ptr.template Cast<GpuSubmitTask>());
+      break;
+    }
+    case Method::kSubtaskTest: {
+      ipc_manager->DelTask(task_ptr.template Cast<SubtaskTestTask>());
       break;
     }
     default: {

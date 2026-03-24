@@ -7,6 +7,7 @@ add_chimod_runtime(
     src/core_config.cc
     src/core_dpe.cc
     src/autogen/core_lib_exec.cc
+    src/core_runtime_gpu.cc
 )
 
 # Create client library using modern ChiMod build functions

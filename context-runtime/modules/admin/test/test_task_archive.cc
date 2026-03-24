@@ -45,7 +45,6 @@
 
 #include "simple_test.h"
 #include <memory>
-#include <sstream>
 #include <string>
 #include <vector>
 #include <hermes_shm/util/logging.h>
@@ -63,11 +62,8 @@
 // Include admin tasks for testing concrete task types
 #include <chimaera/admin/admin_tasks.h>
 
-// Include cereal for comparison tests
-#include <cereal/archives/binary.hpp>
-#include <cereal/cereal.hpp>
-#include <cereal/types/string.hpp>
-#include <cereal/types/vector.hpp>
+// Include GlobalSerialize for serialization
+#include "hermes_shm/data_structures/serialization/global_serialize.h"
 
 using namespace chi;
 
@@ -484,13 +480,16 @@ TEST_CASE("Archive Operator() Bidirectional Functionality",
     std::string value2 = "test string";
     double value3 = 3.14159;
 
-    // Serialize with standard cereal
-    std::ostringstream oss;
-    cereal::BinaryOutputArchive out_archive(oss);
-    out_archive(value1, value2, value3);
+    // Serialize with GlobalSerialize
+    std::vector<char> buf;
+    {
+      hshm::ipc::GlobalSerialize<std::vector<char>> out_archive(buf);
+      out_archive(value1, value2, value3);
+      out_archive.Finalize();
+    }
 
     // Deserialize with LoadTaskArchive using operator()
-    chi::LoadTaskArchive in_archive(oss.str());
+    chi::LoadTaskArchive in_archive(std::string(buf.begin(), buf.end()));
     int result1;
     std::string result2;
     double result3;
@@ -681,7 +680,7 @@ TEST_CASE("Container Serialization Methods", "[task_archive][container]") {
 
 TEST_CASE("Error Handling and Edge Cases", "[task_archive][error_handling]") {
   SECTION("Invalid serialization data") {
-    std::string invalid_data = "this is not valid cereal data";
+    std::string invalid_data = "this is not valid serialized data";
     chi::LoadTaskArchive archive(invalid_data);
 
     // Archive should be constructed without throwing
@@ -719,7 +718,7 @@ TEST_CASE("Performance and Large Data", "[task_archive][performance]") {
     REQUIRE_NOTHROW(out_archive << large_string);
 
     std::string serialized_data = out_archive.GetData();
-    REQUIRE(serialized_data.size() > large_string.size()); // Should include cereal overhead
+    REQUIRE(serialized_data.size() > large_string.size()); // Should include serialization overhead
 
     chi::LoadTaskArchive in_archive(serialized_data);
     std::string result_string;
@@ -829,8 +828,8 @@ TEST_CASE("Complete Serialization Flow", "[task_archive][integration]") {
 
   SECTION("Network Transport Round-Trip Simulation") {
     // This test simulates the exact serialization path used by ZeroMQ transport:
-    // 1. SaveTaskArchive is serialized with cereal::BinaryOutputArchive
-    // 2. LoadTaskArchive is deserialized with cereal::BinaryInputArchive
+    // 1. SaveTaskArchive is serialized with GlobalSerialize
+    // 2. LoadTaskArchive is deserialized with GlobalDeserialize
     // This mimics zmq_transport.h Send() and RecvMetadata() behavior
     INFO("Testing network transport round-trip serialization");
 
@@ -842,22 +841,23 @@ TEST_CASE("Complete Serialization Flow", "[task_archive][integration]") {
     original_task->pool_id_ = chi::PoolId(100, 200);
     save_archive << *original_task;
 
-    // Step 2: Serialize SaveTaskArchive using cereal (mimics ZMQ Send)
-    std::ostringstream oss(std::ios::binary);
+    // Step 2: Serialize SaveTaskArchive using GlobalSerialize (mimics ZMQ Send)
+    std::vector<char> net_buf;
     {
-      cereal::BinaryOutputArchive ar(oss);
-      ar(save_archive);  // Calls SaveTaskArchive::save()
+      hshm::ipc::GlobalSerialize<std::vector<char>> ar(net_buf);
+      ar(save_archive);  // Calls SaveTaskArchive::serialize()
+      ar.Finalize();
     }
-    std::string network_data = oss.str();
+    std::string network_data(net_buf.begin(), net_buf.end());
     INFO("Network data size: " << network_data.size() << " bytes");
     REQUIRE(network_data.size() > 0);
 
     // Step 3: Deserialize into LoadTaskArchive (mimics ZMQ RecvMetadata)
     chi::LoadTaskArchive load_archive;
     {
-      std::istringstream iss(network_data, std::ios::binary);
-      cereal::BinaryInputArchive ar(iss);
-      ar(load_archive);  // Calls LoadTaskArchive::load()
+      std::vector<char> recv_buf(network_data.begin(), network_data.end());
+      hshm::ipc::GlobalDeserialize<std::vector<char>> ar(recv_buf);
+      ar(load_archive);  // Calls LoadTaskArchive::serialize()
     }
 
     // Step 4: Verify metadata was transferred correctly
@@ -897,21 +897,22 @@ TEST_CASE("Complete Serialization Flow", "[task_archive][integration]") {
     test_bulk.flags.SetBits(BULK_XFER);
     save_archive.send.push_back(test_bulk);
 
-    // Step 2: Serialize using cereal
-    std::ostringstream oss(std::ios::binary);
+    // Step 2: Serialize using GlobalSerialize
+    std::vector<char> net_buf;
     {
-      cereal::BinaryOutputArchive ar(oss);
+      hshm::ipc::GlobalSerialize<std::vector<char>> ar(net_buf);
       ar(save_archive);
+      ar.Finalize();
     }
-    std::string network_data = oss.str();
+    std::string network_data(net_buf.begin(), net_buf.end());
     INFO("Network data size with bulk: " << network_data.size() << " bytes");
     REQUIRE(network_data.size() > 0);
 
     // Step 3: Deserialize into LoadTaskArchive
     chi::LoadTaskArchive load_archive;
     {
-      std::istringstream iss(network_data, std::ios::binary);
-      cereal::BinaryInputArchive ar(iss);
+      std::vector<char> recv_buf(network_data.begin(), network_data.end());
+      hshm::ipc::GlobalDeserialize<std::vector<char>> ar(recv_buf);
       ar(load_archive);
     }
 

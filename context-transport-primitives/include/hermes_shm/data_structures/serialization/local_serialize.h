@@ -53,66 +53,177 @@
 
 namespace hshm::ipc {
 
-#if HSHM_ENABLE_CEREAL
-/** Save cereal binary archive */
-template <typename Ar, typename T>
-void save(Ar &ar, const cereal::BinaryData<T> &data) {
-  ar.write_binary((const char *)data.data, (size_t)data.size);
-}
-
-/** Load cereal binary archive */
-template <typename Ar, typename T>
-void load(Ar &ar, cereal::BinaryData<T> &data) {
-  ar.read_binary((char *)data.data, (size_t)data.size);
-}
-#endif
 
 /** Save string */
 template <typename Ar>
-void save(Ar &ar, const std::string &str) {
+HSHM_INLINE_CROSS_FUN void save(Ar &ar, const std::string &str) {
   save_string(ar, str);
 }
 
 /** Load string */
 template <typename Ar>
-void load(Ar &ar, std::string &str) {
+HSHM_INLINE_CROSS_FUN void load(Ar &ar, std::string &str) {
   load_string(ar, str);
 }
 
 /** Save vector */
 template <typename Ar, typename T>
-void save(Ar &ar, const std::vector<T> &data) {
+HSHM_INLINE_CROSS_FUN void save(Ar &ar, const std::vector<T> &data) {
   save_vec<Ar, std::vector<T>, T>(ar, data);
 }
 
 /** Load vector */
 template <typename Ar, typename T>
-void load(Ar &ar, std::vector<T> &data) {
+HSHM_INLINE_CROSS_FUN void load(Ar &ar, std::vector<T> &data) {
   load_vec<Ar, std::vector<T>, T>(ar, data);
 }
 
 /** Save list */
 template <typename Ar, typename T>
-void save(Ar &ar, const std::list<T> &data) {
+HSHM_INLINE_CROSS_FUN void save(Ar &ar, const std::list<T> &data) {
   save_list<Ar, std::list<T>, T>(ar, data);
 }
 
 /** Load list */
 template <typename Ar, typename T>
-void load(Ar &ar, std::list<T> &data) {
+HSHM_INLINE_CROSS_FUN void load(Ar &ar, std::list<T> &data) {
   load_list<Ar, std::list<T>, T>(ar, data);
 }
 
 /** Save unordered_map */
 template <typename Ar, typename KeyT, typename T>
-void save(Ar &ar, const std::unordered_map<KeyT, T> &data) {
+HSHM_INLINE_CROSS_FUN void save(Ar &ar, const std::unordered_map<KeyT, T> &data) {
   save_map<Ar, std::unordered_map<KeyT, T>, KeyT, T>(ar, data);
 }
 
-/** Load list */
+/** Load unordered_map */
 template <typename Ar, typename KeyT, typename T>
-void load(Ar &ar, std::unordered_map<KeyT, T> &data) {
+HSHM_INLINE_CROSS_FUN void load(Ar &ar, std::unordered_map<KeyT, T> &data) {
   load_map<Ar, std::unordered_map<KeyT, T>, KeyT, T>(ar, data);
+}
+
+/**
+ * Dry-run archive that computes the serialized size without copying data.
+ * Implements the same save-side API as LocalSerialize so that the same
+ * SerializeIn / SerializeOut code paths work unchanged.
+ */
+class CalculateSizeArchive {
+ public:
+  using is_loading = std::false_type;
+  using is_saving = std::true_type;
+  using supports_range_ops = std::true_type;
+
+  size_t cur_off_ = 0;
+
+ public:
+  HSHM_CROSS_FUN CalculateSizeArchive() = default;
+
+  /** Get the total computed size */
+  HSHM_INLINE_CROSS_FUN size_t size() const { return cur_off_; }
+
+  /** left shift operator */
+  template <typename T>
+  HSHM_INLINE_CROSS_FUN CalculateSizeArchive &operator<<(const T &obj) {
+    return base(obj);
+  }
+
+  /** & operator */
+  template <typename T>
+  HSHM_INLINE_CROSS_FUN CalculateSizeArchive &operator&(const T &obj) {
+    return base(obj);
+  }
+
+  /** Call operator */
+  template <typename... Args>
+  HSHM_INLINE_CROSS_FUN CalculateSizeArchive &operator()(Args &&...args) {
+    hshm::ForwardIterateArgpack::Apply(
+        hshm::make_argpack(std::forward<Args>(args)...),
+        [this](auto i, auto &arg) { this->base(arg); });
+    return *this;
+  }
+
+  /** range() — compute span size from first to last arg (contiguous POD) */
+  template <typename... Args>
+  HSHM_INLINE_CROSS_FUN CalculateSizeArchive &range(Args &...args) {
+    const char *begin = reinterpret_cast<const char *>(
+        &std::get<0>(std::forward_as_tuple(args...)));
+    auto &last = std::get<sizeof...(Args) - 1>(std::forward_as_tuple(args...));
+    const char *end = reinterpret_cast<const char *>(&last) +
+                       sizeof(std::decay_t<decltype(last)>);
+    cur_off_ += static_cast<size_t>(end - begin);
+    return *this;
+  }
+
+  /** Size-compute function */
+  template <typename T>
+  HSHM_INLINE_CROSS_FUN CalculateSizeArchive &base(const T &obj) {
+    if constexpr (std::is_arithmetic<T>::value) {
+      cur_off_ += sizeof(T);
+    } else if constexpr (std::is_enum<T>::value) {
+      cur_off_ += sizeof(std::underlying_type_t<T>);
+    } else if constexpr (has_serialize_fun_v<CalculateSizeArchive, T>) {
+      serialize(*this, const_cast<T &>(obj));
+    } else if constexpr (has_save_fun_v<CalculateSizeArchive, T>) {
+      save(*this, obj);
+    } else if constexpr (has_serialize_cls_v<CalculateSizeArchive, T>) {
+      const_cast<T &>(obj).serialize(*this);
+    } else if constexpr (has_save_cls_v<CalculateSizeArchive, T>) {
+      obj.save(*this);
+    }
+    return *this;
+  }
+
+  /** write_range — compute span size */
+  template <typename FirstT, typename LastT>
+  HSHM_INLINE_CROSS_FUN void write_range(const FirstT *first,
+                                          const LastT *last) {
+    const char *begin = reinterpret_cast<const char *>(first);
+    const char *end = reinterpret_cast<const char *>(last) + sizeof(LastT);
+    cur_off_ += static_cast<size_t>(end - begin);
+  }
+
+  /** write_binary — just accumulate size */
+  HSHM_INLINE_CROSS_FUN
+  CalculateSizeArchive &write_binary(const char *data, size_t size) {
+    (void)data;
+    cur_off_ += size;
+    return *this;
+  }
+
+  /** Fused string save — just accumulate sizeof(size_t) + len */
+  HSHM_INLINE_CROSS_FUN
+  void save_string_fused(const char *str_data, size_t len) {
+    (void)str_data;
+    cur_off_ += sizeof(size_t) + len;
+  }
+};
+
+/** Save string (CalculateSizeArchive overload) */
+HSHM_INLINE_CROSS_FUN void save(CalculateSizeArchive &ar,
+                                 const std::string &str) {
+  save_string(ar, str);
+}
+
+/** Save vector (CalculateSizeArchive overload) */
+template <typename T>
+HSHM_INLINE_CROSS_FUN void save(CalculateSizeArchive &ar,
+                                 const std::vector<T> &data) {
+  save_vec<CalculateSizeArchive, std::vector<T>, T>(ar, data);
+}
+
+/** Save list (CalculateSizeArchive overload) */
+template <typename T>
+HSHM_INLINE_CROSS_FUN void save(CalculateSizeArchive &ar,
+                                 const std::list<T> &data) {
+  save_list<CalculateSizeArchive, std::list<T>, T>(ar, data);
+}
+
+/** Save unordered_map (CalculateSizeArchive overload) */
+template <typename KeyT, typename T>
+HSHM_INLINE_CROSS_FUN void save(CalculateSizeArchive &ar,
+                                 const std::unordered_map<KeyT, T> &data) {
+  save_map<CalculateSizeArchive, std::unordered_map<KeyT, T>, KeyT, T>(ar,
+                                                                        data);
 }
 
 /** A class for serializing simple objects into private memory */
@@ -121,12 +232,22 @@ class LocalSerialize {
  public:
   using is_loading = std::false_type;
   using is_saving = std::true_type;
+  using supports_range_ops = std::true_type;
 
   DataT &data_;
+  size_t cur_off_ = 0;
 
  public:
-  HSHM_CROSS_FUN LocalSerialize(DataT &data) : data_(data) { data_.resize(0); }
-  HSHM_CROSS_FUN LocalSerialize(DataT &data, bool) : data_(data) {}
+  HSHM_CROSS_FUN LocalSerialize(DataT &data) : data_(data), cur_off_(0) {
+    data_.resize(0);
+  }
+  HSHM_CROSS_FUN LocalSerialize(DataT &data, bool) : data_(data), cur_off_(data.size()) {}
+
+  /** Commit the local offset to the vector's size. Must be called when
+   *  serialization is complete so that data_.size() reflects what was written. */
+  HSHM_INLINE_CROSS_FUN void Finalize() {
+    data_.resize(cur_off_);
+  }
 
   /** left shift operator */
   template <typename T>
@@ -149,6 +270,20 @@ class LocalSerialize {
     return *this;
   }
 
+  /** range() — batch memcpy from &first_arg through &last_arg (inclusive).
+   *  All args must be contiguous POD fields in memory.
+   *  The first parameter is the beginning and the last is the end. */
+  template <typename... Args>
+  HSHM_INLINE_CROSS_FUN LocalSerialize &range(Args &...args) {
+    const char *begin = reinterpret_cast<const char *>(
+        &std::get<0>(std::forward_as_tuple(args...)));
+    auto &last = std::get<sizeof...(Args) - 1>(std::forward_as_tuple(args...));
+    const char *end = reinterpret_cast<const char *>(&last) +
+                       sizeof(std::decay_t<decltype(last)>);
+    write_binary(begin, static_cast<size_t>(end - begin));
+    return *this;
+  }
+
   /** Save function */
   template <typename T>
   HSHM_INLINE_CROSS_FUN LocalSerialize &base(const T &obj) {
@@ -157,7 +292,6 @@ class LocalSerialize {
     if constexpr (std::is_arithmetic<T>::value) {
       write_binary(reinterpret_cast<const char *>(&obj), sizeof(T));
     } else if constexpr (std::is_enum<T>::value) {
-      // Serialize enums as their underlying type
       using UnderlyingType = std::underlying_type_t<T>;
       UnderlyingType value = static_cast<UnderlyingType>(obj);
       write_binary(reinterpret_cast<const char *>(&value),
@@ -174,14 +308,55 @@ class LocalSerialize {
     return *this;
   }
 
+  /** Batch-serialize a contiguous range of POD fields in one memcpy.
+   *  @param first Pointer to the first field
+   *  @param last  Pointer to the last field
+   *  The range is [first, last] inclusive (i.e. last field IS included).
+   *  Example: ar.write_range(&obj.field_a_, &obj.field_z_);
+   */
+  template <typename FirstT, typename LastT>
+  HSHM_INLINE_CROSS_FUN LocalSerialize &write_range(const FirstT *first,
+                                                     const LastT *last) {
+    const char *begin = reinterpret_cast<const char *>(first);
+    const char *end = reinterpret_cast<const char *>(last) + sizeof(LastT);
+    write_binary(begin, static_cast<size_t>(end - begin));
+    return *this;
+  }
+
+  /** Fused string save: size prefix + character data in one capacity check.
+   *  Uses direct store for size prefix to avoid memcpy overhead on GPU. */
+  HSHM_INLINE_CROSS_FUN
+  void save_string_fused(const char *str_data, size_t len) {
+    size_t total = sizeof(size_t) + len;
+    size_t new_off = cur_off_ + total;
+    if (new_off > data_.size()) {
+      size_t new_cap = data_.size();
+      if (new_cap == 0) new_cap = 64;
+      while (new_cap < new_off) new_cap *= 2;
+      data_.resize(new_cap);
+    }
+    char *dst = data_.data() + cur_off_;
+    memcpy(dst, &len, sizeof(size_t));
+    if (len > 0) {
+      memcpy(dst + sizeof(size_t), str_data, len);
+    }
+    cur_off_ = new_off;
+  }
+
   /** Save function (binary data) */
   HSHM_INLINE_CROSS_FUN
   LocalSerialize &write_binary(const char *data, size_t size) {
-    size_t off = data_.size();
-    data_.resize(off + size);
-    if (size > 0) {
-      memcpy(data_.data() + off, data, size);
+    size_t new_off = cur_off_ + size;
+    if (new_off > data_.size()) {
+      size_t new_cap = data_.size();
+      if (new_cap == 0) new_cap = 64;
+      while (new_cap < new_off) new_cap *= 2;
+      data_.resize(new_cap);
     }
+    if (size > 0) {
+      memcpy(data_.data() + cur_off_, data, size);
+    }
+    cur_off_ = new_off;
     return *this;
   }
 };
@@ -192,6 +367,7 @@ class LocalDeserialize {
  public:
   using is_loading = std::true_type;
   using is_saving = std::false_type;
+  using supports_range_ops = std::true_type;
 
   const DataT &data_;
   size_t cur_off_ = 0;
@@ -220,6 +396,20 @@ class LocalDeserialize {
     return *this;
   }
 
+  /** range() — batch memcpy from &first_arg through &last_arg (inclusive).
+   *  All args must be contiguous POD fields in memory.
+   *  The first parameter is the beginning and the last is the end. */
+  template <typename... Args>
+  HSHM_INLINE_CROSS_FUN LocalDeserialize &range(Args &...args) {
+    char *begin = reinterpret_cast<char *>(
+        &std::get<0>(std::forward_as_tuple(args...)));
+    auto &last = std::get<sizeof...(Args) - 1>(std::forward_as_tuple(args...));
+    char *end = reinterpret_cast<char *>(&last) +
+                 sizeof(std::decay_t<decltype(last)>);
+    read_binary(begin, static_cast<size_t>(end - begin));
+    return *this;
+  }
+
   /** Load function */
   template <typename T>
   HSHM_INLINE_CROSS_FUN LocalDeserialize &base(T &obj) {
@@ -228,9 +418,8 @@ class LocalDeserialize {
     if constexpr (std::is_arithmetic<T>::value) {
       read_binary(reinterpret_cast<char *>(&obj), sizeof(T));
     } else if constexpr (std::is_enum<T>::value) {
-      // Deserialize enums from their underlying type
       using UnderlyingType = std::underlying_type_t<T>;
-      UnderlyingType value;
+      UnderlyingType value{};
       read_binary(reinterpret_cast<char *>(&value), sizeof(UnderlyingType));
       obj = static_cast<T>(value);
     } else if constexpr (has_serialize_fun_v<LocalDeserialize, T>) {
@@ -242,6 +431,21 @@ class LocalDeserialize {
     } else if constexpr (has_load_save_cls_v<LocalDeserialize, T>) {
       obj.load(*this);
     }
+    return *this;
+  }
+
+  /** Batch-deserialize a contiguous range of POD fields in one memcpy.
+   *  @param first Pointer to the first field
+   *  @param last  Pointer to the last field
+   *  The range is [first, last] inclusive (i.e. last field IS included).
+   *  Example: ar.read_range(&obj.field_a_, &obj.field_z_);
+   */
+  template <typename FirstT, typename LastT>
+  HSHM_INLINE_CROSS_FUN LocalDeserialize &read_range(FirstT *first,
+                                                      LastT *last) {
+    char *begin = reinterpret_cast<char *>(first);
+    char *end = reinterpret_cast<char *>(last) + sizeof(LastT);
+    read_binary(begin, static_cast<size_t>(end - begin));
     return *this;
   }
 

@@ -104,6 +104,33 @@ install(TARGETS socket_transport_full_test
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
+# NIXL transport test (conditional on NIXL)
+if(WRP_CORE_ENABLE_NIXL)
+    find_library(NIXL_LIB_TEST NAMES nixl PATHS /usr/local/lib /usr/local/lib/x86_64-linux-gnu
+                 /usr/lib /usr/lib/x86_64-linux-gnu)
+    find_library(NIXL_BUILD_LIB_TEST NAMES nixl_build PATHS /usr/local/lib /usr/local/lib/x86_64-linux-gnu
+                 /usr/lib /usr/lib/x86_64-linux-gnu)
+    find_path(NIXL_INCLUDE_TEST NAMES nixl.h PATHS /usr/local/include /usr/include)
+    if(NIXL_LIB_TEST AND NIXL_INCLUDE_TEST)
+        set(NIXL_LINK_LIBS_TEST ${NIXL_LIB_TEST})
+        if(NIXL_BUILD_LIB_TEST)
+            list(APPEND NIXL_LINK_LIBS_TEST ${NIXL_BUILD_LIB_TEST})
+        endif()
+        add_executable(nixl_transport_test nixl_transport_test.cc)
+        target_link_libraries(nixl_transport_test hermes_shm_host hshm::lightbeam ${NIXL_LINK_LIBS_TEST})
+        target_include_directories(nixl_transport_test PRIVATE ${NIXL_INCLUDE_TEST})
+        target_compile_definitions(nixl_transport_test PRIVATE HSHM_ENABLE_NIXL=1)
+        add_test(NAME ctp_nixl_transport COMMAND nixl_transport_test)
+        set_tests_properties(ctp_nixl_transport PROPERTIES
+            LABELS "msan_skip"
+            ENVIRONMENT "LD_LIBRARY_PATH=/usr/local/lib/x86_64-linux-gnu:${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}")
+        install(TARGETS nixl_transport_test
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    endif()
+endif()
+
 # distributed_lightbeam_test requires MPI
 if(WRP_CORE_ENABLE_MPI AND WRP_CORE_ENABLE_ZMQ)
     add_executable(distributed_lightbeam_test distributed_lightbeam_test.cc)

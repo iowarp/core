@@ -1,0 +1,58 @@
+# Content Transfer Engine (CTE) Configuration File
+# GPU benchmark configuration with pinned host + HBM storage tiers
+networking:
+  port: 9413
+  neighborhood_size: 32
+
+runtime:
+  num_threads: 4             # Worker threads for task execution
+  queue_depth: 1024          # Task queue depth per worker
+
+  # Worker sleep configuration (all values in microseconds)
+  first_busy_wait: 10000     # Busy wait before sleeping when idle (10ms)
+  max_sleep: 50000           # Maximum sleep duration (50ms)
+
+gpu:
+  blocks: 1
+  threads_per_block: 32
+  queue_depth: 256            # Must be >= max concurrent client warps
+
+compose:
+  # RAM bdev (required by runtime)
+  - mod_name: chimaera_bdev
+    pool_name: "ram::chi_default_bdev"
+    pool_query: local
+    pool_id: "301.0"
+    bdev_type: ram
+    capacity: "512MB"
+
+  # CTE pool with GPU storage tiers
+  - mod_name: wrp_cte_core
+    pool_name: cte_main
+    pool_query: local
+    pool_id: 512.0
+
+    # Target management settings
+    targets:
+      neighborhood: 1  # Single-node configuration
+      default_target_timeout_ms: 30000
+      poll_period_ms: 5000
+
+    # Storage block device configuration
+    # Two tiers: pinned host memory and GPU HBM
+    storage:
+      # Pinned host memory tier (lower priority)
+      - path: "pinned::cte_pinned_tier"
+        bdev_type: "pinned"
+        capacity_limit: "256MB"
+        score: 0.5
+
+      # GPU High-Bandwidth Memory tier (higher priority)
+      - path: "hbm::cte_hbm_tier"
+        bdev_type: "hbm"
+        capacity_limit: "256MB"
+        score: 1.0
+
+    # Data Placement Engine configuration
+    dpe:
+      dpe_type: "max_bw"

@@ -35,8 +35,7 @@
 #define CHIMAERA_INCLUDE_CHIMAERA_CONTAINER_H_
 
 #include <cmath>
-#include <cereal/archives/binary.hpp>
-#include <cereal/cereal.hpp>
+#include <hermes_shm/data_structures/serialization/global_serialize.h>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -364,6 +363,15 @@ class Container {
   }
 
   /**
+   * Called after the GPU container for this pool has been allocated and
+   * registered with the GPU work orchestrator (and the orchestrator has been
+   * resumed). Override to send GPU-init tasks that must arrive after the
+   * GPU container is registered (e.g., bdev's UpdateTask).
+   * Default implementation is a no-op.
+   */
+  virtual void PostGpuContainerCreate() {}
+
+  /**
    * Serialize task parameters for network transfer (unified method)
    * Must be implemented by derived classes
    * Uses switch-case structure based on method ID to dispatch to appropriate serialization
@@ -483,14 +491,15 @@ class ContainerClient {
   /**
    * Default constructor
    */
-  ContainerClient() : pool_id_(), return_code_(0) {}
+  HSHM_CROSS_FUN ContainerClient() : pool_id_(), return_code_(0) {}
 
+#if HSHM_IS_HOST
   /**
    * Initialize client with pool ID
    * @param pool_id Pool identifier to connect to
    */
-  virtual void Init(const PoolId& pool_id) { 
-    pool_id_ = pool_id; 
+  virtual void Init(const PoolId& pool_id) {
+    pool_id_ = pool_id;
     return_code_ = 0;
   }
 
@@ -498,6 +507,16 @@ class ContainerClient {
    * Virtual destructor
    */
   virtual ~ContainerClient() = default;
+#else
+  /**
+   * Initialize client with pool ID (GPU version, non-virtual)
+   * @param pool_id Pool identifier to connect to
+   */
+  HSHM_GPU_FUN void Init(const PoolId& pool_id) {
+    pool_id_ = pool_id;
+    return_code_ = 0;
+  }
+#endif
 
   /**
    * Serialization support

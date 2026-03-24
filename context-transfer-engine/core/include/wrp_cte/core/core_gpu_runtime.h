@@ -1,0 +1,301 @@
+/*
+ * Copyright (c) 2024, Gnosis Research Center, Illinois Institute of Technology
+ * All rights reserved.
+ *
+ * This file is part of IOWarp Core.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#ifndef WRP_CTE_CORE_GPU_RUNTIME_H_
+#define WRP_CTE_CORE_GPU_RUNTIME_H_
+
+#include "chimaera/gpu_container.h"
+#include "autogen/core_methods.h"
+#include <hermes_shm/data_structures/priv/vector.h>
+#include <hermes_shm/data_structures/priv/string.h>
+#include <hermes_shm/thread/lock/mutex.h>
+
+// Forward declarations of task types.
+// Full definitions are in core_tasks.h (CPU code only). Forward declarations
+// are sufficient here since method signatures only need pointer-compatible types.
+namespace wrp_cte::core {
+
+// TagId is a type alias for chi::UniqueId, defined here to avoid pulling
+// in core_tasks.h (which includes CPU-only chimaera/bdev headers).
+using TagId = chi::UniqueId;
+
+// Forward declarations for metadata structures
+struct TagInfo;
+struct BlobInfo;
+
+struct CreateParams;
+struct RegisterTargetTask;
+struct UnregisterTargetTask;
+struct ListTargetsTask;
+struct StatTargetsTask;
+template <typename CreateParamsT> struct GetOrCreateTagTask;
+struct GetTagSizeTask;
+struct DelTagTask;
+struct GetContainedBlobsTask;
+struct PutBlobTask;
+struct GetBlobTask;
+struct ReorganizeBlobTask;
+struct DelBlobTask;
+struct GetBlobScoreTask;
+struct GetBlobSizeTask;
+struct GetBlobInfoTask;
+struct PollTelemetryLogTask;
+struct TagQueryTask;
+struct BlobQueryTask;
+struct GetTargetInfoTask;
+struct FlushMetadataTask;
+struct FlushDataTask;
+
+}  // namespace wrp_cte::core (forward declarations)
+
+namespace wrp_cte::core {
+
+/**
+ * GPU-side container for the CTE Core ChiMod.
+ * All methods are no-ops on GPU (CPU-only data placement logic).
+ * PutBlob and GetBlob demonstrate the CHI_IPC->ToFullPtr pattern for
+ * converting ShmPtr references to GPU-accessible pointers.
+ */
+// Forward declaration (defined in core_runtime_gpu.cc)
+struct GpuMetadata;
+
+class GpuRuntime : public chi::gpu::Container {
+ public:
+  // GPU-resident metadata (lazily initialized on first use)
+  GpuMetadata *meta_{nullptr};
+  hshm::Mutex init_lock_;  // Protects lazy init of meta_
+  chi::u32 next_tag_minor_{0};
+
+  HSHM_GPU_FUN GpuRuntime() = default;
+  HSHM_GPU_FUN ~GpuRuntime() override = default;
+
+  /**
+   * GPU handler for RegisterTarget.
+   * @param task RegisterTarget task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume RegisterTarget(hipc::FullPtr<RegisterTargetTask> task,
+                                    chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for UnregisterTarget.
+   * @param task UnregisterTarget task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume UnregisterTarget(hipc::FullPtr<UnregisterTargetTask> task,
+                                      chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for ListTargets.
+   * @param task ListTargets task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume ListTargets(hipc::FullPtr<ListTargetsTask> task,
+                                 chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for StatTargets.
+   * @param task StatTargets task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume StatTargets(hipc::FullPtr<StatTargetsTask> task,
+                                 chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for GetOrCreateTag.
+   * @param task GetOrCreateTag task (default template instantiation).
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume GetOrCreateTag(
+      hipc::FullPtr<GetOrCreateTagTask<CreateParams>> task,
+      chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for GetTagSize.
+   * @param task GetTagSize task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume GetTagSize(hipc::FullPtr<GetTagSizeTask> task,
+                                chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for DelTag.
+   * @param task DelTag task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume DelTag(hipc::FullPtr<DelTagTask> task,
+                            chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for GetContainedBlobs.
+   * @param task GetContainedBlobs task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume GetContainedBlobs(
+      hipc::FullPtr<GetContainedBlobsTask> task,
+      chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for PutBlob.
+   * Converts blob_data_ ShmPtr to a GPU-accessible FullPtr via
+   * CHI_IPC->ToFullPtr. This demonstrates the correct pattern for
+   * accessing blob data from GPU runtime methods.
+   * @param task PutBlob task containing blob_data_ ShmPtr.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume PutBlob(hipc::FullPtr<PutBlobTask> task,
+                              chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for GetBlob.
+   * Converts blob_data_ ShmPtr to a GPU-accessible FullPtr via
+   * CHI_IPC->ToFullPtr. This demonstrates the correct pattern for
+   * accessing the output blob buffer from GPU runtime methods.
+   * @param task GetBlob task containing blob_data_ ShmPtr output buffer.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume GetBlob(hipc::FullPtr<GetBlobTask> task,
+                              chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for ReorganizeBlob.
+   * @param task ReorganizeBlob task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume ReorganizeBlob(hipc::FullPtr<ReorganizeBlobTask> task,
+                                    chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for DelBlob.
+   * @param task DelBlob task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume DelBlob(hipc::FullPtr<DelBlobTask> task,
+                              chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for GetBlobScore.
+   * @param task GetBlobScore task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume GetBlobScore(hipc::FullPtr<GetBlobScoreTask> task,
+                                  chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for GetBlobSize.
+   * @param task GetBlobSize task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume GetBlobSize(hipc::FullPtr<GetBlobSizeTask> task,
+                                 chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for GetBlobInfo.
+   * @param task GetBlobInfo task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume GetBlobInfo(hipc::FullPtr<GetBlobInfoTask> task,
+                                 chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for PollTelemetryLog.
+   * @param task PollTelemetryLog task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume PollTelemetryLog(hipc::FullPtr<PollTelemetryLogTask> task,
+                                      chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for TagQuery.
+   * @param task TagQuery task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume TagQuery(hipc::FullPtr<TagQueryTask> task,
+                              chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for BlobQuery.
+   * @param task BlobQuery task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume BlobQuery(hipc::FullPtr<BlobQueryTask> task,
+                               chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for GetTargetInfo.
+   * @param task GetTargetInfo task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume GetTargetInfo(hipc::FullPtr<GetTargetInfoTask> task,
+                                   chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for FlushMetadata.
+   * @param task FlushMetadata task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume FlushMetadata(hipc::FullPtr<FlushMetadataTask> task,
+                                   chi::gpu::RunContext &rctx);
+
+  /**
+   * GPU handler for FlushData.
+   * @param task FlushData task.
+   * @param rctx GPU run context.
+   */
+  HSHM_GPU_FUN chi::gpu::TaskResume FlushData(hipc::FullPtr<FlushDataTask> task,
+                               chi::gpu::RunContext &rctx);
+
+ private:
+  /** Initialize metadata store on first use (uses CHI_PRIV_ALLOC GPU heap) */
+  HSHM_GPU_FUN void EnsureMetaInit();
+
+  /** Find TagInfo by TagId. Returns nullptr if not found. */
+  HSHM_GPU_FUN TagInfo *FindTagById(const TagId &tag_id);
+
+  /** Find TagId (as u64) by name. Returns nullptr if not found. */
+  HSHM_GPU_FUN chi::u64 *FindTagIdByName(const chi::priv::string &name);
+
+  /** Insert or update tag in metadata */
+  HSHM_GPU_FUN TagInfo *UpsertTag(const chi::priv::string &tag_name, const TagId &tag_id);
+
+  /** Build compound key for blob: "major.minor.blob_name" */
+  HSHM_GPU_FUN chi::priv::string MakeBlobKey(const TagId &tag_id,
+                                              const chi::priv::string &blob_name);
+
+  // Autogenerated virtual method overrides (switch-case dispatch)
+  #include "autogen/core_gpu_lib_exec.h"
+};
+
+}  // namespace wrp_cte::core
+
+#endif  // WRP_CTE_CORE_GPU_RUNTIME_H_
