@@ -82,7 +82,8 @@ add_executable(test_gpu_core
     test_gpu_core.cc
 )
 
-# Create test_gpu_create executable for GPU AsyncCreate tests
+# Create test_gpu_create executable for GPU AsyncCreate tests (CUDA only)
+if(WRP_CORE_ENABLE_CUDA)
 # GPU kernel file compiled with HSHM_ENABLE_CUDA=1 so device APIs are available
 add_library(test_gpu_create_kernels OBJECT test_gpu_create_gpu.cu)
 target_include_directories(test_gpu_create_kernels PRIVATE
@@ -111,6 +112,7 @@ set_target_properties(test_gpu_create PROPERTIES
     LINKER_LANGUAGE CUDA
     POSITION_INDEPENDENT_CODE ON
 )
+endif()
 
 # Include directories for all tests - using unified simple_test.h framework
 target_include_directories(cte_core_unit_tests PRIVATE
@@ -157,9 +159,11 @@ target_include_directories(test_gpu_core PRIVATE
   ${CMAKE_SOURCE_DIR}/test  # For unified simple_test.h
 )
 
+if(WRP_CORE_ENABLE_CUDA)
 target_include_directories(test_gpu_create PRIVATE
   ${CMAKE_SOURCE_DIR}/test  # For unified simple_test.h
 )
+endif()
 
 # Link against required libraries using simple_test.h framework (NOT Catch2)
 target_link_libraries(cte_core_unit_tests
@@ -306,6 +310,7 @@ if(WRP_CORE_ENABLE_CUDA AND CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES)
 endif()
 
 # Link test_gpu_create - using simple_test.h framework (NOT Catch2)
+if(WRP_CORE_ENABLE_CUDA)
 target_link_libraries(test_gpu_create
     wrp_cte_core_runtime         # CTE core runtime library
     wrp_cte_core_client          # CTE core client library
@@ -317,6 +322,7 @@ target_link_libraries(test_gpu_create
     hermes_shm_cuda              # HermesShm CUDA library (for GPU kernels)
     ${CMAKE_THREAD_LIBS_INIT}    # Threading support
 )
+endif()
 
 # Note: Include directories are provided automatically via linked ChiMod targets
 # wrp_cte_core_client provides ${WRP_CTE_ROOT}/core/include via transitive includes
@@ -742,8 +748,10 @@ add_test(NAME cte_gpu_core_all
     COMMAND test_gpu_core)
 
 # GPU create tests - AsyncCreate from GPU kernel
+if(WRP_CORE_ENABLE_CUDA)
 add_test(NAME cte_gpu_create
     COMMAND test_gpu_create)
+endif()
 
 set_tests_properties(
     cte_reorganize_all
@@ -907,7 +915,15 @@ set_tests_properties(
 # ------------------------------------------------------------------------------
 # Install Targets
 # ------------------------------------------------------------------------------
-install(TARGETS cte_core_unit_tests test_core_functionality test_query test_cte_config_dpe test_tag_operations test_core_client_config test_core_runtime_coverage test_tiered_storage_stress test_reorganize_blob test_cte_gpu_coroutine test_gpu_core test_gpu_create
+set(_cte_test_install_targets
+    cte_core_unit_tests test_core_functionality test_query test_cte_config_dpe
+    test_tag_operations test_core_client_config test_core_runtime_coverage
+    test_tiered_storage_stress test_reorganize_blob test_cte_gpu_coroutine test_gpu_core
+)
+if(WRP_CORE_ENABLE_CUDA)
+    list(APPEND _cte_test_install_targets test_gpu_create)
+endif()
+install(TARGETS ${_cte_test_install_targets}
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin

@@ -295,6 +295,7 @@ bool Chimaera::ServerInit() {
     }
   }
 
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
   // Launch GPU work orchestrator after all initial pools are created, so that
   // cudaMalloc calls during GPU container allocation don't deadlock
   // against the persistent GPU work orchestrator.
@@ -304,6 +305,7 @@ bool Chimaera::ServerInit() {
     runtime_is_initializing_ = false;
     return false;
   }
+#endif
 
   // Start local server last - after all other initialization is complete
   // This ensures clients can connect only when runtime is fully ready

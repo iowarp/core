@@ -1106,7 +1106,6 @@ void IpcManager::RebuildInternalQueue(u32 gpu_id, u32 new_lanes) {
   HLOG(kInfo, "RebuildInternalQueue: Recreated internal queue with {} lanes "
        "(depth {})", new_lanes, queue_depth);
 }
-#endif
 
 TaskQueue *IpcManager::GetToGpuQueue(size_t gpu_id) {
   if (gpu_id < cpu2gpu_queues_.size()) {
@@ -1121,6 +1120,7 @@ TaskQueue *IpcManager::GetGpuToGpuQueue(size_t gpu_id) {
   }
   return nullptr;
 }
+#endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 
 void IpcManager::RegisterGpuAllocator(const hipc::MemoryBackendId &id,
                                        char *data, size_t capacity) {
