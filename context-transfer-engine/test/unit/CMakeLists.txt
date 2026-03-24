@@ -66,12 +66,10 @@ if(WRP_CORE_ENABLE_CUDA)
       test_gpu_coroutine_gpu.cc
       INCLUDE_DIRS
           ${CMAKE_SOURCE_DIR}/context-transfer-engine/core/include
-          ${CMAKE_SOURCE_DIR}/context-runtime/include
-          ${CMAKE_SOURCE_DIR}/context-runtime/modules/admin/include
-          ${CMAKE_SOURCE_DIR}/context-runtime/modules/bdev/include
-          ${CMAKE_SOURCE_DIR}/context-transport-primitives/include
+          ${CMAKE_SOURCE_DIR}/context-runtime/modules/MOD_NAME/include
+      LINK_LIBS hshm::cuda_cxx chimaera_cxx_gpu
   )
-  target_link_libraries(test_gpu_initiated_kernels PUBLIC hshm::cuda_cxx)
+  target_link_libraries(test_gpu_initiated_kernels hshm::cuda_cxx)
 endif()
 
 add_executable(test_cte_gpu_coroutine
@@ -151,6 +149,7 @@ target_include_directories(test_reorganize_blob PRIVATE
 
 target_include_directories(test_cte_gpu_coroutine PRIVATE
   ${CMAKE_SOURCE_DIR}/context-runtime/test  # For simple_test.h with g_test_finalize
+  ${CMAKE_SOURCE_DIR}/context-runtime/modules/MOD_NAME/include
 )
 
 target_include_directories(test_gpu_core PRIVATE

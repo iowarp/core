@@ -281,6 +281,54 @@ function(_wrp_core_collect_clang_cuda_defs LINK_LIBS OUT_VAR)
     set(${OUT_VAR} ${_DEFS} PARENT_SCOPE)
 endfunction()
 
+# Collect transitive INTERFACE_INCLUDE_DIRECTORIES from a list of link targets.
+# Walks the dependency graph (same approach as _wrp_core_collect_clang_cuda_defs)
+# and returns -I flags suitable for clang custom commands.
+#
+# Usage:
+#   _wrp_core_collect_clang_cuda_includes("${CUDA_LINK_LIBS}" CLANG_CUDA_INCS)
+#
+function(_wrp_core_collect_clang_cuda_includes LINK_LIBS OUT_VAR)
+    set(_INCS "")
+    set(_VISITED "")
+    set(_QUEUE ${LINK_LIBS})
+    while(_QUEUE)
+        list(POP_FRONT _QUEUE _LIB)
+        if(_LIB IN_LIST _VISITED)
+            continue()
+        endif()
+        list(APPEND _VISITED "${_LIB}")
+        if(NOT TARGET "${_LIB}")
+            continue()
+        endif()
+        get_target_property(_LIB_INCS "${_LIB}" INTERFACE_INCLUDE_DIRECTORIES)
+        if(_LIB_INCS)
+            foreach(_INC IN LISTS _LIB_INCS)
+                # Extract paths from $<BUILD_INTERFACE:path> expressions
+                if(_INC MATCHES "^\\$<BUILD_INTERFACE:(.+)>$")
+                    list(APPEND _INCS "-I${CMAKE_MATCH_1}")
+                elseif(_INC MATCHES "^\\$<")
+                    # Skip other generator expressions
+                else()
+                    list(APPEND _INCS "-I${_INC}")
+                endif()
+            endforeach()
+        endif()
+        # Recurse into transitive link dependencies
+        get_target_property(_LIB_LINK "${_LIB}" INTERFACE_LINK_LIBRARIES)
+        if(_LIB_LINK)
+            foreach(_DEP IN LISTS _LIB_LINK)
+                if(TARGET "${_DEP}" AND NOT "${_DEP}" IN_LIST _VISITED)
+                    list(APPEND _QUEUE "${_DEP}")
+                endif()
+            endforeach()
+        endif()
+    endwhile()
+
+    list(REMOVE_DUPLICATES _INCS)
+    set(${OUT_VAR} ${_INCS} PARENT_SCOPE)
+endfunction()
+
 # Function for adding a CUDA library
 #
 # When WRP_CORE_CLANG_CUDA_COMPILER is set (via wrp_core_find_clang_cuda()),
@@ -321,6 +369,10 @@ function(add_cuda_library TARGET SHARED DO_COPY)
         # Collect all compile definitions (base + transitive from LINK_LIBS)
         _wrp_core_collect_clang_cuda_defs("${CUDA_LINK_LIBS}" CLANG_CUDA_DEFS)
 
+        # Collect transitive include directories from LINK_LIBS
+        _wrp_core_collect_clang_cuda_includes("${CUDA_LINK_LIBS}" CLANG_CUDA_INCS)
+        list(APPEND INCLUDE_FLAGS ${CLANG_CUDA_INCS})
+
         set(OBJECT_FILES "")
         foreach(SRC IN LISTS SRC_FILES)
             get_filename_component(SRC_NAME ${SRC} NAME_WE)
@@ -338,6 +390,7 @@ function(add_cuda_library TARGET SHARED DO_COPY)
                     -Wno-unknown-cuda-version
                     -fPIC
                     -fgpu-rdc
+                    --no-offload-new-driver
                     ${CLANG_CUDA_DEFS}
                     ${INCLUDE_FLAGS}
                     -c ${SRC_ABS}
@@ -400,9 +453,10 @@ function(add_cuda_library TARGET SHARED DO_COPY)
         set_property(TARGET ${TARGET} APPEND PROPERTY
             LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart")
 
-        # Export the Clang-CUDA object files (excluding device_link.o) to parent scope
-        # so embed_gpu_device_code() can extract fatbins from them.
+        # Export the Clang-CUDA object files (excluding device_link.o) globally
+        # so embed_gpu_device_code() and add_cuda_executable() can use them.
         set(${TARGET}_CUDA_OBJ_FILES ${_CUDA_SRC_OBJ_FILES} PARENT_SCOPE)
+        set_property(GLOBAL PROPERTY ${TARGET}_CUDA_OBJ_FILES ${_CUDA_SRC_OBJ_FILES})
     else()
         # ---- NVCC path ----
         set(CUDA_SOURCE_FILES "")
@@ -431,7 +485,10 @@ function(add_cuda_library TARGET SHARED DO_COPY)
         endif()
 
         if(CUDA_INCLUDE_DIRS)
-            target_include_directories(${TARGET} PUBLIC ${CUDA_INCLUDE_DIRS})
+            foreach(_dir IN LISTS CUDA_INCLUDE_DIRS)
+                target_include_directories(${TARGET} PUBLIC
+                    $<BUILD_INTERFACE:${_dir}>)
+            endforeach()
         endif()
     endif()
 
@@ -472,6 +529,10 @@ function(add_cuda_executable TARGET DO_COPY)
         # Collect all compile definitions (base + transitive from LINK_LIBS)
         _wrp_core_collect_clang_cuda_defs("${CUDA_LINK_LIBS}" CLANG_CUDA_DEFS)
 
+        # Collect transitive include directories from LINK_LIBS
+        _wrp_core_collect_clang_cuda_includes("${CUDA_LINK_LIBS}" CLANG_CUDA_INCS)
+        list(APPEND INCLUDE_FLAGS ${CLANG_CUDA_INCS})
+
         set(OBJECT_FILES "")
         foreach(SRC IN LISTS SRC_FILES)
             get_filename_component(SRC_NAME ${SRC} NAME_WE)
@@ -487,6 +548,8 @@ function(add_cuda_executable TARGET DO_COPY)
                     --cuda-path=${WRP_CORE_CLANG_CUDA_PATH}
                     ${GPU_ARCH_FLAGS}
                     -Wno-unknown-cuda-version
+                    -fgpu-rdc
+                    --no-offload-new-driver
                     ${CLANG_CUDA_DEFS}
                     ${EXTRA_DEFS}
                     ${INCLUDE_FLAGS}
@@ -504,12 +567,55 @@ function(add_cuda_executable TARGET DO_COPY)
             list(APPEND OBJECT_FILES ${OBJ_FILE})
         endforeach()
 
+        # Collect CUDA object files from LINK_LIBS for device linking
+        set(DLINK_OBJECT_FILES ${OBJECT_FILES})
+        foreach(_lib IN LISTS CUDA_LINK_LIBS)
+            get_property(_lib_objs GLOBAL PROPERTY ${_lib}_CUDA_OBJ_FILES)
+            if(_lib_objs)
+                list(APPEND DLINK_OBJECT_FILES ${_lib_objs})
+            endif()
+        endforeach()
+
+        # Device link step: nvcc -dlink resolves __cudaRegisterLinkedBinary__nv_*
+        # symbols that clang-cuda -fgpu-rdc compilation leaves undefined.
+        set(DEVICE_LINK_OBJ "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda/${TARGET}_device_link.o")
+        set(NVCC_ARCH_FLAGS "")
+        if(CMAKE_CUDA_ARCHITECTURES)
+            foreach(ARCH IN LISTS CMAKE_CUDA_ARCHITECTURES)
+                if(NOT "${ARCH}" STREQUAL "native")
+                    string(REGEX REPLACE "-real|-virtual" "" ARCH_NUM "${ARCH}")
+                    list(APPEND NVCC_ARCH_FLAGS
+                        "--generate-code=arch=compute_${ARCH_NUM},code=[compute_${ARCH_NUM},sm_${ARCH_NUM}]")
+                endif()
+            endforeach()
+        endif()
+        if(NOT NVCC_ARCH_FLAGS)
+            list(APPEND NVCC_ARCH_FLAGS "--generate-code=arch=compute_80,code=[compute_80,sm_80]")
+        endif()
+        add_custom_command(
+            OUTPUT ${DEVICE_LINK_OBJ}
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/clang_cuda"
+            COMMAND ${CMAKE_CUDA_COMPILER}
+                -dlink
+                ${NVCC_ARCH_FLAGS}
+                -Xcompiler=-fPIC
+                ${DLINK_OBJECT_FILES}
+                -o ${DEVICE_LINK_OBJ}
+                -L${WRP_CORE_CLANG_CUDA_PATH}/lib64
+                -lcudadevrt
+                -lcudart
+            DEPENDS ${DLINK_OBJECT_FILES}
+            COMMENT "NVCC: Device link for ${TARGET}"
+            VERBATIM
+        )
+        list(APPEND OBJECT_FILES ${DEVICE_LINK_OBJ})
+
         add_executable(${TARGET} ${OBJECT_FILES})
         set_target_properties(${TARGET} PROPERTIES
             LINKER_LANGUAGE CXX
         )
         set_property(TARGET ${TARGET} APPEND PROPERTY
-            LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart")
+            LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart;-lcudadevrt")
     else()
         # ---- NVCC path ----
         set(CUDA_SOURCE_FILES "")
@@ -528,7 +634,14 @@ function(add_cuda_executable TARGET DO_COPY)
             $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
 
         if(CUDA_INCLUDE_DIRS)
-            target_include_directories(${TARGET} PUBLIC ${CUDA_INCLUDE_DIRS})
+            foreach(_dir IN LISTS CUDA_INCLUDE_DIRS)
+                target_include_directories(${TARGET} PUBLIC
+                    $<BUILD_INTERFACE:${_dir}>)
+            endforeach()
+        endif()
+
+        if(CUDA_DEFS)
+            target_compile_definitions(${TARGET} PRIVATE ${CUDA_DEFS})
         endif()
     endif()
 
@@ -542,17 +655,18 @@ endfunction()
 #------------------------------------------------------------------------------
 
 # Find the Clang compiler for CUDA compilation.
-# When found, add_cuda_library() and add_cuda_executable() will automatically
-# use Clang instead of NVCC, enabling C++20 features (coroutines, concepts,
-# etc.) in device code.
+# Called automatically when WRP_CORE_ENABLE_GPU_RUNTIME=ON and
+# WRP_CORE_ENABLE_CUDA=ON.  Clang is required because NVCC does not support
+# C++20 coroutines in device code.
 macro(wrp_core_find_clang_cuda)
-    if(NOT WRP_CORE_CLANG_CUDA_COMPILER)
-        find_program(WRP_CORE_CLANG_CUDA_COMPILER
-            NAMES clang++-20 clang++-19 clang++-18 clang++
-            PATHS /usr/bin /usr/local/bin
-            DOC "Clang compiler for CUDA compilation"
-        )
-    endif()
+    find_program(_WRP_CLANG_CUDA_COMPILER
+        NAMES clang++-18 clang++-19 clang++-20 clang++
+        PATHS /usr/bin /usr/local/bin
+        DOC "Clang compiler for CUDA compilation (internal)"
+    )
+    set(WRP_CORE_CLANG_CUDA_COMPILER "${_WRP_CLANG_CUDA_COMPILER}"
+        CACHE INTERNAL "Clang compiler for CUDA compilation")
+    unset(_WRP_CLANG_CUDA_COMPILER CACHE)
 
     # Derive --cuda-path from CMAKE_CUDA_COMPILER (e.g., /usr/local/cuda-12.6/bin/nvcc -> /usr/local/cuda-12.6)
     if(NOT WRP_CORE_CLANG_CUDA_PATH)
@@ -564,14 +678,18 @@ macro(wrp_core_find_clang_cuda)
         else()
             set(WRP_CORE_CLANG_CUDA_PATH "/usr/local/cuda")
         endif()
-        set(WRP_CORE_CLANG_CUDA_PATH "${WRP_CORE_CLANG_CUDA_PATH}" CACHE PATH "CUDA toolkit root for Clang")
+        set(WRP_CORE_CLANG_CUDA_PATH "${WRP_CORE_CLANG_CUDA_PATH}" CACHE INTERNAL "CUDA toolkit root for Clang")
     endif()
 
     if(WRP_CORE_CLANG_CUDA_COMPILER)
         message(STATUS "Found Clang for CUDA: ${WRP_CORE_CLANG_CUDA_COMPILER}")
         message(STATUS "  CUDA path for Clang: ${WRP_CORE_CLANG_CUDA_PATH}")
     else()
-        message(WARNING "Clang not found -- GPU coroutine targets will be unavailable")
+        message(FATAL_ERROR
+            "Clang is required when WRP_CORE_ENABLE_GPU_RUNTIME=ON with CUDA.\n"
+            "NVCC does not support C++20 coroutines in device code.\n"
+            "Install clang with: apt-get install clang-18\n"
+            "Or disable GPU runtime with: -DWRP_CORE_ENABLE_GPU_RUNTIME=OFF")
     endif()
 endmacro()
 

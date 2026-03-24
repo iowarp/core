@@ -7,7 +7,9 @@ set(CHIMAERA_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 # Enable CUDA if requested
 if(WRP_CORE_ENABLE_CUDA)
     wrp_core_enable_cuda(17)
-    wrp_core_find_clang_cuda()
+    if(WRP_CORE_ENABLE_GPU_RUNTIME)
+        wrp_core_find_clang_cuda()
+    endif()
 endif()
 
 # Enable ROCm if requested
@@ -61,7 +63,7 @@ message(STATUS "Chimaera namespace: ${CHIMAERA_NAMESPACE}")
 add_subdirectory(util)
 
 # Add compiler subdirectory (Clang-compiled GPU coroutine headers)
-if(WRP_CORE_ENABLE_CUDA AND WRP_CORE_CLANG_CUDA_COMPILER)
+if(WRP_CORE_ENABLE_CUDA AND WRP_CORE_ENABLE_GPU_RUNTIME)
     add_subdirectory(compiler)
 endif()
 

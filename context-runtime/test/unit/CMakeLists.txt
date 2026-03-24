@@ -427,7 +427,12 @@ set_target_properties(${CLIENT_RETRY_TEST_TARGET} PROPERTIES
 
 # Create GPU IPC AllocateBuffer test executable (only if CUDA or HIP is enabled)
 if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
-  add_cuda_executable(${IPC_ALLOCATE_BUFFER_GPU_TEST_TARGET} TRUE ${IPC_ALLOCATE_BUFFER_GPU_TEST_SOURCES})
+  add_cuda_executable(${IPC_ALLOCATE_BUFFER_GPU_TEST_TARGET} TRUE ${IPC_ALLOCATE_BUFFER_GPU_TEST_SOURCES}
+    INCLUDE_DIRS
+      ${CHIMAERA_ROOT}/test
+      ${CHIMAERA_ROOT}/modules/MOD_NAME/include
+    LINK_LIBS chimaera_cxx hshm::cuda_cxx
+  )
   target_include_directories(${IPC_ALLOCATE_BUFFER_GPU_TEST_TARGET} PRIVATE
     ${CHIMAERA_ROOT}/include
     ${CHIMAERA_ROOT}/test
@@ -444,7 +449,12 @@ if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
   add_test(NAME ${IPC_ALLOCATE_BUFFER_GPU_TEST_TARGET} COMMAND ${IPC_ALLOCATE_BUFFER_GPU_TEST_TARGET})
 
   # BuddyAllocator benchmark-mimic GPU test
-  add_cuda_executable(test_buddy_benchmark_gpu TRUE test_buddy_benchmark_gpu.cc)
+  add_cuda_executable(test_buddy_benchmark_gpu TRUE test_buddy_benchmark_gpu.cc
+    INCLUDE_DIRS
+      ${CHIMAERA_ROOT}/test
+      ${CHIMAERA_ROOT}/modules/MOD_NAME/include
+    LINK_LIBS chimaera_cxx hshm::cuda_cxx
+  )
   target_include_directories(test_buddy_benchmark_gpu PRIVATE
     ${CHIMAERA_ROOT}/include
     ${CHIMAERA_ROOT}/test
@@ -490,7 +500,13 @@ endif()
 if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
   set(GPU_COROUTINE_TEST_TARGET test_gpu_coroutine)
   add_cuda_executable(${GPU_COROUTINE_TEST_TARGET} FALSE test_gpu_coroutine.cu
-    INCLUDE_DIRS ${CHIMAERA_ROOT}/compiler/include
+    INCLUDE_DIRS
+      ${CHIMAERA_ROOT}/compiler/include
+    LINK_LIBS chimaera_cxx_gpu hshm::cuda_cxx
+  )
+  target_link_libraries(${GPU_COROUTINE_TEST_TARGET}
+    chimaera_cxx_gpu
+    hshm::cuda_cxx
   )
   set_target_properties(${GPU_COROUTINE_TEST_TARGET} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

@@ -50,16 +50,14 @@ RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86
 # Clang (CUDA-capable) Installation
 #------------------------------------------------------------
 
-# Install Clang 20 from the official LLVM apt repository.
-# Clang 20 can compile CUDA kernels directly (--cuda-gpu-arch).
-RUN wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-        > /etc/apt/trusted.gpg.d/apt.llvm.org.asc \
-    && echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble main" \
-        > /etc/apt/sources.list.d/llvm.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends clang-20 \
-    && update-alternatives --install /usr/bin/clang   clang   /usr/bin/clang-20   100 \
-    && update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-20 100 \
+# Install Clang 18 (Ubuntu 24.04 native) for compiling CUDA kernels via
+# clang -x cuda --cuda-gpu-arch=sm_XX.  Clang 18 uses the stable legacy
+# CUDA offload driver; clang 20+ has a new offload driver that segfaults
+# on some device code in this project.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends clang-18 \
+    && update-alternatives --install /usr/bin/clang   clang   /usr/bin/clang-18   100 \
+    && update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100 \
     && rm -rf /var/lib/apt/lists/*
 
 #------------------------------------------------------------
