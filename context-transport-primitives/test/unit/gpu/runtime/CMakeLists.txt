@@ -3,7 +3,11 @@
 #------------------------------------------------------------------------------
 
 # Shared CUDA library (dynamically loaded)
-add_cuda_library(gpu_runtime_lib SHARED TRUE lib.cc)
+add_cuda_library(gpu_runtime_lib SHARED TRUE lib.cc
+  INCLUDE_DIRS
+    ${HSHM_ROOT}/include
+    ${PROJECT_BINARY_DIR}/include
+)
 target_link_libraries(gpu_runtime_lib hshm::cuda_cxx)
 target_include_directories(gpu_runtime_lib PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 install(TARGETS gpu_runtime_lib
@@ -12,6 +16,9 @@ install(TARGETS gpu_runtime_lib
 
 # Test executable
 add_cuda_executable(test_gpu_runtime TRUE main.cc
+    INCLUDE_DIRS
+      ${HSHM_ROOT}/include
+      ${PROJECT_BINARY_DIR}/include
     DEFS GPU_RUNTIME_LIB_PATH="$<TARGET_FILE:gpu_runtime_lib>")
 target_link_libraries(test_gpu_runtime hshm::cuda_cxx ${CMAKE_DL_LIBS})
 target_include_directories(test_gpu_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
