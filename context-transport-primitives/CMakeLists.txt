@@ -112,7 +112,7 @@ endif()
 
 # ENABLE GPU SUPPORT
 if(WRP_CORE_ENABLE_CUDA)
-    wrp_core_enable_cuda(17)
+    wrp_core_enable_cuda(20)
 endif()
 
 if(WRP_CORE_ENABLE_ROCM)
