@@ -115,34 +115,17 @@ __device__ inline uint8_t *warp_page_cache_acquire(
     unsigned long long prev = atomicCAS(tag_ptr, desired, desired);
 
     if (prev == desired) {
+      // Tag matches — check if already loaded
       uint32_t st = atomicAdd(&state.page_states[slot], 0);
       if (st == static_cast<uint32_t>(PageState::kValid) ||
           st == static_cast<uint32_t>(PageState::kDirty)) {
-        load_flag = 0;  // Hit
+        load_flag = 0;  // Cache hit
       } else {
-        // Someone else loading — spin
-        while (true) {
-          __threadfence();
-          st = atomicAdd(&state.page_states[slot], 0);
-          if (st == static_cast<uint32_t>(PageState::kValid) ||
-              st == static_cast<uint32_t>(PageState::kDirty)) {
-            load_flag = 0;
-            break;
-          }
-          unsigned long long cur = atomicAdd(tag_ptr, 0ULL);
-          if (cur != desired) {
-            // Tag stolen — we need to re-install and load
-            atomicExch(tag_ptr, desired);
-            atomicExch(&state.page_states[slot],
-                       static_cast<uint32_t>(PageState::kLoading));
-            __threadfence();
-            load_flag = 1;
-            break;
-          }
-        }
+        // Another warp is loading — just reload (idempotent, no deadlock)
+        load_flag = 1;
       }
     } else {
-      // Miss
+      // Cache miss — install our tag and load
       atomicExch(tag_ptr, desired);
       atomicExch(&state.page_states[slot],
                  static_cast<uint32_t>(PageState::kLoading));

@@ -83,6 +83,8 @@ if(WRP_CORE_ENABLE_CUDA)
           chimaera::cxx
           hshm::cuda_cxx
           ${_BAM_LINK_LIBS}
+      DEFS
+          ${_BAM_DEFS}
   )
 
   if(_BAM_DEFS)
@@ -199,6 +201,9 @@ if(WRP_CORE_ENABLE_CUDA)
 else()
   message(STATUS "Skipping wrp_cte_gpu_bench - CUDA not enabled")
 endif()
+
+# GPU workload benchmarks (PageRank, GNN features, Gray-Scott)
+add_subdirectory(gpu)
 
 # NOTE: Compression benchmark (wrp_cte_compress_bench) has been moved to
 # context-transfer-engine/compressor/test/
