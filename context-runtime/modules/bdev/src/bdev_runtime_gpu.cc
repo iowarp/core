@@ -173,9 +173,10 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
   char *src = data_ptr.ptr_;
 
   // Copy across all blocks with yield for asynchronicity.
-  // Use warp-wide coalesced copy when all 32 lanes are active (parallelism > 1),
-  // otherwise fall back to lane-0 sequential copy.
-  bool warp_wide = (__activemask() == 0xFFFFFFFF);
+  // In GPU coroutines, only lane 0 (warp scheduler) is active.
+  // __activemask() may return stale values in coroutine context.
+  // Always use lane-0 sequential copy for correctness.
+  bool warp_wide = false;
   size_t num_blocks = task->blocks_.size();
   chi::u64 data_off = 0;
   long long t_start = clock64();
@@ -286,7 +287,10 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
   // Copy across all blocks with yield for asynchronicity.
   // Use warp-wide coalesced copy when all 32 lanes are active (parallelism > 1),
   // otherwise fall back to lane-0 sequential copy.
-  bool warp_wide = (__activemask() == 0xFFFFFFFF);
+  // In GPU coroutines, only lane 0 (warp scheduler) is active.
+  // __activemask() may return stale values in coroutine context.
+  // Always use lane-0 sequential copy for correctness.
+  bool warp_wide = false;
   size_t num_blocks = task->blocks_.size();
   chi::u64 data_off = 0;
   long long t_start = clock64();
@@ -356,7 +360,9 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
   }
   long long t_end = clock64();
 
-  // Ensure GPU writes to pinned host memory are visible to CPU
+  // ALL lanes must fence their writes before signaling completion.
+  // Without this, only lane 0's writes are visible to the consumer.
+  __syncwarp();
   __threadfence_system();
 
   if (lane == 0) {

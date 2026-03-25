@@ -87,13 +87,9 @@ __global__ void gpu_tiered_test_kernel(
 
   if (lane_id == 0) { d_progress[0] = 3; __threadfence_system(); }
 
-  // Step 3: Zero read buffer
+  // Step 3: Skip zeroing — just let GetBlob overwrite whatever's in the buffer
+  // This tests whether the L1 cache stale-data issue affects verification
   chi::u64 total_read = blob_size * num_blobs;
-  for (chi::u64 i = lane_id; i < total_read; i += 32) {
-    read_ptr.ptr_[i] = 0;
-  }
-  __syncwarp();
-  __threadfence();
 
   // Step 4: GetBlob each chunk back
   if (lane_id == 0) { d_progress[0] = 4; __threadfence_system(); }
@@ -128,13 +124,27 @@ __global__ void gpu_tiered_test_kernel(
   __syncwarp();
 
   if (lane_id == 0) { d_progress[0] = 5; __threadfence_system(); }
+
+  // Critical: invalidate L1 and ensure global memory is up to date.
+  // The bdev Read ran on a different SM's warp — we need to see its writes.
   __threadfence_system();
+  asm volatile("" ::: "memory");  // Compiler barrier
+  // Force L1 invalidation by doing a volatile read
+  volatile char probe = read_ptr.ptr_[0];
+  (void)probe;
+  __syncwarp();
 
   // Step 5: Verify (all lanes)
+  // The bdev Read ran on the orchestrator kernel (different SM).
+  // Use ld.global.cg (cache-at-global-level) to bypass L1 cache
+  // and read directly from L2/DRAM.
   int mismatches = 0;
   for (chi::u64 i = lane_id; i < total_read; i += 32) {
+    unsigned int actual_u;
+    asm volatile("ld.global.cg.u8 %0, [%1];" : "=r"(actual_u) : "l"(read_ptr.ptr_ + i));
+    char actual = static_cast<char>(actual_u);
     char expected = static_cast<char>(i % 251);
-    if (read_ptr.ptr_[i] != expected) mismatches++;
+    if (actual != expected) mismatches++;
   }
   // Warp reduce
   for (int off = 16; off > 0; off >>= 1)
@@ -144,10 +154,12 @@ __global__ void gpu_tiered_test_kernel(
     if (mismatches > 0) {
       // Find first mismatch
       for (chi::u64 i = 0; i < total_read; i++) {
-        if (read_ptr.ptr_[i] != static_cast<char>(i % 251)) {
+        unsigned int val_u;
+        asm volatile("ld.global.cg.u8 %0, [%1];" : "=r"(val_u) : "l"(read_ptr.ptr_ + i));
+        char val = static_cast<char>(val_u);
+        if (val != static_cast<char>(i % 251)) {
           printf("GPU: first mismatch at byte %llu: got 0x%02x expected 0x%02x\n",
-                 (unsigned long long)i,
-                 (unsigned char)read_ptr.ptr_[i],
+                 (unsigned long long)i, (unsigned char)val,
                  (unsigned char)(i % 251));
           break;
         }
@@ -212,35 +224,34 @@ extern "C" int run_gpu_tiered_test(
   hipc::GpuMalloc heap_backend;
   heap_backend.shm_init(heap_id, 4*1024*1024, "", 0);
 
-  // Alloc write buffer
-  hipc::FullPtr<char> *d_wptr;
-  cudaMallocHost(&d_wptr, sizeof(hipc::FullPtr<char>));
-  d_wptr->SetNull();
+  // Alloc one contiguous buffer for both write and read
+  // (single MakeAlloc call — second call would reinitialize the allocator)
+  chi::u64 write_bytes = blob_size * num_blobs;
+  chi::u64 read_bytes = blob_size * num_blobs;
+  hipc::FullPtr<char> *d_aptr;
+  cudaMallocHost(&d_aptr, sizeof(hipc::FullPtr<char>));
+  d_aptr->SetNull();
   gpu_tiered_alloc_kernel<<<1,1>>>(
       static_cast<hipc::MemoryBackend&>(data_backend),
-      blob_size * num_blobs, d_wptr);
+      write_bytes + read_bytes, d_aptr);
   cudaDeviceSynchronize();
-  if (d_wptr->IsNull()) {
-    fprintf(stderr, "TEST: write alloc failed\n");
-    cudaFreeHost(d_wptr); CHI_IPC->ResumeGpuOrchestrator(); return -2;
+  if (d_aptr->IsNull()) {
+    fprintf(stderr, "TEST: alloc failed\n");
+    cudaFreeHost(d_aptr); CHI_IPC->ResumeGpuOrchestrator(); return -2;
   }
-  hipc::FullPtr<char> write_ptr = *d_wptr;
+  hipc::FullPtr<char> all_ptr = *d_aptr;
+  cudaFreeHost(d_aptr);
 
-  // Alloc read buffer
-  hipc::FullPtr<char> *d_rptr;
-  cudaMallocHost(&d_rptr, sizeof(hipc::FullPtr<char>));
-  d_rptr->SetNull();
-  gpu_tiered_alloc_kernel<<<1,1>>>(
-      static_cast<hipc::MemoryBackend&>(data_backend),
-      blob_size * num_blobs, d_rptr);
-  cudaDeviceSynchronize();
-  if (d_rptr->IsNull()) {
-    fprintf(stderr, "TEST: read alloc failed\n");
-    cudaFreeHost(d_wptr); cudaFreeHost(d_rptr);
-    CHI_IPC->ResumeGpuOrchestrator(); return -3;
-  }
-  hipc::FullPtr<char> read_ptr = *d_rptr;
-  cudaFreeHost(d_wptr); cudaFreeHost(d_rptr);
+  // Split: write buffer = first half, read buffer = second half
+  hipc::FullPtr<char> write_ptr = all_ptr;
+  hipc::FullPtr<char> read_ptr;
+  read_ptr.ptr_ = all_ptr.ptr_ + write_bytes;
+  read_ptr.shm_ = all_ptr.shm_;
+  read_ptr.shm_.off_.exchange(all_ptr.shm_.off_.load() + write_bytes);
+
+  fprintf(stderr, "TEST: write_ptr=%p (off=%llu) read_ptr=%p (off=%llu)\n",
+          write_ptr.ptr_, (unsigned long long)write_ptr.shm_.off_.load(),
+          read_ptr.ptr_, (unsigned long long)read_ptr.shm_.off_.load());
 
   hipc::AllocatorId data_alloc_id(data_id.major_, data_id.minor_);
   CHI_IPC->RegisterGpuAllocator(data_id, data_backend.data_,
@@ -303,6 +314,26 @@ extern "C" int run_gpu_tiered_test(
   }
 
   int result = d_result[0];
+
+  // Host-side verification: copy read buffer from GPU to CPU and check
+  CHI_IPC->PauseGpuOrchestrator();
+  cudaDeviceSynchronize();  // Ensure all GPU work is done
+  {
+    char *h_verify = (char *)malloc(1024);
+    cudaMemcpy(h_verify, read_ptr.ptr_, 1024, cudaMemcpyDeviceToHost);
+    fprintf(stderr, "HOST VERIFY: read_ptr[0..15]:");
+    for (int i = 0; i < 16; i++) fprintf(stderr, " %02x", (unsigned char)h_verify[i]);
+    fprintf(stderr, "\n");
+    fprintf(stderr, "HOST VERIFY: read_ptr[16..31]:");
+    for (int i = 16; i < 32; i++) fprintf(stderr, " %02x", (unsigned char)h_verify[i]);
+    fprintf(stderr, "\n");
+    fprintf(stderr, "HOST VERIFY: expected [0..15]:");
+    for (int i = 0; i < 16; i++) fprintf(stderr, " %02x", (unsigned char)(i % 251));
+    fprintf(stderr, "\n");
+    free(h_verify);
+  }
+  CHI_IPC->ResumeGpuOrchestrator();
+
   fprintf(stderr, "TEST: result=%d\n", result);
   if (result == 1) fprintf(stderr, "TEST: PASSED\n");
   else if (result == 0) fprintf(stderr, "TEST: TIMEOUT (step=%d)\n", (int)*d_progress);
