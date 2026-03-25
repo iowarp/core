@@ -138,30 +138,23 @@ __global__ void gnn_cte_kernel(
   if (warp_id < total_warps) {
     uint32_t node_start = warp_node_start[warp_id];
     uint32_t node_end = warp_node_end[warp_id];
-    chi::u64 my_feature_offset = warp_feature_offsets[warp_id];
     chi::u64 my_feature_bytes = warp_feature_bytes[warp_id];
-    char *my_data = data_ptr.ptr_ + my_feature_offset;
+    // All warps share the same data buffer (full feature table at offset 0)
+    char *my_data = data_ptr.ptr_;
 
-    // Build blob name: "gnn_w<warp_id>"
-    using StrT = hshm::priv::basic_string<char, CHI_PRIV_ALLOC_T>;
-    char name_buf[32];
-    int pos = 0;
-    const char *pfx = "gnn_w";
-    while (*pfx) name_buf[pos++] = *pfx++;
-    pos += StrT::NumberToStr(name_buf + pos, 32 - pos, warp_id);
-    name_buf[pos] = '\0';
-
+    // All warps load the same shared blob "gnn_features"
+    const char *blob_name = "gnn_features";
     bool alloc_failed = false;
 
-    // === I/O: GetBlob — load this warp's features from CTE ===
+    // === I/O: GetBlob — load full feature table from CTE ===
     if (chi::IpcManager::IsWarpScheduler() && my_feature_bytes > 0) {
       wrp_cte::core::Client cte_client(cte_pool_id);
       hipc::ShmPtr<> shm;
       shm.alloc_id_ = data_alloc_id;
-      shm.off_.exchange(data_ptr.shm_.off_.load() + my_feature_offset);
+      shm.off_.exchange(data_ptr.shm_.off_.load());
 
       auto get_future = cte_client.AsyncGetBlob(
-          tag_id, name_buf, (chi::u64)0, my_feature_bytes,
+          tag_id, blob_name, (chi::u64)0, my_feature_bytes,
           (chi::u32)0, shm, chi::PoolQuery::Local());
       if (!get_future.GetFutureShmPtr().IsNull()) {
         get_future.Wait();
@@ -172,18 +165,20 @@ __global__ void gnn_cte_kernel(
     __syncwarp();
 
     // === COMPUTE: All 32 lanes gather features (THE SCIENCE) ===
+    // my_data holds the FULL feature table (all nodes), so neighbor lookups
+    // can access any node's features regardless of warp partition.
     if (!alloc_failed) {
-      const float *my_features = reinterpret_cast<const float *>(my_data);
+      const float *all_features = reinterpret_cast<const float *>(my_data);
 
       for (uint32_t node_id = node_start + lane_id; node_id < node_end; node_id += 32) {
         uint64_t nbr_start = d_adj_offsets[node_id];
         uint64_t nbr_end = d_adj_offsets[node_id + 1];
 
         for (uint32_t f = 0; f < emb_dim; f++) {
-          float sum = my_features[(node_id - node_start) * emb_dim + f];
+          float sum = all_features[node_id * emb_dim + f];
           for (uint64_t nbr_idx = nbr_start; nbr_idx < nbr_end; nbr_idx++) {
             uint32_t nbr = d_adj_list[nbr_idx];
-            sum += my_features[(nbr - node_start) * emb_dim + f];
+            sum += all_features[nbr * emb_dim + f];
           }
           d_output[node_id * emb_dim + f] = sum / (1.0f + (float)(nbr_end - nbr_start));
         }
@@ -290,33 +285,31 @@ int run_workload_gnn(const WorkloadConfig &cfg, const char *mode,
 
   if (m == "cte") {
     // ======== CTE: Combined kernel with multi-warp I/O + compute ========
+    // All warps load the FULL feature table (neighbors can be any node).
+    // Each warp computes only its node partition.
     uint32_t total_warps = (cfg.client_blocks * cfg.client_threads) / 32;
     if (total_warps == 0) total_warps = 1;
 
-    // Partition nodes among warps
     uint32_t nodes_per_warp = (num_nodes + total_warps - 1) / total_warps;
-    std::vector<uint32_t> h_node_start(total_warps), h_node_end(total_warps);
-    std::vector<uint64_t> h_feature_offsets(total_warps), h_feature_bytes(total_warps);
+    uint64_t feat_bytes = (uint64_t)num_nodes * emb_dim * sizeof(float);
 
-    uint64_t total_feature_bytes = 0;
+    // All warps share the same blob (full feature table) at offset 0
+    std::vector<uint32_t> h_node_start(total_warps), h_node_end(total_warps);
+    std::vector<uint64_t> h_feature_offsets(total_warps, 0);      // all at offset 0
+    std::vector<uint64_t> h_feature_bytes(total_warps, feat_bytes); // all same size
     for (uint32_t w = 0; w < total_warps; w++) {
       h_node_start[w] = w * nodes_per_warp;
       h_node_end[w] = std::min((w + 1) * nodes_per_warp, num_nodes);
-      uint32_t batch_size = h_node_end[w] - h_node_start[w];
-      h_feature_offsets[w] = total_feature_bytes;
-      h_feature_bytes[w] = (uint64_t)batch_size * emb_dim * sizeof(float);
-      total_feature_bytes += h_feature_bytes[w];
     }
 
-    HIPRINT("  CTE: {} warps, {} nodes/warp, {:.1f} MB total features",
-            total_warps, nodes_per_warp, total_feature_bytes/(1024.0*1024.0));
+    HIPRINT("  CTE: {} warps, {} nodes/warp, {:.1f} MB features (shared blob)",
+            total_warps, nodes_per_warp, feat_bytes/(1024.0*1024.0));
 
     CHI_IPC->SetGpuOrchestratorBlocks(cfg.rt_blocks, cfg.rt_threads);
     CHI_IPC->PauseGpuOrchestrator();
 
-    // Data backend
     hipc::MemoryBackendId data_id(200,0); hipc::GpuMalloc data_backend;
-    data_backend.shm_init(data_id, total_feature_bytes + 4*1024*1024, "", 0);
+    data_backend.shm_init(data_id, feat_bytes + 4*1024*1024, "", 0);
     hipc::MemoryBackendId scratch_id(201,0); hipc::GpuMalloc scratch_backend;
     scratch_backend.shm_init(scratch_id, (size_t)total_warps*1024*1024, "", 0);
     hipc::MemoryBackendId heap_id(202,0); hipc::GpuMalloc heap_backend;
@@ -325,7 +318,7 @@ int run_workload_gnn(const WorkloadConfig &cfg, const char *mode,
     hipc::FullPtr<char> *d_ptr; cudaMallocHost(&d_ptr, sizeof(hipc::FullPtr<char>));
     d_ptr->SetNull();
     gnn_cte_alloc_kernel<<<1,1>>>(static_cast<hipc::MemoryBackend&>(data_backend),
-                                   total_feature_bytes, d_ptr);
+                                   feat_bytes, d_ptr);
     cudaDeviceSynchronize();
     if (d_ptr->IsNull()) {
       HLOG(kError,"GNN CTE alloc failed"); cudaFreeHost(d_ptr);
@@ -344,7 +337,6 @@ int run_workload_gnn(const WorkloadConfig &cfg, const char *mode,
     if(heap_backend.data_) cudaMemset(heap_backend.data_,0,sizeof(hipc::PartitionedAllocator));
     cudaDeviceSynchronize();
 
-    // Copy partition info to pinned memory
     uint64_t *h_fo, *h_fb; uint32_t *h_ns, *h_ne;
     cudaMallocHost(&h_fo, total_warps*sizeof(uint64_t));
     cudaMallocHost(&h_fb, total_warps*sizeof(uint64_t));
@@ -355,45 +347,24 @@ int run_workload_gnn(const WorkloadConfig &cfg, const char *mode,
     memcpy(h_ns, h_node_start.data(), total_warps*sizeof(uint32_t));
     memcpy(h_ne, h_node_end.data(), total_warps*sizeof(uint32_t));
 
-    // Seed per-warp feature blobs
-    char *h_all_features = (char*)malloc(total_feature_bytes);
-    for (uint32_t w = 0; w < total_warps; w++) {
-      uint32_t node_start = h_node_start[w];
-      uint32_t batch_size = h_node_end[w] - node_start;
-      for (uint32_t i = 0; i < batch_size; i++) {
-        float *dst = (float*)(h_all_features + h_feature_offsets[w]) + i*emb_dim;
-        float *src = features.data() + (node_start + i)*emb_dim;
-        memcpy(dst, src, emb_dim*sizeof(float));
-      }
-    }
-    cudaMemcpy(array_ptr.ptr_, h_all_features, total_feature_bytes, cudaMemcpyHostToDevice);
-    free(h_all_features);
+    // Seed single shared feature blob
+    cudaMemcpy(array_ptr.ptr_, features.data(), feat_bytes, cudaMemcpyHostToDevice);
     cudaDeviceSynchronize();
 
-    // Seed each warp's blob via CTE client
+    // All warps use the same blob name
     {
       wrp_cte::core::Client cte_client(cfg.cte_pool_id);
-      for (uint32_t w = 0; w < total_warps; w++) {
-        char bname[32];
-        int pos = 0;
-        const char *pfx = "gnn_w";
-        while (*pfx) bname[pos++] = *pfx++;
-        pos += std::to_string(w).copy(bname + pos, 32 - pos);
-        bname[pos] = '\0';
-
-        hipc::ShmPtr<> shm;
-        shm.alloc_id_ = data_alloc_id;
-        shm.off_.exchange(array_ptr.shm_.off_.load() + h_feature_offsets[w]);
-        auto f = cte_client.AsyncPutBlob(cfg.tag_id, bname,
-            (chi::u64)0, h_feature_bytes[w], shm, -1.0f,
-            wrp_cte::core::Context(), (chi::u32)0, chi::PoolQuery::Local());
-        f.Wait();
-      }
-      HIPRINT("  CTE: Seeded {} per-warp feature blobs", total_warps);
+      hipc::ShmPtr<> shm;
+      shm.alloc_id_ = data_alloc_id;
+      shm.off_.exchange(array_ptr.shm_.off_.load());
+      auto f = cte_client.AsyncPutBlob(cfg.tag_id, "gnn_features",
+          (chi::u64)0, feat_bytes, shm, -1.0f,
+          wrp_cte::core::Context(), (chi::u32)0, chi::PoolQuery::Local());
+      f.Wait();
+      HIPRINT("  CTE: Seeded shared feature blob ({:.1f} MB)", feat_bytes/(1024.0*1024.0));
     }
 
-    // Clear data backend before GetBlob
-    cudaMemset(array_ptr.ptr_, 0, total_feature_bytes);
+    cudaMemset(array_ptr.ptr_, 0, feat_bytes);
     if(scratch_backend.data_) cudaMemset(scratch_backend.data_,0,sizeof(hipc::PartitionedAllocator));
     if(heap_backend.data_) cudaMemset(heap_backend.data_,0,sizeof(hipc::PartitionedAllocator));
     cudaDeviceSynchronize();
