@@ -41,6 +41,7 @@
  *   direct      -- GPU kernel writes directly to pinned host memory (baseline)
  *   cudamemcpy  -- cudaMemcpyAsync baseline (theoretical PCIe max)
  *   managed     -- CUDA managed memory write + prefetch to host
+ *   bam         -- BaM page cache: GPU reads from DRAM through HBM cache
  *
  * Usage:
  *   wrp_cte_gpu_bench [options]
@@ -79,6 +80,11 @@
 #include <cstring>
 #include <string>
 #include <thread>
+
+#ifdef WRP_CORE_ENABLE_BAM
+#include <bam/bam.h>
+#include <bam/array.cuh>
+#endif
 
 using namespace std::chrono_literals;
 
@@ -638,6 +644,104 @@ __global__ void gpu_bdev_read_write_kernel(
     __threadfence_system();
   }
 }
+
+//==============================================================================
+// BaM Baseline Kernel
+//==============================================================================
+
+#ifdef WRP_CORE_ENABLE_BAM
+/**
+ * Kernel: BaM read benchmark.
+ * Each thread reads elements from a bam::ArrayDevice, which transparently
+ * fetches pages from DRAM through the GPU HBM page cache.
+ * Measures GPU-initiated DRAM→HBM bandwidth via BaM's software page cache.
+ */
+__global__ void gpu_bam_read_kernel(
+    bam::ArrayDevice<char> arr,
+    chi::u64 total_bytes,
+    int *d_done) {
+  chi::u32 tid = blockIdx.x * blockDim.x + threadIdx.x;
+  chi::u32 stride = blockDim.x * gridDim.x;
+
+  // Each thread reads 4 bytes at a time, strided across total_bytes
+  chi::u64 n_words = total_bytes / 4;
+  volatile chi::u32 sink = 0;  // Prevent dead code elimination
+
+  for (chi::u64 i = tid; i < n_words; i += stride) {
+    // Read 4 bytes through BaM page cache (DRAM -> HBM cache -> register)
+    chi::u64 byte_off = i * 4;
+    chi::u64 page_off = byte_off & ~((chi::u64)arr.cache_state.page_size - 1);
+    chi::u32 in_page  = (chi::u32)(byte_off & ((chi::u64)arr.cache_state.page_size - 1));
+
+    bool needs_load;
+    uint8_t *page = bam::page_cache_acquire(
+        const_cast<bam::PageCacheDeviceState &>(arr.cache_state),
+        page_off, &needs_load);
+
+    if (needs_load) {
+      bam::host_read_page(page, arr.host_base, page_off,
+                          arr.cache_state.page_size);
+      bam::page_cache_finish_load(
+          const_cast<bam::PageCacheDeviceState &>(arr.cache_state), page_off);
+    }
+
+    sink += *reinterpret_cast<const chi::u32 *>(page + in_page);
+  }
+
+  // Prevent optimizer from removing reads
+  if (sink == 0xDEADBEEF && tid == 0) {
+    atomicAdd_system(d_done, -1);  // Never actually reached
+  }
+
+  atomicAdd_system(d_done, 1);
+  __threadfence_system();
+}
+
+/**
+ * Kernel: BaM write benchmark.
+ * Each thread writes elements through bam::ArrayDevice, which writes through
+ * the HBM page cache to DRAM (write-through in host-memory mode).
+ */
+__global__ void gpu_bam_write_kernel(
+    bam::ArrayDevice<char> arr,
+    chi::u64 total_bytes,
+    int *d_done) {
+  chi::u32 tid = blockIdx.x * blockDim.x + threadIdx.x;
+  chi::u32 stride = blockDim.x * gridDim.x;
+
+  chi::u64 n_words = total_bytes / 4;
+
+  for (chi::u64 i = tid; i < n_words; i += stride) {
+    chi::u64 byte_off = i * 4;
+    chi::u64 page_off = byte_off & ~((chi::u64)arr.cache_state.page_size - 1);
+    chi::u32 in_page  = (chi::u32)(byte_off & ((chi::u64)arr.cache_state.page_size - 1));
+
+    bool needs_load;
+    uint8_t *page = bam::page_cache_acquire(
+        const_cast<bam::PageCacheDeviceState &>(arr.cache_state),
+        page_off, &needs_load);
+
+    if (needs_load) {
+      bam::host_read_page(page, arr.host_base, page_off,
+                          arr.cache_state.page_size);
+      bam::page_cache_finish_load(
+          const_cast<bam::PageCacheDeviceState &>(arr.cache_state), page_off);
+    }
+
+    *reinterpret_cast<chi::u32 *>(page + in_page) =
+        static_cast<chi::u32>(tid + i);
+
+    // Write-through to DRAM
+    bam::host_write_page(page, const_cast<uint8_t *>(arr.host_base),
+                         page_off, arr.cache_state.page_size);
+    bam::page_cache_mark_dirty(
+        const_cast<bam::PageCacheDeviceState &>(arr.cache_state), page_off);
+  }
+
+  atomicAdd_system(d_done, 1);
+  __threadfence_system();
+}
+#endif  // WRP_CORE_ENABLE_BAM
 
 //==============================================================================
 // Host-only code: CPU-side launchers, CLI, and main()
@@ -1271,6 +1375,154 @@ static int run_cte_gpu_bench_cudamemcpy(
 }
 
 //==============================================================================
+// BaM Benchmark Launcher
+//==============================================================================
+
+#ifdef WRP_CORE_ENABLE_BAM
+/**
+ * BaM read benchmark: measures DRAM→HBM bandwidth through the BaM page cache.
+ * Comparable to the "direct" baseline (GPU→pinned host) but through BaM's
+ * software page cache layer.
+ */
+static int run_cte_gpu_bench_bam_read(
+    chi::u32 client_blocks,
+    chi::u32 client_threads,
+    chi::u64 total_bytes,
+    chi::u64 page_size,
+    chi::u32 cache_pages,
+    float *out_elapsed_ms) {
+  CHI_IPC->PauseGpuOrchestrator();
+
+  // Configure BaM: HBM cache + DRAM backing store
+  bam::PageCacheConfig config;
+  config.page_size = page_size;
+  config.num_pages = cache_pages;
+  config.num_queues = 0;
+  config.queue_depth = 0;
+  config.backend = bam::BackendType::kHostMemory;
+  config.nvme_dev = nullptr;
+
+  bam::PageCache cache(config);
+  bam::Array<char> arr(total_bytes, cache);
+
+  // Populate DRAM backing store with test data
+  std::vector<char> host_data(total_bytes);
+  for (chi::u64 i = 0; i < total_bytes; i++) {
+    host_data[i] = static_cast<char>(i & 0xFF);
+  }
+  arr.load_from_host(host_data.data(), total_bytes);
+
+  chi::u32 total_threads = client_blocks * client_threads;
+  if (total_threads == 0) total_threads = 1;
+
+  int *d_done;
+  cudaMallocHost(&d_done, sizeof(int));
+  *d_done = 0;
+
+  void *stream = hshm::GpuApi::CreateStream();
+  cudaGetLastError();
+
+  auto t_start = std::chrono::high_resolution_clock::now();
+
+  gpu_bam_read_kernel<<<
+      client_blocks, client_threads, 0,
+      static_cast<cudaStream_t>(stream)>>>(
+      arr.device(), total_bytes, d_done);
+
+  cudaError_t launch_err = cudaGetLastError();
+  if (launch_err != cudaSuccess) {
+    HLOG(kError, "BaM read kernel launch failed: {}", cudaGetErrorString(launch_err));
+    cudaFreeHost(d_done);
+    hshm::GpuApi::DestroyStream(stream);
+    CHI_IPC->ResumeGpuOrchestrator();
+    return -1;
+  }
+
+  bool completed = PollDone(d_done, static_cast<int>(total_threads), 60000000);
+  hshm::GpuApi::Synchronize(stream);
+
+  auto t_end = std::chrono::high_resolution_clock::now();
+  double elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          t_end - t_start).count();
+  *out_elapsed_ms = static_cast<float>(elapsed_ns / 1e6);
+
+  cudaFreeHost(d_done);
+  hshm::GpuApi::DestroyStream(stream);
+  CHI_IPC->ResumeGpuOrchestrator();
+
+  return completed ? 0 : -2;
+}
+
+/**
+ * BaM write benchmark: measures HBM→DRAM write-through bandwidth.
+ */
+static int run_cte_gpu_bench_bam_write(
+    chi::u32 client_blocks,
+    chi::u32 client_threads,
+    chi::u64 total_bytes,
+    chi::u64 page_size,
+    chi::u32 cache_pages,
+    float *out_elapsed_ms) {
+  CHI_IPC->PauseGpuOrchestrator();
+
+  bam::PageCacheConfig config;
+  config.page_size = page_size;
+  config.num_pages = cache_pages;
+  config.num_queues = 0;
+  config.queue_depth = 0;
+  config.backend = bam::BackendType::kHostMemory;
+  config.nvme_dev = nullptr;
+
+  bam::PageCache cache(config);
+  bam::Array<char> arr(total_bytes, cache);
+
+  // Zero-fill backing store
+  std::vector<char> host_data(total_bytes, 0);
+  arr.load_from_host(host_data.data(), total_bytes);
+
+  chi::u32 total_threads = client_blocks * client_threads;
+  if (total_threads == 0) total_threads = 1;
+
+  int *d_done;
+  cudaMallocHost(&d_done, sizeof(int));
+  *d_done = 0;
+
+  void *stream = hshm::GpuApi::CreateStream();
+  cudaGetLastError();
+
+  auto t_start = std::chrono::high_resolution_clock::now();
+
+  gpu_bam_write_kernel<<<
+      client_blocks, client_threads, 0,
+      static_cast<cudaStream_t>(stream)>>>(
+      arr.device(), total_bytes, d_done);
+
+  cudaError_t launch_err = cudaGetLastError();
+  if (launch_err != cudaSuccess) {
+    HLOG(kError, "BaM write kernel launch failed: {}", cudaGetErrorString(launch_err));
+    cudaFreeHost(d_done);
+    hshm::GpuApi::DestroyStream(stream);
+    CHI_IPC->ResumeGpuOrchestrator();
+    return -1;
+  }
+
+  bool completed = PollDone(d_done, static_cast<int>(total_threads), 60000000);
+  hshm::GpuApi::Synchronize(stream);
+
+  auto t_end = std::chrono::high_resolution_clock::now();
+  double elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          t_end - t_start).count();
+  *out_elapsed_ms = static_cast<float>(elapsed_ns / 1e6);
+
+  cudaFreeHost(d_done);
+  hshm::GpuApi::DestroyStream(stream);
+  CHI_IPC->ResumeGpuOrchestrator();
+
+  return completed ? 0 : -2;
+}
+#endif  // WRP_CORE_ENABLE_BAM
+
+//==============================================================================
 // BDEV Benchmark Launchers
 //==============================================================================
 
@@ -1583,7 +1835,7 @@ static int run_bdev_read_write(
 // CLI and main()
 //==============================================================================
 
-enum class TestCase { kPutBlob, kPutBlobGpu, kPutGetGpu, kDirect, kCudaMemcpy, kManaged, kAllocTest, kBdevAllocFree, kBdevReadWrite };
+enum class TestCase { kPutBlob, kPutBlobGpu, kPutGetGpu, kDirect, kCudaMemcpy, kManaged, kAllocTest, kBdevAllocFree, kBdevReadWrite, kBamRead, kBamWrite };
 
 struct BenchConfig {
   TestCase test_case = TestCase::kPutBlob;
@@ -1595,6 +1847,8 @@ struct BenchConfig {
   chi::u32 iterations = 16;          // iterations per warp
   std::string bdev_type = "pinned";  // storage backend: pinned, hbm, ram
   int timeout_sec = 60;              // PollDone timeout in seconds
+  chi::u64 bam_page_size = 65536;    // BaM page cache page size
+  chi::u32 bam_cache_pages = 256;    // BaM number of cache pages in HBM
 };
 
 namespace {
@@ -1622,7 +1876,8 @@ chi::u64 ParseSize(const std::string &s) {
 void PrintUsage(const char *prog) {
   HIPRINT("Usage: {} [options]", prog);
   HIPRINT("Options:");
-  HIPRINT("  --test-case <case>     putblob, putblob_gpu, putget_gpu, direct, cudamemcpy, managed, bdev_alloc_free, or bdev_read_write (default: putblob)");
+  HIPRINT("  --test-case <case>     putblob, putblob_gpu, putget_gpu, direct, cudamemcpy, managed,");
+  HIPRINT("                         bam_read, bam_write, bdev_alloc_free, or bdev_read_write");
   HIPRINT("  --rt-blocks <N>        GPU runtime orchestrator blocks (default: 1)");
   HIPRINT("  --rt-threads <N>       GPU runtime threads/block (default: 32)");
   HIPRINT("  --client-blocks <N>    GPU client kernel blocks (default: 1)");
@@ -1630,6 +1885,8 @@ void PrintUsage(const char *prog) {
   HIPRINT("  --io-size <bytes>      Per-warp I/O size (default: 128K, supports k/m/g suffixes)");
   HIPRINT("  --iterations <N>       Iterations per warp (default: 16)");
   HIPRINT("  --bdev-type <type>     Storage backend: pinned, hbm, or ram (default: pinned)");
+  HIPRINT("  --bam-page-size <B>    BaM page cache page size (default: 64K)");
+  HIPRINT("  --bam-cache-pages <N>  BaM number of HBM cache pages (default: 256)");
   HIPRINT("  --timeout <seconds>    PollDone timeout in seconds (default: 60)");
   HIPRINT("  --help, -h             Show this help");
 }
@@ -1651,8 +1908,10 @@ bool ParseArgs(int argc, char **argv, BenchConfig &cfg) {
       else if (tc == "alloc_test") cfg.test_case = TestCase::kAllocTest;
       else if (tc == "bdev_alloc_free") cfg.test_case = TestCase::kBdevAllocFree;
       else if (tc == "bdev_read_write") cfg.test_case = TestCase::kBdevReadWrite;
+      else if (tc == "bam_read") cfg.test_case = TestCase::kBamRead;
+      else if (tc == "bam_write") cfg.test_case = TestCase::kBamWrite;
       else {
-        HLOG(kError, "Unknown test case '{}'; use putblob, putblob_gpu, putget_gpu, direct, cudamemcpy, managed, alloc_test, bdev_alloc_free, or bdev_read_write", tc);
+        HLOG(kError, "Unknown test case '{}'; use putblob, putblob_gpu, putget_gpu, direct, cudamemcpy, managed, alloc_test, bdev_alloc_free, bdev_read_write, bam_read, or bam_write", tc);
         return false;
       }
     } else if (arg == "--rt-blocks" && i + 1 < argc) {
@@ -1676,6 +1935,10 @@ bool ParseArgs(int argc, char **argv, BenchConfig &cfg) {
       }
     } else if (arg == "--timeout" && i + 1 < argc) {
       cfg.timeout_sec = static_cast<int>(std::stol(argv[++i]));
+    } else if (arg == "--bam-page-size" && i + 1 < argc) {
+      cfg.bam_page_size = ParseSize(argv[++i]);
+    } else if (arg == "--bam-cache-pages" && i + 1 < argc) {
+      cfg.bam_cache_pages = static_cast<chi::u32>(std::stoul(argv[++i]));
     } else {
       HLOG(kError, "Unknown option: {}", arg);
       PrintUsage(argv[0]);
@@ -1739,6 +2002,8 @@ int main(int argc, char **argv) {
                          (cfg.test_case == TestCase::kAllocTest) ? "alloc_test" :
                          (cfg.test_case == TestCase::kBdevAllocFree) ? "bdev_alloc_free" :
                          (cfg.test_case == TestCase::kBdevReadWrite) ? "bdev_read_write" :
+                         (cfg.test_case == TestCase::kBamRead) ? "bam_read" :
+                         (cfg.test_case == TestCase::kBamWrite) ? "bam_write" :
                          "direct";
 
   HIPRINT("\n=== CTE GPU Benchmark ===");
@@ -1922,6 +2187,26 @@ int main(int argc, char **argv) {
            static_cast<double>(total_ms), (bytes / 1e9) / (total_ms / 1e3));
     printf("=========================\n");
     return 0;
+  } else if (cfg.test_case == TestCase::kBamRead || cfg.test_case == TestCase::kBamWrite) {
+#ifdef WRP_CORE_ENABLE_BAM
+    HIPRINT("BaM page size:       {} bytes ({} KB)", cfg.bam_page_size,
+            cfg.bam_page_size / 1024);
+    HIPRINT("BaM cache pages:     {} ({} KB in HBM)", cfg.bam_cache_pages,
+            (cfg.bam_cache_pages * cfg.bam_page_size) / 1024);
+
+    if (cfg.test_case == TestCase::kBamRead) {
+      rc = run_cte_gpu_bench_bam_read(cfg.client_blocks, cfg.client_threads,
+                                       total_bytes, cfg.bam_page_size,
+                                       cfg.bam_cache_pages, &elapsed_ms);
+    } else {
+      rc = run_cte_gpu_bench_bam_write(cfg.client_blocks, cfg.client_threads,
+                                        total_bytes, cfg.bam_page_size,
+                                        cfg.bam_cache_pages, &elapsed_ms);
+    }
+#else
+    HLOG(kError, "BaM support not compiled. Rebuild with -DWRP_CORE_ENABLE_BAM=ON");
+    return 1;
+#endif
   } else if (cfg.test_case == TestCase::kCudaMemcpy) {
     rc = run_cte_gpu_bench_cudamemcpy(total_bytes, &elapsed_ms);
   } else if (cfg.test_case == TestCase::kDirect) {

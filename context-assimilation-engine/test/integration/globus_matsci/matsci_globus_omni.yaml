@@ -3,27 +3,26 @@
 # This OMNI file demonstrates transferring data from a Globus endpoint to the local filesystem
 # using the Content Assimilation Engine (CAE).
 #
-# Dataset: Materials Science Data Collection
-# Globus URL: https://app.globus.org/file-manager?add_identity=4a606161-92f1-4b5a-b0f6-c160e32df121&origin_id=e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae&origin_path=%2F&two_pane=false
+# Dataset: Materials Science Data Collection (SEM_103)
 # Endpoint ID: e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae
+# Browse: https://app.globus.org/file-manager?origin_id=e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae&origin_path=%2FSEM_103%2F
 #
 # Prerequisites:
-# - Valid GLOBUS_ACCESS_TOKEN environment variable set
+# - Valid GLOBUS_ACCESS_TOKEN and GLOBUS_HTTPS_ACCESS_TOKEN environment variables
 # - Globus endpoint must have HTTPS access enabled for local transfers
 # - Network connectivity to Globus services
 
 version: "1.0"
 
 transfers:
-  # Transfer a file from Globus endpoint to local filesystem
-  # Using Globus web URL format - the code will automatically extract endpoint ID and path
-  - src: "https://app.globus.org/file-manager?add_identity=4a606161-92f1-4b5a-b0f6-c160e32df121&origin_id=e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae&origin_path=%2F&two_pane=false"
-    dst: "file::/tmp/globus_matsci/data.txt"
+  # Transfer a small file from the SEM_103 dataset using globus:// URI
+  - src: "globus://e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae/SEM_103/PRISTINE/SEM_103_pristine_MASTER_650_MPa_loads.inp"
+    dst: "file::/tmp/globus_matsci/SEM_103_pristine_MASTER_650_MPa_loads.inp"
     format: "binary"
     src_token: "${GLOBUS_ACCESS_TOKEN}"
 
-  # Alternative format using globus:// URI (also supported)
-  # - src: "globus://e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae/path/to/file.dat"
-  #   dst: "file::/tmp/globus_matsci/file.dat"
-  #   format: "binary"
-  #   src_token: "${GLOBUS_ACCESS_TOKEN}"
+  # Transfer a second file using Globus web URL format
+  - src: "https://app.globus.org/file-manager?origin_id=e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae&origin_path=%2FSEM_103%2FPRISTINE%2FSEM_103_pristine_MASTER_0.0055_strain_loads.inp"
+    dst: "file::/tmp/globus_matsci/SEM_103_pristine_MASTER_0.0055_strain_loads.inp"
+    format: "binary"
+    src_token: "${GLOBUS_ACCESS_TOKEN}"

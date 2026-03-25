@@ -57,6 +57,16 @@ if(WRP_CORE_ENABLE_CUDA)
       endif()
     endif()
   endforeach()
+  # BaM include dirs and link libs (conditional)
+  set(_BAM_INCLUDE_DIRS "")
+  set(_BAM_LINK_LIBS "")
+  set(_BAM_DEFS "")
+  if(WRP_CORE_ENABLE_BAM AND TARGET bam)
+    set(_BAM_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/external/bam/include)
+    set(_BAM_LINK_LIBS bam)
+    set(_BAM_DEFS WRP_CORE_ENABLE_BAM)
+  endif()
+
   add_cuda_executable(wrp_cte_gpu_bench TRUE
       wrp_cte_gpu_bench.cc
       INCLUDE_DIRS
@@ -67,11 +77,17 @@ if(WRP_CORE_ENABLE_CUDA)
           ${CMAKE_SOURCE_DIR}/context-transport-primitives/include
           ${CMAKE_SOURCE_DIR}/context-runtime/compiler/include
           ${_CTE_GPU_BENCH_EXTRA_INCLUDES}
+          ${_BAM_INCLUDE_DIRS}
       LINK_LIBS
           wrp_cte::core_client
           chimaera::cxx
           hshm::cuda_cxx
+          ${_BAM_LINK_LIBS}
   )
+
+  if(_BAM_DEFS)
+    target_compile_definitions(wrp_cte_gpu_bench PRIVATE ${_BAM_DEFS})
+  endif()
 
   install(TARGETS wrp_cte_gpu_bench RUNTIME DESTINATION bin)
 
@@ -142,6 +158,30 @@ if(WRP_CORE_ENABLE_CUDA)
   set_tests_properties(cte_gpu_bench_alloc_test PROPERTIES
     TIMEOUT 60 LABELS "msan_skip")
 
+  # BaM regression tests (only when BaM is enabled)
+  set(_BAM_TEST_NAMES "")
+  if(WRP_CORE_ENABLE_BAM AND TARGET bam)
+    add_test(NAME cte_gpu_bench_bam_read
+      COMMAND wrp_cte_gpu_bench
+        --test-case bam_read
+        --client-blocks 1 --client-threads 32
+        --io-size 4k --iterations 1
+        --bam-page-size 4k --bam-cache-pages 16)
+    set_tests_properties(cte_gpu_bench_bam_read PROPERTIES
+      TIMEOUT 60 LABELS "msan_skip")
+
+    add_test(NAME cte_gpu_bench_bam_write
+      COMMAND wrp_cte_gpu_bench
+        --test-case bam_write
+        --client-blocks 1 --client-threads 32
+        --io-size 4k --iterations 1
+        --bam-page-size 4k --bam-cache-pages 16)
+    set_tests_properties(cte_gpu_bench_bam_write PROPERTIES
+      TIMEOUT 60 LABELS "msan_skip")
+
+    set(_BAM_TEST_NAMES cte_gpu_bench_bam_read cte_gpu_bench_bam_write)
+  endif()
+
   # Set CHI_REPO_PATH so the ChiMod plugin loader finds module .so files
   set_tests_properties(
     cte_gpu_bench_putblob_gpu
@@ -152,6 +192,7 @@ if(WRP_CORE_ENABLE_CUDA)
     cte_gpu_bench_putblob_gpu_64warp
     cte_gpu_bench_putblob_gpu_64warp_stress
     cte_gpu_bench_alloc_test
+    ${_BAM_TEST_NAMES}
     PROPERTIES
       ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
   )
