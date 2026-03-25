@@ -250,31 +250,32 @@ int run_workload_gray_scott(const WorkloadConfig &cfg, const char *mode,
     float *d_u2, *d_v2;
     cudaMalloc(&d_u2, fb); cudaMalloc(&d_v2, fb);
 
-    // Page cache sized to match CTE HBM tier (bam_cache_pages * page_size)
+    // Match BaM HBM to CTE: each cache holds one field (fb bytes)
+    // CTE data backend = 4*fb (u,v,u2,v2). BaM = 2*cache + 2*cudaMalloc(fb)
+    // So cache_per_field = fb to match total HBM = 4*fb
+    uint64_t fb_aligned = ((fb + cfg.bam_page_size - 1) / cfg.bam_page_size) * cfg.bam_page_size;
+    uint32_t matched_pages = (uint32_t)(fb_aligned / cfg.bam_page_size);
+
     bam::PageCacheConfig u_cfg, v_cfg;
     u_cfg.page_size = cfg.bam_page_size;
-    u_cfg.num_pages = cfg.bam_cache_pages;
+    u_cfg.num_pages = matched_pages;
     u_cfg.num_queues = 0; u_cfg.queue_depth = 0;
     u_cfg.backend = bam::BackendType::kHostMemory;
     u_cfg.nvme_dev = nullptr;
     v_cfg = u_cfg;
 
     bam::PageCache u_cache(u_cfg), v_cache(v_cfg);
-
-    // Backing store: page-aligned DRAM
-    uint64_t fb_aligned = ((fb + cfg.bam_page_size - 1) / cfg.bam_page_size) * cfg.bam_page_size;
     u_cache.alloc_host_backing(fb_aligned);
     v_cache.alloc_host_backing(fb_aligned);
 
-    // Initialize fields
     std::vector<float> hu(total), hv(total);
     gs_init(hu.data(), hv.data(), L);
     memcpy(u_cache.host_buffer(), hu.data(), fb);
     memcpy(v_cache.host_buffer(), hv.data(), fb);
 
-    HIPRINT("  BaM cache: {} pages x {} B = {:.1f} MB per field",
-            cfg.bam_cache_pages, cfg.bam_page_size,
-            (double)cfg.bam_cache_pages * cfg.bam_page_size / (1024.0 * 1024.0));
+    HIPRINT("  BaM HBM cache: {} pages x {} B = {:.1f} MB per field (matched to CTE)",
+            matched_pages, cfg.bam_page_size,
+            (double)matched_pages * cfg.bam_page_size / (1024.0 * 1024.0));
 
     auto t0 = std::chrono::high_resolution_clock::now();
     for (int s = 0; s < steps; s++) {
@@ -290,13 +291,13 @@ int run_workload_gray_scott(const WorkloadConfig &cfg, const char *mode,
 
       // Reset cache tags so next iteration re-fetches from updated DRAM
       cudaMemset(u_cache.device_state().page_tags, 0xFF,
-                 cfg.bam_cache_pages * sizeof(uint64_t));
+                 matched_pages * sizeof(uint64_t));
       cudaMemset(u_cache.device_state().page_states, 0,
-                 cfg.bam_cache_pages * sizeof(uint32_t));
+                 matched_pages * sizeof(uint32_t));
       cudaMemset(v_cache.device_state().page_tags, 0xFF,
-                 cfg.bam_cache_pages * sizeof(uint64_t));
+                 matched_pages * sizeof(uint64_t));
       cudaMemset(v_cache.device_state().page_states, 0,
-                 cfg.bam_cache_pages * sizeof(uint32_t));
+                 matched_pages * sizeof(uint32_t));
       cudaDeviceSynchronize();
     }
     auto t1 = std::chrono::high_resolution_clock::now();

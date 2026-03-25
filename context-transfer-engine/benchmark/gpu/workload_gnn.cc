@@ -248,12 +248,14 @@ int run_workload_gnn(const WorkloadConfig &cfg, const char *mode, WorkloadResult
 #ifdef WRP_CORE_ENABLE_BAM
   else if (m=="bam") {
     uint64_t fb_al=((feat_bytes+cfg.bam_page_size-1)/cfg.bam_page_size)*cfg.bam_page_size;
-    bam::PageCacheConfig pcfg; pcfg.page_size=cfg.bam_page_size; pcfg.num_pages=cfg.bam_cache_pages;
+    // Match BaM HBM cache size to CTE HBM data backend size
+    uint32_t matched_pages=(uint32_t)(fb_al/cfg.bam_page_size);
+    bam::PageCacheConfig pcfg; pcfg.page_size=cfg.bam_page_size; pcfg.num_pages=matched_pages;
     pcfg.num_queues=0;pcfg.queue_depth=0;pcfg.backend=bam::BackendType::kHostMemory;pcfg.nvme_dev=nullptr;
     bam::PageCache cache(pcfg); cache.alloc_host_backing(fb_al);
     for(uint64_t i=0;i<(uint64_t)nn*ed;i++)reinterpret_cast<float*>(cache.host_buffer())[i]=fdist(rng);
-    HIPRINT("  BaM cache: {} pages x {} B = {:.1f} MB",cfg.bam_cache_pages,cfg.bam_page_size,
-            (double)cfg.bam_cache_pages*cfg.bam_page_size/(1024.0*1024.0));
+    HIPRINT("  BaM HBM cache: {} pages x {} B = {:.1f} MB (matched to CTE)",
+            matched_pages,cfg.bam_page_size,(double)matched_pages*cfg.bam_page_size/(1024.0*1024.0));
     for(uint32_t i=0;i<bs;i++)h_idx[i]=ndist(rng);
     cudaMemcpy(d_idx,h_idx.data(),bs*sizeof(uint32_t),cudaMemcpyHostToDevice);
     gnn_gather_bam<<<blocks,threads>>>(cache.device_state(),cache.host_buffer(),d_idx,d_out,bs,ed);
@@ -262,8 +264,8 @@ int run_workload_gnn(const WorkloadConfig &cfg, const char *mode, WorkloadResult
     for(uint32_t b=0;b<nb;b++){
       for(uint32_t i=0;i<bs;i++)h_idx[i]=ndist(rng);
       cudaMemcpy(d_idx,h_idx.data(),bs*sizeof(uint32_t),cudaMemcpyHostToDevice);
-      cudaMemset(cache.device_state().page_tags,0xFF,cfg.bam_cache_pages*sizeof(uint64_t));
-      cudaMemset(cache.device_state().page_states,0,cfg.bam_cache_pages*sizeof(uint32_t));
+      cudaMemset(cache.device_state().page_tags,0xFF,matched_pages*sizeof(uint64_t));
+      cudaMemset(cache.device_state().page_states,0,matched_pages*sizeof(uint32_t));
       cudaDeviceSynchronize();
       auto t0=std::chrono::high_resolution_clock::now();
       gnn_gather_bam<<<blocks,threads>>>(cache.device_state(),cache.host_buffer(),d_idx,d_out,bs,ed);

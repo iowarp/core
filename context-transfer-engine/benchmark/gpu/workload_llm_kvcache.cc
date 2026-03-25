@@ -296,13 +296,16 @@ llm_cleanup:
 #ifdef WRP_CORE_ENABLE_BAM
   else if (m=="bam") {
     uint64_t kvb_al=((kvbt+cfg.bam_page_size-1)/cfg.bam_page_size)*cfg.bam_page_size;
-    bam::PageCacheConfig pcfg; pcfg.page_size=cfg.bam_page_size; pcfg.num_pages=cfg.bam_cache_pages;
+    // Match BaM HBM to CTE: CTE holds one layer at a time (kvbl bytes)
+    uint64_t kvbl_al=((kvbl+cfg.bam_page_size-1)/cfg.bam_page_size)*cfg.bam_page_size;
+    uint32_t matched_pages=(uint32_t)(kvbl_al/cfg.bam_page_size);
+    bam::PageCacheConfig pcfg; pcfg.page_size=cfg.bam_page_size; pcfg.num_pages=matched_pages;
     pcfg.num_queues=0;pcfg.queue_depth=0;pcfg.backend=bam::BackendType::kHostMemory;pcfg.nvme_dev=nullptr;
     bam::PageCache cache(pcfg); cache.alloc_host_backing(kvb_al);
     memset(cache.host_buffer(),0,kvb_al);
-    HIPRINT("  BaM cache: {} pages x {} B = {:.1f} MB (KV total {:.1f} MB)",
-            cfg.bam_cache_pages,cfg.bam_page_size,
-            (double)cfg.bam_cache_pages*cfg.bam_page_size/(1024.0*1024.0),kvbt/(1024.0*1024.0));
+    HIPRINT("  BaM HBM cache: {} pages x {} B = {:.1f} MB/layer (matched to CTE, KV total {:.1f} MB)",
+            matched_pages,cfg.bam_page_size,
+            (double)matched_pages*cfg.bam_page_size/(1024.0*1024.0),kvbt/(1024.0*1024.0));
     auto t0=std::chrono::high_resolution_clock::now();
     for(uint32_t t=0;t<dt;t++){
       for(uint32_t l=0;l<nl;l++){
@@ -313,8 +316,8 @@ llm_cleanup:
             d_nk,d_nv,nh,sl,hd,t);
       }
       cudaDeviceSynchronize();
-      cudaMemset(cache.device_state().page_tags,0xFF,cfg.bam_cache_pages*sizeof(uint64_t));
-      cudaMemset(cache.device_state().page_states,0,cfg.bam_cache_pages*sizeof(uint32_t));
+      cudaMemset(cache.device_state().page_tags,0xFF,matched_pages*sizeof(uint64_t));
+      cudaMemset(cache.device_state().page_states,0,matched_pages*sizeof(uint32_t));
       cudaDeviceSynchronize();
     }
     auto t1=std::chrono::high_resolution_clock::now();
