@@ -261,6 +261,8 @@ int main() {
   // ============================================================
   // Phase 2: Index Knowledge Graph
   // ============================================================
+  // If gen_summaries.py was run, the manifest descriptions are LLM keywords.
+  // Otherwise, they are raw descriptions. Either way, index them.
   HLOG(kInfo, "");
   HLOG(kInfo, "=== Phase 2: Index Knowledge Graph ===");
 
@@ -274,7 +276,7 @@ int main() {
   }
   auto t_kg_end = Clock::now();
   double kg_ms = Ms(t_kg_end - t_kg_start).count();
-  HLOG(kInfo, "  {} descriptions indexed ({:.1f} ms)", datasets.size(), kg_ms);
+  HLOG(kInfo, "  {} entries indexed ({:.1f} ms)", datasets.size(), kg_ms);
 
   // ============================================================
   // Phase 2.5: Sync Global IDF
@@ -300,9 +302,16 @@ int main() {
   HLOG(kInfo, "");
   HLOG(kInfo, "=== Phase 3: Query ({} questions) ===", queries.size());
 
+  // Build lookup maps: tag_name -> filename, tag_name -> DatasetInfo index
+  std::unordered_map<std::string, std::string> tag_to_file;
+  for (const auto& ds : datasets) {
+    tag_to_file[ds.tag_name] = ds.filename;
+  }
+
   int top1_correct = 0;
   int top3_correct = 0;
   int top5_correct = 0;
+  int file_verified = 0;
   double total_rr = 0.0;  // Sum of reciprocal ranks
   double total_query_ms = 0.0;
 
@@ -329,22 +338,24 @@ int main() {
       expected_tid = tag_ids[q.expected_tag];
     }
 
-    // Log results
+    // Log results — map TagId back to dataset name and filename
     std::string results_str;
     int found_rank = -1;
     for (size_t r = 0; r < result_tags.size(); r++) {
       // Find dataset name for this TagId
       std::string name = "?";
+      std::string file = "?";
       for (const auto& [tname, tid] : tag_ids) {
         if (tid == result_tags[r]) {
           name = tname;
+          if (tag_to_file.count(tname)) file = tag_to_file[tname];
           break;
         }
       }
       if (!results_str.empty()) results_str += ", ";
       char score_str[16];
       snprintf(score_str, sizeof(score_str), "%.2f", result_scores[r]);
-      results_str += name + " (" + score_str + ")";
+      results_str += name + "/" + file + " (" + score_str + ")";
 
       if (result_tags[r] == expected_tid && found_rank < 0) {
         found_rank = static_cast<int>(r);
@@ -354,8 +365,29 @@ int main() {
     HLOG(kInfo, "    Results: [{}]", results_str);
 
     if (found_rank >= 0) {
-      HLOG(kInfo, "    Expected: {} -> FOUND at rank {} ({:.1f} ms)",
-           q.expected_tag, found_rank + 1, query_ms);
+      // Verify the returned file actually exists on disk
+      std::string expected_file = tag_to_file.count(q.expected_tag)
+          ? tag_to_file[q.expected_tag] : "";
+      std::string file_path = bench_dir.empty() ? "" :
+          bench_dir + "/" + expected_file;
+      bool file_exists = false;
+      if (!file_path.empty()) {
+        std::ifstream probe(file_path);
+        file_exists = probe.good();
+      }
+
+      if (file_exists) {
+        HLOG(kInfo, "    -> FOUND at rank {} -> file: {} [VERIFIED] ({:.1f} ms)",
+             found_rank + 1, expected_file, query_ms);
+        file_verified++;
+      } else if (!expected_file.empty()) {
+        HLOG(kInfo, "    -> FOUND at rank {} -> file: {} [NOT ON DISK] ({:.1f} ms)",
+             found_rank + 1, expected_file, query_ms);
+      } else {
+        HLOG(kInfo, "    -> FOUND at rank {} ({:.1f} ms)",
+             found_rank + 1, query_ms);
+      }
+
       if (found_rank == 0) top1_correct++;
       if (found_rank < 3) top3_correct++;
       if (found_rank < 5) top5_correct++;
@@ -390,6 +422,9 @@ int main() {
   HLOG(kInfo, "  KG index latency:    {:.1f} ms", kg_ms);
   HLOG(kInfo, "  Avg query latency:   {:.3f} ms", total_query_ms / n);
   HLOG(kInfo, "  Total queries:       {}", queries.size());
+  if (file_verified > 0) {
+    HLOG(kInfo, "  Files verified:      {}/{}", file_verified, queries.size());
+  }
   HLOG(kInfo, "========================================");
 
   // Write results JSON

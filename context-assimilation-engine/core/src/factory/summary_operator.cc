@@ -145,8 +145,10 @@ std::string SummaryOperator::CallLlm(const std::string& description) {
   request_body["messages"] = nlohmann::json::array({
       {{"role", "system"},
        {"content",
-        "Summarize the following data description in exactly 4 to 8 words. "
-        "Return only the summary, nothing else."}},
+        "Extract exactly 4 to 8 of the most important and distinctive keywords "
+        "from the following dataset description. Return only the keywords "
+        "separated by spaces, nothing else. Keep the original words, do not "
+        "paraphrase or translate."}},
       {{"role", "user"}, {"content", description}},
   });
   request_body["max_tokens"] = 64;
