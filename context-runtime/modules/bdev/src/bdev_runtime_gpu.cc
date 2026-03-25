@@ -172,11 +172,7 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
   hipc::FullPtr<char> data_ptr = ipc_mgr->ToFullPtr(task->data_).template Cast<char>();
   char *src = data_ptr.ptr_;
 
-  // Copy across all blocks with yield for asynchronicity.
-  // In GPU coroutines, only lane 0 (warp scheduler) is active.
-  // __activemask() may return stale values in coroutine context.
-  // Always use lane-0 sequential copy for correctness.
-  bool warp_wide = false;
+  // Subtask coroutines only dispatch lane 0 — same limitation as Read.
   size_t num_blocks = task->blocks_.size();
   chi::u64 data_off = 0;
   long long t_start = clock64();
@@ -186,54 +182,26 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
     if (remaining == 0) break;
     chi::u64 copy_size = (block.size_ < remaining) ? block.size_ : remaining;
 
-    char *dst = dst_base + block.offset_;
+    char *block_dst = dst_base + block.offset_;
     const char *block_src = src + data_off;
 
-    bool aligned16 = ((reinterpret_cast<uintptr_t>(dst) |
-                        reinterpret_cast<uintptr_t>(block_src)) & 15) == 0;
-    if (warp_wide) {
-      // Warp-wide coalesced copy (all 32 lanes participate)
+    if (lane == 0) {
+      bool aligned16 = ((reinterpret_cast<uintptr_t>(block_dst) |
+                          reinterpret_cast<uintptr_t>(block_src)) & 15) == 0;
       if (aligned16) {
         chi::u64 vec_elems = copy_size / sizeof(uint4);
         const uint4 *src4 = reinterpret_cast<const uint4 *>(block_src);
-        uint4 *dst4 = reinterpret_cast<uint4 *>(dst);
-        for (chi::u64 idx = lane; idx < vec_elems; idx += 32) {
+        uint4 *dst4 = reinterpret_cast<uint4 *>(block_dst);
+        for (chi::u64 idx = 0; idx < vec_elems; ++idx) {
           dst4[idx] = src4[idx];
         }
         chi::u64 tail_start = vec_elems * sizeof(uint4);
-        for (chi::u64 b = tail_start + lane; b < copy_size; b += 32) {
-          dst[b] = block_src[b];
+        for (chi::u64 b = tail_start; b < copy_size; ++b) {
+          block_dst[b] = block_src[b];
         }
       } else {
-        chi::u64 vec_elems = copy_size / sizeof(chi::u32);
-        const chi::u32 *src4 = reinterpret_cast<const chi::u32 *>(block_src);
-        chi::u32 *dst4 = reinterpret_cast<chi::u32 *>(dst);
-        for (chi::u64 idx = lane; idx < vec_elems; idx += 32) {
-          dst4[idx] = src4[idx];
-        }
-        chi::u64 tail_start = vec_elems * sizeof(chi::u32);
-        for (chi::u64 b = tail_start + lane; b < copy_size; b += 32) {
-          dst[b] = block_src[b];
-        }
-      }
-    } else {
-      // Lane-0 sequential copy (subtask path, only 1 lane active)
-      if (lane == 0) {
-        if (aligned16) {
-          chi::u64 vec_elems = copy_size / sizeof(uint4);
-          const uint4 *src4 = reinterpret_cast<const uint4 *>(block_src);
-          uint4 *dst4 = reinterpret_cast<uint4 *>(dst);
-          for (chi::u64 idx = 0; idx < vec_elems; ++idx) {
-            dst4[idx] = src4[idx];
-          }
-          chi::u64 tail_start = vec_elems * sizeof(uint4);
-          for (chi::u64 b = tail_start; b < copy_size; ++b) {
-            dst[b] = block_src[b];
-          }
-        } else {
-          for (chi::u64 b = 0; b < copy_size; ++b) {
-            dst[b] = block_src[b];
-          }
+        for (chi::u64 b = 0; b < copy_size; ++b) {
+          block_dst[b] = block_src[b];
         }
       }
     }
@@ -287,10 +255,11 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
   // Copy across all blocks with yield for asynchronicity.
   // Use warp-wide coalesced copy when all 32 lanes are active (parallelism > 1),
   // otherwise fall back to lane-0 sequential copy.
-  // In GPU coroutines, only lane 0 (warp scheduler) is active.
-  // __activemask() may return stale values in coroutine context.
-  // Always use lane-0 sequential copy for correctness.
-  bool warp_wide = false;
+  // Subtask coroutines only dispatch lane 0 (the orchestrator's coroutine
+  // system does not yet support multi-lane subtask dispatch). Use vectorized
+  // uint4 sequential copy for maximum single-lane throughput.
+  // TODO(perf): Enable multi-lane parallel copy when the Chimaera GPU
+  // coroutine system supports dispatching subtasks with parallelism > 1.
   size_t num_blocks = task->blocks_.size();
   chi::u64 data_off = 0;
   long long t_start = clock64();
@@ -303,51 +272,23 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
     const char *block_src = src_base + block.offset_;
     char *block_dst = dst + data_off;
 
-    bool aligned16 = ((reinterpret_cast<uintptr_t>(block_dst) |
-                        reinterpret_cast<uintptr_t>(block_src)) & 15) == 0;
-    if (warp_wide) {
-      // Warp-wide coalesced copy (all 32 lanes participate)
+    if (lane == 0) {
+      bool aligned16 = ((reinterpret_cast<uintptr_t>(block_dst) |
+                          reinterpret_cast<uintptr_t>(block_src)) & 15) == 0;
       if (aligned16) {
         chi::u64 vec_elems = copy_size / sizeof(uint4);
         const uint4 *src4 = reinterpret_cast<const uint4 *>(block_src);
         uint4 *dst4 = reinterpret_cast<uint4 *>(block_dst);
-        for (chi::u64 idx = lane; idx < vec_elems; idx += 32) {
+        for (chi::u64 idx = 0; idx < vec_elems; ++idx) {
           dst4[idx] = src4[idx];
         }
         chi::u64 tail_start = vec_elems * sizeof(uint4);
-        for (chi::u64 b = tail_start + lane; b < copy_size; b += 32) {
+        for (chi::u64 b = tail_start; b < copy_size; ++b) {
           block_dst[b] = block_src[b];
         }
       } else {
-        chi::u64 vec_elems = copy_size / sizeof(chi::u32);
-        const chi::u32 *src4 = reinterpret_cast<const chi::u32 *>(block_src);
-        chi::u32 *dst4 = reinterpret_cast<chi::u32 *>(block_dst);
-        for (chi::u64 idx = lane; idx < vec_elems; idx += 32) {
-          dst4[idx] = src4[idx];
-        }
-        chi::u64 tail_start = vec_elems * sizeof(chi::u32);
-        for (chi::u64 b = tail_start + lane; b < copy_size; b += 32) {
+        for (chi::u64 b = 0; b < copy_size; ++b) {
           block_dst[b] = block_src[b];
-        }
-      }
-    } else {
-      // Lane-0 sequential copy (subtask path, only 1 lane active)
-      if (lane == 0) {
-        if (aligned16) {
-          chi::u64 vec_elems = copy_size / sizeof(uint4);
-          const uint4 *src4 = reinterpret_cast<const uint4 *>(block_src);
-          uint4 *dst4 = reinterpret_cast<uint4 *>(block_dst);
-          for (chi::u64 idx = 0; idx < vec_elems; ++idx) {
-            dst4[idx] = src4[idx];
-          }
-          chi::u64 tail_start = vec_elems * sizeof(uint4);
-          for (chi::u64 b = tail_start; b < copy_size; ++b) {
-            block_dst[b] = block_src[b];
-          }
-        } else {
-          for (chi::u64 b = 0; b < copy_size; ++b) {
-            block_dst[b] = block_src[b];
-          }
         }
       }
     }

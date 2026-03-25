@@ -125,45 +125,25 @@ __global__ void gpu_tiered_test_kernel(
 
   if (lane_id == 0) { d_progress[0] = 5; __threadfence_system(); }
 
-  // Critical: invalidate L1 and ensure global memory is up to date.
-  // The bdev Read ran on a different SM's warp — we need to see its writes.
   __threadfence_system();
-  asm volatile("" ::: "memory");  // Compiler barrier
-  // Force L1 invalidation by doing a volatile read
-  volatile char probe = read_ptr.ptr_[0];
-  (void)probe;
-  __syncwarp();
 
-  // Step 5: Verify (all lanes)
-  // The bdev Read ran on the orchestrator kernel (different SM).
-  // Use ld.global.cg (cache-at-global-level) to bypass L1 cache
-  // and read directly from L2/DRAM.
-  int mismatches = 0;
-  for (chi::u64 i = lane_id; i < total_read; i += 32) {
-    unsigned int actual_u;
-    asm volatile("ld.global.cg.u8 %0, [%1];" : "=r"(actual_u) : "l"(read_ptr.ptr_ + i));
-    char actual = static_cast<char>(actual_u);
-    char expected = static_cast<char>(i % 251);
-    if (actual != expected) mismatches++;
-  }
-  // Warp reduce
-  for (int off = 16; off > 0; off >>= 1)
-    mismatches += __shfl_down_sync(0xFFFFFFFF, mismatches, off);
-
+  // Step 5: Verify (lane 0 only — bdev subtask coroutines are single-lane)
   if (lane_id == 0) {
-    if (mismatches > 0) {
-      // Find first mismatch
-      for (chi::u64 i = 0; i < total_read; i++) {
-        unsigned int val_u;
-        asm volatile("ld.global.cg.u8 %0, [%1];" : "=r"(val_u) : "l"(read_ptr.ptr_ + i));
-        char val = static_cast<char>(val_u);
-        if (val != static_cast<char>(i % 251)) {
-          printf("GPU: first mismatch at byte %llu: got 0x%02x expected 0x%02x\n",
-                 (unsigned long long)i, (unsigned char)val,
-                 (unsigned char)(i % 251));
-          break;
+    int mismatches = 0;
+    int first_bad = -1;
+    for (chi::u64 i = 0; i < total_read; i++) {
+      char actual = read_ptr.ptr_[i];
+      char expected = static_cast<char>(i % 251);
+      if (actual != expected) {
+        mismatches++;
+        if (first_bad < 0) {
+          first_bad = (int)i;
+          printf("GPU: first mismatch at byte %d: got 0x%02x expected 0x%02x\n",
+                 first_bad, (unsigned char)actual, (unsigned char)expected);
         }
       }
+    }
+    if (mismatches > 0) {
       printf("GPU: %d total mismatches out of %llu\n",
              mismatches, (unsigned long long)total_read);
       *d_result = -500 - mismatches;
@@ -314,25 +294,6 @@ extern "C" int run_gpu_tiered_test(
   }
 
   int result = d_result[0];
-
-  // Host-side verification: copy read buffer from GPU to CPU and check
-  CHI_IPC->PauseGpuOrchestrator();
-  cudaDeviceSynchronize();  // Ensure all GPU work is done
-  {
-    char *h_verify = (char *)malloc(1024);
-    cudaMemcpy(h_verify, read_ptr.ptr_, 1024, cudaMemcpyDeviceToHost);
-    fprintf(stderr, "HOST VERIFY: read_ptr[0..15]:");
-    for (int i = 0; i < 16; i++) fprintf(stderr, " %02x", (unsigned char)h_verify[i]);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "HOST VERIFY: read_ptr[16..31]:");
-    for (int i = 16; i < 32; i++) fprintf(stderr, " %02x", (unsigned char)h_verify[i]);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "HOST VERIFY: expected [0..15]:");
-    for (int i = 0; i < 16; i++) fprintf(stderr, " %02x", (unsigned char)(i % 251));
-    fprintf(stderr, "\n");
-    free(h_verify);
-  }
-  CHI_IPC->ResumeGpuOrchestrator();
 
   fprintf(stderr, "TEST: result=%d\n", result);
   if (result == 1) fprintf(stderr, "TEST: PASSED\n");
