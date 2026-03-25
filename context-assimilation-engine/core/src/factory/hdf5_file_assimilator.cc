@@ -485,9 +485,77 @@ chi::TaskResume Hdf5FileAssimilator::ProcessDataset(
   }
   HLOG(kDebug, "ProcessDataset: Tag created/retrieved, tag_id: {}", tag_id);
 
-  // Create and store tensor description as "description" blob
-  std::string description = FormatTensorDescription(datatype_id, dims);
-  HLOG(kDebug, "ProcessDataset: Tensor description: '{}'", description);
+  // Build rich description combining all available metadata:
+  //   tag name, dataset path, tensor shape, and HDF5 attributes
+  std::string description;
+
+  // 1. Tag name and dataset path (contains domain info like "weather_forecast")
+  description += "file:" + tag_name + " dataset:" + dataset_path;
+
+  // 2. Tensor shape and type
+  description += " " + FormatTensorDescription(datatype_id, dims);
+
+  // 3. HDF5 "description" attribute on the dataset (if present)
+  if (H5Aexists(dataset_id, "description") > 0) {
+    hid_t attr_id = H5Aopen(dataset_id, "description", H5P_DEFAULT);
+    if (attr_id >= 0) {
+      hid_t attr_type = H5Aget_type(attr_id);
+      if (H5Tis_variable_str(attr_type)) {
+        char* attr_str = nullptr;
+        hid_t mem_type = H5Tcopy(H5T_C_S1);
+        H5Tset_size(mem_type, H5T_VARIABLE);
+        H5Aread(attr_id, mem_type, &attr_str);
+        if (attr_str) {
+          description += " ";
+          description += attr_str;
+          H5free_memory(attr_str);
+        }
+        H5Tclose(mem_type);
+      } else {
+        size_t attr_size = H5Tget_size(attr_type);
+        std::vector<char> buf(attr_size + 1, '\0');
+        H5Aread(attr_id, attr_type, buf.data());
+        description += " ";
+        description += buf.data();
+      }
+      H5Tclose(attr_type);
+      H5Aclose(attr_id);
+    }
+  }
+
+  // 4. HDF5 "description" attribute on the parent group/file (if present)
+  hid_t file_id_local = H5Iget_file_id(dataset_id);
+  if (file_id_local >= 0) {
+    if (H5Aexists(file_id_local, "description") > 0) {
+      hid_t attr_id = H5Aopen(file_id_local, "description", H5P_DEFAULT);
+      if (attr_id >= 0) {
+        hid_t attr_type = H5Aget_type(attr_id);
+        if (H5Tis_variable_str(attr_type)) {
+          char* attr_str = nullptr;
+          hid_t mem_type = H5Tcopy(H5T_C_S1);
+          H5Tset_size(mem_type, H5T_VARIABLE);
+          H5Aread(attr_id, mem_type, &attr_str);
+          if (attr_str) {
+            description += " ";
+            description += attr_str;
+            H5free_memory(attr_str);
+          }
+          H5Tclose(mem_type);
+        } else {
+          size_t attr_size = H5Tget_size(attr_type);
+          std::vector<char> buf(attr_size + 1, '\0');
+          H5Aread(attr_id, attr_type, buf.data());
+          description += " ";
+          description += buf.data();
+        }
+        H5Tclose(attr_type);
+        H5Aclose(attr_id);
+      }
+    }
+    H5Fclose(file_id_local);
+  }
+
+  HLOG(kDebug, "ProcessDataset: Rich description: '{}'", description);
   size_t desc_size = description.size();
   auto desc_buffer = CHI_IPC->AllocateBuffer(desc_size);
   std::memcpy(desc_buffer.ptr_, description.c_str(), desc_size);
