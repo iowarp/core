@@ -79,6 +79,31 @@ often) but sequential prefetching ineffective (access offsets are data-dependent
   Each edge access triggers an atomicCAS tag check. Hot edges stay in HBM
   across iterations; cold edges are fetched from DRAM on demand.
 
+### Tunable Parameters
+
+| CLI Flag | Default | Effect on Data Size |
+|----------|---------|---------------------|
+| `--vertices V` | 100,000 | Number of vertices. Edge count ≈ V × avg_degree. |
+| `--avg-degree D` | 16 | Average out-degree. Edge list = V×D×4 bytes. |
+| `--iterations N` | 10 | PR iterations (convergence loops). |
+
+**Data size formula:**
+
+```
+edge_bytes  = num_edges × 4          (num_edges ≈ V × D after dedup)
+offset_bytes = (V + 1) × 8
+total_HBM   ≈ edge_bytes             (offsets + values + residuals are small)
+```
+
+**Examples:**
+
+| V | D | Edges (approx) | Edge List | Total Working Set |
+|---|---|----------------|-----------|-------------------|
+| 10K | 8 | ~71K | 0.3 MB | ~0.3 MB |
+| 100K | 16 | ~1.4M | 5.4 MB | ~5.8 MB |
+| 1M | 32 | ~28M | 107 MB | ~115 MB |
+| 10M | 64 | ~560M | 2.1 GB | ~2.3 GB |
+
 ### Source of Graph
 
 Synthetic R-MAT (Recursive Matrix) generator with parameters `a=0.57, b=0.19,
@@ -157,6 +182,34 @@ that GIDS (OSDI'24) targets: large feature stores that don't fit in GPU memory.
 - **BaM**: Each `features.read(u * D + f)` goes through the page cache. For
   random neighbor access, many pages are touched, and the hit rate depends on
   graph locality. Pages for high-degree hub nodes stay hot in cache.
+
+### Tunable Parameters
+
+| CLI Flag | Default | Effect on Data Size |
+|----------|---------|---------------------|
+| `--num-nodes V` | 500,000 | Number of nodes in the graph. |
+| `--emb-dim D` | 128 | Feature embedding dimension per node. |
+| `--avg-degree K` | 16 | Average neighbor count per node. |
+| `--iterations N` | 10 | Number of aggregation iterations. |
+
+**Data size formula:**
+
+```
+feature_bytes = V × D × 4            (float32 per dimension)
+adj_bytes     = num_edges × 4        (num_edges ≈ V × K)
+total_HBM     ≈ feature_bytes        (features dominate; adj in HBM always)
+```
+
+**Examples:**
+
+| V | D | Feature Table | Adj List (K=16) | Total |
+|---|---|---------------|-----------------|-------|
+| 10K | 64 | 2.4 MB | 0.6 MB | 3 MB |
+| 100K | 128 | 48.8 MB | 6.1 MB | 55 MB |
+| 1M | 256 | 976 MB | 61 MB | 1.0 GB |
+| 10M | 1024 | 38.1 GB | 610 MB | 38.7 GB |
+
+The 10M × 1024 case approximates the IGB-260M dataset scale from GIDS.
 
 ### Source of Graph
 
@@ -247,6 +300,32 @@ cache is hundreds of GB — far exceeding GPU memory. The access pattern is
 sequential within each head (scan over positions) but the total data volume
 is enormous. This is the workload that GeminiFS (FAST'25) targets.
 
+### Tunable Parameters
+
+| CLI Flag | Default | Effect on Data Size |
+|----------|---------|---------------------|
+| `--num-layers L` | 12 | Transformer layers. KV scales linearly. |
+| `--num-heads H` | 12 | Attention heads per layer. |
+| `--head-dim D` | 64 | Dimension per head. |
+| `--seq-len S` | 2,048 | Maximum sequence length (KV cache depth). |
+| `--decode-tokens T` | 32 | Tokens to generate (decode iterations). |
+
+**Data size formula:**
+
+```
+kv_per_layer  = 2 × H × S × D × 4   bytes (K + V, float32)
+kv_total      = L × kv_per_layer
+per_token_IO  = L × kv_per_layer     (read all layers) + L × 2×H×D×4 (write new entries)
+```
+
+**Examples (model configurations):**
+
+| Model | L | H | D | S | KV/Layer | KV Total | Per-Token Read |
+|-------|---|---|---|---|----------|----------|----------------|
+| GPT-2 Small | 12 | 12 | 64 | 2K | 12 MB | 144 MB | 144 MB |
+| LLaMA-7B | 32 | 32 | 128 | 4K | 128 MB | 4 GB | 4 GB |
+| LLaMA-70B | 80 | 64 | 128 | 8K | 512 MB | 40 GB | 40 GB |
+
 ### CTE vs BaM
 
 - **CTE**: Per-layer GetBlob/PutBlob cycle. Each warp loads its heads' KV via
@@ -331,6 +410,33 @@ For large grids (512³ = 134M points), each field is 512 MB — total working se
 is 2 GB for reads plus 1 GB for writes per step. The stencil pattern has
 excellent spatial locality (neighbors are adjacent in memory) so caching is
 very effective. Periodic checkpointing adds write bursts.
+
+### Tunable Parameters
+
+| CLI Flag | Default | Effect on Data Size |
+|----------|---------|---------------------|
+| `--grid-size L` | 128 | Cubic grid dimension. Total points = L³. |
+| `--steps N` | 100 | Simulation timesteps. |
+| `--checkpoint-freq C` | 10 | Checkpoint (PutBlob) every C steps. 0 = no checkpoints. |
+
+**Data size formula:**
+
+```
+field_bytes   = L³ × 4               (one float32 field)
+working_set   = 4 × field_bytes      (u, v, u', v')
+per_step_IO   = 2 × field_bytes      (read u,v) + 2 × field_bytes (write u',v')
+checkpoint_IO = 2 × field_bytes      (write u,v snapshot every C steps)
+```
+
+**Examples:**
+
+| L | Grid Points | Per Field | Working Set (4 fields) | Per-Step I/O |
+|---|-------------|-----------|------------------------|--------------|
+| 32 | 32K | 128 KB | 512 KB | 512 KB |
+| 64 | 262K | 1 MB | 4 MB | 4 MB |
+| 128 | 2.1M | 8 MB | 32 MB | 32 MB |
+| 256 | 16.8M | 64 MB | 256 MB | 256 MB |
+| 512 | 134M | 512 MB | 2 GB | 2 GB |
 
 ### CTE vs BaM
 
