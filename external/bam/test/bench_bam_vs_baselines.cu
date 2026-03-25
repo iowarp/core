@@ -694,47 +694,60 @@ int main(int argc, char **argv) {
 
   std::vector<BenchResult> results;
 
-  // Run all benchmarks
-  printf("Running bam_read...\n");
-  results.push_back(run_bam_read(blocks, threads_per_block, total_bytes,
-                                  page_size, cache_pages, iterations));
-
-  printf("Running bam_write...\n");
-  results.push_back(run_bam_write(blocks, threads_per_block, total_bytes,
-                                   page_size, cache_pages, iterations));
-
-  printf("Running bam_warp_read...\n");
+  // ------------------------------------------------------------------
+  // BaM: GPU-initiated DRAM↔HBM via software page cache
+  // Comparable to CTE putblob_gpu (GPU writes data → runtime moves to DRAM)
+  // ------------------------------------------------------------------
+  printf("Running bam_warp_read  (DRAM→HBM, warp-coop page cache)...\n");
   results.push_back(run_bam_warp_read(blocks, threads_per_block, total_bytes,
                                        page_size, cache_pages, iterations));
 
-  printf("Running bam_warp_write...\n");
+  printf("Running bam_warp_write (HBM→DRAM, warp-coop page cache)...\n");
   results.push_back(run_bam_warp_write(blocks, threads_per_block, total_bytes,
                                         page_size, cache_pages, iterations));
 
-  printf("Running direct_read...\n");
+  // ------------------------------------------------------------------
+  // CTE-equivalent baselines (no Chimaera runtime needed)
+  //   direct_read  ≈ CTE "direct" baseline (GPU reads pinned DRAM)
+  //   direct_write ≈ CTE putblob "direct" (GPU writes to pinned DRAM)
+  //   cudaMemcpy   ≈ CTE theoretical PCIe max
+  // ------------------------------------------------------------------
+  printf("Running direct_read    (GPU reads pinned DRAM, CTE baseline)...\n");
   results.push_back(run_direct_read(blocks, threads_per_block, total_bytes,
                                      iterations));
 
-  printf("Running direct_write...\n");
+  printf("Running direct_write   (GPU writes pinned DRAM, CTE baseline)...\n");
   results.push_back(run_direct_write(blocks, threads_per_block, total_bytes,
                                       iterations));
 
-  printf("Running cudaMemcpy D2H...\n");
+  printf("Running cudaMemcpy D2H (PCIe max, CTE ceiling)...\n");
   results.push_back(run_cudamemcpy_d2h(total_bytes, iterations));
 
-  printf("Running cudaMemcpy H2D...\n");
+  printf("Running cudaMemcpy H2D (PCIe max, CTE ceiling)...\n");
   results.push_back(run_cudamemcpy_h2d(total_bytes, iterations));
+
+  // Old single-thread BaM skipped (too slow at large I/O sizes)
 
   // Print results table
   printf("\n============================================================\n");
   printf("  Results (I/O = %.1f KB, %u warps)\n",
          total_bytes / 1024.0, warps);
   printf("============================================================\n");
-  printf("%-18s  %10s  %10s\n", "Method", "Time (ms)", "BW (GB/s)");
-  printf("%-18s  %10s  %10s\n", "------", "---------", "---------");
+  printf("  BaM = GPU-initiated via HBM page cache\n");
+  printf("  CTE-equiv = direct GPU↔DRAM (what CTE baselines measure)\n");
+  printf("------------------------------------------------------------\n");
+  printf("%-18s  %10s  %10s  %s\n", "Method", "Time (ms)", "BW (GB/s)", "Category");
+  printf("%-18s  %10s  %10s  %s\n", "------", "---------", "---------", "--------");
 
-  for (auto &r : results) {
-    printf("%-18s  %10.3f  %10.3f\n", r.name, r.elapsed_ms, r.bandwidth_gbps);
+  const char *cats[] = {
+    "BaM", "BaM",
+    "CTE-equiv", "CTE-equiv", "CTE-equiv", "CTE-equiv",
+  };
+  for (size_t i = 0; i < results.size(); i++) {
+    printf("%-18s  %10.3f  %10.3f  %s\n",
+           results[i].name, results[i].elapsed_ms,
+           results[i].bandwidth_gbps,
+           i < 6 ? cats[i] : "");
   }
   printf("============================================================\n");
 
