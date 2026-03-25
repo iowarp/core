@@ -2292,7 +2292,6 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::this_thread::sleep_for(500ms);
-  fprintf(stderr, "DEBUG: past sleep_for(500ms)\n"); fflush(stderr);
 
   const char *tc_name = (cfg.test_case == TestCase::kPutBlob) ? "putblob" :
                          (cfg.test_case == TestCase::kPutBlobGpu) ? "putblob_gpu" :
@@ -2364,7 +2363,7 @@ int main(int argc, char **argv) {
 
     // For CTE mode: use the same pool setup as putblob_gpu
     if (cfg.workload_mode == "cte") {
-      fprintf(stderr, "CTE SETUP: Creating pool...\n"); fflush(stderr);
+
       chi::PoolId gpu_pool_id(wrp_cte::core::kCtePoolId.major_ + 1,
                                wrp_cte::core::kCtePoolId.minor_);
       wrp_cte::core::Client cte_client(gpu_pool_id);
@@ -2372,9 +2371,9 @@ int main(int argc, char **argv) {
       auto create_task = cte_client.AsyncCreate(
           chi::PoolQuery::Dynamic(),
           "cte_workload_pool", gpu_pool_id, params);
-      fprintf(stderr, "CTE SETUP: Waiting for pool create...\n"); fflush(stderr);
+
       create_task.Wait();
-      fprintf(stderr, "CTE SETUP: Pool created rc=%d\n", create_task->GetReturnCode()); fflush(stderr);
+
       if (create_task->GetReturnCode() != 0) {
         HLOG(kError, "Failed to create CTE workload pool: {}",
              create_task->GetReturnCode());

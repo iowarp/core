@@ -154,6 +154,62 @@ __global__ void gs_cte_alloc_kernel(hipc::MemoryBackend data_backend,
   *d_out_ptr = alloc->AllocateObjs<char>(total_bytes);
 }
 
+/** GPU-initiated GetBlob: load u and v fields from CTE. */
+__global__ void gs_cte_getblob_kernel(
+    chi::IpcManagerGpu gpu_info, chi::PoolId pool_id,
+    wrp_cte::core::TagId tag_id, chi::u32 num_blocks,
+    hipc::FullPtr<char> data_ptr, hipc::AllocatorId alloc_id,
+    chi::u64 field_bytes, const char *u_name, const char *v_name,
+    int *d_done) {
+  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  if (chi::IpcManager::GetWarpId()==0 && chi::IpcManager::IsWarpScheduler()) {
+    wrp_cte::core::Client c(pool_id);
+    // GetBlob u field (first half of data buffer)
+    hipc::ShmPtr<> u_shm; u_shm.alloc_id_=alloc_id;
+    u_shm.off_.exchange(data_ptr.shm_.off_.load());
+    auto f1=c.AsyncGetBlob(tag_id, u_name, (chi::u64)0, field_bytes,
+        (chi::u32)0, u_shm, chi::PoolQuery::Local());
+    if (!f1.GetFutureShmPtr().IsNull()) f1.Wait();
+
+    // GetBlob v field (second half)
+    hipc::ShmPtr<> v_shm; v_shm.alloc_id_=alloc_id;
+    v_shm.off_.exchange(data_ptr.shm_.off_.load() + field_bytes);
+    auto f2=c.AsyncGetBlob(tag_id, v_name, (chi::u64)0, field_bytes,
+        (chi::u32)0, v_shm, chi::PoolQuery::Local());
+    if (!f2.GetFutureShmPtr().IsNull()) f2.Wait();
+
+    atomicAdd_system(d_done, 1); __threadfence_system();
+  }
+}
+
+/** GPU-initiated PutBlob: write u2 and v2 fields to CTE. */
+__global__ void gs_cte_putblob_kernel(
+    chi::IpcManagerGpu gpu_info, chi::PoolId pool_id,
+    wrp_cte::core::TagId tag_id, chi::u32 num_blocks,
+    hipc::FullPtr<char> data_ptr, hipc::AllocatorId alloc_id,
+    chi::u64 field_bytes, const char *u_name, const char *v_name,
+    int *d_done) {
+  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  if (chi::IpcManager::GetWarpId()==0 && chi::IpcManager::IsWarpScheduler()) {
+    wrp_cte::core::Client c(pool_id);
+    // PutBlob u2 (third quarter of buffer)
+    hipc::ShmPtr<> u_shm; u_shm.alloc_id_=alloc_id;
+    u_shm.off_.exchange(data_ptr.shm_.off_.load() + 2*field_bytes);
+    auto f1=c.AsyncPutBlob(tag_id, u_name, (chi::u64)0, field_bytes,
+        u_shm, -1.0f, wrp_cte::core::Context(), (chi::u32)0, chi::PoolQuery::Local());
+    if (!f1.GetFutureShmPtr().IsNull()) f1.Wait();
+
+    // PutBlob v2 (fourth quarter)
+    hipc::ShmPtr<> v_shm; v_shm.alloc_id_=alloc_id;
+    v_shm.off_.exchange(data_ptr.shm_.off_.load() + 3*field_bytes);
+    auto f2=c.AsyncPutBlob(tag_id, v_name, (chi::u64)0, field_bytes,
+        v_shm, -1.0f, wrp_cte::core::Context(), (chi::u32)0, chi::PoolQuery::Local());
+    if (!f2.GetFutureShmPtr().IsNull()) f2.Wait();
+
+    atomicAdd_system(d_done, 1); __threadfence_system();
+  }
+}
+
 // Host-only code
 #include <hermes_shm/constants/macros.h>
 #if HSHM_IS_HOST
@@ -256,24 +312,21 @@ int run_workload_gray_scott(const WorkloadConfig &cfg, const char *mode,
 #endif  // WRP_CORE_ENABLE_BAM
 
   if (m == "cte") {
-    float *d_u,*d_v,*d_u2,*d_v2;
-    cudaMalloc(&d_u,fb); cudaMalloc(&d_v,fb);
-    cudaMalloc(&d_u2,fb); cudaMalloc(&d_v2,fb);
-    std::vector<float> hu(total), hv(total);
-    gs_init(hu.data(),hv.data(),L);
-    cudaMemcpy(d_u,hu.data(),fb,cudaMemcpyHostToDevice);
-    cudaMemcpy(d_v,hv.data(),fb,cudaMemcpyHostToDevice);
-
+    // ======== CTE: GetBlob u,v → stencil → PutBlob u2,v2 per step ========
+    // Data backend layout: [u | v | u2 | v2] = 4*fb bytes
+    CHI_IPC->SetGpuOrchestratorBlocks(cfg.rt_blocks, cfg.rt_threads);
     CHI_IPC->PauseGpuOrchestrator();
+
     hipc::MemoryBackendId data_id(200,0); hipc::GpuMalloc data_backend;
-    data_backend.shm_init(data_id, fb*2+4*1024*1024, "", 0);
+    data_backend.shm_init(data_id, 4*fb+4*1024*1024, "", 0);
     hipc::MemoryBackendId scratch_id(201,0); hipc::GpuMalloc scratch_backend;
     scratch_backend.shm_init(scratch_id, 1*1024*1024, "", 0);
     hipc::MemoryBackendId heap_id(202,0); hipc::GpuMalloc heap_backend;
     heap_backend.shm_init(heap_id, 1*1024*1024, "", 0);
+
     hipc::FullPtr<char> *d_ptr; cudaMallocHost(&d_ptr, sizeof(hipc::FullPtr<char>));
     d_ptr->SetNull();
-    gs_cte_alloc_kernel<<<1,1>>>(static_cast<hipc::MemoryBackend&>(data_backend), fb*2, d_ptr);
+    gs_cte_alloc_kernel<<<1,1>>>(static_cast<hipc::MemoryBackend&>(data_backend), 4*fb, d_ptr);
     cudaDeviceSynchronize();
     if (d_ptr->IsNull()) { cudaFreeHost(d_ptr); CHI_IPC->ResumeGpuOrchestrator(); return -2; }
     hipc::FullPtr<char> array_ptr = *d_ptr; cudaFreeHost(d_ptr);
@@ -285,38 +338,85 @@ int run_workload_gray_scott(const WorkloadConfig &cfg, const char *mode,
     if (scratch_backend.data_) cudaMemset(scratch_backend.data_, 0, sizeof(hipc::PartitionedAllocator));
     if (heap_backend.data_) cudaMemset(heap_backend.data_, 0, sizeof(hipc::PartitionedAllocator));
     cudaDeviceSynchronize();
-    CHI_IPC->SetGpuOrchestratorBlocks(cfg.rt_blocks, cfg.rt_threads);
 
-    auto t0 = std::chrono::high_resolution_clock::now();
-    for (int s = 0; s < steps; s++) {
-      gs_stencil_hbm<<<blocks,threads>>>(d_u,d_v,d_u2,d_v2,L,params);
-      std::swap(d_u,d_u2); std::swap(d_v,d_v2);
-      if (ckpt > 0 && (s+1) % ckpt == 0) {
-        cudaDeviceSynchronize();
-        cudaMemcpy(array_ptr.ptr_, d_u, fb, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(array_ptr.ptr_+fb, d_v, fb, cudaMemcpyDeviceToDevice);
-        cudaDeviceSynchronize();
-        *d_done = 0;
-        gs_cte_ckpt_kernel<<<cfg.rt_blocks, cfg.rt_threads>>>(
-            gpu_info, cfg.cte_pool_id, cfg.tag_id, cfg.rt_blocks,
-            array_ptr, data_alloc_id, fb*2, (uint32_t)(s+1), d_done);
-        CHI_IPC->ResumeGpuOrchestrator();
-        auto *orch = static_cast<chi::gpu::WorkOrchestrator*>(CHI_IPC->gpu_orchestrator_);
-        auto *ctrl = orch ? orch->control_ : nullptr;
-        if (ctrl) { int w=0; while(ctrl->running_flag==0&&w<5000){std::this_thread::sleep_for(std::chrono::milliseconds(1));++w;} }
-        int64_t tus=(int64_t)cfg.timeout_sec*1000000, el=0;
-        while(__atomic_load_n(d_done,__ATOMIC_ACQUIRE)<1&&el<tus){std::this_thread::sleep_for(std::chrono::microseconds(100));el+=100;}
-        CHI_IPC->PauseGpuOrchestrator();
-      }
-    }
+    // Blob names
+    char *h_u_name, *h_v_name;
+    cudaMallocHost(&h_u_name, 32); strcpy(h_u_name, "gs_u");
+    cudaMallocHost(&h_v_name, 32); strcpy(h_v_name, "gs_v");
+
+    // Initialize and seed u,v into CTE
+    std::vector<float> hu(total), hv(total);
+    gs_init(hu.data(), hv.data(), L);
+    cudaMemcpy(array_ptr.ptr_, hu.data(), fb, cudaMemcpyHostToDevice);
+    cudaMemcpy(array_ptr.ptr_ + fb, hv.data(), fb, cudaMemcpyHostToDevice);
     cudaDeviceSynchronize();
-    auto t1 = std::chrono::high_resolution_clock::now();
-    result->elapsed_ms = std::chrono::duration<double,std::milli>(t1-t0).count();
-    double bps = (double)total*sizeof(float)*(2*7+2);
-    result->bandwidth_gbps = (bps*steps/1e9)/(result->elapsed_ms/1e3);
-    result->primary_metric = result->elapsed_ms/steps;
-    result->metric_name = "ms/step";
-    cudaFreeHost(d_done); cudaFree(d_u); cudaFree(d_v); cudaFree(d_u2); cudaFree(d_v2);
+
+    auto gs_cycle = [&]() -> bool {
+      CHI_IPC->ResumeGpuOrchestrator();
+      auto *o=static_cast<chi::gpu::WorkOrchestrator*>(CHI_IPC->gpu_orchestrator_);
+      auto *c=o?o->control_:nullptr;
+      if(c){int w=0;while(c->running_flag==0&&w<5000){std::this_thread::sleep_for(std::chrono::milliseconds(1));++w;}}
+      int64_t tus=(int64_t)cfg.timeout_sec*1000000,el=0;
+      while(__atomic_load_n(d_done,__ATOMIC_ACQUIRE)<1&&el<tus){std::this_thread::sleep_for(std::chrono::microseconds(100));el+=100;}
+      bool ok=__atomic_load_n(d_done,__ATOMIC_ACQUIRE)>=1;
+      CHI_IPC->PauseGpuOrchestrator();
+      return ok;
+    };
+
+    auto reset_scratch = [&]() {
+      if(scratch_backend.data_)cudaMemset(scratch_backend.data_,0,sizeof(hipc::PartitionedAllocator));
+      cudaDeviceSynchronize();
+    };
+
+    // Seed: PutBlob initial u,v
+    HIPRINT("  CTE: Seeding u,v via AsyncPutBlob...");
+    reset_scratch(); *d_done=0;
+    // Use gs_cte_putblob_kernel to write u (at offset 0) and v (at offset fb)
+    // But putblob writes from offsets 2*fb and 3*fb. Copy to those positions first.
+    cudaMemcpy(array_ptr.ptr_+2*fb, hu.data(), fb, cudaMemcpyHostToDevice);
+    cudaMemcpy(array_ptr.ptr_+3*fb, hv.data(), fb, cudaMemcpyHostToDevice);
+    cudaDeviceSynchronize();
+    gs_cte_putblob_kernel<<<cfg.rt_blocks, cfg.rt_threads>>>(
+        gpu_info, cfg.cte_pool_id, cfg.tag_id, cfg.rt_blocks,
+        array_ptr, data_alloc_id, fb, h_u_name, h_v_name, d_done);
+    if (!gs_cycle()) { HLOG(kError, "GS CTE seed timed out"); goto gs_cleanup; }
+    HIPRINT("  CTE: Seeded.");
+
+    // Timed loop
+    {
+      auto t0 = std::chrono::high_resolution_clock::now();
+      for (int s = 0; s < steps; s++) {
+        // GetBlob u,v into data backend (first 2*fb bytes)
+        reset_scratch(); *d_done=0;
+        gs_cte_getblob_kernel<<<cfg.rt_blocks, cfg.rt_threads>>>(
+            gpu_info, cfg.cte_pool_id, cfg.tag_id, cfg.rt_blocks,
+            array_ptr, data_alloc_id, fb, h_u_name, h_v_name, d_done);
+        if (!gs_cycle()) { HLOG(kError, "GS CTE GetBlob step {} timed out", s); break; }
+
+        // Compute stencil: u,v at offsets 0,fb → u2,v2 at offsets 2*fb,3*fb
+        float *d_u = reinterpret_cast<float*>(array_ptr.ptr_);
+        float *d_v = reinterpret_cast<float*>(array_ptr.ptr_ + fb);
+        float *d_u2 = reinterpret_cast<float*>(array_ptr.ptr_ + 2*fb);
+        float *d_v2 = reinterpret_cast<float*>(array_ptr.ptr_ + 3*fb);
+        gs_stencil_hbm<<<blocks,threads>>>(d_u, d_v, d_u2, d_v2, L, params);
+        cudaDeviceSynchronize();
+
+        // PutBlob u2,v2 (from offsets 2*fb,3*fb) → these become the new u,v for next step
+        reset_scratch(); *d_done=0;
+        gs_cte_putblob_kernel<<<cfg.rt_blocks, cfg.rt_threads>>>(
+            gpu_info, cfg.cte_pool_id, cfg.tag_id, cfg.rt_blocks,
+            array_ptr, data_alloc_id, fb, h_u_name, h_v_name, d_done);
+        if (!gs_cycle()) { HLOG(kError, "GS CTE PutBlob step {} timed out", s); break; }
+      }
+      auto t1 = std::chrono::high_resolution_clock::now();
+      result->elapsed_ms = std::chrono::duration<double,std::milli>(t1-t0).count();
+      double bps = (double)total*sizeof(float)*(2*7+2);
+      result->bandwidth_gbps = (bps*steps/1e9)/(result->elapsed_ms/1e3);
+      result->primary_metric = result->elapsed_ms/steps;
+      result->metric_name = "ms/step";
+    }
+gs_cleanup:
+    cudaFreeHost(d_done); cudaFreeHost(h_u_name); cudaFreeHost(h_v_name);
     return 0;
 
   } else if (m == "hbm") {
