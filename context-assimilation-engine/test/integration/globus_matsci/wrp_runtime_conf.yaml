@@ -19,7 +19,7 @@ logging:
 
 # Runtime configuration
 runtime:
-  num_threads: 1
+  num_threads: 4
   queue_depth: 1024
   local_sched: "default"
   heartbeat_interval: 1000
@@ -40,7 +40,7 @@ compose:
     storage:
       - path: "ram::cte_ram_tier1"
         bdev_type: "ram"
-        capacity_limit: "16GB"
+        capacity_limit: "1GB"
         score: 0.0
 
     dpe:

@@ -21,14 +21,26 @@ set -e  # Exit on error
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Locate build/bin directory (walk up from repo root)
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+BIN_DIR="${BIN_DIR:-${REPO_ROOT}/build/bin}"
+
 # Runtime configuration (includes compose section for CTE + CAE pools)
-RUNTIME_CONF="${SCRIPT_DIR}/wrp_runtime_conf.yaml"
+RUNTIME_CONF="${RUNTIME_CONF:-${SCRIPT_DIR}/wrp_runtime_conf.yaml}"
 
-# OMNI file
-OMNI_FILE="${SCRIPT_DIR}/matsci_globus_omni.yaml"
+# OMNI file (override with OMNI_FILE env var)
+OMNI_FILE="${OMNI_FILE:-${SCRIPT_DIR}/matsci_globus_omni.yaml}"
 
-# Output directory for transferred files
-OUTPUT_DIR="/tmp/globus_matsci"
+# Output directory for transferred files (override with OUTPUT_DIR env var)
+OUTPUT_DIR="${OUTPUT_DIR:-/tmp/globus_matsci}"
+
+# Ensure build/bin is on PATH and LD_LIBRARY_PATH so the runtime can
+# discover libwrp_cae_core_runtime.so / libwrp_cte_core_runtime.so.
+# Conda iowarp lib must come before base miniconda3/lib so that libcurl's
+# OPENSSL_3.2.0 dependency is satisfied by the conda-provided libssl.so.3.
+CONDA_IOWARP_LIB="${HOME}/miniconda3/envs/iowarp/lib"
+export PATH="${BIN_DIR}:${PATH}"
+export LD_LIBRARY_PATH="${BIN_DIR}:${CONDA_IOWARP_LIB}:${LD_LIBRARY_PATH:-}"
 
 echo "========================================="
 echo "Globus Materials Science Integration Test"
@@ -62,15 +74,32 @@ echo ""
 # The runtime config contains a compose section that creates both
 # CTE (pool 512.0) and CAE (pool 400.0) automatically on startup.
 echo "Starting Chimaera runtime..."
-export CHIMAERA_CONF="${RUNTIME_CONF}"
+export CHI_SERVER_CONF="${RUNTIME_CONF}"
 chimaera runtime start &
 CHIMAERA_PID=$!
 echo "Chimaera runtime started (PID: ${CHIMAERA_PID})"
 echo ""
 
-# Wait for runtime to initialize and create pools
+# Wait for runtime to initialize and create compose pools (CTE + CAE).
+# The IPC socket appears once the runtime is up; then we wait a further
+# grace period for the compose pools to finish registering.
 echo "Waiting for runtime to initialize..."
-sleep 3
+IPC_SOCKET="/tmp/chimaera_${USER}/chimaera_9413.ipc"
+MAX_WAIT=60
+WAITED=0
+while [ $WAITED -lt $MAX_WAIT ]; do
+    if [ -e "${IPC_SOCKET}" ]; then
+        echo "Runtime socket ready (${WAITED}s)"
+        break
+    fi
+    sleep 1
+    WAITED=$((WAITED + 1))
+done
+if [ $WAITED -ge $MAX_WAIT ]; then
+    echo "WARNING: runtime socket did not appear after ${MAX_WAIT}s"
+fi
+# Grace period for compose pools (CTE + CAE) to finish registering
+sleep 5
 echo ""
 
 # Process OMNI file
