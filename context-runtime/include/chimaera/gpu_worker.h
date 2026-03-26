@@ -201,7 +201,18 @@ class Worker {
   // ================================================================
 
   HSHM_GPU_FUN void EndTask(RunContext *ctx) {
-    bool task_done = (ctx->task_coros_[0] == nullptr);
+    bool task_done = true;
+    u32 par = ctx->parallelism_ > kWarpSize ? kWarpSize : ctx->parallelism_;
+    for (u32 i = 0; i < par; ++i) {
+      if (ctx->task_coros_[i] != nullptr) {
+        task_done = false;
+        if (ctx->method_id_ >= 12) {
+          printf("[EndTask] lane %u NOT done (method=%u par=%u)\n",
+                 i, ctx->method_id_, par);
+        }
+        break;
+      }
+    }
 
     if (task_done) {
       DbgState(5);

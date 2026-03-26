@@ -139,7 +139,9 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::FreeBlocks(hipc::FullPtr<FreeBlock
 
 HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
                                      chi::gpu::RunContext &rctx) {
-  chi::u32 lane = threadIdx.x % 32;
+  chi::u32 lane;
+  asm volatile("mov.u32 %0, %%tid.x;" : "=r"(lane));
+  lane = lane % 32;
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
   static constexpr chi::u32 kNoop   = static_cast<chi::u32>(BdevType::kNoop);
@@ -164,6 +166,17 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
 
   chi::u32 num_lanes = rctx.parallelism_;
   if (num_lanes == 0) num_lanes = 1;
+  {
+    static __device__ unsigned int g_wr[33];
+    unsigned int slot = atomicAdd(&g_wr[32], 1u);
+    if (slot < 32) g_wr[slot] = lane;
+    __threadfence();
+    if (slot == 31) {
+      printf("[WR PROBE] lanes: ");
+      for (int i = 0; i < 32; i++) printf("%u ", g_wr[i]);
+      printf("num_lanes=%u\n", num_lanes);
+    }
+  }
   if (lane >= num_lanes) co_return;
 
   size_t num_blocks = task->blocks_.size();
@@ -211,7 +224,12 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
     }
   }
 
+  __threadfence_system();
   if (lane == 0) {
+    char *check_dst = dst_base + task->blocks_[0].offset_;
+    printf("[WR DONE] lane0: b[0]=%02x b[1638400]=%02x b[3276800]=%02x\n",
+           (unsigned char)check_dst[0], (unsigned char)check_dst[1638400],
+           (unsigned char)check_dst[3276800]);
     task->bytes_written_ = data_off;
     task->return_code_ = 0;
   }
@@ -224,7 +242,9 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
 
 HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
                                     chi::gpu::RunContext &rctx) {
-  chi::u32 lane = threadIdx.x % 32;
+  chi::u32 lane;
+  asm volatile("mov.u32 %0, %%tid.x;" : "=r"(lane));
+  lane = lane % 32;
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
   static constexpr chi::u32 kNoop   = static_cast<chi::u32>(BdevType::kNoop);
@@ -239,6 +259,27 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
   if (bdev_type_ != kHbm && bdev_type_ != kPinned) {
     if (lane == 0) task->return_code_ = 1;
     co_return;
+  }
+
+  // Re-read and verify
+  asm volatile("mov.u32 %0, %%tid.x;" : "=r"(lane));
+  lane = lane % 32;
+  // Atomic probe to verify lane is correct AND num_lanes/parallelism
+  {
+    static __device__ unsigned int g_verify[64];
+    unsigned int slot = atomicAdd(&g_verify[63], 1u);
+    if (slot < 32) {
+      g_verify[slot] = lane;
+      g_verify[32 + slot] = rctx.parallelism_;
+    }
+    __threadfence();
+    if (slot == 31) {
+      printf("[VERIFY] lanes: ");
+      for (int i = 0; i < 32; i++) printf("%u ", g_verify[i]);
+      printf("\npar: ");
+      for (int i = 0; i < 32; i++) printf("%u ", g_verify[32+i]);
+      printf("\n");
+    }
   }
 
   char *src_base = reinterpret_cast<char *>(
@@ -262,6 +303,9 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
     const char *block_src = src_base + block.offset_;
     char *block_dst = dst + data_off;
 
+    // Re-read again right at stripe calculation
+    asm volatile("mov.u32 %0, %%tid.x;" : "=r"(lane));
+    lane = lane % 32;
     chi::u64 stripe = copy_size / num_lanes;
     chi::u64 my_start = lane * stripe;
     chi::u64 my_end = (lane == num_lanes - 1) ? copy_size : (lane + 1) * stripe;
