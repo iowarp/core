@@ -58,11 +58,11 @@
 
 // Must be included first -- blocks libstdc++ <coroutine> and provides
 // GPU-compatible std::coroutine_handle with __host__ __device__ annotations.
+#include <cstddef>
+#include <cstdint>
+
 #include "chimaera/gpu_coroutine_handle.h"
 #include "chimaera/task.h"
-
-#include <cstdint>
-#include <cstddef>
 
 // Set to 1 to enable verbose GPU coroutine debug printf (very slow)
 #ifndef CHI_GPU_CORO_DEBUG
@@ -104,7 +104,7 @@ HSHM_GPU_FUN void GpuCoroFreeRaw(void *ptr);
  */
 struct alignas(8) FrameHeader {
   u32 parallelism_;
-  u32 lane_id_;  /**< Hardware lane at frame allocation (set in device pass) */
+  u32 lane_id_; /**< Hardware lane at frame allocation (set in device pass) */
 };
 
 // ============================================================================
@@ -146,8 +146,8 @@ struct RunContext {
 
   u32 block_id_;
   u32 thread_id_;
-  u32 warp_id_;    /**< Warp index within the grid */
-  u32 lane_id_;    /**< Thread lane within the warp (0-31) */
+  u32 warp_id_; /**< Warp index within the grid */
+  u32 lane_id_; /**< Thread lane within the warp (0-31) */
 
   // ==== Awaited sub-task (co_await tracking) ====
 
@@ -173,8 +173,8 @@ struct RunContext {
 
   // ==== Cross-warp range ====
 
-  u32 range_off_;     /**< Start of this warp's sub-range within [0, parallelism) */
-  u32 range_width_;   /**< Width of this warp's sub-range (typically <=32) */
+  u32 range_off_; /**< Start of this warp's sub-range within [0, parallelism) */
+  u32 range_width_; /**< Width of this warp's sub-range (typically <=32) */
 
   // ==== Constructors ====
 
@@ -202,8 +202,8 @@ struct RunContext {
     }
   }
 
-  __host__ __device__ RunContext(u32 block_id, u32 thread_id,
-                                u32 warp_id, u32 lane_id)
+  __host__ __device__ RunContext(u32 block_id, u32 thread_id, u32 warp_id,
+                                 u32 lane_id)
       : is_yielded_(false),
         yield_spin_count_(0),
         spins_remaining_(0),
@@ -228,7 +228,9 @@ struct RunContext {
   }
 
   /** Get the warp offset index for this context's range */
-  __host__ __device__ u32 GetTaskWarpOffset() const { return range_off_ / kWarpSize; }
+  __host__ __device__ u32 GetTaskWarpOffset() const {
+    return range_off_ / kWarpSize;
+  }
 
   /** Allocate memory via CHI_PRIV_ALLOC (PrivateBuddyAllocator) */
   __device__ void *Alloc(size_t size) {
@@ -237,9 +239,7 @@ struct RunContext {
   }
 
   /** Free memory via CHI_PRIV_ALLOC (PrivateBuddyAllocator) */
-  __device__ void Free(void *ptr) {
-    GpuCoroFreeRaw(ptr);
-  }
+  __device__ void Free(void *ptr) { GpuCoroFreeRaw(ptr); }
 
   /**
    * Free the top-level coroutine frame block directly (lane-0-only path).
@@ -272,14 +272,15 @@ class TaskResume {
   struct promise_type {
     RunContext *run_ctx_ = nullptr;
     std::coroutine_handle<> caller_handle_ = nullptr;
-    u32 lane_id_ = 0;  /**< Hardware lane set by Worker before resume */
+    u32 lane_id_ = 0; /**< Hardware lane set by Worker before resume */
 
     /** Capture RunContext from the coroutine's first parameter. */
     template <typename... Args>
     __device__ promise_type(RunContext &ctx, Args &&...)
         : run_ctx_(&ctx), caller_handle_(nullptr), lane_id_(0) {}
 
-    /** Capture RunContext from the second parameter (FullPtr<Task>, RunContext&). */
+    /** Capture RunContext from the second parameter (FullPtr<Task>,
+     * RunContext&). */
     template <typename TaskT, typename... Args>
     __device__ promise_type(hipc::FullPtr<TaskT>, RunContext &ctx, Args &&...)
         : run_ctx_(&ctx), caller_handle_(nullptr), lane_id_(0) {}
@@ -295,12 +296,16 @@ class TaskResume {
     __device__ static void *AllocFrame(size_t size, u32 parallelism) noexcept {
       size_t total = sizeof(FrameHeader) + size;
       u32 lane = threadIdx.x % kWarpSize;
+      if (lane == 0) {
+        printf("[AllocFrame] par=%u lane=%u size=%llu\n",
+               parallelism, lane, (unsigned long long)size);
+      }
       if (parallelism > 1) {
         unsigned long long base_ull = 0;
         if (lane == 0) {
           auto fp = GpuCoroAlloc(kWarpSize * total);
-          base_ull = fp.IsNull() ? 0
-              : reinterpret_cast<unsigned long long>(fp.ptr_);
+          base_ull =
+              fp.IsNull() ? 0 : reinterpret_cast<unsigned long long>(fp.ptr_);
         }
         base_ull = __shfl_sync(0xFFFFFFFF, base_ull, 0);
         if (base_ull == 0) return nullptr;
@@ -318,25 +323,35 @@ class TaskResume {
       return fp.ptr_ + sizeof(FrameHeader);
     }
 
-    /** operator new: RunContext is first parameter. */
-    template <typename... Args>
-    __device__ static void *operator new(size_t size, RunContext &ctx,
-                                         Args &&...) noexcept {
-      return AllocFrame(size, ctx.parallelism_);
+    /** operator new: catch-all for member function coroutines.
+     * C++20 passes coroutine function params to operator new.
+     * For member functions, the implicit object ref is first.
+     * We accept it as Self&& and scan remaining args for RunContext. */
+    template <typename Self, typename... Args>
+    __device__ static void *operator new(size_t size, Self&&,
+                                         Args &&...args) noexcept {
+      return AllocFrame(size, ExtractParallelism(args...));
     }
 
-    /** operator new: FullPtr<T> first, RunContext second (bdev pattern). */
-    template <typename TaskT, typename... Args>
-    __device__ static void *operator new(size_t size, hipc::FullPtr<TaskT>,
-                                         RunContext &ctx,
-                                         Args &&...) noexcept {
-      return AllocFrame(size, ctx.parallelism_);
-    }
-
-    /** operator new: fallback, no RunContext (single frame only). */
+    /** operator new: fallback for parameterless coroutines. */
     __device__ static void *operator new(size_t size) noexcept {
       return AllocFrame(size, 1);
     }
+
+   private:
+    __device__ static u32 ExtractParallelism() { return 1; }
+
+    template <typename... Rest>
+    __device__ static u32 ExtractParallelism(RunContext &ctx, Rest &&...) {
+      return ctx.parallelism_;
+    }
+
+    template <typename First, typename... Rest>
+    __device__ static u32 ExtractParallelism(First &&, Rest &&...rest) {
+      return ExtractParallelism(rest...);
+    }
+
+   public:
 
     /**
      * Warp-level bulk free: if the frame was bulk-allocated, __syncwarp
@@ -380,25 +395,27 @@ class TaskResume {
        * inner coroutine is done and chain-resumes callers explicitly, with
        * the stack fully unwound between each step.
        */
-      __device__ std::coroutine_handle<>
-      await_suspend(std::coroutine_handle<> h) noexcept {
-        GPU_CORO_DPRINTF("[FinalAwaiter] coroutine %p reached final_suspend, returning noop\n",
-               h.address());
+      __device__ std::coroutine_handle<> await_suspend(
+          std::coroutine_handle<> h) noexcept {
+        GPU_CORO_DPRINTF(
+            "[FinalAwaiter] coroutine %p reached final_suspend, returning "
+            "noop\n",
+            h.address());
         return std::noop_coroutine();
       }
 
       __device__ void await_resume() noexcept {}
     };
 
-    __device__ FinalAwaiter final_suspend() noexcept {
-      return FinalAwaiter{};
-    }
+    __device__ FinalAwaiter final_suspend() noexcept { return FinalAwaiter{}; }
 
     __device__ void return_void() {}
 
     __device__ void unhandled_exception() { __trap(); }
 
-    __host__ __device__ void set_run_context(RunContext *ctx) { run_ctx_ = ctx; }
+    __host__ __device__ void set_run_context(RunContext *ctx) {
+      run_ctx_ = ctx;
+    }
     __host__ __device__ RunContext *get_run_context() const { return run_ctx_; }
     __host__ __device__ void set_lane_id(u32 id) { lane_id_ = id; }
     __host__ __device__ u32 get_lane_id() const { return lane_id_; }
@@ -411,7 +428,8 @@ class TaskResume {
 
  private:
   handle_type handle_;
-  std::coroutine_handle<> caller_handle_;  /**< Stored by await_suspend for await_resume */
+  std::coroutine_handle<>
+      caller_handle_; /**< Stored by await_suspend for await_resume */
 
  public:
   __device__ explicit TaskResume(handle_type h)
@@ -450,7 +468,10 @@ class TaskResume {
   }
 
   __device__ void destroy() {
-    if (handle_) { handle_.destroy(); handle_ = nullptr; }
+    if (handle_) {
+      handle_.destroy();
+      handle_ = nullptr;
+    }
   }
 
   __device__ explicit operator bool() const { return handle_ != nullptr; }
@@ -470,7 +491,8 @@ class TaskResume {
   }
 
   /**
-   * Suspend the calling coroutine and run the inner to completion or suspension.
+   * Suspend the calling coroutine and run the inner to completion or
+   * suspension.
    *
    * Matches the CPU pattern (task.h): manually resumes the inner coroutine
    * and returns bool. This avoids symmetric transfer, which on GPU is NOT
@@ -478,8 +500,8 @@ class TaskResume {
    * the inner frame while inner's .resume() is still on the stack.
    */
   template <typename PromiseT>
-  __device__ bool
-  await_suspend(std::coroutine_handle<PromiseT> caller_handle) noexcept {
+  __device__ bool await_suspend(
+      std::coroutine_handle<PromiseT> caller_handle) noexcept {
     if (!handle_) return false;
 
     // Store caller handle for await_resume to use
@@ -488,8 +510,7 @@ class TaskResume {
     // Propagate RunContext and lane_id from caller to inner
     handle_.promise().set_run_context(
         caller_handle.promise().get_run_context());
-    handle_.promise().set_lane_id(
-        caller_handle.promise().get_lane_id());
+    handle_.promise().set_lane_id(caller_handle.promise().get_lane_id());
 
     // NOTE: Do NOT set caller on inner's promise yet. If inner completes
     // synchronously, FinalAwaiter would try to access a stale caller.
@@ -498,7 +519,7 @@ class TaskResume {
     // Manually resume the inner coroutine
     handle_.resume();
     GPU_CORO_DPRINTF("[TaskResume::await_suspend] inner resumed, done=%d\n",
-           (int)handle_.done());
+                     (int)handle_.done());
 
     // Check if inner completed synchronously
     if (handle_.done()) {
@@ -510,8 +531,9 @@ class TaskResume {
     // Inner suspended (on co_await Future or yield).
     // NOW safe to set caller — inner will complete asynchronously.
     handle_.promise().set_caller(caller_handle);
-    GPU_CORO_DPRINTF("[TaskResume::await_suspend] set caller=%p on inner, returning true\n",
-           caller_handle.address());
+    GPU_CORO_DPRINTF(
+        "[TaskResume::await_suspend] set caller=%p on inner, returning true\n",
+        caller_handle.address());
     return true;  // Suspend caller
   }
 
@@ -523,15 +545,17 @@ class TaskResume {
    * The Worker chain-resumes callers explicitly.
    */
   __device__ void await_resume() noexcept {
-    GPU_CORO_DPRINTF("[TaskResume::await_resume] handle_=%p caller_handle_=%p\n",
-           handle_ ? handle_.address() : nullptr,
-           caller_handle_ ? caller_handle_.address() : nullptr);
+    GPU_CORO_DPRINTF(
+        "[TaskResume::await_resume] handle_=%p caller_handle_=%p\n",
+        handle_ ? handle_.address() : nullptr,
+        caller_handle_ ? caller_handle_.address() : nullptr);
     if (handle_) {
       auto *ctx = handle_.promise().get_run_context();
       char *frame = static_cast<char *>(handle_.address());
       auto *hdr = reinterpret_cast<FrameHeader *>(frame - sizeof(FrameHeader));
       u32 lane = hdr->lane_id_;
-      GPU_CORO_DPRINTF("[TaskResume::await_resume] destroying inner %p\n", handle_.address());
+      GPU_CORO_DPRINTF("[TaskResume::await_resume] destroying inner %p\n",
+                       handle_.address());
       handle_.destroy();
       handle_ = nullptr;
 
@@ -539,8 +563,10 @@ class TaskResume {
       // subsequent yields or co_awaits are tracked correctly.
       if (ctx && caller_handle_) {
         ctx->coro_handles_[lane] = caller_handle_;
-        GPU_CORO_DPRINTF("[TaskResume::await_resume] updated coro_handles_[%u] to caller %p\n",
-               lane, caller_handle_.address());
+        GPU_CORO_DPRINTF(
+            "[TaskResume::await_resume] updated coro_handles_[%u] to caller "
+            "%p\n",
+            lane, caller_handle_.address());
       }
     }
   }
@@ -559,8 +585,7 @@ class YieldAwaiter {
 
   __device__ bool await_ready() const noexcept { return false; }
 
-  __device__ void
-  await_suspend(std::coroutine_handle<> handle) noexcept {
+  __device__ void await_suspend(std::coroutine_handle<> handle) noexcept {
     auto typed = std::coroutine_handle<TaskResume::promise_type>::from_address(
         handle.address());
     auto *ctx = typed.promise().get_run_context();
@@ -608,8 +633,7 @@ class GetLaneIdAwaiter {
  public:
   __device__ bool await_ready() noexcept { return false; }
 
-  __device__ bool
-  await_suspend(std::coroutine_handle<> handle) noexcept {
+  __device__ bool await_suspend(std::coroutine_handle<> handle) noexcept {
     auto typed = std::coroutine_handle<TaskResume::promise_type>::from_address(
         handle.address());
     lane_id_ = typed.promise().lane_id_;  // Direct field access
@@ -619,9 +643,7 @@ class GetLaneIdAwaiter {
   __device__ u32 await_resume() noexcept { return lane_id_; }
 };
 
-__device__ inline GetLaneIdAwaiter get_lane_id() {
-  return GetLaneIdAwaiter{};
-}
+__device__ inline GetLaneIdAwaiter get_lane_id() { return GetLaneIdAwaiter{}; }
 
 // ============================================================================
 // CoroutineEntry / CoroutineScheduler
@@ -632,8 +654,7 @@ struct CoroutineEntry {
   RunContext run_ctx_;
   bool occupied_;
 
-  __host__ __device__ CoroutineEntry()
-      : handle_(nullptr), occupied_(false) {}
+  __host__ __device__ CoroutineEntry() : handle_(nullptr), occupied_(false) {}
 };
 
 class CoroutineScheduler {
