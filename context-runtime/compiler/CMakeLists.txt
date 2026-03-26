@@ -18,3 +18,12 @@ install(DIRECTORY include/
     DESTINATION include
     FILES_MATCHING PATTERN "*.h"
 )
+
+# LLVM pass plugin for GPU coroutine threadIdx.x fix
+if(WRP_CORE_ENABLE_GPU_RUNTIME)
+  add_subdirectory(coro_tid_fix)
+  # Register the plugin so add_cuda_library passes it to clang
+  set(WRP_CORE_CLANG_CUDA_PASS_PLUGINS
+    "-fpass-plugin=$<TARGET_FILE:CoroTidFix>"
+    CACHE INTERNAL "Clang CUDA pass plugins")
+endif()

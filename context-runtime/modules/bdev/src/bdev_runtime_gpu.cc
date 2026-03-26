@@ -139,7 +139,7 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::FreeBlocks(hipc::FullPtr<FreeBlock
 
 HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
                                      chi::gpu::RunContext &rctx) {
-  chi::u32 lane = co_await chi::gpu::get_lane_id();
+  chi::u32 lane = threadIdx.x % 32;
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
   static constexpr chi::u32 kNoop   = static_cast<chi::u32>(BdevType::kNoop);
@@ -224,7 +224,7 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
 
 HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
                                     chi::gpu::RunContext &rctx) {
-  chi::u32 lane = co_await chi::gpu::get_lane_id();
+  chi::u32 lane = threadIdx.x % 32;
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
   static constexpr chi::u32 kNoop   = static_cast<chi::u32>(BdevType::kNoop);

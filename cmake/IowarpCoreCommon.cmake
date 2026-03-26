@@ -391,6 +391,7 @@ function(add_cuda_library TARGET SHARED DO_COPY)
                     -fPIC
                     -fgpu-rdc
                     --no-offload-new-driver
+                    ${WRP_CORE_CLANG_CUDA_PASS_PLUGINS}
                     ${CLANG_CUDA_DEFS}
                     ${INCLUDE_FLAGS}
                     -c ${SRC_ABS}

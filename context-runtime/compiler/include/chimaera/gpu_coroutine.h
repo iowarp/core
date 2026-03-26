@@ -500,7 +500,6 @@ class TaskResume {
     // We set it only after confirming inner suspended.
 
     // Manually resume the inner coroutine
-    GPU_CORO_DPRINTF("[TaskResume::await_suspend] resuming inner %p\n", handle_.address());
     handle_.resume();
     GPU_CORO_DPRINTF("[TaskResume::await_suspend] inner resumed, done=%d\n",
            (int)handle_.done());
