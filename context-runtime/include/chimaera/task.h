@@ -923,12 +923,9 @@ class Future {
 #endif
         ctx->coro_handles_[lane] = handle;
         ctx->is_yielded_ = true;
-        // Store FutureShm pointer so Worker checks FUTURE_COMPLETE before resume
         auto fshm_full = GetFutureShm();
         ctx->awaited_fshm_ = fshm_full.IsNull() ? nullptr : fshm_full.ptr_;
-        // Store sub-task pointer so Worker can deserialize output before resume
         ctx->awaited_task_ = task_ptr_.IsNull() ? nullptr : task_ptr_.ptr_;
-        // Store parent RunContext on FutureShm for direct parent resumption
         if (!fshm_full.IsNull()) {
           fshm_full.ptr_->parent_gpu_rctx_ = ctx;
         }

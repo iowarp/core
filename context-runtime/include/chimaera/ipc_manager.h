@@ -864,7 +864,7 @@ class IpcManager {
    * @return Future<TaskT> for co_await / polling
    */
   template <typename TaskT>
-  HSHM_GPU_FUN Future<TaskT> SendGpuDirect(
+  HSHM_CROSS_FUN Future<TaskT> SendGpuDirect(
       const hipc::FullPtr<TaskT> &task_ptr) {
     // Use internal queue if available (orchestrator context), else gpu2gpu
     TaskQueue *queue = internal_queue_ ? internal_queue_ : gpu2gpu_queue_;
@@ -896,7 +896,7 @@ class IpcManager {
 
     // Distribute across queue lanes using warp ID
     u32 lane_id = 0;
-#if HSHM_IS_GPU
+#if HSHM_IS_GPU_COMPILER
     if (queue == internal_queue_) {
       if (internal_num_lanes_ > 1) {
         lane_id = GetWarpId() % internal_num_lanes_;
@@ -1132,13 +1132,13 @@ class IpcManager {
   template <typename TaskT>
   HSHM_CROSS_FUN Future<TaskT> Send(const hipc::FullPtr<TaskT> &task_ptr,
                                     bool awake_event = true) {
+#if HSHM_IS_GPU_COMPILER
+    if (is_gpu_runtime_) {
+      return SendGpuDirect(task_ptr);
+    }
+#endif
 #if HSHM_IS_GPU
     {
-      // Runtime kernels use SendGpuDirect (no serialization) for subtasks.
-      // Client kernels use SendGpu (serialization into ring buffer).
-      if (is_gpu_runtime_) {
-        return SendGpuDirect(task_ptr);
-      }
       return SendGpu(task_ptr);
     }
 #else  // HOST PATH
