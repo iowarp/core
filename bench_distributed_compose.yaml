@@ -1,6 +1,6 @@
 networking:
   port: 9413
-  neighborhood_size: 4
+  neighborhood_size: 5
   hostfile: "/mnt/common/rpawar4/clio-core/bench_distributed_hostfile"
   wait_for_restart: 60
   wait_for_restart_poll_period: 1

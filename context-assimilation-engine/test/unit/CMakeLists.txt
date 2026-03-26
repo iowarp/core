@@ -313,15 +313,21 @@ endif()
 if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
   add_executable(cae_hdf5_discovery_bench
     ${CMAKE_CURRENT_SOURCE_DIR}/hdf5_assim/bench_hdf5_discovery.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../core/src/factory/summary_operator.cc
   )
   target_link_libraries(cae_hdf5_discovery_bench
     PRIVATE
+      wrp_cae_core_client
       wrp_cte_core_client
       chimaera::cxx
       hshm::configure
       nlohmann_json::nlohmann_json
+      CURL::libcurl
   )
-  target_compile_definitions(cae_hdf5_discovery_bench PRIVATE WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
+  target_compile_definitions(cae_hdf5_discovery_bench PRIVATE
+    WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+    WRP_CAE_ENABLE_SUMMARY_OP
+  )
   target_include_directories(cae_hdf5_discovery_bench PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
   )

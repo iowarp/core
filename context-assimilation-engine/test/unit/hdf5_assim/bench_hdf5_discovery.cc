@@ -34,6 +34,10 @@
 #include <wrp_cte/core/core_client.h>
 #include <hermes_shm/util/logging.h>
 
+#ifdef WRP_CAE_ENABLE_SUMMARY_OP
+#include <wrp_cae/core/factory/summary_operator.h>
+#endif
+
 using Clock = std::chrono::high_resolution_clock;
 using Ms = std::chrono::duration<double, std::milli>;
 using json = nlohmann::json;
@@ -259,10 +263,55 @@ int main() {
   HLOG(kInfo, "  Total ingest: {:.1f} ms", ingest_ms);
 
   // ============================================================
+  // Phase 1.5: Summarize via LLM (if endpoint configured)
+  // ============================================================
+  // The Summary Operator reads each tag's "description" blob,
+  // calls an LLM to extract 4-8 keywords, and writes a "summary" blob.
+  // If no LLM endpoint is configured, Phase 2 uses descriptions directly.
+  bool has_summaries = false;
+#ifdef WRP_CAE_ENABLE_SUMMARY_OP
+  {
+    const char* endpoint = std::getenv("CAE_SUMMARY_ENDPOINT");
+    const char* model = std::getenv("CAE_SUMMARY_MODEL");
+    if (endpoint && model) {
+      HLOG(kInfo, "");
+      HLOG(kInfo, "=== Phase 1.5: Summarize via LLM ===");
+      HLOG(kInfo, "  Endpoint: {}, Model: {}", endpoint, model);
+
+      auto cte_client = std::make_shared<wrp_cte::core::Client>();
+      cte_client->Init(WRP_CTE_CLIENT->pool_id_);
+      wrp_cae::core::SummaryOperator summary_op(cte_client);
+
+      auto t_sum_start = Clock::now();
+      int sum_ok = 0, sum_fail = 0;
+      for (const auto& ds : datasets) {
+        std::string full_tag = kTagPrefix + ds.tag_name;
+        int rc = summary_op.Execute(full_tag);
+        if (rc == 0) {
+          sum_ok++;
+        } else {
+          sum_fail++;
+          HLOG(kWarning, "  Summary failed for {}: rc={}", full_tag, rc);
+        }
+      }
+      auto t_sum_end = Clock::now();
+      double sum_ms = Ms(t_sum_end - t_sum_start).count();
+      HLOG(kInfo, "  {} summaries generated, {} failed ({:.1f} ms)",
+           sum_ok, sum_fail, sum_ms);
+      has_summaries = (sum_ok > 0);
+    } else {
+      HLOG(kInfo, "");
+      HLOG(kInfo, "  [Phase 1.5 skipped: set CAE_SUMMARY_ENDPOINT and "
+                   "CAE_SUMMARY_MODEL to enable LLM summarization]");
+    }
+  }
+#endif
+
+  // ============================================================
   // Phase 2: Index Knowledge Graph
   // ============================================================
-  // If gen_summaries.py was run, the manifest descriptions are LLM keywords.
-  // Otherwise, they are raw descriptions. Either way, index them.
+  // Use "summary" blob if available (from Phase 1.5 LLM),
+  // otherwise use the description from manifest/fallback.
   HLOG(kInfo, "");
   HLOG(kInfo, "=== Phase 2: Index Knowledge Graph ===");
 
@@ -270,8 +319,26 @@ int main() {
   for (const auto& ds : datasets) {
     auto tag_id = tag_ids[ds.tag_name];
     std::string full_tag = kTagPrefix + ds.tag_name;
+
+    // Try to read the "summary" blob written by the Summary Operator
+    std::string index_text = ds.description;
+    if (has_summaries) {
+      try {
+        wrp_cte::core::Tag tag(full_tag);
+        chi::u64 sum_size = tag.GetBlobSize("summary");
+        if (sum_size > 0 && sum_size < 4096) {
+          std::vector<char> buf(sum_size + 1, '\0');
+          tag.GetBlob("summary", buf.data(), sum_size);
+          index_text = std::string(buf.data(), sum_size);
+          HLOG(kInfo, "  {}: using LLM summary ({} bytes)", full_tag, sum_size);
+        }
+      } catch (...) {
+        // Fall back to description
+      }
+    }
+
     auto fut = WRP_CTE_CLIENT->AsyncUpdateKnowledgeGraph(
-        tag_id, full_tag, ds.description);
+        tag_id, full_tag, index_text);
     fut.Wait();
   }
   auto t_kg_end = Clock::now();
