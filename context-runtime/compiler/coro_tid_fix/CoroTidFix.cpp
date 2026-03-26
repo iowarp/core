@@ -2,23 +2,23 @@
  * CoroTidFix — LLVM pass plugin for GPU coroutine threadIdx.x preservation.
  *
  * Problem: clang-cuda's CoroSplit outlines coroutine resume paths into
- * separate functions. When one coroutine resumes another via
- * llvm.coro.resume (an indirect call through the frame), the resumed
- * function sees threadIdx.x == 0 for all warp lanes instead of the
- * correct per-lane hardware value.
+ * separate functions where threadIdx.x reads the wrong value. Inner
+ * coroutines created from within a .resume function also get wrong values.
  *
- * Fix: Before each llvm.coro.resume call, save %tid.x into the callee's
- * coroutine frame at a fixed negative offset (FrameHeader::lane_id_,
- * offset -4 from the frame pointer). In .resume functions, replace all
- * reads of the %tid.x special register with a load from that frame slot.
+ * Fix: Use a per-lane shared memory slot to pass the correct tid.x.
+ * - In .resume functions: load tid.x from FrameHeader, store to shared mem
+ * - In all non-kernel device functions: read tid.x from shared mem instead
+ *   of the hardware register
+ * - In kernel functions: store hardware tid.x to shared mem at entry
  *
- * This pass runs after CoroSplit (which creates .resume functions) and
- * only applies to the nvptx/nvptx64 targets.
+ * Shared memory layout: __shared__ u32 _coro_tid_x[32];
+ * Indexed by hardware %laneid (always correct).
  *
- * Load via: clang++ -fpass-plugin=<path>/libCoroTidFix.so
+ * Only applies to nvptx/nvptx64 targets.
  */
 
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
@@ -33,188 +33,185 @@ using namespace llvm;
 
 namespace {
 
-/// Fixed offset from the coroutine frame pointer where we store tid.x.
-/// This corresponds to FrameHeader::lane_id_ which is at frame_ptr - 4.
-/// FrameHeader is { u32 parallelism_; u32 lane_id_; } prepended before
-/// the coroutine frame by operator new in gpu_coroutine.h.
 static constexpr int64_t TID_FRAME_OFFSET = -4;
+static constexpr unsigned SHARED_ADDR_SPACE = 3;  // NVPTX shared memory
 
-/// Check if a function is a coroutine resume function (created by CoroSplit).
-/// CoroSplit names them <original>.resume and they take a single ptr arg.
-static bool isResumeFunction(const Function &F) {
-  if (!F.getName().ends_with(".resume"))
-    return false;
-  // Resume functions take exactly one argument: the frame pointer
-  if (F.arg_size() != 1)
-    return false;
-  if (!F.getArg(0)->getType()->isPointerTy())
-    return false;
-  return true;
-}
-
-/// Get or declare the @llvm.nvvm.read.ptx.sreg.tid.x intrinsic.
 static Function *getTidXIntrinsic(Module &M) {
   return Intrinsic::getDeclaration(&M, Intrinsic::nvvm_read_ptx_sreg_tid_x);
 }
 
-/// After CoroEarly, llvm.coro.resume is lowered to:
-///   %fn_ptr = load ptr, ptr %frame   (resume fn is first field in frame)
-///   call void %fn_ptr(ptr %frame)
-/// We find indirect calls where the callee is loaded from the first
-/// argument, and save tid.x into the frame before the call.
-static bool instrumentCoroResumeCalls(Function &F, Function *TidXFn) {
-  bool Changed = false;
-  SmallVector<CallInst *, 4> ResumeCalls;
-
-  for (auto &BB : F) {
-    for (auto &I : BB) {
-      auto *CI = dyn_cast<CallInst>(&I);
-      if (!CI)
-        continue;
-      if (CI->arg_size() < 1)
-        continue;
-
-      Value *FrameArg = CI->getArgOperand(0);
-
-      // Pattern 1: Indirect call — callee loaded from frame
-      if (!CI->getCalledFunction()) {
-        Value *Callee = CI->getCalledOperand();
-        auto *Load = dyn_cast<LoadInst>(Callee);
-        if (Load && Load->getPointerOperand() == FrameArg) {
-          ResumeCalls.push_back(CI);
-          continue;
-        }
-      }
-
-      // Pattern 2: Direct call to a .resume function
-      if (auto *Callee = CI->getCalledFunction()) {
-        if (Callee->getName().ends_with(".resume")) {
-          ResumeCalls.push_back(CI);
-        }
-      }
-    }
-  }
-
-  for (auto *CI : ResumeCalls) {
-    Value *FramePtr = CI->getArgOperand(0);
-    IRBuilder<> Builder(CI);
-
-    Value *TidX = Builder.CreateCall(TidXFn, {}, "tid.x.save");
-    Value *Slot = Builder.CreateGEP(
-        Builder.getInt8Ty(), FramePtr,
-        Builder.getInt64(TID_FRAME_OFFSET), "tid.slot");
-    Builder.CreateStore(TidX, Slot);
-
-    Changed = true;
-  }
-
-  return Changed;
+static Function *getLaneIdIntrinsic(Module &M) {
+  return Intrinsic::getDeclaration(&M, Intrinsic::nvvm_read_ptx_sreg_laneid);
 }
 
-/// In .resume functions: replace all reads of %tid.x with a load from
-/// the saved slot in the coroutine frame.
-static bool fixResumeFunction(Function &F, Function *TidXFn) {
-  // The frame pointer is the first (and only) argument
-  Value *FramePtr = F.getArg(0);
+/// Get or create the shared memory array: __shared__ u32 _coro_tid_x[32]
+static GlobalVariable *getOrCreateSharedTidArray(Module &M) {
+  auto *Existing = M.getGlobalVariable("_coro_tid_x", true);
+  if (Existing) return Existing;
 
-  // Load the saved tid.x from the frame at entry
-  IRBuilder<> EntryBuilder(&*F.getEntryBlock().getFirstInsertionPt());
-  Value *Slot = EntryBuilder.CreateGEP(
-      EntryBuilder.getInt8Ty(), FramePtr,
-      EntryBuilder.getInt64(TID_FRAME_OFFSET), "tid.slot");
-  Value *SavedTid = EntryBuilder.CreateLoad(
-      EntryBuilder.getInt32Ty(), Slot, "tid.x.restored");
+  auto *ArrTy = ArrayType::get(Type::getInt32Ty(M.getContext()), 32);
+  auto *GV = new GlobalVariable(
+      M, ArrTy, false, GlobalValue::InternalLinkage,
+      UndefValue::get(ArrTy), "_coro_tid_x",
+      nullptr, GlobalValue::NotThreadLocal, SHARED_ADDR_SPACE);
+  GV->setAlignment(Align(128));
+  return GV;
+}
 
-  // Find and replace all tid.x intrinsic calls
-  SmallVector<CallInst *, 4> TidCalls;
+static void collectTidXCalls(Function &F, SmallVectorImpl<CallInst *> &Calls) {
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (auto *CI = dyn_cast<CallInst>(&I)) {
         if (auto *Callee = CI->getCalledFunction()) {
           if (Callee->getIntrinsicID() == Intrinsic::nvvm_read_ptx_sreg_tid_x) {
-            TidCalls.push_back(CI);
+            Calls.push_back(CI);
           }
         }
       }
     }
   }
+}
 
-  if (TidCalls.empty())
-    return false;
+static bool isKernelFunction(const Function &F, const Module &M) {
+  auto *NvvmAnnot = M.getNamedMetadata("nvvm.annotations");
+  if (!NvvmAnnot) return false;
+  for (auto *Op : NvvmAnnot->operands()) {
+    if (Op->getNumOperands() >= 3) {
+      if (auto *FnMD = dyn_cast<ValueAsMetadata>(Op->getOperand(0))) {
+        if (FnMD->getValue() == &F) {
+          if (auto *KindMD = dyn_cast<MDString>(Op->getOperand(1))) {
+            if (KindMD->getString() == "kernel") return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/// Load tid.x from shared memory: _coro_tid_x[%laneid]
+static Value *loadTidFromShared(IRBuilder<> &Builder, GlobalVariable *SharedArr,
+                                 Function *LaneIdFn) {
+  Value *LaneId = Builder.CreateCall(LaneIdFn, {}, "laneid");
+  Value *Indices[] = {Builder.getInt32(0), LaneId};
+  Value *Ptr = Builder.CreateInBoundsGEP(SharedArr->getValueType(),
+                                          SharedArr, Indices, "tid.shared.ptr");
+  return Builder.CreateLoad(Builder.getInt32Ty(), Ptr, "tid.x.shared");
+}
+
+/// Store tid.x to shared memory: _coro_tid_x[%laneid] = val
+static void storeTidToShared(IRBuilder<> &Builder, Value *TidVal,
+                              GlobalVariable *SharedArr, Function *LaneIdFn) {
+  Value *LaneId = Builder.CreateCall(LaneIdFn, {}, "laneid");
+  Value *Indices[] = {Builder.getInt32(0), LaneId};
+  Value *Ptr = Builder.CreateInBoundsGEP(SharedArr->getValueType(),
+                                          SharedArr, Indices, "tid.shared.ptr");
+  Builder.CreateStore(TidVal, Ptr);
+}
+
+/// Kernel entry: store hardware tid.x to shared memory.
+static bool instrumentKernel(Function &F, Function *TidXFn,
+                              Function *LaneIdFn, GlobalVariable *SharedArr) {
+  SmallVector<CallInst *, 4> TidCalls;
+  collectTidXCalls(F, TidCalls);
+  if (TidCalls.empty()) return false;
+
+  // Store tid.x to shared at kernel entry
+  IRBuilder<> Builder(&*F.getEntryBlock().getFirstInsertionPt());
+  Value *TidX = Builder.CreateCall(TidXFn, {}, "tid.x.hw");
+  storeTidToShared(Builder, TidX, SharedArr, LaneIdFn);
+
+  return false;  // Don't replace reads in kernels — they're correct
+}
+
+/// .resume function: load tid.x from FrameHeader, store to shared,
+/// then replace all tid.x reads.
+static bool fixResumeFunction(Function &F, Function *LaneIdFn,
+                               GlobalVariable *SharedArr) {
+  SmallVector<CallInst *, 4> TidCalls;
+  collectTidXCalls(F, TidCalls);
+
+  Value *FramePtr = F.getArg(0);
+  IRBuilder<> Builder(&*F.getEntryBlock().getFirstInsertionPt());
+
+  // Load from FrameHeader
+  Value *Slot = Builder.CreateGEP(
+      Builder.getInt8Ty(), FramePtr,
+      Builder.getInt64(TID_FRAME_OFFSET), "tid.slot");
+  Value *SavedTid = Builder.CreateLoad(
+      Builder.getInt32Ty(), Slot, "tid.x.frame");
+
+  // Store to shared memory so callees can find it
+  storeTidToShared(Builder, SavedTid, SharedArr, LaneIdFn);
+
+  // Replace tid.x reads
+  if (!TidCalls.empty()) {
+    for (auto *CI : TidCalls) {
+      CI->replaceAllUsesWith(SavedTid);
+      CI->eraseFromParent();
+    }
+  }
+  return true;
+}
+
+/// Non-kernel, non-resume device function: replace tid.x reads with
+/// loads from shared memory.
+static bool fixDeviceFunction(Function &F, Function *LaneIdFn,
+                               GlobalVariable *SharedArr) {
+  SmallVector<CallInst *, 4> TidCalls;
+  collectTidXCalls(F, TidCalls);
+  if (TidCalls.empty()) return false;
+
+  // Load once from shared at function entry
+  IRBuilder<> Builder(&*F.getEntryBlock().getFirstInsertionPt());
+  Value *TidFromShared = loadTidFromShared(Builder, SharedArr, LaneIdFn);
 
   for (auto *CI : TidCalls) {
-    CI->replaceAllUsesWith(SavedTid);
+    CI->replaceAllUsesWith(TidFromShared);
     CI->eraseFromParent();
   }
-
   return true;
 }
 
 struct CoroTidFixPass : PassInfoMixin<CoroTidFixPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
     StringRef Triple = M.getTargetTriple();
-    errs() << "[CoroTidFix] Module: " << M.getName()
-           << " triple: " << Triple << "\n";
-
-    if (!Triple.starts_with("nvptx")) {
-      errs() << "[CoroTidFix] Skipping non-NVPTX module\n";
+    if (!Triple.starts_with("nvptx"))
       return PreservedAnalyses::all();
-    }
 
     Function *TidXFn = getTidXIntrinsic(M);
-    if (!TidXFn) {
-      errs() << "[CoroTidFix] No tid.x intrinsic found\n";
+    Function *LaneIdFn = getLaneIdIntrinsic(M);
+    if (!TidXFn || !LaneIdFn)
       return PreservedAnalyses::all();
-    }
 
+    GlobalVariable *SharedArr = getOrCreateSharedTidArray(M);
     bool Changed = false;
-    unsigned ResumeCallsFixed = 0;
-    unsigned ResumeFnsFixed = 0;
 
+    // Process kernels first: store tid.x to shared at entry
     for (auto &F : M) {
-      if (F.isDeclaration())
-        continue;
-      if (F.getName().contains("Run") || F.getName().contains("resume") ||
-          F.getName().contains("destroy")) {
-        errs() << "[CoroTidFix] Function: " << F.getName() << "\n";
-      }
-      if (F.getName().contains("Run") || F.getName().ends_with(".resume")) {
-        for (auto &BB : F) {
-          for (auto &I : BB) {
-            if (auto *CI = dyn_cast<CallInst>(&I)) {
-              if (CI->getCalledFunction())
-                errs() << "[CoroTidFix] " << F.getName() << " calls "
-                       << CI->getCalledFunction()->getName() << "\n";
-              else
-                errs() << "[CoroTidFix] " << F.getName()
-                       << " indirect call: " << *CI << "\n";
-            }
-          }
-        }
-      }
-      if (instrumentCoroResumeCalls(F, TidXFn)) {
-        Changed = true;
-        ResumeCallsFixed++;
+      if (F.isDeclaration()) continue;
+      if (isKernelFunction(F, M)) {
+        Changed |= instrumentKernel(F, TidXFn, LaneIdFn, SharedArr);
       }
     }
 
+    // Process .resume functions: load from FrameHeader, store to shared
     for (auto &F : M) {
-      if (F.isDeclaration())
-        continue;
-      if (F.getName().ends_with(".resume")) {
-        errs() << "[CoroTidFix] Found .resume fn: " << F.getName()
-               << " args=" << F.arg_size() << "\n";
-        if (fixResumeFunction(F, TidXFn)) {
-          Changed = true;
-          ResumeFnsFixed++;
-        }
+      if (F.isDeclaration()) continue;
+      if (F.getName().ends_with(".resume") && F.arg_size() == 1 &&
+          F.getArg(0)->getType()->isPointerTy()) {
+        Changed |= fixResumeFunction(F, LaneIdFn, SharedArr);
       }
     }
 
-    errs() << "[CoroTidFix] Fixed " << ResumeCallsFixed
-           << " coro.resume callers, " << ResumeFnsFixed
-           << " resume functions\n";
+    // Process all other device functions: read from shared
+    for (auto &F : M) {
+      if (F.isDeclaration()) continue;
+      if (F.getName().ends_with(".resume") || isKernelFunction(F, M)) continue;
+      Changed |= fixDeviceFunction(F, LaneIdFn, SharedArr);
+    }
 
+    errs() << "[CoroTidFix] " << M.getName() << ": done\n";
     return Changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
 
@@ -223,13 +220,10 @@ struct CoroTidFixPass : PassInfoMixin<CoroTidFixPass> {
 
 } // anonymous namespace
 
-// Plugin registration
 extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "CoroTidFix", LLVM_VERSION_STRING,
           [](PassBuilder &PB) {
-            // Register as a module pass running after the optimization pipeline
-            // (after CoroSplit has created .resume functions)
             PB.registerOptimizerLastEPCallback(
                 [](ModulePassManager &MPM, OptimizationLevel) {
                   MPM.addPass(CoroTidFixPass());
