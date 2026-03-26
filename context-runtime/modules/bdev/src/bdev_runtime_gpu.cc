@@ -5,16 +5,6 @@
  * See COPYING file in the top-level directory.
  */
 
-/**
- * GPU-side bdev container implementation.
- *
- * Compiled as CUDA device code (picked up by chimaera_cxx_gpu via the
- * modules/<star>_gpu.cc glob in src/CMakeLists.txt).
- *
- * Implements Update, AllocateBlocks, FreeBlocks, Write, Read using
- * device-resident atomics and memcpy.
- */
-
 #include "chimaera/bdev/bdev_gpu_runtime.h"
 #include "chimaera/singletons.h"
 
@@ -134,27 +124,23 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::FreeBlocks(hipc::FullPtr<FreeBlock
 }
 
 // ---------------------------------------------------------------------------
-// Write — per-lane stripe copy
+// Write — lane-0 only for now
 // ---------------------------------------------------------------------------
 
 HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
                                      chi::gpu::RunContext &rctx) {
-  chi::u32 lane;
-  asm volatile("mov.u32 %0, %%tid.x;" : "=r"(lane));
-  lane = lane % 32;
+  if (!chi::IpcManager::IsWarpScheduler()) { (void)rctx; co_return; }
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
   static constexpr chi::u32 kNoop   = static_cast<chi::u32>(BdevType::kNoop);
 
   if (bdev_type_ == kNoop) {
-    if (lane == 0) {
-      task->bytes_written_ = task->length_;
-      task->return_code_ = 0;
-    }
+    task->bytes_written_ = task->length_;
+    task->return_code_ = 0;
     co_return;
   }
   if (bdev_type_ != kHbm && bdev_type_ != kPinned) {
-    if (lane == 0) task->return_code_ = 1;
+    task->return_code_ = 1;
     co_return;
   }
 
@@ -163,21 +149,6 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
   auto *ipc_mgr = CHI_IPC;
   hipc::FullPtr<char> data_ptr = ipc_mgr->ToFullPtr(task->data_).template Cast<char>();
   char *src = data_ptr.ptr_;
-
-  chi::u32 num_lanes = rctx.parallelism_;
-  if (num_lanes == 0) num_lanes = 1;
-  {
-    static __device__ unsigned int g_wr[33];
-    unsigned int slot = atomicAdd(&g_wr[32], 1u);
-    if (slot < 32) g_wr[slot] = lane;
-    __threadfence();
-    if (slot == 31) {
-      printf("[WR PROBE] lanes: ");
-      for (int i = 0; i < 32; i++) printf("%u ", g_wr[i]);
-      printf("num_lanes=%u\n", num_lanes);
-    }
-  }
-  if (lane >= num_lanes) co_return;
 
   size_t num_blocks = task->blocks_.size();
   chi::u64 data_off = 0;
@@ -190,30 +161,22 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
     char *block_dst = dst_base + block.offset_;
     const char *block_src = src + data_off;
 
-    chi::u64 stripe = copy_size / num_lanes;
-    chi::u64 my_start = lane * stripe;
-    chi::u64 my_end = (lane == num_lanes - 1) ? copy_size : (lane + 1) * stripe;
-    chi::u64 my_len = my_end - my_start;
-
-    const char *my_src = block_src + my_start;
-    char *my_dst = block_dst + my_start;
-
-    bool aligned16 = ((reinterpret_cast<uintptr_t>(my_dst) |
-                        reinterpret_cast<uintptr_t>(my_src)) & 15) == 0;
-    if (aligned16 && my_len >= sizeof(uint4)) {
-      chi::u64 vec_elems = my_len / sizeof(uint4);
-      const uint4 *src4 = reinterpret_cast<const uint4 *>(my_src);
-      uint4 *dst4 = reinterpret_cast<uint4 *>(my_dst);
+    bool aligned16 = ((reinterpret_cast<uintptr_t>(block_dst) |
+                        reinterpret_cast<uintptr_t>(block_src)) & 15) == 0;
+    if (aligned16) {
+      chi::u64 vec_elems = copy_size / sizeof(uint4);
+      const uint4 *src4 = reinterpret_cast<const uint4 *>(block_src);
+      uint4 *dst4 = reinterpret_cast<uint4 *>(block_dst);
       for (chi::u64 idx = 0; idx < vec_elems; ++idx) {
         dst4[idx] = src4[idx];
       }
       chi::u64 tail_start = vec_elems * sizeof(uint4);
-      for (chi::u64 b = tail_start; b < my_len; ++b) {
-        my_dst[b] = my_src[b];
+      for (chi::u64 b = tail_start; b < copy_size; ++b) {
+        block_dst[b] = block_src[b];
       }
     } else {
-      for (chi::u64 b = 0; b < my_len; ++b) {
-        my_dst[b] = my_src[b];
+      for (chi::u64 b = 0; b < copy_size; ++b) {
+        block_dst[b] = block_src[b];
       }
     }
     __threadfence_system();
@@ -224,27 +187,18 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
     }
   }
 
-  __threadfence_system();
-  if (lane == 0) {
-    char *check_dst = dst_base + task->blocks_[0].offset_;
-    printf("[WR DONE] lane0: b[0]=%02x b[1638400]=%02x b[3276800]=%02x\n",
-           (unsigned char)check_dst[0], (unsigned char)check_dst[1638400],
-           (unsigned char)check_dst[3276800]);
-    task->bytes_written_ = data_off;
-    task->return_code_ = 0;
-  }
+  task->bytes_written_ = data_off;
+  task->return_code_ = 0;
   co_return;
 }
 
 // ---------------------------------------------------------------------------
-// Read — per-lane stripe copy
+// Read — memset(lane) stripe test
 // ---------------------------------------------------------------------------
 
 HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
                                     chi::gpu::RunContext &rctx) {
-  chi::u32 lane;
-  asm volatile("mov.u32 %0, %%tid.x;" : "=r"(lane));
-  lane = lane % 32;
+  chi::u32 lane = threadIdx.x % 32;
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
   static constexpr chi::u32 kNoop   = static_cast<chi::u32>(BdevType::kNoop);
@@ -261,29 +215,6 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
     co_return;
   }
 
-  // Re-read and verify
-  asm volatile("mov.u32 %0, %%tid.x;" : "=r"(lane));
-  lane = lane % 32;
-  // Atomic probe to verify lane is correct AND num_lanes/parallelism
-  {
-    static __device__ unsigned int g_verify[64];
-    unsigned int slot = atomicAdd(&g_verify[63], 1u);
-    if (slot < 32) {
-      g_verify[slot] = lane;
-      g_verify[32 + slot] = rctx.parallelism_;
-    }
-    __threadfence();
-    if (slot == 31) {
-      printf("[VERIFY] lanes: ");
-      for (int i = 0; i < 32; i++) printf("%u ", g_verify[i]);
-      printf("\npar: ");
-      for (int i = 0; i < 32; i++) printf("%u ", g_verify[32+i]);
-      printf("\n");
-    }
-  }
-
-  char *src_base = reinterpret_cast<char *>(
-      (bdev_type_ == kHbm) ? hbm_ptr_ : pinned_ptr_);
   auto *ipc_mgr = CHI_IPC;
   hipc::FullPtr<char> data_ptr = ipc_mgr->ToFullPtr(task->data_).template Cast<char>();
   char *dst = data_ptr.ptr_;
@@ -292,58 +223,20 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
   if (num_lanes == 0) num_lanes = 1;
   if (lane >= num_lanes) co_return;
 
-  size_t num_blocks = task->blocks_.size();
-  chi::u64 data_off = 0;
-  for (size_t i = 0; i < num_blocks; ++i) {
-    const Block &block = task->blocks_[i];
-    chi::u64 remaining = task->length_ - data_off;
-    if (remaining == 0) break;
-    chi::u64 copy_size = (block.size_ < remaining) ? block.size_ : remaining;
+  // Instead of copying from bdev, just memset each stripe with lane id
+  // to verify that per-lane writes reach distinct memory regions.
+  chi::u64 total = task->length_;
+  chi::u64 stripe = total / num_lanes;
+  chi::u64 my_start = lane * stripe;
+  chi::u64 my_end = (lane == num_lanes - 1) ? total : (lane + 1) * stripe;
 
-    const char *block_src = src_base + block.offset_;
-    char *block_dst = dst + data_off;
-
-    // Re-read again right at stripe calculation
-    asm volatile("mov.u32 %0, %%tid.x;" : "=r"(lane));
-    lane = lane % 32;
-    chi::u64 stripe = copy_size / num_lanes;
-    chi::u64 my_start = lane * stripe;
-    chi::u64 my_end = (lane == num_lanes - 1) ? copy_size : (lane + 1) * stripe;
-    chi::u64 my_len = my_end - my_start;
-
-    const char *my_src = block_src + my_start;
-    char *my_dst = block_dst + my_start;
-
-    bool aligned16 = ((reinterpret_cast<uintptr_t>(my_dst) |
-                        reinterpret_cast<uintptr_t>(my_src)) & 15) == 0;
-    if (aligned16 && my_len >= sizeof(uint4)) {
-      chi::u64 vec_elems = my_len / sizeof(uint4);
-      const uint4 *src4 = reinterpret_cast<const uint4 *>(my_src);
-      uint4 *dst4 = reinterpret_cast<uint4 *>(my_dst);
-      for (chi::u64 idx = 0; idx < vec_elems; ++idx) {
-        dst4[idx] = src4[idx];
-      }
-      chi::u64 tail_start = vec_elems * sizeof(uint4);
-      for (chi::u64 b = tail_start; b < my_len; ++b) {
-        my_dst[b] = my_src[b];
-      }
-    } else {
-      for (chi::u64 b = 0; b < my_len; ++b) {
-        my_dst[b] = my_src[b];
-      }
-    }
-    __threadfence_system();
-    data_off += copy_size;
-
-    if (i + 1 < num_blocks) {
-      co_await chi::gpu::yield(2);
-    }
+  for (chi::u64 b = my_start; b < my_end; ++b) {
+    dst[b] = static_cast<char>(lane);
   }
-
   __threadfence_system();
 
   if (lane == 0) {
-    task->bytes_read_ = data_off;
+    task->bytes_read_ = total;
     task->return_code_ = 0;
   }
   co_return;

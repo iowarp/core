@@ -295,21 +295,8 @@ class TaskResume {
     __device__ static void *AllocFrame(size_t size, u32 parallelism) noexcept {
       size_t total = sizeof(FrameHeader) + size;
 #if HSHM_IS_GPU_COMPILER
-      u32 lane;
-      asm volatile("mov.u32 %0, %%tid.x;" : "=r"(lane));
-      lane = lane % kWarpSize;
+      u32 lane = threadIdx.x % kWarpSize;
       if (parallelism > 1) {
-        {
-          static __device__ unsigned int g_af[33];
-          unsigned int slot = atomicAdd(&g_af[32], 1u);
-          if (slot < 32) g_af[slot] = lane;
-          __threadfence();
-          if (slot == 31) {
-            printf("[AllocFrame] lanes: ");
-            for (int i = 0; i < 32; i++) printf("%u ", g_af[i]);
-            printf("\n");
-          }
-        }
         unsigned long long base_ull = 0;
         if (lane == 0) {
           auto fp = GpuCoroAlloc(kWarpSize * total);
@@ -367,9 +354,7 @@ class TaskResume {
 #if HSHM_IS_GPU_COMPILER
       if (hdr->parallelism_ > 1) {
         __syncwarp();
-        u32 lane;
-        asm volatile("mov.u32 %0, %%tid.x;" : "=r"(lane));
-        lane = lane % kWarpSize;
+        u32 lane = threadIdx.x % kWarpSize;
         if (lane == 0) {
           GpuCoroFreeRaw(raw);
         }

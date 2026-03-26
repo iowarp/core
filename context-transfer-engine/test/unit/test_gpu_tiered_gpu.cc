@@ -127,8 +127,15 @@ __global__ void gpu_tiered_test_kernel(
 
   __threadfence_system();
 
-  // Step 5: Verify (lane 0 only — bdev subtask coroutines are single-lane)
+  // Step 5: Verify — print first byte of each stripe to see per-lane writes
   if (lane_id == 0) {
+    chi::u64 stripe = blob_size / 32;
+    printf("GPU STRIPES: ");
+    for (int s = 0; s < 32; s++) {
+      printf("%02x ", (unsigned char)read_ptr.ptr_[s * stripe]);
+    }
+    printf("\n");
+    // Still do normal verification
     int mismatches = 0;
     int first_bad = -1;
     for (chi::u64 i = 0; i < total_read; i++) {
