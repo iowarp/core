@@ -129,17 +129,20 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::FreeBlocks(hipc::FullPtr<FreeBlock
 
 HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
                                      chi::gpu::RunContext &rctx) {
+  chi::u32 lane = threadIdx.x % 32;
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
   static constexpr chi::u32 kNoop   = static_cast<chi::u32>(BdevType::kNoop);
 
   if (bdev_type_ == kNoop) {
-    task->bytes_written_ = task->length_;
-    task->return_code_ = 0;
+    if (lane == 0) {
+      task->bytes_written_ = task->length_;
+      task->return_code_ = 0;
+    }
     co_return;
   }
   if (bdev_type_ != kHbm && bdev_type_ != kPinned) {
-    task->return_code_ = 1;
+    if (lane == 0) task->return_code_ = 1;
     co_return;
   }
 
@@ -163,8 +166,6 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
     char *block_dst = dst_base + block.offset_;
     const char *block_src = src + data_off;
 
-    // Fresh threadIdx.x read here — prevents LLVM CSE with function-entry reads
-    chi::u32 lane = threadIdx.x % 32;
     if (lane >= num_lanes) { data_off += copy_size; continue; }
     chi::u64 stripe = copy_size / num_lanes;
     chi::u64 my_start = lane * stripe;
@@ -213,17 +214,20 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
 
 HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
                                     chi::gpu::RunContext &rctx) {
+  chi::u32 lane = threadIdx.x % 32;
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
   static constexpr chi::u32 kNoop   = static_cast<chi::u32>(BdevType::kNoop);
 
   if (bdev_type_ == kNoop) {
-    task->bytes_read_ = task->length_;
-    task->return_code_ = 0;
+    if (lane == 0) {
+      task->bytes_read_ = task->length_;
+      task->return_code_ = 0;
+    }
     co_return;
   }
   if (bdev_type_ != kHbm && bdev_type_ != kPinned) {
-    task->return_code_ = 1;
+    if (lane == 0) task->return_code_ = 1;
     co_return;
   }
 
@@ -247,8 +251,6 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
     const char *block_src = src_base + block.offset_;
     char *block_dst = dst + data_off;
 
-    // Fresh threadIdx.x read here — prevents LLVM CSE with function-entry reads
-    chi::u32 lane = threadIdx.x % 32;
     if (lane >= num_lanes) { data_off += copy_size; continue; }
     chi::u64 stripe = copy_size / num_lanes;
     chi::u64 my_start = lane * stripe;
