@@ -80,18 +80,30 @@ namespace chi::detail {
   struct FiberState;
   inline thread_local FiberState* tls_current_fiber = nullptr;
 
+  struct FiberCallable {
+    virtual void call() = 0;
+    virtual ~FiberCallable() = default;
+  };
+
+  template<typename F>
+  struct FiberCallableT : FiberCallable {
+    F fn;
+    explicit FiberCallableT(F&& f) : fn(std::move(f)) {}
+    void call() override { fn(); }
+  };
+
   struct FiberState {
     ucontext_t fiber_ctx;
     ucontext_t caller_ctx;
     bool done = false;
-    std::function<void()> fn;
+    std::unique_ptr<FiberCallable> fn;
     std::unique_ptr<char[]> stack;
     FiberState() : done(false), stack(new char[FIBER_STACK_SIZE]) {}
   };
 
   static void fiber_trampoline() {
     auto* fs = tls_current_fiber;
-    try { fs->fn(); } catch(...) {}
+    try { fs->fn->call(); } catch(...) {}
     fs->done = true;
     swapcontext(&fs->fiber_ctx, &fs->caller_ctx);
   }
@@ -1713,9 +1725,10 @@ inline void fiber_co_await(chi::TaskResume inner, chi::RunContext& rctx) {
 }
 
 /// Create a TaskResume wrapping a new fiber
-inline chi::TaskResume make_task_fiber(std::function<void()> fn) {
+template<typename F>
+inline chi::TaskResume make_task_fiber(F&& fn) {
   auto* state = new FiberState();
-  state->fn = std::move(fn);
+  state->fn = std::make_unique<FiberCallableT<typename std::decay<F>::type>>(std::forward<F>(fn));
   getcontext(&state->fiber_ctx);
   state->fiber_ctx.uc_stack.ss_sp = state->stack.get();
   state->fiber_ctx.uc_stack.ss_size = FIBER_STACK_SIZE;

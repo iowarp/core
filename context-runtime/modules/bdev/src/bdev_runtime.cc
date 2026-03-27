@@ -360,6 +360,8 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
                                 chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   // Get the creation parameters
@@ -483,7 +485,6 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
 
   // Set success result
   task->return_code_ = 0;
-  (void)ctx;
   CHI_CO_RETURN;
   CHI_TASK_BODY_END
 }
@@ -492,6 +493,8 @@ chi::TaskResume Runtime::AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task,
                                         chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   HLOG(kDebug,
@@ -604,7 +607,6 @@ chi::TaskResume Runtime::AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task,
        local_blocks.size(), task->blocks_.size());
 
   task->return_code_ = 0;
-  (void)ctx;
   CHI_CO_RETURN;
   CHI_TASK_BODY_END
 }
@@ -613,6 +615,8 @@ chi::TaskResume Runtime::FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
                                     chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   // Get worker ID for free operation
@@ -626,7 +630,6 @@ chi::TaskResume Runtime::FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
   }
 
   task->return_code_ = 0;
-  (void)ctx;
   CHI_CO_RETURN;
   CHI_TASK_BODY_END
 }
@@ -635,6 +638,8 @@ chi::TaskResume Runtime::Write(hipc::FullPtr<WriteTask> task,
                                chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   switch (bdev_type_) {
@@ -657,6 +662,8 @@ chi::TaskResume Runtime::Read(hipc::FullPtr<ReadTask> task,
                               chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   switch (bdev_type_) {
@@ -679,6 +686,8 @@ chi::TaskResume Runtime::WriteToFile(hipc::FullPtr<WriteTask> task,
                                      chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   size_t worker_id = GetWorkerID(ctx);
@@ -747,6 +756,8 @@ chi::TaskResume Runtime::ReadFromFile(hipc::FullPtr<ReadTask> task,
                                       chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   size_t worker_id = GetWorkerID(ctx);
@@ -815,6 +826,8 @@ chi::TaskResume Runtime::GetStats(hipc::FullPtr<GetStatsTask> task,
                                   chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   // Predict wall time from learned model
@@ -835,7 +848,6 @@ chi::TaskResume Runtime::GetStats(hipc::FullPtr<GetStatsTask> task,
   chi::u64 remaining = heap_.GetRemainingSize();
   task->remaining_size_ = remaining;
   task->return_code_ = 0;
-  (void)ctx;
   CHI_CO_RETURN;
   CHI_TASK_BODY_END
 }
@@ -844,13 +856,14 @@ chi::TaskResume Runtime::Destroy(hipc::FullPtr<DestroyTask> task,
                                  chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   // Worker I/O contexts (and their AsyncIO instances) are cleaned up by destructor
   // Note: GlobalBlockMap and Heap cleanup is handled by their destructors
 
   task->return_code_ = 0;
-  (void)ctx;
   CHI_CO_RETURN;
   CHI_TASK_BODY_END
 }

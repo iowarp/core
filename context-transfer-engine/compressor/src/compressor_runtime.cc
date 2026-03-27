@@ -209,6 +209,8 @@ chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
                                  chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   if (!core_client_) {

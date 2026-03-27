@@ -57,12 +57,20 @@ namespace wrp_cae::core {
 
 chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
                                  chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   task->SetReturnCode(0);
   (void)rctx;
   CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext& ctx) {
+#ifdef __NVCOMPILER
+  chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   // Container is already initialized via Init() before Create is called
   // Do NOT call Init() here
 
@@ -74,6 +82,7 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext&
   HLOG(kInfo, "Core container created and initialized for pool: {} (ID: {})",
        pool_name_, pool_id_);
   CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::u64 Runtime::GetWorkRemaining() const {
@@ -84,6 +93,12 @@ chi::u64 Runtime::GetWorkRemaining() const {
 
 chi::TaskResume Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task,
                                    chi::RunContext& ctx) {
+#ifdef __NVCOMPILER
+  chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   HLOG(kInfo, "ParseOmni called with {} bytes of serialized data",
        task->serialized_ctx_.size());
 
@@ -155,10 +170,17 @@ chi::TaskResume Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task,
   HLOG(kInfo, "ParseOmni: Successfully scheduled {} assimilations",
        tasks_scheduled);
   CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::ProcessHdf5Dataset(
     hipc::FullPtr<ProcessHdf5DatasetTask> task, chi::RunContext& ctx) {
+#ifdef __NVCOMPILER
+  chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
+#endif
+  CHI_TASK_BODY_BEGIN
 #ifdef WRP_CAE_ENABLE_HDF5
   HLOG(kInfo, "ProcessHdf5Dataset: file='{}', dataset='{}', tag_prefix='{}'",
        task->file_path_.str(), task->dataset_path_.str(),
@@ -203,10 +225,17 @@ chi::TaskResume Runtime::ProcessHdf5Dataset(
       chi::priv::string("HDF5 support not compiled in", HSHM_MALLOC);
 #endif
   CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::ExportData(hipc::FullPtr<ExportDataTask> task,
                                     chi::RunContext& ctx) {
+#ifdef __NVCOMPILER
+  chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   task->result_code_ = 0;
   task->bytes_exported_ = 0;
 
@@ -337,8 +366,8 @@ chi::TaskResume Runtime::ExportData(hipc::FullPtr<ExportDataTask> task,
          task->bytes_exported_, output_path);
   }
 
-  (void)ctx;
   CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 }  // namespace wrp_cae::core

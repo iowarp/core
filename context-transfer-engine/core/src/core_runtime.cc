@@ -113,6 +113,8 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
                                 chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   // Initialize unordered_map_ll instances with appropriately sized bucket
@@ -321,6 +323,8 @@ chi::TaskResume Runtime::Destroy(hipc::FullPtr<DestroyTask> task,
                                  chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -437,6 +441,8 @@ chi::TaskResume Runtime::RegisterTarget(hipc::FullPtr<RegisterTargetTask> task,
                                         chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -575,6 +581,8 @@ chi::TaskResume Runtime::UnregisterTarget(
     hipc::FullPtr<UnregisterTargetTask> task, chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -615,6 +623,8 @@ chi::TaskResume Runtime::ListTargets(hipc::FullPtr<ListTargetsTask> task,
                                      chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -643,6 +653,8 @@ chi::TaskResume Runtime::StatTargets(hipc::FullPtr<StatTargetsTask> task,
                                      chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -724,6 +736,8 @@ chi::TaskResume Runtime::GetOrCreateTag(
     chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -786,6 +800,8 @@ chi::TaskResume Runtime::GetTargetInfo(hipc::FullPtr<GetTargetInfoTask> task,
                                        chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -829,6 +845,8 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
                                  chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -977,6 +995,8 @@ chi::TaskResume Runtime::GetBlob(hipc::FullPtr<GetBlobTask> task,
                                  chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -1047,6 +1067,8 @@ chi::TaskResume Runtime::ReorganizeBlob(hipc::FullPtr<ReorganizeBlobTask> task,
                                         chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -1165,6 +1187,8 @@ chi::TaskResume Runtime::DelBlob(hipc::FullPtr<DelBlobTask> task,
                                  chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -1252,6 +1276,8 @@ chi::TaskResume Runtime::DelTag(hipc::FullPtr<DelTagTask> task,
                                 chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -1402,6 +1428,8 @@ chi::TaskResume Runtime::GetTagSize(hipc::FullPtr<GetTagSizeTask> task,
                                     chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -1532,6 +1560,8 @@ chi::TaskResume Runtime::FlushMetadata(hipc::FullPtr<FlushMetadataTask> task,
                                        chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   task->entries_flushed_ = 0;
@@ -1539,7 +1569,6 @@ chi::TaskResume Runtime::FlushMetadata(hipc::FullPtr<FlushMetadataTask> task,
   const std::string &log_path = config_.performance_.metadata_log_path_;
   if (log_path.empty()) {
     task->return_code_ = 0;
-    (void)ctx;
     CHI_CO_RETURN;
   }
 
@@ -1656,7 +1685,6 @@ chi::TaskResume Runtime::FlushMetadata(hipc::FullPtr<FlushMetadataTask> task,
     HLOG(kError, "FlushMetadata: Exception: {}", e.what());
     task->return_code_ = 99;
   }
-  (void)ctx;
   CHI_CO_RETURN;
   CHI_TASK_BODY_END
 }
@@ -1665,6 +1693,8 @@ chi::TaskResume Runtime::FlushData(hipc::FullPtr<FlushDataTask> task,
                                    chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   task->bytes_flushed_ = 0;
@@ -1688,7 +1718,6 @@ chi::TaskResume Runtime::FlushData(hipc::FullPtr<FlushDataTask> task,
     HLOG(kDebug, "FlushData: No non-volatile targets available at level >= {}",
          target_level);
     task->return_code_ = 0;
-    (void)ctx;
     CHI_CO_RETURN;
   }
 
@@ -1854,7 +1883,6 @@ chi::TaskResume Runtime::FlushData(hipc::FullPtr<FlushDataTask> task,
   task->return_code_ = 0;
   HLOG(kDebug, "FlushData: Flushed {} blobs ({} bytes)", task->blobs_flushed_,
        task->bytes_flushed_);
-  (void)ctx;
   CHI_CO_RETURN;
   CHI_TASK_BODY_END
 }
@@ -2210,6 +2238,8 @@ BlobInfo *Runtime::CheckBlobExists(const std::string &blob_name,
                                    const TagId &tag_id) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   // Validate that blob name is provided
@@ -2831,6 +2861,8 @@ chi::TaskResume Runtime::PollTelemetryLog(
     hipc::FullPtr<PollTelemetryLogTask> task, chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -2859,7 +2891,6 @@ chi::TaskResume Runtime::PollTelemetryLog(
     task->return_code_ = 1;
     task->last_logical_time_ = 0;
   }
-  (void)ctx;
   CHI_CO_RETURN;
   CHI_TASK_BODY_END
 }
@@ -2868,6 +2899,8 @@ chi::TaskResume Runtime::GetBlobScore(hipc::FullPtr<GetBlobScoreTask> task,
                                       chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -2917,6 +2950,8 @@ chi::TaskResume Runtime::GetBlobSize(hipc::FullPtr<GetBlobSizeTask> task,
                                      chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -2965,6 +3000,8 @@ chi::TaskResume Runtime::GetBlobInfo(hipc::FullPtr<GetBlobInfoTask> task,
                                      chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -3022,6 +3059,8 @@ chi::TaskResume Runtime::GetContainedBlobs(
     hipc::FullPtr<GetContainedBlobsTask> task, chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -3077,6 +3116,8 @@ chi::TaskResume Runtime::TagQuery(hipc::FullPtr<TagQueryTask> task,
                                   chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
@@ -3126,6 +3167,8 @@ chi::TaskResume Runtime::BlobQuery(hipc::FullPtr<BlobQueryTask> task,
                                    chi::RunContext &ctx) {
 #ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
 #endif
   CHI_TASK_BODY_BEGIN
   try {
