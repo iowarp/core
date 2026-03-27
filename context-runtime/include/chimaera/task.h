@@ -1737,14 +1737,6 @@ inline chi::TaskResume make_task_fiber(F&& fn) {
   return chi::TaskResume(FiberHandle(state));
 }
 
-/// Mark current fiber as done and return to caller
-inline void fiber_co_return() {
-  auto* fs = tls_current_fiber;
-  if (!fs) return;
-  fs->done = true;
-  swapcontext(&fs->fiber_ctx, &fs->caller_ctx);
-}
-
 } // namespace chi::detail
 #endif // __NVCOMPILER
 
@@ -1760,7 +1752,10 @@ inline void fiber_co_return() {
 #  define CHI_TASK_BODY_BEGIN return chi::detail::make_task_fiber([=, &rctx]() mutable {
 #  define CHI_TASK_BODY_END   });
 #  define CHI_CO_AWAIT(expr)  chi::detail::fiber_co_await((expr), rctx)
-#  define CHI_CO_RETURN       do { chi::detail::fiber_co_return(); return; } while(0)
+// Use plain return so RAII destructors (e.g. ScopedCoMutex) run before the
+// fiber stack is freed. fiber_trampoline handles the final swapcontext back
+// to the worker after the lambda returns.
+#  define CHI_CO_RETURN       return
 #endif
 
 #endif  // CHIMAERA_INCLUDE_CHIMAERA_TASK_H_
