@@ -40,7 +40,7 @@
  *
  * Key differences from test_buddy_alloc_gpu (context-transport-primitives):
  *
- *   1. Uses CHIMAERA_GPU_ORCHESTRATOR_INIT — the real macro from the
+ *   1. Uses CHIMAERA_GPU_CLIENT_INIT — the real macro from the
  *      benchmark.  This adjusts block_info.backend.data_ per block:
  *        data_ += blockIdx.x * per_block
  *      so each block's IpcManager sees a shifted base pointer. The existing
@@ -92,11 +92,11 @@ __global__ void bench_mimic_kernel(
     int                num_allocs,   ///< allocations per thread
     int               *d_results) {
 
-  // ── Exact CHIMAERA_GPU_ORCHESTRATOR_INIT pattern ─────────────────────────
+  // ── Exact CHIMAERA_GPU_CLIENT_INIT pattern ─────────────────────────
   // Splits the backend per block (data_ += blockIdx.x * per_block), then
   // calls ClientInitGpu which placement-news one HSHM_DEFAULT_ALLOC_GPU_T
   // per thread and calls shm_init with the per-block sub-backend.
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   int global_tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -183,7 +183,7 @@ TEST_CASE("BuddyBenchmark - single block (control)",
 
 /**
  * Multi-block test: 4 blocks × 32 threads.
- * CHIMAERA_GPU_ORCHESTRATOR_INIT shifts data_ per block; this is the path
+ * CHIMAERA_GPU_CLIENT_INIT shifts data_ per block; this is the path
  * that was NOT covered by the single-block test and is suspected to trigger
  * the misaligned-address bug with BuddyAllocator.
  *

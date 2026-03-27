@@ -54,7 +54,7 @@
  * @param gpu_info     IPC manager GPU info (scratch backend, queues)
  * @param pool_id      MOD_NAME pool to submit tasks to
  * @param iterations   Number of submit+wait cycles per warp
- * @param num_blocks   Client block count (for CHIMAERA_GPU_ORCHESTRATOR_INIT)
+ * @param num_blocks   Client block count (for CHIMAERA_GPU_CLIENT_INIT)
  * @param d_done       Pinned host counter — each warp atomicAdds 1 on completion
  * @param d_progress   Per-warp progress (pinned host): 0=init, 1=running, 2=done
  */
@@ -66,7 +66,7 @@ __global__ void gpu_queue_stress_kernel(
     int *d_done,
     volatile int *d_progress) {
   // Initialize IPC — multi-block aware, partitions allocators per warp
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   chi::u32 warp_id = chi::IpcManager::GetWarpId();
 

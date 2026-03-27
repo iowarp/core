@@ -73,7 +73,7 @@ namespace chi_bench {
  * GPU client benchmark kernel.
  *
  * Each block's thread 0 initializes its IpcManager (via
- * CHIMAERA_GPU_ORCHESTRATOR_INIT for per-block backend partitioning), then
+ * CHIMAERA_GPU_CLIENT_INIT for per-block backend partitioning), then
  * submits total_tasks tasks sequentially via AsyncGpuSubmit + Wait(). Other
  * threads in the block are idle. Block 0 thread 0 writes d_done after its
  * loop completes.
@@ -92,7 +92,7 @@ __global__ void gpu_bench_client_kernel(
     int *d_done,
     chi::u32 total_warps) {
   // Partition backend per block; initialize block-local IpcManager
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   // Only lane 0 of each warp submits tasks (warp-level dispatch model).
   // The allocator is partitioned per-warp, so only one thread per warp
@@ -133,7 +133,7 @@ __global__ void gpu_bench_coroutine_kernel(
     chi::u32 subtasks,
     int *d_done,
     chi::u32 total_warps) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   if (chi::IpcManager::IsWarpScheduler()) {
     chimaera::MOD_NAME::Client client(pool_id);
@@ -168,7 +168,7 @@ __global__ void gpu_bench_alloc_kernel(
     chi::u32 total_tasks,
     int *d_done,
     chi::u32 total_threads) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   auto *ipc = CHI_IPC;
   for (chi::u32 i = 0; i < total_tasks; ++i) {
@@ -204,7 +204,7 @@ __global__ void gpu_bench_alloc_serde_kernel(
     chi::u32 total_tasks,
     int *d_done,
     chi::u32 total_threads) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   auto *ipc = CHI_IPC;
 
@@ -340,7 +340,7 @@ __global__ void gpu_bench_serde_kernel(
     chi::u32 total_tasks,
     int *d_done,
     chi::u32 total_threads) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   auto *ipc = CHI_IPC;
 
@@ -1658,7 +1658,7 @@ __global__ void gpu_putblob_kernel(
     chi::u32 total_warps,
     bool to_cpu,
     int *d_done) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   chi::u32 warp_id = chi::IpcManager::GetWarpId();
   chi::u32 lane_id = chi::IpcManager::GetLaneId();

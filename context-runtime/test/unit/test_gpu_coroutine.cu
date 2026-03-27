@@ -39,7 +39,7 @@
  * coroutines.
  *
  * Each test kernel initializes the IPC manager via
- * CHIMAERA_GPU_ORCHESTRATOR_INIT so that CHI_PRIV_ALLOC is available
+ * CHIMAERA_GPU_CLIENT_INIT so that CHI_PRIV_ALLOC is available
  * for coroutine frame allocation.
  *
  * Tests verify:
@@ -69,7 +69,7 @@ __device__ TaskResume basic_coro(RunContext &ctx) {
 
 __global__ void test_basic(chi::IpcManagerGpuInfo gpu_info,
                            int num_blocks, int *result) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
   RunContext ctx;
   auto c = basic_coro(ctx);
   c.resume();
@@ -91,7 +91,7 @@ __device__ TaskResume yielding_coro(RunContext &ctx, int *counter) {
 
 __global__ void test_yield(chi::IpcManagerGpuInfo gpu_info,
                            int num_blocks, int *result) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
   int counter = 0;
   RunContext ctx;
   auto c = yielding_coro(ctx, &counter);
@@ -129,7 +129,7 @@ __device__ TaskResume outer_sync(RunContext &ctx, int *counter) {
 
 __global__ void test_nested_sync(chi::IpcManagerGpuInfo gpu_info,
                                  int num_blocks, int *result) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
   int counter = 0;
   RunContext ctx;
   auto c = outer_sync(ctx, &counter);
@@ -151,7 +151,7 @@ __device__ TaskResume spin_coro(RunContext &ctx, int *counter) {
 
 __global__ void test_scheduler(chi::IpcManagerGpuInfo gpu_info,
                                int num_blocks, int *result) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
   int counter = 0;
   RunContext ctx;
   CoroutineScheduler sched;
@@ -197,7 +197,7 @@ __device__ TaskResume multi_coro(RunContext &ctx, int *val, int increment) {
 
 __global__ void test_multi_suspended(chi::IpcManagerGpuInfo gpu_info,
                                      int num_blocks, int *result) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
   int val_a = 0, val_b = 0;
   RunContext ctx_a, ctx_b;
   CoroutineScheduler sched;
