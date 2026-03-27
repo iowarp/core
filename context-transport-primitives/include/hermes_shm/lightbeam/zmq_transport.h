@@ -280,6 +280,7 @@ class ZeroMqTransport : public Transport {
     size_t write_bulk_count = meta.send_bulks;
 
     // ROUTER mode: prepend identity frame + empty delimiter
+#if !HSHM_IS_GPU
     if (IsServer() && !meta.client_info_.identity_.empty()) {
       // Send identity frame
       int rc = zmq_send(socket_, meta.client_info_.identity_.data(),
@@ -296,7 +297,9 @@ class ZeroMqTransport : public Transport {
              zmq_strerror(zmq_errno()));
         return zmq_errno();
       }
-    } else if (IsClient()) {
+    } else
+#endif
+    if (IsClient()) {
       // DEALER mode: send empty delimiter frame
       int rc = zmq_send(socket_, "", 0, ZMQ_SNDMORE);
       if (rc == -1) {
@@ -350,8 +353,10 @@ class ZeroMqTransport : public Transport {
     ClientInfo info;
     info.rc = RecvMetadata(meta, ctx);
     if (info.rc != 0) return info;
+#if !HSHM_IS_GPU
     // Copy identity from recv into ClientInfo
     info.identity_ = meta.client_info_.identity_;
+#endif
     // Set up recv entries from send descriptors
     for (const auto& send_bulk : meta.send) {
       Bulk recv_bulk;
@@ -380,9 +385,11 @@ class ZeroMqTransport : public Transport {
         return err;
       }
       // Store identity in meta for targeted Send responses
+#if !HSHM_IS_GPU
       meta.client_info_.identity_ = std::string(
           static_cast<char*>(zmq_msg_data(&identity_msg)),
           zmq_msg_size(&identity_msg));
+#endif
       zmq_msg_close(&identity_msg);
 
       // Receive and discard empty delimiter frame
