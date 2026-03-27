@@ -42,7 +42,7 @@ __global__ void gpu_bdev_alloc_free_kernel(
     chi::u32 iterations,
     int *d_done,
     volatile int *d_progress) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   chi::u32 warp_id = chi::IpcManager::GetWarpId();
   chi::u32 lane_id = chi::IpcManager::GetLaneId();
@@ -105,7 +105,7 @@ __global__ void gpu_bdev_read_write_kernel(
     volatile int *d_progress,
     long long *d_write_clk,
     long long *d_read_clk) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   chi::u32 warp_id = chi::IpcManager::GetWarpId();
   chi::u32 lane_id = chi::IpcManager::GetLaneId();

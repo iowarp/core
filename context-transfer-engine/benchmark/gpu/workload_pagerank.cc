@@ -113,7 +113,7 @@ __global__ void pr_cte_kernel(
     chi::u32 total_warps,
     float alpha,
     int *d_done) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   chi::u32 warp_id = chi::IpcManager::GetWarpId();
   chi::u32 lane_id = chi::IpcManager::GetLaneId();

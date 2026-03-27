@@ -2821,6 +2821,32 @@ HSHM_GPU_FUN inline hipc::PartitionedAllocator *GetSharedAllocGpu() {
  * @param gpu_info IpcManagerGpuInfo with backends and queue pointers
  * @param num_blocks Total number of blocks in the orchestrator grid
  */
+/**
+ * Multi-block GPU client kernel initialization macro.
+ *
+ * Like CHIMAERA_GPU_ORCHESTRATOR_INIT but does NOT set is_gpu_runtime_.
+ * This means Send() uses the regular SendGpu() path (serialized into
+ * gpu2gpu_queue ring buffer) instead of SendGpuDirect() (raw pointers
+ * into internal_queue).
+ *
+ * Use this for client kernels that submit tasks TO the orchestrator.
+ * Use CHIMAERA_GPU_ORCHESTRATOR_INIT only for the orchestrator itself.
+ */
+#define CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks)                         \
+  chi::IpcManager *g_ipc_manager_ptr = chi::IpcManager::GetBlockIpcManager();  \
+  int thread_id = chi::IpcManager::GetGpuThreadId();                           \
+  int num_threads = chi::IpcManager::GetGpuNumThreads();                       \
+  if (thread_id == 0) {                                                        \
+    chi::IpcManagerGpuInfo block_info = gpu_info;                              \
+    if (blockIdx.x != 0) {                                                     \
+      block_info.skip_heap_init = true;                                        \
+      block_info.skip_scratch_init = true;                                     \
+    }                                                                          \
+    g_ipc_manager_ptr->ClientInitGpu(block_info, num_threads, num_blocks);     \
+  }                                                                            \
+  __syncthreads();                                                             \
+  chi::IpcManager &g_ipc_manager = *g_ipc_manager_ptr
+
 #define CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks)                   \
   chi::IpcManager *g_ipc_manager_ptr = chi::IpcManager::GetBlockIpcManager();  \
   int thread_id = chi::IpcManager::GetGpuThreadId();                           \

@@ -84,7 +84,7 @@ __global__ void gpu_client_overhead_kernel(
     int *d_done,
     volatile int *d_progress,
     long long *d_submit_clk) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   chi::u32 warp_id = chi::IpcManager::GetWarpId();
   chi::u32 lane_id = chi::IpcManager::GetLaneId();

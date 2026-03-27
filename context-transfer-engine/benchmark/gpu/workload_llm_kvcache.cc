@@ -130,7 +130,7 @@ __global__ void llm_cte_kernel(
     chi::u32 num_layers, chi::u32 num_heads, chi::u32 seq_len, chi::u32 head_dim,
     chi::u32 decode_token_pos,
     int *d_done) {
-  CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   chi::u32 warp_id = chi::IpcManager::GetWarpId();
   chi::u32 lane_id = chi::IpcManager::GetLaneId();
@@ -302,7 +302,7 @@ int run_workload_llm_kvcache(const WorkloadConfig &cfg, const char *mode, Worklo
     uint32_t total_warps = (cfg.client_blocks * cfg.client_threads) / 32;
     if (total_warps == 0) total_warps = 1;
     // Cap active warps to number of heads (no point having idle warps)
-    // Also must cap client_blocks to match, since CHIMAERA_GPU_ORCHESTRATOR_INIT
+    // Also must cap client_blocks to match, since CHIMAERA_GPU_CLIENT_INIT
     // runs on all launched blocks.
     uint32_t active_warps = std::min(total_warps, nh);
     uint32_t active_client_blocks = (active_warps * 32 + cfg.client_threads - 1) / cfg.client_threads;
