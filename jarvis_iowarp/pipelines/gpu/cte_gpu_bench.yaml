@@ -27,5 +27,9 @@ pkgs:
     client_threads: 32
     io_size: "128k"
     iterations: 16
-    hbm_cache: 100
     timeout: 120
+    # Storage targets for CTE mode (type:size pairs)
+    # If empty, defaults to single hbm:256m target
+    targets:
+      - ["hbm", "256m"]
+      - ["pinned", "256m"]

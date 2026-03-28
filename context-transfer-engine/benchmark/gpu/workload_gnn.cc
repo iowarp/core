@@ -506,7 +506,10 @@ int run_workload_gnn(const WorkloadConfig &cfg, const char *mode,
     uint64_t feature_bytes = num_nodes * emb_dim * sizeof(float);
     uint64_t fb_aligned = ((feature_bytes+cfg.bam_page_size-1)/cfg.bam_page_size)*cfg.bam_page_size;
     uint32_t total_pages = (uint32_t)(fb_aligned / cfg.bam_page_size);
-    uint32_t cache_pages = std::max(1u, total_pages * cfg.hbm_cache_pct / 100);
+    uint64_t hbm_bytes = cfg.GetHbmBytes();
+    uint32_t cache_pages = (hbm_bytes > 0)
+        ? std::max(1u, (uint32_t)(hbm_bytes / cfg.bam_page_size))
+        : total_pages;
 
     bam::PageCacheConfig pcfg;
     pcfg.page_size=cfg.bam_page_size; pcfg.num_pages=cache_pages;
@@ -518,7 +521,8 @@ int run_workload_gnn(const WorkloadConfig &cfg, const char *mode,
     feat_array.load_from_host(features.data(), num_nodes * emb_dim);
 
     HIPRINT("  BaM HBM cache: {} / {} pages ({}%) x {} B = {:.1f} MB",
-            cache_pages, total_pages, cfg.hbm_cache_pct, cfg.bam_page_size,
+            cache_pages, total_pages,
+            cache_pages * 100 / std::max(1u, total_pages), cfg.bam_page_size,
             (double)cache_pages*cfg.bam_page_size/(1024.0*1024.0));
 
     auto t0=std::chrono::high_resolution_clock::now(); int iter;

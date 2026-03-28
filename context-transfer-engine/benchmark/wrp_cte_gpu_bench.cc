@@ -88,13 +88,14 @@ struct BenchConfig {
   chi::u64 warp_bytes = 128 * 1024;  // per-warp I/O size
   chi::u32 iterations = 16;          // iterations per warp
   int timeout_sec = 60;              // PollDone timeout in seconds
-  chi::u32 hbm_cache_pct = 100;     // HBM cache ratio (0-100%)
   // I/O options
   bool validate = false;
   std::string io_pattern = "sequential";  // "sequential" or "random"
   std::string routing = "local";          // "local" or "to_cpu"
   // Workload mode: hbm, direct, cte, bam
   std::string workload_mode = "hbm";
+  // CTE storage targets (populated via --target flags)
+  std::vector<TargetSpec> targets;
   // Workload-specific parameters
   chi::u32 param_vertices = 100000;
   chi::u32 param_avg_degree = 16;
@@ -145,12 +146,34 @@ void PrintUsage(const char *prog) {
   HIPRINT("  --client-threads <N>   GPU client kernel threads/block (default: 32)");
   HIPRINT("  --io-size <bytes>      Per-warp I/O size (default: 128K, supports k/m/g suffixes)");
   HIPRINT("  --iterations <N>       Iterations per warp (default: 16)");
-  HIPRINT("  --hbm-cache <pct>      HBM cache ratio 0-100 (default: 100)");
   HIPRINT("  --timeout <seconds>    PollDone timeout in seconds (default: 60)");
   HIPRINT("  --validate             Enable data validation after reads");
   HIPRINT("  --io-pattern <p>       I/O pattern: sequential or random (default: sequential)");
   HIPRINT("  --routing <r>          Task routing: local or to_cpu (default: local)");
+  HIPRINT("  --target <type:size>   CTE storage target (repeatable). type: hbm, pinned, ram");
+  HIPRINT("                         Example: --target hbm:256m --target pinned:256m");
+  HIPRINT("                         If omitted, defaults to one target based on --hbm-cache");
   HIPRINT("  --help, -h             Show this help");
+}
+
+/** Parse "type:size" into a TargetSpec. Returns true on success. */
+bool ParseTarget(const std::string &spec, TargetSpec &out) {
+  auto colon = spec.find(':');
+  if (colon == std::string::npos || colon == 0) return false;
+  std::string type_str = spec.substr(0, colon);
+  std::string size_str = spec.substr(colon + 1);
+  if (type_str == "hbm") {
+    out.bdev_type = chimaera::bdev::BdevType::kHbm;
+  } else if (type_str == "pinned") {
+    out.bdev_type = chimaera::bdev::BdevType::kPinned;
+  } else if (type_str == "ram") {
+    out.bdev_type = chimaera::bdev::BdevType::kRam;
+  } else {
+    return false;
+  }
+  out.label = type_str;
+  out.size_bytes = ParseSize(size_str);
+  return out.size_bytes > 0;
 }
 
 bool ParseArgs(int argc, char **argv, BenchConfig &cfg) {
@@ -184,12 +207,6 @@ bool ParseArgs(int argc, char **argv, BenchConfig &cfg) {
       cfg.warp_bytes = ParseSize(argv[++i]);
     } else if (arg == "--iterations" && i + 1 < argc) {
       cfg.iterations = static_cast<chi::u32>(std::stoul(argv[++i]));
-    } else if (arg == "--hbm-cache" && i + 1 < argc) {
-      cfg.hbm_cache_pct = static_cast<chi::u32>(std::stoul(argv[++i]));
-      if (cfg.hbm_cache_pct > 100) {
-        HLOG(kError, "hbm-cache must be 0-100, got {}", cfg.hbm_cache_pct);
-        return false;
-      }
     } else if (arg == "--timeout" && i + 1 < argc) {
       cfg.timeout_sec = static_cast<int>(std::stol(argv[++i]));
     } else if (arg == "--workload-mode" && i + 1 < argc) {
@@ -226,6 +243,13 @@ bool ParseArgs(int argc, char **argv, BenchConfig &cfg) {
       cfg.param_seq_len = static_cast<chi::u32>(std::stoul(argv[++i]));
     } else if (arg == "--decode-tokens" && i + 1 < argc) {
       cfg.param_decode_tokens = static_cast<chi::u32>(std::stoul(argv[++i]));
+    } else if (arg == "--target" && i + 1 < argc) {
+      TargetSpec ts;
+      if (!ParseTarget(argv[++i], ts)) {
+        HLOG(kError, "Invalid --target '{}'. Format: type:size (hbm:256m)", argv[i]);
+        return false;
+      }
+      cfg.targets.push_back(ts);
     } else {
       HLOG(kError, "Unknown option: {}", arg);
       PrintUsage(argv[0]);
@@ -324,7 +348,7 @@ int main(int argc, char **argv) {
     wcfg.client_threads = cfg.client_threads;
     wcfg.iterations = cfg.iterations;
     wcfg.timeout_sec = cfg.timeout_sec;
-    wcfg.hbm_cache_pct = cfg.hbm_cache_pct;
+    wcfg.targets = cfg.targets;
     wcfg.param_vertices = cfg.param_vertices;
     wcfg.param_avg_degree = cfg.param_avg_degree;
     wcfg.param_num_nodes = cfg.param_num_nodes;
@@ -364,33 +388,46 @@ int main(int argc, char **argv) {
       }
       std::this_thread::sleep_for(200ms);
 
+      // Build target list: use --target specs, or default to 256MB HBM
+      std::vector<TargetSpec> targets = cfg.targets;
+      if (targets.empty()) {
+        TargetSpec ts;
+        ts.bdev_type = chimaera::bdev::BdevType::kHbm;
+        ts.label = "hbm";
+        ts.size_bytes = 256ULL * 1024 * 1024;
+        targets.push_back(ts);
+      }
+
+      // Register each storage target (CPU + GPU)
       chi::PoolId bdev_pool_id(800, 0);
-      chimaera::bdev::BdevType bdev_enum = (cfg.hbm_cache_pct >= 100)
-          ? chimaera::bdev::BdevType::kHbm : chimaera::bdev::BdevType::kPinned;
-      std::string bdev_label = (cfg.hbm_cache_pct >= 100) ? "hbm" : "pinned";
-      std::string target_name = bdev_label + "::workload_target";
+      for (size_t ti = 0; ti < targets.size(); ti++) {
+        const auto &ts = targets[ti];
+        std::string target_name = ts.label + "::workload_target_" + std::to_string(ti);
+        HIPRINT("  Registering target: {} ({} bytes)", target_name, ts.size_bytes);
 
-      auto reg_task = cte_client.AsyncRegisterTarget(
-          target_name, bdev_enum, 256ULL * 1024 * 1024,
-          chi::PoolQuery::Local(), bdev_pool_id);
-      reg_task.Wait();
-      if (reg_task->GetReturnCode() != 0) {
-        HLOG(kError, "Failed to register target: {}", reg_task->GetReturnCode());
-        return 1;
-      }
-      std::this_thread::sleep_for(200ms);
+        auto reg_task = cte_client.AsyncRegisterTarget(
+            target_name, ts.bdev_type, ts.size_bytes,
+            chi::PoolQuery::Local(), bdev_pool_id);
+        reg_task.Wait();
+        if (reg_task->GetReturnCode() != 0) {
+          HLOG(kError, "Failed to register target {}: {}",
+               target_name, reg_task->GetReturnCode());
+          return 1;
+        }
+        std::this_thread::sleep_for(200ms);
 
-      auto gpu_reg_task = cte_client.AsyncRegisterTarget(
-          target_name, bdev_enum, 256ULL * 1024 * 1024,
-          chi::PoolQuery::Local(), bdev_pool_id,
-          chi::PoolQuery::LocalGpuBcast());
-      gpu_reg_task.Wait();
-      if (gpu_reg_task->GetReturnCode() != 0) {
-        HLOG(kError, "Failed to register GPU target: {}",
-             gpu_reg_task->GetReturnCode());
-        return 1;
+        auto gpu_reg_task = cte_client.AsyncRegisterTarget(
+            target_name, ts.bdev_type, ts.size_bytes,
+            chi::PoolQuery::Local(), bdev_pool_id,
+            chi::PoolQuery::LocalGpuBcast());
+        gpu_reg_task.Wait();
+        if (gpu_reg_task->GetReturnCode() != 0) {
+          HLOG(kError, "Failed to register GPU target {}: {}",
+               target_name, gpu_reg_task->GetReturnCode());
+          return 1;
+        }
+        std::this_thread::sleep_for(200ms);
       }
-      std::this_thread::sleep_for(200ms);
 
       auto tag_task = cte_client.AsyncGetOrCreateTag(
           "workload_tag", wrp_cte::core::TagId::GetNull(),
@@ -470,36 +507,50 @@ int main(int argc, char **argv) {
     }
     std::this_thread::sleep_for(200ms);
 
-    chi::PoolId bdev_pool_id(800, 0);
     chi::u64 data_footprint = cfg.warp_bytes * client_warps;
-    chi::u64 bdev_size = std::max(data_footprint + 64ULL * 1024 * 1024,
-                                    256ULL * 1024 * 1024);
+    chi::u64 default_bdev_size = std::max(data_footprint + 64ULL * 1024 * 1024,
+                                           256ULL * 1024 * 1024);
 
-    chimaera::bdev::BdevType bdev_enum = (cfg.hbm_cache_pct >= 100)
-        ? chimaera::bdev::BdevType::kHbm : chimaera::bdev::BdevType::kPinned;
-    std::string bdev_label = (cfg.hbm_cache_pct >= 100) ? "hbm" : "pinned";
-    std::string target_name = bdev_label + "::cte_gpu_bench_target";
-
-    auto reg_task = cte_client.AsyncRegisterTarget(
-        target_name, bdev_enum, bdev_size,
-        chi::PoolQuery::Local(), bdev_pool_id);
-    reg_task.Wait();
-    if (reg_task->GetReturnCode() != 0) {
-      HLOG(kError, "Failed to register target (CPU): {}", reg_task->GetReturnCode());
-      return 1;
+    // Build target list: use --target specs, or default to HBM
+    std::vector<TargetSpec> targets = cfg.targets;
+    if (targets.empty()) {
+      TargetSpec ts;
+      ts.bdev_type = chimaera::bdev::BdevType::kHbm;
+      ts.label = "hbm";
+      ts.size_bytes = default_bdev_size;
+      targets.push_back(ts);
     }
-    std::this_thread::sleep_for(200ms);
 
-    auto gpu_reg_task = cte_client.AsyncRegisterTarget(
-        target_name, bdev_enum, bdev_size,
-        chi::PoolQuery::Local(), bdev_pool_id,
-        chi::PoolQuery::LocalGpuBcast());
-    gpu_reg_task.Wait();
-    if (gpu_reg_task->GetReturnCode() != 0) {
-      HLOG(kError, "Failed to register target (GPU): {}", gpu_reg_task->GetReturnCode());
-      return 1;
+    // Register each storage target (CPU + GPU)
+    chi::PoolId bdev_pool_id(800, 0);
+    for (size_t ti = 0; ti < targets.size(); ti++) {
+      const auto &ts = targets[ti];
+      std::string target_name = ts.label + "::bench_target_" + std::to_string(ti);
+      HIPRINT("  Registering target: {} ({} bytes)", target_name, ts.size_bytes);
+
+      auto reg_task = cte_client.AsyncRegisterTarget(
+          target_name, ts.bdev_type, ts.size_bytes,
+          chi::PoolQuery::Local(), bdev_pool_id);
+      reg_task.Wait();
+      if (reg_task->GetReturnCode() != 0) {
+        HLOG(kError, "Failed to register target {}: {}",
+             target_name, reg_task->GetReturnCode());
+        return 1;
+      }
+      std::this_thread::sleep_for(200ms);
+
+      auto gpu_reg_task = cte_client.AsyncRegisterTarget(
+          target_name, ts.bdev_type, ts.size_bytes,
+          chi::PoolQuery::Local(), bdev_pool_id,
+          chi::PoolQuery::LocalGpuBcast());
+      gpu_reg_task.Wait();
+      if (gpu_reg_task->GetReturnCode() != 0) {
+        HLOG(kError, "Failed to register GPU target {}: {}",
+             target_name, gpu_reg_task->GetReturnCode());
+        return 1;
+      }
+      std::this_thread::sleep_for(200ms);
     }
-    std::this_thread::sleep_for(200ms);
 
     auto tag_task = cte_client.AsyncGetOrCreateTag(
         "gpu_bench_tag", wrp_cte::core::TagId::GetNull(),

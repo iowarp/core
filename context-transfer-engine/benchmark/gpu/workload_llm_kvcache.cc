@@ -457,7 +457,10 @@ int run_workload_llm_kvcache(const WorkloadConfig &cfg, const char *mode, Worklo
   else if (m=="bam") {
     uint64_t kvb_al=((kvbt+cfg.bam_page_size-1)/cfg.bam_page_size)*cfg.bam_page_size;
     uint32_t total_pages=(uint32_t)(kvb_al/cfg.bam_page_size);
-    uint32_t cache_pages=std::max(1u, total_pages * cfg.hbm_cache_pct / 100);
+    uint64_t hbm_bytes = cfg.GetHbmBytes();
+    uint32_t cache_pages = (hbm_bytes > 0)
+        ? std::max(1u, (uint32_t)(hbm_bytes / cfg.bam_page_size))
+        : total_pages;
     bam::PageCacheConfig pcfg; pcfg.page_size=cfg.bam_page_size; pcfg.num_pages=cache_pages;
     pcfg.num_queues=0;pcfg.queue_depth=0;pcfg.backend=bam::BackendType::kHostMemory;pcfg.nvme_dev=nullptr;
     bam::PageCache cache(pcfg);
@@ -465,7 +468,8 @@ int run_workload_llm_kvcache(const WorkloadConfig &cfg, const char *mode, Worklo
     std::vector<float> h_kv(nl*kvpl, 0.0f);
     kv_array.load_from_host(h_kv.data(), nl*kvpl);
     HIPRINT("  BaM HBM cache: {} / {} pages ({}%) x {} B = {:.1f} MB",
-            cache_pages,total_pages,cfg.hbm_cache_pct,cfg.bam_page_size,
+            cache_pages, total_pages,
+            cache_pages * 100 / std::max(1u, total_pages), cfg.bam_page_size,
             (double)cache_pages*cfg.bam_page_size/(1024.0*1024.0));
     auto t0=std::chrono::high_resolution_clock::now();
     for(uint32_t t=0;t<dt;t++){

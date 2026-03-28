@@ -25,7 +25,7 @@ Parameters:
 - client_threads: GPU client kernel threads per block
 - io_size:        Per-warp I/O size (supports k/m/g suffixes)
 - iterations:     Number of iterations per warp
-- hbm_cache:      HBM cache ratio 0-100 (controls CTE bdev and BaM cache)
+- targets:        CTE storage targets as [type, size] pairs
 - timeout:        PollDone timeout in seconds
 
 Assumes wrp_cte_gpu_bench is installed and available in PATH.
@@ -115,12 +115,6 @@ class WrpCteGpuBench(Application):
                 'default': 16,
             },
             {
-                'name': 'hbm_cache',
-                'msg': 'HBM cache ratio 0-100%',
-                'type': int,
-                'default': 100,
-            },
-            {
                 'name': 'timeout',
                 'msg': 'PollDone timeout in seconds',
                 'type': int,
@@ -131,6 +125,15 @@ class WrpCteGpuBench(Application):
                 'msg': 'Output directory for benchmark results',
                 'type': str,
                 'default': '/tmp/wrp_cte_gpu_bench',
+            },
+            {
+                'name': 'targets',
+                'msg': 'CTE storage targets as [type, size] pairs',
+                'type': list,
+                'default': [],
+                'help': 'Example: [["hbm", "256m"], ["pinned", "256m"]]. '
+                        'Types: hbm, pinned, ram. '
+                        'If empty, defaults to single hbm:256m target.',
             },
         ]
 
@@ -149,8 +152,12 @@ class WrpCteGpuBench(Application):
                  f"{self.config['client_threads']}t ({warps} warps)")
         self.log(f"  IO/warp:        {self.config['io_size']}")
         self.log(f"  Iterations:     {self.config['iterations']}")
-        self.log(f"  HBM cache:      {self.config['hbm_cache']}%")
         self.log(f"  Timeout:        {self.config['timeout']}s")
+        targets = self.config.get('targets', [])
+        if targets:
+            self.log(f"  Targets:        {targets}")
+        else:
+            self.log(f"  Targets:        (default: hbm:256m)")
 
     def _kill_stale_processes(self):
         """Kill any leftover wrp_cte_gpu_bench or chimaera processes and
@@ -199,7 +206,6 @@ class WrpCteGpuBench(Application):
             f'--client-threads {self.config["client_threads"]}',
             f'--io-size {self.config["io_size"]}',
             f'--iterations {self.config["iterations"]}',
-            f'--hbm-cache {self.config["hbm_cache"]}',
             f'--timeout {self.config["timeout"]}',
         ]
 
@@ -208,6 +214,11 @@ class WrpCteGpuBench(Application):
             cmd_parts.append(
                 f'--workload-mode {self.config["workload_mode"]}')
             cmd_parts.append(f'--routing {self.config["routing"]}')
+
+        # Add storage targets
+        for target in self.config.get('targets', []):
+            if isinstance(target, (list, tuple)) and len(target) >= 2:
+                cmd_parts.append(f'--target {target[0]}:{target[1]}')
 
         cmd = ' '.join(cmd_parts)
 
@@ -231,7 +242,7 @@ class WrpCteGpuBench(Application):
         stat_dict[f'{pid}.client_threads'] = self.config['client_threads']
         stat_dict[f'{pid}.io_size'] = self.config['io_size']
         stat_dict[f'{pid}.iterations'] = self.config['iterations']
-        stat_dict[f'{pid}.hbm_cache'] = self.config['hbm_cache']
+        stat_dict[f'{pid}.targets'] = str(self.config.get('targets', []))
         stat_dict[f'{pid}.warps'] = (
             self.config['client_blocks'] * self.config['client_threads']) // 32
 
@@ -314,7 +325,6 @@ class WrpCteGpuBench(Application):
         mode_col = f'{pid}.workload_mode'
         routing_col = f'{pid}.routing'
         io_col = f'{pid}.io_size'
-        cache_col = f'{pid}.hbm_cache'
 
         if bw_col not in df.columns:
             return
@@ -348,23 +358,7 @@ class WrpCteGpuBench(Application):
                         dpi=150)
             plt.close(fig)
 
-        # --- Plot 2: Bandwidth vs HBM cache ratio, grouped by mode ---
-        if cache_col in df.columns and len(df[cache_col].dropna().unique()) > 1:
-            fig, ax = plt.subplots(figsize=(10, 6))
-            pivot = df.groupby([cache_col, '_mode_label'])[bw_col].mean().unstack()
-            pivot.plot(kind='bar', ax=ax)
-            ax.set_xlabel('HBM Cache (%)')
-            ax.set_ylabel('Bandwidth (GB/s)')
-            ax.set_title('Bandwidth by HBM Cache Ratio and Mode')
-            ax.legend(title='Mode', bbox_to_anchor=(1.02, 1),
-                      loc='upper left', fontsize=8)
-            fig.tight_layout()
-            fig.savefig(os.path.join(output_dir,
-                                     'bandwidth_vs_hbm_cache_by_mode.png'),
-                        dpi=150)
-            plt.close(fig)
-
-        # --- Plot 3: Bandwidth vs workload, grouped by mode ---
+        # --- Plot 2: Bandwidth vs workload, grouped by mode ---
         if tc_col in df.columns and len(df[tc_col].dropna().unique()) > 1:
             fig, ax = plt.subplots(figsize=(10, 6))
             pivot = df.groupby([tc_col, '_mode_label'])[bw_col].mean().unstack()

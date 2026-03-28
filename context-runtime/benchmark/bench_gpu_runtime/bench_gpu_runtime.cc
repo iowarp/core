@@ -53,6 +53,7 @@
 #include <chimaera/MOD_NAME/MOD_NAME_client.h>
 #include <wrp_cte/core/core_client.h>
 #include <hermes_shm/util/logging.h>
+#include <cuda_runtime.h>
 
 #include <chrono>
 #include <cstring>
@@ -466,9 +467,45 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  // Cap threads/block at 256 to avoid exceeding GPU register budget.
+  // Redistribute excess threads across more blocks.
+  {
+    constexpr chi::u32 kMaxThreads = 256;
+    chi::u32 total_rt = cfg.rt_blocks * cfg.rt_threads;
+    if (cfg.rt_threads > kMaxThreads && total_rt > kMaxThreads) {
+      cfg.rt_blocks = (total_rt + kMaxThreads - 1) / kMaxThreads;
+      cfg.rt_threads = kMaxThreads;
+    }
+    chi::u32 total_cl = cfg.client_blocks * cfg.client_threads;
+    if (cfg.client_threads > kMaxThreads && total_cl > kMaxThreads) {
+      cfg.client_blocks = (total_cl + kMaxThreads - 1) / kMaxThreads;
+      cfg.client_threads = kMaxThreads;
+    }
+  }
+
+  // The orchestrator and client kernels must run concurrently on the GPU.
+  // Each block occupies one SM (high register usage). If their combined
+  // block count exceeds the SM count, the second kernel can't launch
+  // and the benchmark deadlocks.
+  {
+    int sm_count = 0;
+    cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, 0);
+    if (sm_count > 0) {
+      chi::u32 total_blocks = cfg.rt_blocks + cfg.client_blocks;
+      if (total_blocks > static_cast<chi::u32>(sm_count)) {
+        // Scale both down proportionally to fit, keeping warp count balanced
+        chi::u32 max_each = static_cast<chi::u32>(sm_count) / 2;
+        if (cfg.rt_blocks > max_each) cfg.rt_blocks = max_each;
+        if (cfg.client_blocks > max_each) cfg.client_blocks = max_each;
+        HIPRINT("WARNING: Capped blocks to fit {} SMs: rt_blocks={}, client_blocks={}",
+                sm_count, cfg.rt_blocks, cfg.client_blocks);
+      }
+    }
+  }
+
   HIPRINT("=== Chimaera GPU Runtime Benchmark ===");
-  HIPRINT("RT blocks={}, RT threads={}, client blocks={} (1 thread/block)",
-          cfg.rt_blocks, cfg.rt_threads, cfg.client_blocks);
+  HIPRINT("RT blocks={}, RT threads={}, client blocks={}, client threads={}",
+          cfg.rt_blocks, cfg.rt_threads, cfg.client_blocks, cfg.client_threads);
   HIPRINT("Total tasks/block={}", cfg.total_tasks);
 
   return RunBenchmark(cfg);

@@ -8,4 +8,4 @@ config:
       rt_threads: 32
       client_blocks: 1
       client_threads: 32
-      total_tasks: 256
+      total_tasks: 1024

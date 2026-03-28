@@ -236,12 +236,11 @@ class LocalSerialize {
 
   DataT &data_;
   size_t cur_off_ = 0;
+  bool warp_converged_ = false;
 
  public:
-  HSHM_CROSS_FUN LocalSerialize(DataT &data) : data_(data), cur_off_(0) {
-    data_.resize(0);
-  }
-  HSHM_CROSS_FUN LocalSerialize(DataT &data, bool) : data_(data), cur_off_(data.size()) {}
+  HSHM_CROSS_FUN LocalSerialize(DataT &data) : data_(data), cur_off_(0), warp_converged_(false) {}
+  HSHM_CROSS_FUN LocalSerialize(DataT &data, bool) : data_(data), cur_off_(data.size()), warp_converged_(false) {}
 
   /** Commit the local offset to the vector's size. Must be called when
    *  serialization is complete so that data_.size() reflects what was written. */
@@ -343,20 +342,48 @@ class LocalSerialize {
     cur_off_ = new_off;
   }
 
-  /** Save function (binary data) */
+  /** Save function (binary data).
+   *  GPU: warp-parallel when warp_converged_, sequential otherwise. */
   HSHM_INLINE_CROSS_FUN
   LocalSerialize &write_binary(const char *data, size_t size) {
-    size_t new_off = cur_off_ + size;
-    if (new_off > data_.size()) {
-      size_t new_cap = data_.size();
-      if (new_cap == 0) new_cap = 64;
-      while (new_cap < new_off) new_cap *= 2;
-      data_.resize(new_cap);
+#if HSHM_IS_GPU
+    if (warp_converged_) {
+      uint32_t lane_id = threadIdx.x & 31;
+      if (lane_id == 0) {
+        size_t new_off = cur_off_ + size;
+        if (new_off > data_.size()) {
+          size_t new_cap = data_.size();
+          if (new_cap == 0) new_cap = 64;
+          while (new_cap < new_off) new_cap *= 2;
+          data_.resize(new_cap);
+        }
+      }
+      __syncwarp();
+      char *dst = data_.data() + cur_off_;
+      for (size_t i = lane_id * 8; i < size; i += 32 * 8) {
+        size_t chunk = (i + 8 <= size) ? 8 : (size - i);
+        memcpy(dst + i, data + i, chunk);
+      }
+      __syncwarp();
+      if (lane_id == 0) {
+        cur_off_ += size;
+      }
+      __syncwarp();
+    } else
+#endif
+    {
+      size_t new_off = cur_off_ + size;
+      if (new_off > data_.size()) {
+        size_t new_cap = data_.size();
+        if (new_cap == 0) new_cap = 64;
+        while (new_cap < new_off) new_cap *= 2;
+        data_.resize(new_cap);
+      }
+      if (size > 0) {
+        memcpy(data_.data() + cur_off_, data, size);
+      }
+      cur_off_ = new_off;
     }
-    if (size > 0) {
-      memcpy(data_.data() + cur_off_, data, size);
-    }
-    cur_off_ = new_off;
     return *this;
   }
 };
@@ -371,9 +398,10 @@ class LocalDeserialize {
 
   const DataT &data_;
   size_t cur_off_ = 0;
+  bool warp_converged_ = false;
 
  public:
-  HSHM_CROSS_FUN LocalDeserialize(const DataT &data) : data_(data) { cur_off_ = 0; }
+  HSHM_CROSS_FUN LocalDeserialize(const DataT &data) : data_(data), cur_off_(0), warp_converged_(false) {}
 
   /** right shift operator */
   template <typename T>
@@ -449,21 +477,45 @@ class LocalDeserialize {
     return *this;
   }
 
-  /** Load function (binary data) */
+  /** Load function (binary data).
+   *  GPU: warp-parallel when warp_converged_, sequential otherwise. */
   HSHM_INLINE_CROSS_FUN
   LocalDeserialize &read_binary(char *data, size_t size) {
-    if (cur_off_ + size > data_.size()) {
-#if HSHM_IS_HOST
-      HLOG(kError,
-           "LocalDeserialize::read_binary: Attempted to read beyond end of "
-           "data");
+#if HSHM_IS_GPU
+    if (warp_converged_) {
+      uint32_t lane_id = threadIdx.x & 31;
+      if (lane_id == 0) {
+        if (cur_off_ + size > data_.size()) {
+          size = 0;
+        }
+      }
+      __syncwarp();
+      const char *src = data_.data() + cur_off_;
+      for (size_t i = lane_id * 8; i < size; i += 32 * 8) {
+        size_t chunk = (i + 8 <= size) ? 8 : (size - i);
+        memcpy(data + i, src + i, chunk);
+      }
+      __syncwarp();
+      if (lane_id == 0) {
+        cur_off_ += size;
+      }
+      __syncwarp();
+    } else
 #endif
-      return *this;
+    {
+      if (cur_off_ + size > data_.size()) {
+#if HSHM_IS_HOST
+        HLOG(kError,
+             "LocalDeserialize::read_binary: Attempted to read beyond end of "
+             "data");
+#endif
+        return *this;
+      }
+      if (size > 0) {
+        memcpy(data, data_.data() + cur_off_, size);
+      }
+      cur_off_ += size;
     }
-    if (size > 0) {
-      memcpy(data, data_.data() + cur_off_, size);
-    }
-    cur_off_ += size;
     return *this;
   }
 };

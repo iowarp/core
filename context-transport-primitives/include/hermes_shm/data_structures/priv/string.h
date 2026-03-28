@@ -595,6 +595,7 @@ class basic_string {
   AllocT* alloc_;       /**< Pointer to allocator for memory management */
   T* data_;             /**< Cached data pointer (avoids branch + pointer chase) */
 
+ public:
   /**
    * Check if current string is using SSO buffer
    *
@@ -604,6 +605,45 @@ class basic_string {
   bool UsingSso() const {
     return using_sso_;
   }
+
+  /**
+   * Fix up the data_ pointer after a bulk memcpy.
+   * After memcpy, data_ still points to the source object's buffer.
+   * This repoints it to this object's own SSO buffer.
+   * Only valid when UsingSso() is true.
+   */
+  HSHM_INLINE_CROSS_FUN
+  void FixupSsoPointer() {
+    data_ = storage_.buffer_;
+  }
+
+  /**
+   * POD-safe state for SSO strings (no pointers).
+   * Serialized as a flat memcpy-able struct via ar.range().
+   */
+  struct SsoState {
+    T buffer_[SSOSize];
+    size_type size_;
+  };
+
+  /** Export SSO state for bulk serialization. */
+  HSHM_INLINE_CROSS_FUN SsoState GetSsoState() const {
+    SsoState s;
+    memcpy(s.buffer_, storage_.buffer_, SSOSize * sizeof(T));
+    s.size_ = size_;
+    return s;
+  }
+
+  /** Import SSO state after bulk deserialization. */
+  HSHM_INLINE_CROSS_FUN void SetSsoState(const SsoState &s) {
+    memcpy(storage_.buffer_, s.buffer_, SSOSize * sizeof(T));
+    size_ = s.size_;
+    using_sso_ = true;
+    alloc_ = nullptr;
+    data_ = storage_.buffer_;
+  }
+
+ private:
 
   /**
    * Get pointer to current string data (SSO or heap)

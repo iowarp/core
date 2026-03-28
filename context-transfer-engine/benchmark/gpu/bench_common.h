@@ -67,4 +67,25 @@ static inline uint64_t parse_size(const char *s) {
   }
 }
 
+#if HSHM_IS_HOST
+#include <hermes_shm/util/logging.h>
+/**
+ * Query and print kernel resource usage (registers, shared memory, max threads).
+ */
+static inline void PrintKernelInfo(const char *name, const void *func,
+                                    uint32_t blocks, uint32_t threads) {
+  cudaFuncAttributes attr;
+  if (cudaFuncGetAttributes(&attr, func) == cudaSuccess) {
+    int max_threads = (attr.numRegs > 0) ? (65536 / attr.numRegs) : 1024;
+    max_threads = (max_threads / 32) * 32;  // warp granularity
+    if (max_threads > 1024) max_threads = 1024;
+    HIPRINT("Kernel {}:", name);
+    HIPRINT("  Registers/thread:    {}", attr.numRegs);
+    HIPRINT("  Shared memory:       {} bytes", attr.sharedSizeBytes);
+    HIPRINT("  Max threads/block:   {} (register-limited)", max_threads);
+    HIPRINT("  Launch config:       {}b x {}t", blocks, threads);
+  }
+}
+#endif
+
 #endif  // BENCH_GPU_COMMON_H

@@ -13,10 +13,9 @@
 #   cte    -- CTE AsyncPutBlob/AsyncGetBlob (GPU-local)
 #   bam    -- BaM warp-cooperative page cache (GIDS-style)
 #
-# HBM cache ratio (--hbm-cache):
-#   100 -- All data in HBM
-#   50  -- Half in HBM, half spills to pinned DRAM
-#   20  -- 20% in HBM, rest in DRAM
+# Storage targets (--target type:size):
+#   hbm:256m   -- 256 MB in GPU HBM
+#   pinned:256m -- 256 MB in pinned host memory
 #
 # Fixed: client_blocks=64, rt_blocks=16
 #
@@ -41,16 +40,18 @@ config:
       rt_threads: 32
       io_size: "128k"
       iterations: 64
-      hbm_cache: 100
       timeout: 120
+      targets:
+        - ["hbm", "256m"]
+        - ["pinned", "256m"]
 
 vars:
   # --- Workloads ---
   bench.test_case:
-    - "synthetic"
-    - "pagerank"
+    # - "synthetic"
+    # - "pagerank"
     # - "gnn"
-    - "gray_scott"
+    # - "gray_scott"
     - "llm_kvcache"
 
   # --- Modes: CTE (Local), CTE (ToLocalCpu), BaM ---
@@ -61,14 +62,10 @@ vars:
   bench.io_size:    ["16k",  "128k", "16m"]
   bench.iterations: [256,    64,     64   ]
 
-  # --- HBM cache ratio (unified for both CTE and BaM) ---
-  bench.hbm_cache: [100, 50, 20]
-
 loop:
   - [bench.test_case]
   - [bench.workload_mode, bench.routing]
   - [bench.io_size, bench.iterations]
-  - [bench.hbm_cache]
 
-repeat: 3
+repeat: 1
 output: "${HOME}/cte_vs_bam_results"

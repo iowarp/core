@@ -80,6 +80,7 @@ class Worker {
   SuspendedQueue *suspended_;
   u32 num_suspended_;
 
+
   HSHM_GPU_FUN void Init(u32 worker_id, u32 lane_id, TaskQueue *cpu2gpu_queue,
                          TaskQueue *gpu2gpu_queue, TaskQueue *internal_queue,
                          PoolManager *pool_mgr, char *queue_backend_base,
@@ -107,6 +108,7 @@ class Worker {
     }
     rctx_ = RunContext(blockIdx.x, threadIdx.x, warp_id, warp_lane);
   }
+
 
   HSHM_GPU_FUN void Stop() { is_running_ = false; }
   HSHM_GPU_FUN void Finalize() { is_running_ = false; }
@@ -433,13 +435,15 @@ class Worker {
     hshm::lbm::LbmContext in_ctx;
     in_ctx.copy_space = fshm->copy_space;
     in_ctx.shm_info_ = &fshm->input_;
-    LocalLoadTaskArchive load_ar(CHI_PRIV_ALLOC);
+    auto *load_ar_ptr = CHI_IPC->GetLoadArchive();
+    auto &load_ar = *load_ar_ptr;
     if (is_gpu2gpu) {
       hshm::lbm::ShmTransport::RecvDevice(load_ar, in_ctx);
     } else {
       hshm::lbm::ShmTransport::Recv(load_ar, in_ctx);
     }
     load_ar.SetMsgType(LocalMsgType::kSerializeIn);
+    // Note: ShmTransport::Recv populates owned_data_ and resets deserializer_
 
     hipc::FullPtr<Task> task_ptr =
         container->LocalAllocLoadTask(method_id, load_ar);
@@ -596,7 +600,9 @@ class Worker {
     out_ctx.copy_space = fshm->copy_space;
     out_ctx.shm_info_ = &fshm->output_;
 
-    LocalSaveTaskArchive save_ar(LocalMsgType::kSerializeOut, CHI_PRIV_ALLOC);
+    auto *save_ar_ptr = CHI_IPC->GetSaveArchive();
+    auto &save_ar = *save_ar_ptr;
+    save_ar.Reset(LocalMsgType::kSerializeOut);
     container->LocalSaveTask(method_id, save_ar, task_ptr);
     if (is_gpu2gpu) {
       hshm::lbm::ShmTransport::SendDevice(save_ar, out_ctx);

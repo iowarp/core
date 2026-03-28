@@ -139,6 +139,7 @@ namespace chi {
 // ShmTransport::Recv can allocate internal buffers on GPU (BuddyAllocator)
 // and on host (MallocAllocator).
 using LocalLbmBase = hshm::lbm::LbmMeta<CHI_PRIV_ALLOC_T>;
+
 using LocalTaskInfoVec = chi::priv::vector<LocalTaskInfo>;
 
 /**
@@ -268,6 +269,18 @@ class LocalSaveTaskArchive : public LocalLbmBase {
   hshm::ipc::LocalSerialize<chi::priv::vector<char>> serializer_;
 
  public:
+  /** Mark this archive for warp-parallel write_binary calls */
+  HSHM_INLINE_CROSS_FUN void SetWarpConverged(bool v) {
+    serializer_.warp_converged_ = v;
+  }
+
+  /** Reset for reuse — avoids re-allocating the buffer between tasks */
+  HSHM_CROSS_FUN void Reset(LocalMsgType msg_type) {
+    msg_type_ = msg_type;
+    task_infos_.resize(0);
+    serializer_.cur_off_ = 0;
+  }
+
   /**
    * Serialize for ShmTransport compatibility.
    * Wire-compatible with SaveTaskArchive::serialize /
@@ -302,8 +315,7 @@ class LocalSaveTaskArchive : public LocalLbmBase {
   }
 
   /**
-   * Constructor with external buffer and allocator.
-   * Used by GPU worker where buffer is pre-allocated from GPU heap.
+   * Constructor with allocator — owns its own buffer.
    */
   template <typename AllocPtrT>
   HSHM_CROSS_FUN LocalSaveTaskArchive(LocalMsgType msg_type,
@@ -314,6 +326,22 @@ class LocalSaveTaskArchive : public LocalLbmBase {
         buffer_(alloc),
         serializer_(buffer_) {
     buffer_.reserve(256);
+    task_infos_.reserve(4);
+  }
+
+  /**
+   * Constructor with allocator and external buffer.
+   * Used by WarpIpcManager where buffer is pre-allocated.
+   */
+  template <typename AllocPtrT>
+  HSHM_CROSS_FUN LocalSaveTaskArchive(LocalMsgType msg_type,
+                                       AllocPtrT *alloc,
+                                       chi::priv::vector<char> &ext_buffer)
+      : Base(alloc),
+        task_infos_(alloc),
+        msg_type_(msg_type),
+        buffer_(alloc),
+        serializer_(ext_buffer) {
     task_infos_.reserve(4);
   }
 
@@ -566,6 +594,20 @@ class LocalLoadTaskArchive : public LocalLbmBase {
   size_t current_task_index_;
 
  public:
+  /** Mark this archive for warp-parallel read_binary calls */
+  HSHM_INLINE_CROSS_FUN void SetWarpConverged(bool v) {
+    deserializer_.warp_converged_ = v;
+  }
+
+  /** Reset for reuse with new data — avoids re-allocating between tasks */
+  HSHM_CROSS_FUN void Reset(const chi::priv::vector<char> &data, LocalMsgType msg_type) {
+    msg_type_ = msg_type;
+    data_ = &data;
+    new (&deserializer_) hshm::ipc::LocalDeserialize<chi::priv::vector<char>>(data);
+    current_task_index_ = 0;
+    task_infos_.resize(0);
+  }
+
   /**
    * Serialize for ShmTransport compatibility.
    * Wire-compatible with SaveTaskArchive::serialize /
@@ -583,40 +625,52 @@ class LocalLoadTaskArchive : public LocalLbmBase {
   }
 
   /**
-   * Default constructor
+   * Default constructor — uses owned_data_ as deserializer target
    */
   HSHM_CROSS_FUN LocalLoadTaskArchive()
       : Base(CHI_PRIV_ALLOC),
         task_infos_(CHI_PRIV_ALLOC),
         msg_type_(LocalMsgType::kSerializeIn),
         owned_data_(CHI_PRIV_ALLOC),
-        data_(nullptr),
-        deserializer_(GetEmptyBuffer()),
+        data_(&owned_data_),
+        deserializer_(owned_data_),
         current_task_index_(0) {
     owned_data_.reserve(256);
     task_infos_.reserve(4);
   }
 
   /**
-   * Constructor with explicit allocator pointer.
-   * Used by GPU worker where allocator comes from GPU heap.
+   * Constructor with explicit allocator and external buffer.
+   * Used by WarpIpcManager where buffer is pre-allocated.
+   */
+  template <typename AllocPtrT>
+  HSHM_CROSS_FUN LocalLoadTaskArchive(AllocPtrT *alloc,
+                                       chi::priv::vector<char> &buffer)
+      : Base(alloc),
+        task_infos_(alloc),
+        msg_type_(LocalMsgType::kSerializeIn),
+        owned_data_(alloc),
+        data_(&buffer),
+        deserializer_(buffer),
+        current_task_index_(0) {}
+
+  /**
+   * Constructor with allocator only — uses owned_data_ as buffer
    */
   HSHM_CROSS_FUN explicit LocalLoadTaskArchive(CHI_PRIV_ALLOC_T *alloc)
       : Base(alloc),
         task_infos_(alloc),
         msg_type_(LocalMsgType::kSerializeIn),
         owned_data_(alloc),
-        data_(nullptr),
-        deserializer_(GetEmptyBuffer()),
+        data_(&owned_data_),
+        deserializer_(owned_data_),
         current_task_index_(0) {
     owned_data_.reserve(256);
     task_infos_.reserve(4);
   }
 
   /**
-   * Constructor from serialized data (uses chi::priv::vector)
-   *
-   * @param data Buffer containing serialized data
+   * Constructor from serialized data
    */
   HSHM_CROSS_FUN explicit LocalLoadTaskArchive(
       const chi::priv::vector<char> &data)
@@ -630,17 +684,14 @@ class LocalLoadTaskArchive : public LocalLbmBase {
 
   /**
    * Constructor from std::vector serialized data.
-   * Copies the data into owned_data_ for lifetime management.
-   *
-   * @param data Buffer containing serialized data
    */
   explicit LocalLoadTaskArchive(const std::vector<char> &data)
       : Base(),
         task_infos_(CHI_PRIV_ALLOC),
         msg_type_(LocalMsgType::kSerializeIn),
         owned_data_(CHI_PRIV_ALLOC),
-        data_(nullptr),
-        deserializer_(GetEmptyBuffer()),
+        data_(&owned_data_),
+        deserializer_(owned_data_),
         current_task_index_(0) {
     owned_data_.reserve(data.size());
     for (size_t i = 0; i < data.size(); ++i) {
@@ -658,7 +709,7 @@ class LocalLoadTaskArchive : public LocalLbmBase {
         msg_type_(other.msg_type_),
         owned_data_(std::move(other.owned_data_)),
         data_(other.data_),
-        deserializer_(other.data_ ? *other.data_ : GetEmptyBuffer()),
+        deserializer_(other.data_ ? *other.data_ : owned_data_),
         current_task_index_(other.current_task_index_) {
     other.data_ = nullptr;
   }
@@ -910,23 +961,6 @@ class LocalLoadTaskArchive : public LocalLbmBase {
     msg_type_ = msg_type;
   }
 
- private:
-  /**
-   * Get a reference to an empty buffer for use as a placeholder.
-   * Uses function-local static to be accessible from both host and device.
-   *
-   * @return Reference to an empty vector
-   */
-  HSHM_CROSS_FUN static chi::priv::vector<char> &GetEmptyBuffer() {
-#if HSHM_IS_HOST
-    static chi::priv::vector<char> buf(nullptr);
-#else
-    // On GPU, use shared memory for the empty buffer placeholder
-    __shared__ char buf_storage[sizeof(chi::priv::vector<char>)];
-    auto &buf = *reinterpret_cast<chi::priv::vector<char> *>(buf_storage);
-#endif
-    return buf;
-  }
 };
 
 }  // namespace chi

@@ -29,6 +29,14 @@
 #include "bench_common.h"
 #include <cstdint>
 #include <string>
+#include <vector>
+
+/** A CTE storage target parsed from --target type:size */
+struct TargetSpec {
+  chimaera::bdev::BdevType bdev_type;
+  std::string label;   // e.g. "hbm", "pinned", "ram"
+  chi::u64 size_bytes;
+};
 
 struct WorkloadConfig {
   // Grid/thread config
@@ -45,10 +53,16 @@ struct WorkloadConfig {
   bool validate = false;
   std::string routing = "local";  // "local" or "to_cpu"
 
-  // HBM cache ratio (0-100): controls both CTE bdev_type and BaM cache size
-  // 100 = all data in HBM; < 100 = spill to pinned DRAM
-  uint32_t hbm_cache_pct = 100;
+  // Storage targets (from --target flags)
+  std::vector<TargetSpec> targets;
   uint64_t bam_page_size = 65536;  // BaM internal page size (not user-facing)
+
+  /** Get HBM target size in bytes (0 if no HBM target). */
+  uint64_t GetHbmBytes() const {
+    for (const auto &t : targets)
+      if (t.bdev_type == chimaera::bdev::BdevType::kHbm) return t.size_bytes;
+    return 0;
+  }
 
   // CTE config (set by main driver after Chimaera init)
   chi::PoolId cte_pool_id;

@@ -523,6 +523,9 @@ int run_workload_synthetic(const WorkloadConfig &cfg, const char *mode,
     auto t0 = std::chrono::high_resolution_clock::now();
 
     void *stream = hshm::GpuApi::CreateStream();
+    PrintKernelInfo("synthetic_cte_kernel",
+                    (const void *)synthetic_cte_kernel,
+                    cfg.client_blocks, cfg.client_threads);
     synthetic_cte_kernel<<<cfg.client_blocks, cfg.client_threads, 0,
                            static_cast<cudaStream_t>(stream)>>>(
         ctx.gpu_info, cfg.cte_pool_id, cfg.tag_id, cfg.client_blocks,
@@ -568,7 +571,10 @@ int run_workload_synthetic(const WorkloadConfig &cfg, const char *mode,
 
     uint64_t fb_aligned = ((total_bytes + cfg.bam_page_size - 1) / cfg.bam_page_size) * cfg.bam_page_size;
     uint32_t total_pages = (uint32_t)(fb_aligned / cfg.bam_page_size);
-    uint32_t cache_pages = std::max(1u, total_pages * cfg.hbm_cache_pct / 100);
+    uint64_t hbm_bytes = cfg.GetHbmBytes();
+    uint32_t cache_pages = (hbm_bytes > 0)
+        ? std::max(1u, (uint32_t)(hbm_bytes / cfg.bam_page_size))
+        : total_pages;
 
     bam::PageCacheConfig pcfg;
     pcfg.page_size = cfg.bam_page_size;
@@ -588,7 +594,8 @@ int run_workload_synthetic(const WorkloadConfig &cfg, const char *mode,
     read_array.load_from_host(init_data.data(), init_data.size());
 
     HIPRINT("  BaM HBM cache: {} / {} pages ({}%) x {} B = {:.1f} MB",
-            cache_pages, total_pages, cfg.hbm_cache_pct, cfg.bam_page_size,
+            cache_pages, total_pages,
+            cache_pages * 100 / std::max(1u, total_pages), cfg.bam_page_size,
             (double)cache_pages * cfg.bam_page_size / (1024.0 * 1024.0));
 
     int *d_errors;
@@ -597,6 +604,9 @@ int run_workload_synthetic(const WorkloadConfig &cfg, const char *mode,
 
     auto t0 = std::chrono::high_resolution_clock::now();
 
+    PrintKernelInfo("synthetic_bam_kernel",
+                    (const void *)synthetic_bam_kernel,
+                    cfg.client_blocks, cfg.client_threads);
     synthetic_bam_kernel<<<cfg.client_blocks, cfg.client_threads>>>(
         write_array.device(), read_array.device(),
         warp_bytes, total_warps, iters, cfg.validate, d_errors);
@@ -634,6 +644,9 @@ int run_workload_synthetic(const WorkloadConfig &cfg, const char *mode,
 
     auto t0 = std::chrono::high_resolution_clock::now();
 
+    PrintKernelInfo("synthetic_hbm_kernel",
+                    (const void *)synthetic_hbm_kernel,
+                    cfg.client_blocks, cfg.client_threads);
     synthetic_hbm_kernel<<<cfg.client_blocks, cfg.client_threads>>>(
         d_write, d_read, warp_bytes, total_warps, iters, cfg.validate, d_errors);
 
@@ -671,6 +684,9 @@ int run_workload_synthetic(const WorkloadConfig &cfg, const char *mode,
 
     auto t0 = std::chrono::high_resolution_clock::now();
 
+    PrintKernelInfo("synthetic_direct_kernel",
+                    (const void *)synthetic_direct_kernel,
+                    cfg.client_blocks, cfg.client_threads);
     synthetic_direct_kernel<<<cfg.client_blocks, cfg.client_threads>>>(
         h_write, h_read, warp_bytes, total_warps, iters, cfg.validate, d_errors);
 

@@ -268,6 +268,24 @@ using IpcManagerGpu = IpcManagerGpuInfo;
  */
 class IpcManager {
  public:
+  /** Per-warp cached state for GPU serialization and allocation.
+   *  buffer_ is the shared serialize/deserialize buffer — allocated once,
+   *  reused for every task. Archives bind to it via reference at construction. */
+  struct WarpIpcManager {
+    CHI_PRIV_ALLOC_T *priv_alloc_ = nullptr;
+    chi::priv::vector<char> buffer_;
+    LocalSaveTaskArchive save_ar_;
+    LocalLoadTaskArchive load_ar_;
+
+    HSHM_CROSS_FUN WarpIpcManager(CHI_PRIV_ALLOC_T *alloc)
+        : priv_alloc_(alloc),
+          buffer_(alloc),
+          save_ar_(LocalMsgType::kSerializeOut, alloc, buffer_),
+          load_ar_(alloc, buffer_) {
+      buffer_.reserve(256);
+    }
+  };
+ public:
   /**
    * Initialize client components
    * @return true if initialization successful, false otherwise
@@ -363,9 +381,9 @@ class IpcManager {
     // Scratch generation — containers compare to detect stale metadata
     scratch_gen_ = gpu_info.scratch_gen;
 
-    // Zero the per-warp cache; populated lazily by GetPrivAlloc()
+    // Zero the per-warp caches; populated lazily by GetWarpManager()
     for (u32 i = 0; i < kMaxCachedWarps; ++i) {
-      priv_allocs_[i] = nullptr;
+      warp_mgrs_[i] = nullptr;
     }
   }
 
@@ -420,19 +438,52 @@ class IpcManager {
    * On GPU: returns the per-warp PrivateBuddyAllocator from PartitionedAllocator.
    * On host: returns nullptr (host uses HSHM_MALLOC via CHI_PRIV_ALLOC).
    */
-  HSHM_CROSS_FUN hipc::PrivateBuddyAllocator *GetPrivAlloc() {
+  /** Get the per-warp manager (lazy: single heap alloc for all warp state) */
+  HSHM_CROSS_FUN WarpIpcManager *GetWarpManager() {
 #if HSHM_IS_GPU
     u32 local_warp = threadIdx.x / 32;
-    if (local_warp < kMaxCachedWarps && priv_allocs_[local_warp]) {
-      return priv_allocs_[local_warp];
+    if (local_warp < kMaxCachedWarps && warp_mgrs_[local_warp]) {
+      return warp_mgrs_[local_warp];
     }
-    // Lazy-cache on first call from this warp
     if (gpu_alloc_) {
       auto *alloc = gpu_alloc_->GetWarpAllocator();
-      if (local_warp < kMaxCachedWarps) priv_allocs_[local_warp] = alloc;
-      return alloc;
+      if (alloc) {
+        auto p = alloc->template AllocateObjs<WarpIpcManager>(1);
+        auto *mgr = new (p.ptr_) WarpIpcManager(alloc);
+        if (local_warp < kMaxCachedWarps) warp_mgrs_[local_warp] = mgr;
+        return mgr;
+      }
     }
     return nullptr;
+#else
+    return nullptr;
+#endif
+  }
+
+  HSHM_CROSS_FUN hipc::PrivateBuddyAllocator *GetPrivAlloc() {
+#if HSHM_IS_GPU
+    auto *mgr = GetWarpManager();
+    return mgr ? mgr->priv_alloc_ : nullptr;
+#else
+    return nullptr;
+#endif
+  }
+
+  /** Get per-warp cached save archive */
+  HSHM_CROSS_FUN LocalSaveTaskArchive *GetSaveArchive() {
+#if HSHM_IS_GPU
+    auto *mgr = GetWarpManager();
+    return mgr ? &mgr->save_ar_ : nullptr;
+#else
+    return nullptr;
+#endif
+  }
+
+  /** Get per-warp cached load archive */
+  HSHM_CROSS_FUN LocalLoadTaskArchive *GetLoadArchive() {
+#if HSHM_IS_GPU
+    auto *mgr = GetWarpManager();
+    return mgr ? &mgr->load_ar_ : nullptr;
 #else
     return nullptr;
 #endif
@@ -2526,9 +2577,8 @@ class IpcManager {
   hipc::MemoryBackend gpu_backend_;
   /** PartitionedAllocator for GPU→GPU FutureShm or orch scratch (device memory) */
   hipc::PartitionedAllocator *gpu_alloc_ = nullptr;
-  /** Cached per-warp PrivateBuddyAllocator pointers (indexed by warp ID) */
   static constexpr u32 kMaxCachedWarps = 32;
-  hipc::PrivateBuddyAllocator *priv_allocs_[kMaxCachedWarps] = {};
+  WarpIpcManager *warp_mgrs_[kMaxCachedWarps] = {};
 
   // --- GPU→CPU backend: pinned host for cross-direction FutureShm ---
   /** Pinned-host backend for GPU→CPU FutureShm allocation (ToLocalCpu path) */
