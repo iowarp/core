@@ -491,11 +491,7 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
 
 chi::TaskResume Runtime::AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task,
                                         chi::RunContext &ctx) {
-#ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
-#else
-  (void)ctx;
-#endif
   CHI_TASK_BODY_BEGIN
   HLOG(kDebug,
        "bdev::AllocateBlocks: ENTER - pool_id_=({},{}), size={}, "
@@ -504,7 +500,7 @@ chi::TaskResume Runtime::AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task,
        container_id_);
 
   // Get worker ID for allocation
-  int worker_id = static_cast<int>(GetWorkerID(ctx));
+  int worker_id = static_cast<int>(GetWorkerID(rctx));
 
   chi::u64 total_size = task->size_;
   if (total_size == 0) {
@@ -613,14 +609,10 @@ chi::TaskResume Runtime::AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task,
 
 chi::TaskResume Runtime::FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
                                     chi::RunContext &ctx) {
-#ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
-#else
-  (void)ctx;
-#endif
   CHI_TASK_BODY_BEGIN
   // Get worker ID for free operation
-  int worker_id = static_cast<int>(GetWorkerID(ctx));
+  int worker_id = static_cast<int>(GetWorkerID(rctx));
 
   // Free all blocks in the vector using GlobalBlockMap
   for (size_t i = 0; i < task->blocks_.size(); ++i) {
@@ -636,15 +628,11 @@ chi::TaskResume Runtime::FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
 
 chi::TaskResume Runtime::Write(hipc::FullPtr<WriteTask> task,
                                chi::RunContext &ctx) {
-#ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
-#else
-  (void)ctx;
-#endif
   CHI_TASK_BODY_BEGIN
   switch (bdev_type_) {
     case BdevType::kFile:
-      CHI_CO_AWAIT(WriteToFile(task, ctx));
+      CHI_CO_AWAIT(WriteToFile(task, rctx));
       break;
     case BdevType::kRam:
       WriteToRam(task);
@@ -660,15 +648,11 @@ chi::TaskResume Runtime::Write(hipc::FullPtr<WriteTask> task,
 
 chi::TaskResume Runtime::Read(hipc::FullPtr<ReadTask> task,
                               chi::RunContext &ctx) {
-#ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
-#else
-  (void)ctx;
-#endif
   CHI_TASK_BODY_BEGIN
   switch (bdev_type_) {
     case BdevType::kFile:
-      CHI_CO_AWAIT(ReadFromFile(task, ctx));
+      CHI_CO_AWAIT(ReadFromFile(task, rctx));
       break;
     case BdevType::kRam:
       ReadFromRam(task);
@@ -684,13 +668,9 @@ chi::TaskResume Runtime::Read(hipc::FullPtr<ReadTask> task,
 
 chi::TaskResume Runtime::WriteToFile(hipc::FullPtr<WriteTask> task,
                                      chi::RunContext &ctx) {
-#ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
-#else
-  (void)ctx;
-#endif
   CHI_TASK_BODY_BEGIN
-  size_t worker_id = GetWorkerID(ctx);
+  size_t worker_id = GetWorkerID(rctx);
   WorkerIOContext *io_ctx = GetWorkerIOContext(worker_id);
 
   auto *ipc_mgr = CHI_IPC;
@@ -754,13 +734,9 @@ chi::TaskResume Runtime::WriteToFile(hipc::FullPtr<WriteTask> task,
 
 chi::TaskResume Runtime::ReadFromFile(hipc::FullPtr<ReadTask> task,
                                       chi::RunContext &ctx) {
-#ifdef __NVCOMPILER
   chi::RunContext& rctx = ctx;
-#else
-  (void)ctx;
-#endif
   CHI_TASK_BODY_BEGIN
-  size_t worker_id = GetWorkerID(ctx);
+  size_t worker_id = GetWorkerID(rctx);
   WorkerIOContext *io_ctx = GetWorkerIOContext(worker_id);
 
   auto *ipc_mgr = CHI_IPC;
