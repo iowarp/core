@@ -21,7 +21,7 @@ HSHM_GPU_FUN chi::gpu::TaskResume Run(chi::u32 method, hipc::FullPtr<chi::Task> 
 }
 
 HSHM_GPU_FUN hipc::FullPtr<chi::Task> LocalAllocLoadTask(
-    chi::u32 method, chi::LocalLoadTaskArchive &archive) override {
+    chi::u32 method, chi::DefaultLoadArchive &archive) override {
   switch (method) {
     case Method::kGpuSubmit: {
       auto *alloc = CHI_IPC->gpu_alloc_;
@@ -67,7 +67,7 @@ HSHM_GPU_FUN hipc::FullPtr<chi::Task> LocalAllocTask(
 }
 
 HSHM_GPU_FUN void LocalLoadTask(
-    chi::u32 method, chi::LocalLoadTaskArchive &archive,
+    chi::u32 method, chi::DefaultLoadArchive &archive,
     const hipc::FullPtr<chi::Task> &task) override {
   archive.SetMsgType(chi::LocalMsgType::kSerializeIn);
   switch (method) {
@@ -86,7 +86,7 @@ HSHM_GPU_FUN void LocalLoadTask(
 }
 
 HSHM_GPU_FUN void LocalSaveTask(
-    chi::u32 method, chi::LocalSaveTaskArchive &archive,
+    chi::u32 method, chi::DefaultSaveArchive &archive,
     const hipc::FullPtr<chi::Task> &task) override {
   switch (method) {
     case Method::kGpuSubmit: {

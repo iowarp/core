@@ -393,14 +393,14 @@ TEST_CASE("Autogen - Admin LocalSaveTask/LocalLoadTask", "[autogen][admin][local
     }
 
     // LocalSaveTask
-    chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+    chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
     hipc::FullPtr<chi::Task> task_ptr = orig_task.template Cast<chi::Task>();
     container->LocalSaveTask(chimaera::admin::Method::kFlush, save_archive, task_ptr);
 
     // LocalLoadTask
     auto loaded_task = container->NewTask(chimaera::admin::Method::kFlush);
     if (!loaded_task.IsNull()) {
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       container->LocalLoadTask(chimaera::admin::Method::kFlush, load_archive, loaded_task);
       INFO("LocalSaveTask/LocalLoadTask for FlushTask completed");
       CHI_IPC->DelTask(loaded_task);
@@ -418,13 +418,13 @@ TEST_CASE("Autogen - Admin LocalSaveTask/LocalLoadTask", "[autogen][admin][local
       return;
     }
 
-    chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+    chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
     hipc::FullPtr<chi::Task> task_ptr = orig_task.template Cast<chi::Task>();
     container->LocalSaveTask(chimaera::admin::Method::kMonitor, save_archive, task_ptr);
 
     auto loaded_task = container->NewTask(chimaera::admin::Method::kMonitor);
     if (!loaded_task.IsNull()) {
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       container->LocalLoadTask(chimaera::admin::Method::kMonitor, load_archive, loaded_task);
       INFO("LocalSaveTask/LocalLoadTask for MonitorTask completed");
       CHI_IPC->DelTask(loaded_task);
@@ -442,13 +442,13 @@ TEST_CASE("Autogen - Admin LocalSaveTask/LocalLoadTask", "[autogen][admin][local
       return;
     }
 
-    chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+    chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
     hipc::FullPtr<chi::Task> task_ptr = orig_task.template Cast<chi::Task>();
     container->LocalSaveTask(chimaera::admin::Method::kClientConnect, save_archive, task_ptr);
 
     auto loaded_task = container->NewTask(chimaera::admin::Method::kClientConnect);
     if (!loaded_task.IsNull()) {
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       container->LocalLoadTask(chimaera::admin::Method::kClientConnect, load_archive, loaded_task);
       INFO("LocalSaveTask/LocalLoadTask for ClientConnectTask completed");
       CHI_IPC->DelTask(loaded_task);
@@ -9660,13 +9660,13 @@ TEST_CASE("Autogen - Admin WreapDeadIpcs Container Methods", "[autogen][admin][w
       return;
     }
 
-    chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+    chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
     hipc::FullPtr<chi::Task> task_ptr = orig_task.template Cast<chi::Task>();
     container->LocalSaveTask(chimaera::admin::Method::kWreapDeadIpcs, save_archive, task_ptr);
 
     auto loaded_task = container->NewTask(chimaera::admin::Method::kWreapDeadIpcs);
     if (!loaded_task.IsNull()) {
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       container->LocalLoadTask(chimaera::admin::Method::kWreapDeadIpcs, load_archive, loaded_task);
       INFO("WreapDeadIpcs LocalSaveTask/LocalLoadTask completed");
       CHI_IPC->DelTask(loaded_task);
@@ -9684,11 +9684,11 @@ TEST_CASE("Autogen - Admin WreapDeadIpcs Container Methods", "[autogen][admin][w
       return;
     }
 
-    chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+    chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
     hipc::FullPtr<chi::Task> task_ptr = orig_task.template Cast<chi::Task>();
     container->LocalSaveTask(chimaera::admin::Method::kWreapDeadIpcs, save_archive, task_ptr);
 
-    chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+    chi::DefaultLoadArchive load_archive(save_archive.GetData());
     auto loaded = container->LocalAllocLoadTask(chimaera::admin::Method::kWreapDeadIpcs, load_archive);
     if (!loaded.IsNull()) {
       INFO("WreapDeadIpcs LocalAllocLoadTask completed");
@@ -9716,11 +9716,11 @@ TEST_CASE("Autogen - Admin LocalAllocLoadTask Additional Methods", "[autogen][ad
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
 
     if (!orig_task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       hipc::FullPtr<chi::Task> task_ptr = orig_task.template Cast<chi::Task>();
       container->LocalSaveTask(chimaera::admin::Method::kFlush, save_archive, task_ptr);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = container->LocalAllocLoadTask(chimaera::admin::Method::kFlush, load_archive);
       if (!loaded.IsNull()) {
         INFO("Flush LocalAllocLoadTask completed");
@@ -9735,11 +9735,11 @@ TEST_CASE("Autogen - Admin LocalAllocLoadTask Additional Methods", "[autogen][ad
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local(), std::string("status"));
 
     if (!orig_task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       hipc::FullPtr<chi::Task> task_ptr = orig_task.template Cast<chi::Task>();
       container->LocalSaveTask(chimaera::admin::Method::kMonitor, save_archive, task_ptr);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = container->LocalAllocLoadTask(chimaera::admin::Method::kMonitor, load_archive);
       if (!loaded.IsNull()) {
         INFO("Monitor LocalAllocLoadTask completed");
@@ -9754,11 +9754,11 @@ TEST_CASE("Autogen - Admin LocalAllocLoadTask Additional Methods", "[autogen][ad
         chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Local());
 
     if (!orig_task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       hipc::FullPtr<chi::Task> task_ptr = orig_task.template Cast<chi::Task>();
       container->LocalSaveTask(chimaera::admin::Method::kClientConnect, save_archive, task_ptr);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = container->LocalAllocLoadTask(chimaera::admin::Method::kClientConnect, load_archive);
       if (!loaded.IsNull()) {
         INFO("ClientConnect LocalAllocLoadTask completed");
@@ -9785,12 +9785,12 @@ TEST_CASE("Autogen - MOD_NAME LocalSaveTask/LocalLoadTask Safe Methods", "[autog
   SECTION("CoMutexTest LocalSaveTask/LocalLoadTask") {
     auto task = mod_name_runtime.NewTask(chimaera::MOD_NAME::Method::kCoMutexTest);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       mod_name_runtime.LocalSaveTask(chimaera::MOD_NAME::Method::kCoMutexTest, save_archive, task);
 
       auto loaded = mod_name_runtime.NewTask(chimaera::MOD_NAME::Method::kCoMutexTest);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         mod_name_runtime.LocalLoadTask(chimaera::MOD_NAME::Method::kCoMutexTest, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -9803,12 +9803,12 @@ TEST_CASE("Autogen - MOD_NAME LocalSaveTask/LocalLoadTask Safe Methods", "[autog
   SECTION("CoRwLockTest LocalSaveTask/LocalLoadTask") {
     auto task = mod_name_runtime.NewTask(chimaera::MOD_NAME::Method::kCoRwLockTest);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       mod_name_runtime.LocalSaveTask(chimaera::MOD_NAME::Method::kCoRwLockTest, save_archive, task);
 
       auto loaded = mod_name_runtime.NewTask(chimaera::MOD_NAME::Method::kCoRwLockTest);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         mod_name_runtime.LocalLoadTask(chimaera::MOD_NAME::Method::kCoRwLockTest, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -9821,12 +9821,12 @@ TEST_CASE("Autogen - MOD_NAME LocalSaveTask/LocalLoadTask Safe Methods", "[autog
   SECTION("WaitTest LocalSaveTask/LocalLoadTask") {
     auto task = mod_name_runtime.NewTask(chimaera::MOD_NAME::Method::kWaitTest);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       mod_name_runtime.LocalSaveTask(chimaera::MOD_NAME::Method::kWaitTest, save_archive, task);
 
       auto loaded = mod_name_runtime.NewTask(chimaera::MOD_NAME::Method::kWaitTest);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         mod_name_runtime.LocalLoadTask(chimaera::MOD_NAME::Method::kWaitTest, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -9845,10 +9845,10 @@ TEST_CASE("Autogen - MOD_NAME LocalAllocLoadTask Safe Methods", "[autogen][mod_n
   SECTION("CoMutexTest LocalAllocLoadTask") {
     auto task = mod_name_runtime.NewTask(chimaera::MOD_NAME::Method::kCoMutexTest);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       mod_name_runtime.LocalSaveTask(chimaera::MOD_NAME::Method::kCoMutexTest, save_archive, task);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = mod_name_runtime.LocalAllocLoadTask(chimaera::MOD_NAME::Method::kCoMutexTest, load_archive);
       if (!loaded.IsNull()) {
         CHI_IPC->DelTask(loaded);
@@ -9861,10 +9861,10 @@ TEST_CASE("Autogen - MOD_NAME LocalAllocLoadTask Safe Methods", "[autogen][mod_n
   SECTION("CoRwLockTest LocalAllocLoadTask") {
     auto task = mod_name_runtime.NewTask(chimaera::MOD_NAME::Method::kCoRwLockTest);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       mod_name_runtime.LocalSaveTask(chimaera::MOD_NAME::Method::kCoRwLockTest, save_archive, task);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = mod_name_runtime.LocalAllocLoadTask(chimaera::MOD_NAME::Method::kCoRwLockTest, load_archive);
       if (!loaded.IsNull()) {
         CHI_IPC->DelTask(loaded);
@@ -9877,10 +9877,10 @@ TEST_CASE("Autogen - MOD_NAME LocalAllocLoadTask Safe Methods", "[autogen][mod_n
   SECTION("WaitTest LocalAllocLoadTask") {
     auto task = mod_name_runtime.NewTask(chimaera::MOD_NAME::Method::kWaitTest);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       mod_name_runtime.LocalSaveTask(chimaera::MOD_NAME::Method::kWaitTest, save_archive, task);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = mod_name_runtime.LocalAllocLoadTask(chimaera::MOD_NAME::Method::kWaitTest, load_archive);
       if (!loaded.IsNull()) {
         CHI_IPC->DelTask(loaded);
@@ -9902,12 +9902,12 @@ TEST_CASE("Autogen - Bdev LocalSaveTask/LocalLoadTask Safe Methods", "[autogen][
   SECTION("GetStats LocalSaveTask/LocalLoadTask") {
     auto task = bdev_runtime.NewTask(chimaera::bdev::Method::kGetStats);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       bdev_runtime.LocalSaveTask(chimaera::bdev::Method::kGetStats, save_archive, task);
 
       auto loaded = bdev_runtime.NewTask(chimaera::bdev::Method::kGetStats);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         bdev_runtime.LocalLoadTask(chimaera::bdev::Method::kGetStats, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -9920,7 +9920,7 @@ TEST_CASE("Autogen - Bdev LocalSaveTask/LocalLoadTask Safe Methods", "[autogen][
   SECTION("FreeBlocks LocalSaveTask only") {
     auto task = bdev_runtime.NewTask(chimaera::bdev::Method::kFreeBlocks);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       bdev_runtime.LocalSaveTask(chimaera::bdev::Method::kFreeBlocks, save_archive, task);
       CHI_IPC->DelTask(task);
       INFO("Bdev FreeBlocks LocalSaveTask completed");
@@ -9931,7 +9931,7 @@ TEST_CASE("Autogen - Bdev LocalSaveTask/LocalLoadTask Safe Methods", "[autogen][
   SECTION("Write LocalSaveTask only") {
     auto task = bdev_runtime.NewTask(chimaera::bdev::Method::kWrite);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       bdev_runtime.LocalSaveTask(chimaera::bdev::Method::kWrite, save_archive, task);
       CHI_IPC->DelTask(task);
       INFO("Bdev Write LocalSaveTask completed");
@@ -9943,13 +9943,13 @@ TEST_CASE("Autogen - Bdev LocalSaveTask/LocalLoadTask Safe Methods", "[autogen][
     auto task = bdev_runtime.NewTask(chimaera::bdev::Method::kAllocateBlocks);
     if (!task.IsNull()) {
       // Write enough data for LocalLoadTask to read from
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       bdev_runtime.LocalSaveTask(chimaera::bdev::Method::kAllocateBlocks, save_archive, task);
 
       // Create new task and try LocalLoadTask
       auto loaded = bdev_runtime.NewTask(chimaera::bdev::Method::kAllocateBlocks);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         bdev_runtime.LocalLoadTask(chimaera::bdev::Method::kAllocateBlocks, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -9968,10 +9968,10 @@ TEST_CASE("Autogen - Bdev LocalAllocLoadTask Safe Methods", "[autogen][bdev][loc
   SECTION("GetStats LocalAllocLoadTask") {
     auto task = bdev_runtime.NewTask(chimaera::bdev::Method::kGetStats);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       bdev_runtime.LocalSaveTask(chimaera::bdev::Method::kGetStats, save_archive, task);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = bdev_runtime.LocalAllocLoadTask(chimaera::bdev::Method::kGetStats, load_archive);
       if (!loaded.IsNull()) {
         CHI_IPC->DelTask(loaded);
@@ -10051,12 +10051,12 @@ TEST_CASE("Autogen - CTE Core LocalSaveTask/LocalLoadTask Safe Methods", "[autog
   SECTION("StatTargets LocalSaveTask/LocalLoadTask") {
     auto task = cte_runtime.NewTask(wrp_cte::core::Method::kStatTargets);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       cte_runtime.LocalSaveTask(wrp_cte::core::Method::kStatTargets, save_archive, task);
 
       auto loaded = cte_runtime.NewTask(wrp_cte::core::Method::kStatTargets);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         cte_runtime.LocalLoadTask(wrp_cte::core::Method::kStatTargets, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -10068,12 +10068,12 @@ TEST_CASE("Autogen - CTE Core LocalSaveTask/LocalLoadTask Safe Methods", "[autog
   SECTION("GetTagSize LocalSaveTask/LocalLoadTask") {
     auto task = cte_runtime.NewTask(wrp_cte::core::Method::kGetTagSize);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       cte_runtime.LocalSaveTask(wrp_cte::core::Method::kGetTagSize, save_archive, task);
 
       auto loaded = cte_runtime.NewTask(wrp_cte::core::Method::kGetTagSize);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         cte_runtime.LocalLoadTask(wrp_cte::core::Method::kGetTagSize, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -10087,12 +10087,12 @@ TEST_CASE("Autogen - CTE Core LocalSaveTask/LocalLoadTask Safe Methods", "[autog
     auto task = cte_runtime.NewTask(wrp_cte::core::Method::kGetContainedBlobs);
     if (!task.IsNull()) {
       // Save first to get valid data
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       cte_runtime.LocalSaveTask(wrp_cte::core::Method::kGetContainedBlobs, save_archive, task);
 
       auto loaded = cte_runtime.NewTask(wrp_cte::core::Method::kGetContainedBlobs);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         cte_runtime.LocalLoadTask(wrp_cte::core::Method::kGetContainedBlobs, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -10105,12 +10105,12 @@ TEST_CASE("Autogen - CTE Core LocalSaveTask/LocalLoadTask Safe Methods", "[autog
     // PollTelemetryLog SerializeIn only has minimum_logical_time_ (u64 - safe)
     auto task = cte_runtime.NewTask(wrp_cte::core::Method::kPollTelemetryLog);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       cte_runtime.LocalSaveTask(wrp_cte::core::Method::kPollTelemetryLog, save_archive, task);
 
       auto loaded = cte_runtime.NewTask(wrp_cte::core::Method::kPollTelemetryLog);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         cte_runtime.LocalLoadTask(wrp_cte::core::Method::kPollTelemetryLog, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -10129,10 +10129,10 @@ TEST_CASE("Autogen - CTE Core LocalAllocLoadTask Safe Methods", "[autogen][cte][
   SECTION("StatTargets LocalAllocLoadTask") {
     auto task = cte_runtime.NewTask(wrp_cte::core::Method::kStatTargets);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       cte_runtime.LocalSaveTask(wrp_cte::core::Method::kStatTargets, save_archive, task);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = cte_runtime.LocalAllocLoadTask(wrp_cte::core::Method::kStatTargets, load_archive);
       if (!loaded.IsNull()) {
         CHI_IPC->DelTask(loaded);
@@ -10145,10 +10145,10 @@ TEST_CASE("Autogen - CTE Core LocalAllocLoadTask Safe Methods", "[autogen][cte][
   SECTION("GetTagSize LocalAllocLoadTask") {
     auto task = cte_runtime.NewTask(wrp_cte::core::Method::kGetTagSize);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       cte_runtime.LocalSaveTask(wrp_cte::core::Method::kGetTagSize, save_archive, task);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = cte_runtime.LocalAllocLoadTask(wrp_cte::core::Method::kGetTagSize, load_archive);
       if (!loaded.IsNull()) {
         CHI_IPC->DelTask(loaded);
@@ -10213,9 +10213,9 @@ TEST_CASE("Autogen - Admin Default Case Coverage", "[autogen][admin][default]") 
   SECTION("Default LocalLoadTask") {
     auto task = container->NewTask(chimaera::admin::Method::kFlush);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       container->LocalSaveTask(chimaera::admin::Method::kFlush, save_archive, task);
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       container->LocalLoadTask(invalid_method, load_archive, task);
       CHI_IPC->DelTask(task);
       INFO("Admin default LocalLoadTask completed");
@@ -10225,7 +10225,7 @@ TEST_CASE("Autogen - Admin Default Case Coverage", "[autogen][admin][default]") 
   SECTION("Default LocalSaveTask") {
     auto task = container->NewTask(chimaera::admin::Method::kFlush);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       container->LocalSaveTask(invalid_method, save_archive, task);
       CHI_IPC->DelTask(task);
       INFO("Admin default LocalSaveTask completed");
@@ -10307,7 +10307,7 @@ TEST_CASE("Autogen - Bdev Default Case Coverage", "[autogen][bdev][default]") {
   SECTION("Default LocalSaveTask") {
     auto task = bdev_runtime.NewTask(chimaera::bdev::Method::kGetStats);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       bdev_runtime.LocalSaveTask(invalid_method, save_archive, task);
       CHI_IPC->DelTask(task);
       INFO("Bdev default LocalSaveTask completed");
@@ -10317,9 +10317,9 @@ TEST_CASE("Autogen - Bdev Default Case Coverage", "[autogen][bdev][default]") {
   SECTION("Default LocalLoadTask") {
     auto task = bdev_runtime.NewTask(chimaera::bdev::Method::kGetStats);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       bdev_runtime.LocalSaveTask(chimaera::bdev::Method::kGetStats, save_archive, task);
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       bdev_runtime.LocalLoadTask(invalid_method, load_archive, task);
       CHI_IPC->DelTask(task);
       INFO("Bdev default LocalLoadTask completed");
@@ -10369,7 +10369,7 @@ TEST_CASE("Autogen - MOD_NAME Default Case Coverage", "[autogen][mod_name][defau
   SECTION("Default LocalSaveTask") {
     auto task = mod_name_runtime.NewTask(chimaera::MOD_NAME::Method::kCoMutexTest);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       mod_name_runtime.LocalSaveTask(invalid_method, save_archive, task);
       CHI_IPC->DelTask(task);
       INFO("MOD_NAME default LocalSaveTask completed");
@@ -10379,9 +10379,9 @@ TEST_CASE("Autogen - MOD_NAME Default Case Coverage", "[autogen][mod_name][defau
   SECTION("Default LocalLoadTask") {
     auto task = mod_name_runtime.NewTask(chimaera::MOD_NAME::Method::kCoMutexTest);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       mod_name_runtime.LocalSaveTask(chimaera::MOD_NAME::Method::kCoMutexTest, save_archive, task);
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       mod_name_runtime.LocalLoadTask(invalid_method, load_archive, task);
       CHI_IPC->DelTask(task);
       INFO("MOD_NAME default LocalLoadTask completed");
@@ -10432,7 +10432,7 @@ TEST_CASE("Autogen - CTE Default Case Coverage", "[autogen][cte][default]") {
   SECTION("Default LocalSaveTask") {
     auto task = cte_runtime.NewTask(wrp_cte::core::Method::kGetTagSize);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       cte_runtime.LocalSaveTask(invalid_method, save_archive, task);
       CHI_IPC->DelTask(task);
       INFO("CTE default LocalSaveTask completed");
@@ -10442,9 +10442,9 @@ TEST_CASE("Autogen - CTE Default Case Coverage", "[autogen][cte][default]") {
   SECTION("Default LocalLoadTask") {
     auto task = cte_runtime.NewTask(wrp_cte::core::Method::kGetTagSize);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut);
       cte_runtime.LocalSaveTask(wrp_cte::core::Method::kGetTagSize, save_archive, task);
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       cte_runtime.LocalLoadTask(invalid_method, load_archive, task);
       CHI_IPC->DelTask(task);
       INFO("CTE default LocalLoadTask completed");
@@ -11115,12 +11115,12 @@ TEST_CASE("Autogen - Admin Container StopRuntime", "[autogen][admin][container][
   SECTION("LocalSaveTask for kStopRuntime") {
     auto task = admin_runtime.NewTask(chimaera::admin::Method::kStopRuntime);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       admin_runtime.LocalSaveTask(chimaera::admin::Method::kStopRuntime, save_archive, task);
 
       auto load_task = admin_runtime.NewTask(chimaera::admin::Method::kStopRuntime);
       if (!load_task.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         admin_runtime.LocalLoadTask(chimaera::admin::Method::kStopRuntime, load_archive, load_task);
         CHI_IPC->DelTask(load_task);
       }
@@ -11132,12 +11132,12 @@ TEST_CASE("Autogen - Admin Container StopRuntime", "[autogen][admin][container][
   SECTION("LocalSaveTask for kSend") {
     auto task = admin_runtime.NewTask(chimaera::admin::Method::kSend);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       admin_runtime.LocalSaveTask(chimaera::admin::Method::kSend, save_archive, task);
 
       auto load_task = admin_runtime.NewTask(chimaera::admin::Method::kSend);
       if (!load_task.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         admin_runtime.LocalLoadTask(chimaera::admin::Method::kSend, load_archive, load_task);
         CHI_IPC->DelTask(load_task);
       }
@@ -11149,12 +11149,12 @@ TEST_CASE("Autogen - Admin Container StopRuntime", "[autogen][admin][container][
   SECTION("LocalSaveTask for kRecv") {
     auto task = admin_runtime.NewTask(chimaera::admin::Method::kRecv);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       admin_runtime.LocalSaveTask(chimaera::admin::Method::kRecv, save_archive, task);
 
       auto load_task = admin_runtime.NewTask(chimaera::admin::Method::kRecv);
       if (!load_task.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         admin_runtime.LocalLoadTask(chimaera::admin::Method::kRecv, load_archive, load_task);
         CHI_IPC->DelTask(load_task);
       }
@@ -11166,12 +11166,12 @@ TEST_CASE("Autogen - Admin Container StopRuntime", "[autogen][admin][container][
   SECTION("LocalSaveTask for kWreapDeadIpcs") {
     auto task = admin_runtime.NewTask(chimaera::admin::Method::kWreapDeadIpcs);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       admin_runtime.LocalSaveTask(chimaera::admin::Method::kWreapDeadIpcs, save_archive, task);
 
       auto load_task = admin_runtime.NewTask(chimaera::admin::Method::kWreapDeadIpcs);
       if (!load_task.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         admin_runtime.LocalLoadTask(chimaera::admin::Method::kWreapDeadIpcs, load_archive, load_task);
         CHI_IPC->DelTask(load_task);
       }
@@ -11187,10 +11187,10 @@ TEST_CASE("Autogen - Admin Container StopRuntime", "[autogen][admin][container][
   SECTION("LocalAllocLoadTask for kStopRuntime") {
     auto task = admin_runtime.NewTask(chimaera::admin::Method::kStopRuntime);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       admin_runtime.LocalSaveTask(chimaera::admin::Method::kStopRuntime, save_archive, task);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto alloc_task = admin_runtime.LocalAllocLoadTask(
           chimaera::admin::Method::kStopRuntime, load_archive);
       if (!alloc_task.IsNull()) {
@@ -11204,10 +11204,10 @@ TEST_CASE("Autogen - Admin Container StopRuntime", "[autogen][admin][container][
   SECTION("LocalAllocLoadTask for kSend") {
     auto task = admin_runtime.NewTask(chimaera::admin::Method::kSend);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       admin_runtime.LocalSaveTask(chimaera::admin::Method::kSend, save_archive, task);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto alloc_task = admin_runtime.LocalAllocLoadTask(
           chimaera::admin::Method::kSend, load_archive);
       if (!alloc_task.IsNull()) {
@@ -11221,10 +11221,10 @@ TEST_CASE("Autogen - Admin Container StopRuntime", "[autogen][admin][container][
   SECTION("LocalAllocLoadTask for kRecv") {
     auto task = admin_runtime.NewTask(chimaera::admin::Method::kRecv);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       admin_runtime.LocalSaveTask(chimaera::admin::Method::kRecv, save_archive, task);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto alloc_task = admin_runtime.LocalAllocLoadTask(
           chimaera::admin::Method::kRecv, load_archive);
       if (!alloc_task.IsNull()) {
@@ -11238,10 +11238,10 @@ TEST_CASE("Autogen - Admin Container StopRuntime", "[autogen][admin][container][
   SECTION("LocalAllocLoadTask for kWreapDeadIpcs") {
     auto task = admin_runtime.NewTask(chimaera::admin::Method::kWreapDeadIpcs);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       admin_runtime.LocalSaveTask(chimaera::admin::Method::kWreapDeadIpcs, save_archive, task);
 
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto alloc_task = admin_runtime.LocalAllocLoadTask(
           chimaera::admin::Method::kWreapDeadIpcs, load_archive);
       if (!alloc_task.IsNull()) {
@@ -11267,7 +11267,7 @@ TEST_CASE("Autogen - CTE " task_label " methods", "[autogen][cte][methods][" tas
   SECTION("SerializeIn") { \
     auto task = ipc_manager->NewTask<TaskType>(); \
     if (!task.IsNull()) { \
-      chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeIn); \
+      chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeIn); \
       task->SerializeIn(save_ar); \
       INFO(task_label " SerializeIn completed"); \
       CHI_IPC->DelTask(task); \
@@ -11277,7 +11277,7 @@ TEST_CASE("Autogen - CTE " task_label " methods", "[autogen][cte][methods][" tas
   SECTION("SerializeOut") { \
     auto task = ipc_manager->NewTask<TaskType>(); \
     if (!task.IsNull()) { \
-      chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeOut); \
+      chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeOut); \
       task->SerializeOut(save_ar); \
       INFO(task_label " SerializeOut completed"); \
       CHI_IPC->DelTask(task); \
@@ -11334,7 +11334,7 @@ TEST_CASE("Autogen - CTE GetOrCreateTagTask methods", "[autogen][cte][methods][G
   SECTION("SerializeIn") {
     auto task = ipc_manager->NewTask<TagCreateTask>();
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeIn);
       task->SerializeIn(save_ar);
       INFO("GetOrCreateTagTask SerializeIn completed");
       CHI_IPC->DelTask(task);
@@ -11344,7 +11344,7 @@ TEST_CASE("Autogen - CTE GetOrCreateTagTask methods", "[autogen][cte][methods][G
   SECTION("SerializeOut") {
     auto task = ipc_manager->NewTask<TagCreateTask>();
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeOut);
+      chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeOut);
       task->SerializeOut(save_ar);
       INFO("GetOrCreateTagTask SerializeOut completed");
       CHI_IPC->DelTask(task);
@@ -11785,62 +11785,62 @@ TEST_CASE("Autogen - ConfigParse ParseNumber", "[autogen][configparse][parsenumb
 // ============================================================================
 
 TEST_CASE("Autogen - LocalTaskArchive operations", "[autogen][localtaskarchive]") {
-  SECTION("LocalSaveTaskArchive basic serialization") {
-    chi::LocalSaveTaskArchive ar(chi::LocalMsgType::kSerializeIn);
+  SECTION("DefaultSaveArchive basic serialization") {
+    chi::DefaultSaveArchive ar(chi::LocalMsgType::kSerializeIn);
     int val1 = 42;
     double val2 = 3.14;
     ar(val1, val2);
     const auto& data = ar.GetData();
     REQUIRE(!data.empty());
     REQUIRE(ar.GetMsgType() == chi::LocalMsgType::kSerializeIn);
-    INFO("LocalSaveTaskArchive basic completed");
+    INFO("DefaultSaveArchive basic completed");
   }
 
-  SECTION("LocalSaveTaskArchive move constructor") {
-    chi::LocalSaveTaskArchive ar1(chi::LocalMsgType::kSerializeIn);
+  SECTION("DefaultSaveArchive move constructor") {
+    chi::DefaultSaveArchive ar1(chi::LocalMsgType::kSerializeIn);
     int val = 99;
     ar1(val);
-    chi::LocalSaveTaskArchive ar2(std::move(ar1));
+    chi::DefaultSaveArchive ar2(std::move(ar1));
     REQUIRE(ar2.GetMsgType() == chi::LocalMsgType::kSerializeIn);
     REQUIRE(!ar2.GetData().empty());
-    INFO("LocalSaveTaskArchive move constructor completed");
+    INFO("DefaultSaveArchive move constructor completed");
   }
 
-  SECTION("LocalLoadTaskArchive default constructor") {
-    chi::LocalLoadTaskArchive ar;
+  SECTION("DefaultLoadArchive default constructor") {
+    chi::DefaultLoadArchive ar;
     REQUIRE(ar.GetMsgType() == chi::LocalMsgType::kSerializeIn);
-    INFO("LocalLoadTaskArchive default constructor completed");
+    INFO("DefaultLoadArchive default constructor completed");
   }
 
-  SECTION("LocalLoadTaskArchive roundtrip") {
-    chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeIn);
+  SECTION("DefaultLoadArchive roundtrip") {
+    chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeIn);
     int val1 = 42;
     double val2 = 3.14;
     save_ar(val1, val2);
 
-    chi::LocalLoadTaskArchive load_ar(save_ar.GetData());
+    chi::DefaultLoadArchive load_ar(save_ar.GetData());
     int out1 = 0;
     double out2 = 0.0;
     load_ar(out1, out2);
     REQUIRE(out1 == 42);
-    INFO("LocalLoadTaskArchive roundtrip completed");
+    INFO("DefaultLoadArchive roundtrip completed");
   }
 
-  SECTION("LocalLoadTaskArchive move constructor") {
-    chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeIn);
+  SECTION("DefaultLoadArchive move constructor") {
+    chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeIn);
     int val = 77;
     save_ar(val);
 
-    chi::LocalLoadTaskArchive ar1(save_ar.GetData());
-    chi::LocalLoadTaskArchive ar2(std::move(ar1));
+    chi::DefaultLoadArchive ar1(save_ar.GetData());
+    chi::DefaultLoadArchive ar2(std::move(ar1));
     int out = 0;
     ar2(out);
     REQUIRE(out == 77);
-    INFO("LocalLoadTaskArchive move constructor completed");
+    INFO("DefaultLoadArchive move constructor completed");
   }
 
-  SECTION("LocalLoadTaskArchive SetMsgType and ResetTaskIndex") {
-    chi::LocalLoadTaskArchive ar;
+  SECTION("DefaultLoadArchive SetMsgType and ResetTaskIndex") {
+    chi::DefaultLoadArchive ar;
     ar.SetMsgType(chi::LocalMsgType::kSerializeOut);
     REQUIRE(ar.GetMsgType() == chi::LocalMsgType::kSerializeOut);
     ar.ResetTaskIndex();
@@ -11889,7 +11889,7 @@ TEST_CASE("Autogen - CTE task default constructors", "[autogen][cte][defaultctor
 }
 
 // ============================================================================
-// CTE task SerializeIn/SerializeOut round-trip with LocalLoadTaskArchive
+// CTE task SerializeIn/SerializeOut round-trip with DefaultLoadArchive
 // Covers the deserialization path
 // ============================================================================
 
@@ -11901,11 +11901,11 @@ TEST_CASE("Autogen - CTE " task_label " serialize roundtrip", "[autogen][cte][ro
   SECTION("SerializeIn roundtrip") { \
     auto orig = ipc_manager->NewTask<TaskType>(); \
     if (!orig.IsNull()) { \
-      chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeIn); \
+      chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeIn); \
       orig->SerializeIn(save_ar); \
       auto loaded = ipc_manager->NewTask<TaskType>(); \
       if (!loaded.IsNull()) { \
-        chi::LocalLoadTaskArchive load_ar(save_ar.GetData()); \
+        chi::DefaultLoadArchive load_ar(save_ar.GetData()); \
         loaded->SerializeIn(load_ar); \
         CHI_IPC->DelTask(loaded); \
       } \
@@ -11917,11 +11917,11 @@ TEST_CASE("Autogen - CTE " task_label " serialize roundtrip", "[autogen][cte][ro
   SECTION("SerializeOut roundtrip") { \
     auto orig = ipc_manager->NewTask<TaskType>(); \
     if (!orig.IsNull()) { \
-      chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeOut); \
+      chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeOut); \
       orig->SerializeOut(save_ar); \
       auto loaded = ipc_manager->NewTask<TaskType>(); \
       if (!loaded.IsNull()) { \
-        chi::LocalLoadTaskArchive load_ar(save_ar.GetData()); \
+        chi::DefaultLoadArchive load_ar(save_ar.GetData()); \
         loaded->SerializeOut(load_ar); \
         CHI_IPC->DelTask(loaded); \
       } \
@@ -12276,7 +12276,7 @@ TEST_CASE("Autogen - CTE Context struct GlobalSerialize", "[autogen][cte][contex
 }
 
 // ============================================================================
-// Additional CTE task coverage - SerializeOut roundtrip with LocalLoadTaskArchive
+// Additional CTE task coverage - SerializeOut roundtrip with DefaultLoadArchive
 // These cover the deserialization (load) path for SerializeOut
 // ============================================================================
 
@@ -12878,11 +12878,11 @@ TEST_CASE("Autogen - CTE Container LocalSave/Load dispatch extended", "[autogen]
   SECTION("LocalSaveTask/LocalLoadTask for ListTargetsTask") {
     auto task = cte_runtime.NewTask(wrp_cte::core::Method::kListTargets);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeIn);
       cte_runtime.LocalSaveTask(wrp_cte::core::Method::kListTargets, save_ar, task);
       auto load_task = cte_runtime.NewTask(wrp_cte::core::Method::kListTargets);
       if (!load_task.IsNull()) {
-        chi::LocalLoadTaskArchive load_ar(save_ar.GetData());
+        chi::DefaultLoadArchive load_ar(save_ar.GetData());
         cte_runtime.LocalLoadTask(wrp_cte::core::Method::kListTargets, load_ar, load_task);
         CHI_IPC->DelTask(load_task);
       }
@@ -12896,11 +12896,11 @@ TEST_CASE("Autogen - CTE Container LocalSave/Load dispatch extended", "[autogen]
   SECTION("LocalSaveTask/LocalLoadTask for GetContainedBlobsTask") {
     auto task = cte_runtime.NewTask(wrp_cte::core::Method::kGetContainedBlobs);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeIn);
       cte_runtime.LocalSaveTask(wrp_cte::core::Method::kGetContainedBlobs, save_ar, task);
       auto load_task = cte_runtime.NewTask(wrp_cte::core::Method::kGetContainedBlobs);
       if (!load_task.IsNull()) {
-        chi::LocalLoadTaskArchive load_ar(save_ar.GetData());
+        chi::DefaultLoadArchive load_ar(save_ar.GetData());
         cte_runtime.LocalLoadTask(wrp_cte::core::Method::kGetContainedBlobs, load_ar, load_task);
         CHI_IPC->DelTask(load_task);
       }
@@ -12915,11 +12915,11 @@ TEST_CASE("Autogen - CTE Container LocalSave/Load dispatch extended", "[autogen]
   SECTION("LocalSaveTask/LocalLoadTask for StatTargetsTask") {
     auto task = cte_runtime.NewTask(wrp_cte::core::Method::kStatTargets);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeIn);
       cte_runtime.LocalSaveTask(wrp_cte::core::Method::kStatTargets, save_ar, task);
       auto load_task = cte_runtime.NewTask(wrp_cte::core::Method::kStatTargets);
       if (!load_task.IsNull()) {
-        chi::LocalLoadTaskArchive load_ar(save_ar.GetData());
+        chi::DefaultLoadArchive load_ar(save_ar.GetData());
         cte_runtime.LocalLoadTask(wrp_cte::core::Method::kStatTargets, load_ar, load_task);
         CHI_IPC->DelTask(load_task);
       }
@@ -12931,11 +12931,11 @@ TEST_CASE("Autogen - CTE Container LocalSave/Load dispatch extended", "[autogen]
   SECTION("LocalSaveTask/LocalLoadTask for GetTagSizeTask") {
     auto task = cte_runtime.NewTask(wrp_cte::core::Method::kGetTagSize);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeIn);
       cte_runtime.LocalSaveTask(wrp_cte::core::Method::kGetTagSize, save_ar, task);
       auto load_task = cte_runtime.NewTask(wrp_cte::core::Method::kGetTagSize);
       if (!load_task.IsNull()) {
-        chi::LocalLoadTaskArchive load_ar(save_ar.GetData());
+        chi::DefaultLoadArchive load_ar(save_ar.GetData());
         cte_runtime.LocalLoadTask(wrp_cte::core::Method::kGetTagSize, load_ar, load_task);
         CHI_IPC->DelTask(load_task);
       }
@@ -14244,7 +14244,7 @@ TEST_CASE("Autogen - ChimaeraManager extended", "[autogen][chimgr][extended]") {
   SECTION(label " LocalSaveTask") { \
     auto task = runtime.NewTask(method_enum); \
     if (!task.IsNull()) { \
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut); \
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut); \
       runtime.LocalSaveTask(method_enum, save_archive, task); \
       CHI_IPC->DelTask(task); \
       INFO(label " LocalSaveTask completed"); \
@@ -14258,7 +14258,7 @@ TEST_CASE("Autogen - ChimaeraManager extended", "[autogen][chimgr][extended]") {
     auto src_task = runtime.NewTask(method_enum); \
     if (!src_task.IsNull()) { \
       /* Save using SerializeIn format to create compatible data */ \
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn); \
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn); \
       runtime.LocalSaveTask(method_enum, save_archive, src_task); \
       /* Actually LocalSaveTask calls SerializeOut, not SerializeIn. */ \
       /* So let's just test LocalLoadTask with an empty archive - the */ \
@@ -14357,13 +14357,13 @@ TEST_CASE("Autogen - CAE LocalSaveTask all methods", "[autogen][cae][localsave][
   SECTION(label " LocalLoadTask") { \
     auto task = runtime.NewTask(method_enum); \
     if (!task.IsNull()) { \
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeOut); \
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeOut); \
       runtime.LocalSaveTask(method_enum, save_archive, task); \
       auto loaded = runtime.NewTask(method_enum); \
       if (!loaded.IsNull()) { \
         /* Only attempt load if archive has data - catches field mismatch */ \
         if (!save_archive.GetData().empty()) { \
-          chi::LocalLoadTaskArchive load_archive(save_archive.GetData()); \
+          chi::DefaultLoadArchive load_archive(save_archive.GetData()); \
           /* Use try/catch since SerializeIn/Out field layout may differ */ \
           try { \
             runtime.LocalLoadTask(method_enum, load_archive, loaded); \
@@ -14393,13 +14393,13 @@ TEST_CASE("Autogen - MOD_NAME LocalLoadTask remaining methods", "[autogen][mod_n
     auto task = rt.NewTask(chimaera::MOD_NAME::Method::kCustom);
     if (!task.IsNull()) {
       // Manually serialize using the task's SerializeIn to generate matching data
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::MOD_NAME::CustomTask>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::MOD_NAME::Method::kCustom);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::MOD_NAME::Method::kCustom, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14411,13 +14411,13 @@ TEST_CASE("Autogen - MOD_NAME LocalLoadTask remaining methods", "[autogen][mod_n
   SECTION("MOD_NAME Create LocalLoadTask") {
     auto task = rt.NewTask(chimaera::MOD_NAME::Method::kCreate);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::MOD_NAME::CreateTask>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::MOD_NAME::Method::kCreate);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::MOD_NAME::Method::kCreate, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14429,13 +14429,13 @@ TEST_CASE("Autogen - MOD_NAME LocalLoadTask remaining methods", "[autogen][mod_n
   SECTION("MOD_NAME Destroy LocalLoadTask") {
     auto task = rt.NewTask(chimaera::MOD_NAME::Method::kDestroy);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::admin::DestroyPoolTask>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::MOD_NAME::Method::kDestroy);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::MOD_NAME::Method::kDestroy, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14454,13 +14454,13 @@ TEST_CASE("Autogen - Admin LocalLoadTask remaining methods", "[autogen][admin][l
   SECTION("Admin Create LocalLoadTask") {
     auto task = rt.NewTask(chimaera::admin::Method::kCreate);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::admin::CreateTask>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::admin::Method::kCreate);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::admin::Method::kCreate, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14472,13 +14472,13 @@ TEST_CASE("Autogen - Admin LocalLoadTask remaining methods", "[autogen][admin][l
   SECTION("Admin Destroy LocalLoadTask") {
     auto task = rt.NewTask(chimaera::admin::Method::kDestroy);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::admin::DestroyPoolTask>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::admin::Method::kDestroy);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::admin::Method::kDestroy, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14490,13 +14490,13 @@ TEST_CASE("Autogen - Admin LocalLoadTask remaining methods", "[autogen][admin][l
   SECTION("Admin GetOrCreatePool LocalLoadTask") {
     auto task = rt.NewTask(chimaera::admin::Method::kGetOrCreatePool);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::admin::GetOrCreatePoolTask<chimaera::admin::CreateParams>>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::admin::Method::kGetOrCreatePool);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::admin::Method::kGetOrCreatePool, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14508,13 +14508,13 @@ TEST_CASE("Autogen - Admin LocalLoadTask remaining methods", "[autogen][admin][l
   SECTION("Admin DestroyPool LocalLoadTask") {
     auto task = rt.NewTask(chimaera::admin::Method::kDestroyPool);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::admin::DestroyPoolTask>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::admin::Method::kDestroyPool);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::admin::Method::kDestroyPool, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14526,13 +14526,13 @@ TEST_CASE("Autogen - Admin LocalLoadTask remaining methods", "[autogen][admin][l
   SECTION("Admin SubmitBatch LocalLoadTask") {
     auto task = rt.NewTask(chimaera::admin::Method::kSubmitBatch);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::admin::SubmitBatchTask>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::admin::Method::kSubmitBatch);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::admin::Method::kSubmitBatch, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14551,13 +14551,13 @@ TEST_CASE("Autogen - Bdev LocalLoadTask remaining methods", "[autogen][bdev][loc
   SECTION("Bdev Create LocalLoadTask") {
     auto task = rt.NewTask(chimaera::bdev::Method::kCreate);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::admin::GetOrCreatePoolTask<chimaera::bdev::CreateParams>>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::bdev::Method::kCreate);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::bdev::Method::kCreate, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14569,13 +14569,13 @@ TEST_CASE("Autogen - Bdev LocalLoadTask remaining methods", "[autogen][bdev][loc
   SECTION("Bdev Destroy LocalLoadTask") {
     auto task = rt.NewTask(chimaera::bdev::Method::kDestroy);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::admin::DestroyPoolTask>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::bdev::Method::kDestroy);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::bdev::Method::kDestroy, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14587,13 +14587,13 @@ TEST_CASE("Autogen - Bdev LocalLoadTask remaining methods", "[autogen][bdev][loc
   SECTION("Bdev FreeBlocks LocalLoadTask") {
     auto task = rt.NewTask(chimaera::bdev::Method::kFreeBlocks);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::bdev::FreeBlocksTask>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::bdev::Method::kFreeBlocks);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::bdev::Method::kFreeBlocks, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14605,13 +14605,13 @@ TEST_CASE("Autogen - Bdev LocalLoadTask remaining methods", "[autogen][bdev][loc
   SECTION("Bdev Write LocalLoadTask") {
     auto task = rt.NewTask(chimaera::bdev::Method::kWrite);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::bdev::WriteTask>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::bdev::Method::kWrite);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::bdev::Method::kWrite, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14623,13 +14623,13 @@ TEST_CASE("Autogen - Bdev LocalLoadTask remaining methods", "[autogen][bdev][loc
   SECTION("Bdev Read LocalLoadTask") {
     auto task = rt.NewTask(chimaera::bdev::Method::kRead);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<chimaera::bdev::ReadTask>();
       typed.ptr_->SerializeIn(save_archive);
 
       auto loaded = rt.NewTask(chimaera::bdev::Method::kRead);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(chimaera::bdev::Method::kRead, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14645,12 +14645,12 @@ TEST_CASE("Autogen - Bdev LocalLoadTask remaining methods", "[autogen][bdev][loc
   SECTION(label " LocalLoadTask") { \
     auto task = cte_rt.NewTask(method_enum); \
     if (!task.IsNull()) { \
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn); \
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn); \
       auto typed = task.template Cast<task_type>(); \
       typed.ptr_->SerializeIn(save_archive); \
       auto loaded = cte_rt.NewTask(method_enum); \
       if (!loaded.IsNull()) { \
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData()); \
+        chi::DefaultLoadArchive load_archive(save_archive.GetData()); \
         cte_rt.LocalLoadTask(method_enum, load_archive, loaded); \
         CHI_IPC->DelTask(loaded); \
       } \
@@ -14672,12 +14672,12 @@ TEST_CASE("Autogen - CTE LocalLoadTask remaining methods", "[autogen][cte][local
   SECTION("CTE GetOrCreateTag LocalLoadTask") {
     auto task = cte_rt.NewTask(wrp_cte::core::Method::kGetOrCreateTag);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<wrp_cte::core::GetOrCreateTagTask<wrp_cte::core::CreateParams>>();
       typed.ptr_->SerializeIn(save_archive);
       auto loaded = cte_rt.NewTask(wrp_cte::core::Method::kGetOrCreateTag);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         cte_rt.LocalLoadTask(wrp_cte::core::Method::kGetOrCreateTag, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14707,12 +14707,12 @@ TEST_CASE("Autogen - CAE LocalLoadTask all methods", "[autogen][cae][localload][
   SECTION("CAE Create LocalLoadTask") {
     auto task = rt.NewTask(wrp_cae::core::Method::kCreate);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<wrp_cae::core::CreateTask>();
       typed.ptr_->SerializeIn(save_archive);
       auto loaded = rt.NewTask(wrp_cae::core::Method::kCreate);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(wrp_cae::core::Method::kCreate, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14724,12 +14724,12 @@ TEST_CASE("Autogen - CAE LocalLoadTask all methods", "[autogen][cae][localload][
   SECTION("CAE Destroy LocalLoadTask") {
     auto task = rt.NewTask(wrp_cae::core::Method::kDestroy);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<wrp_cae::core::DestroyTask>();
       typed.ptr_->SerializeIn(save_archive);
       auto loaded = rt.NewTask(wrp_cae::core::Method::kDestroy);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(wrp_cae::core::Method::kDestroy, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14741,12 +14741,12 @@ TEST_CASE("Autogen - CAE LocalLoadTask all methods", "[autogen][cae][localload][
   SECTION("CAE ParseOmni LocalLoadTask") {
     auto task = rt.NewTask(wrp_cae::core::Method::kParseOmni);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<wrp_cae::core::ParseOmniTask>();
       typed.ptr_->SerializeIn(save_archive);
       auto loaded = rt.NewTask(wrp_cae::core::Method::kParseOmni);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(wrp_cae::core::Method::kParseOmni, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14758,12 +14758,12 @@ TEST_CASE("Autogen - CAE LocalLoadTask all methods", "[autogen][cae][localload][
   SECTION("CAE ProcessHdf5Dataset LocalLoadTask") {
     auto task = rt.NewTask(wrp_cae::core::Method::kProcessHdf5Dataset);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<wrp_cae::core::ProcessHdf5DatasetTask>();
       typed.ptr_->SerializeIn(save_archive);
       auto loaded = rt.NewTask(wrp_cae::core::Method::kProcessHdf5Dataset);
       if (!loaded.IsNull()) {
-        chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+        chi::DefaultLoadArchive load_archive(save_archive.GetData());
         rt.LocalLoadTask(wrp_cae::core::Method::kProcessHdf5Dataset, load_archive, loaded);
         CHI_IPC->DelTask(loaded);
       }
@@ -14784,10 +14784,10 @@ TEST_CASE("Autogen - CAE LocalAllocLoadTask all methods", "[autogen][cae][locala
   SECTION("Create LocalAllocLoadTask") {
     auto task = rt.NewTask(wrp_cae::core::Method::kCreate);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<wrp_cae::core::CreateTask>();
       typed.ptr_->SerializeIn(save_archive);
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = rt.LocalAllocLoadTask(wrp_cae::core::Method::kCreate, load_archive);
       if (!loaded.IsNull()) {
         CHI_IPC->DelTask(loaded);
@@ -14800,10 +14800,10 @@ TEST_CASE("Autogen - CAE LocalAllocLoadTask all methods", "[autogen][cae][locala
   SECTION("Destroy LocalAllocLoadTask") {
     auto task = rt.NewTask(wrp_cae::core::Method::kDestroy);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<wrp_cae::core::DestroyTask>();
       typed.ptr_->SerializeIn(save_archive);
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = rt.LocalAllocLoadTask(wrp_cae::core::Method::kDestroy, load_archive);
       if (!loaded.IsNull()) {
         CHI_IPC->DelTask(loaded);
@@ -14816,10 +14816,10 @@ TEST_CASE("Autogen - CAE LocalAllocLoadTask all methods", "[autogen][cae][locala
   SECTION("ParseOmni LocalAllocLoadTask") {
     auto task = rt.NewTask(wrp_cae::core::Method::kParseOmni);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<wrp_cae::core::ParseOmniTask>();
       typed.ptr_->SerializeIn(save_archive);
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = rt.LocalAllocLoadTask(wrp_cae::core::Method::kParseOmni, load_archive);
       if (!loaded.IsNull()) {
         CHI_IPC->DelTask(loaded);
@@ -14832,10 +14832,10 @@ TEST_CASE("Autogen - CAE LocalAllocLoadTask all methods", "[autogen][cae][locala
   SECTION("ProcessHdf5Dataset LocalAllocLoadTask") {
     auto task = rt.NewTask(wrp_cae::core::Method::kProcessHdf5Dataset);
     if (!task.IsNull()) {
-      chi::LocalSaveTaskArchive save_archive(chi::LocalMsgType::kSerializeIn);
+      chi::DefaultSaveArchive save_archive(chi::LocalMsgType::kSerializeIn);
       auto typed = task.template Cast<wrp_cae::core::ProcessHdf5DatasetTask>();
       typed.ptr_->SerializeIn(save_archive);
-      chi::LocalLoadTaskArchive load_archive(save_archive.GetData());
+      chi::DefaultLoadArchive load_archive(save_archive.GetData());
       auto loaded = rt.LocalAllocLoadTask(wrp_cae::core::Method::kProcessHdf5Dataset, load_archive);
       if (!loaded.IsNull()) {
         CHI_IPC->DelTask(loaded);

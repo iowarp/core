@@ -2896,7 +2896,9 @@ void IpcManager::RouteToGpu(const FullPtr<Task> &task_ptr,
   hshm::lbm::LbmContext ctx;
   ctx.copy_space = fshm->copy_space;
   ctx.shm_info_ = &fshm->input_;
-  LocalSaveTaskArchive save_ar(LocalMsgType::kSerializeIn);
+  chi::priv::vector<char> save_buf;
+  save_buf.reserve(256);
+  DefaultSaveArchive save_ar(LocalMsgType::kSerializeIn, save_buf);
   container->LocalSaveTask(task_ptr->method_, save_ar, task_ptr);
   hshm::lbm::ShmTransport::Send(save_ar, ctx);
 

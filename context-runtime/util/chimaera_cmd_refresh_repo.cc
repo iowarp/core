@@ -634,36 +634,38 @@ class ChiModGenerator {
     oss << "}\n";
     oss << "\n";
 
-    // Generate LocalAllocLoadTask override
-    oss << "HSHM_GPU_FUN hipc::FullPtr<chi::Task> LocalAllocLoadTask(\n";
-    oss << "    chi::u32 method, chi::LocalLoadTaskArchive &archive) override {\n";
+    // --- Template: LoadTaskTmpl (unified deserialization switch-case) ---
+    oss << "template <typename ArchiveT>\n";
+    oss << "HSHM_GPU_FUN void LoadTaskTmpl(\n";
+    oss << "    chi::u32 method, ArchiveT &archive,\n";
+    oss << "    const hipc::FullPtr<chi::Task> &task) {\n";
     if (!gpu_methods.empty()) {
       oss << "  switch (method) {\n";
       for (const auto& method : gpu_methods) {
         std::string task_type = GetTaskTypeName(method.method_name, chimod_name);
         oss << "    case Method::" << method.constant_name << ": {\n";
-        oss << "      auto *alloc = gpu_alloc_;\n";
-        oss << "      auto task = alloc->template AllocateObjs<" << task_type << ">(1);\n";
-        oss << "      if (task.IsNull()) return hipc::FullPtr<chi::Task>::GetNull();\n";
-        oss << "      new (task.ptr_) " << task_type << "();\n";
-        oss << "      archive.SetMsgType(chi::LocalMsgType::kSerializeIn);\n";
-        oss << "      task.ptr_->SerializeIn(archive);\n";
-        oss << "      return task.template Cast<chi::Task>();\n";
+        oss << "      auto typed = task.template Cast<" << task_type << ">();\n";
+        oss << "      if (archive.GetMsgType() == chi::LocalMsgType::kSerializeIn) {\n";
+        oss << "        typed->SerializeIn(archive);\n";
+        oss << "      } else {\n";
+        oss << "        typed->SerializeOut(archive);\n";
+        oss << "      }\n";
+        oss << "      break;\n";
         oss << "    }\n";
       }
-      oss << "    default: return hipc::FullPtr<chi::Task>::GetNull();\n";
+      oss << "    default: break;\n";
       oss << "  }\n";
     } else {
-      oss << "  (void)method; (void)archive;\n";
-      oss << "  return hipc::FullPtr<chi::Task>::GetNull();\n";
+      oss << "  (void)method; (void)archive; (void)task;\n";
     }
     oss << "}\n";
     oss << "\n";
 
-    // Generate LocalSaveTask override
-    oss << "HSHM_GPU_FUN void LocalSaveTask(\n";
-    oss << "    chi::u32 method, chi::LocalSaveTaskArchive &archive,\n";
-    oss << "    const hipc::FullPtr<chi::Task> &task) override {\n";
+    // --- Template: SaveTaskTmpl (unified serialization switch-case) ---
+    oss << "template <typename ArchiveT>\n";
+    oss << "HSHM_GPU_FUN void SaveTaskTmpl(\n";
+    oss << "    chi::u32 method, ArchiveT &archive,\n";
+    oss << "    const hipc::FullPtr<chi::Task> &task) {\n";
     if (!gpu_methods.empty()) {
       oss << "  switch (method) {\n";
       for (const auto& method : gpu_methods) {
@@ -678,6 +680,94 @@ class ChiModGenerator {
       oss << "  }\n";
     } else {
       oss << "  (void)method; (void)archive; (void)task;\n";
+    }
+    oss << "}\n";
+    oss << "\n";
+
+    // --- Virtual override: LocalAllocLoadTask (alloc + deserialize) ---
+    oss << "HSHM_GPU_FUN hipc::FullPtr<chi::Task> LocalAllocLoadTask(\n";
+    oss << "    chi::u32 method, chi::DefaultLoadArchive &archive) override {\n";
+    if (!gpu_methods.empty()) {
+      oss << "  hipc::FullPtr<chi::Task> task = LocalAllocTask(method);\n";
+      oss << "  if (task.IsNull()) return task;\n";
+      oss << "  archive.SetMsgType(chi::LocalMsgType::kSerializeIn);\n";
+      oss << "  LoadTaskTmpl(method, archive, task);\n";
+      oss << "  return task;\n";
+    } else {
+      oss << "  (void)method; (void)archive;\n";
+      oss << "  return hipc::FullPtr<chi::Task>::GetNull();\n";
+    }
+    oss << "}\n";
+    oss << "\n";
+
+    // --- Virtual override: LocalAllocTask (alloc only) ---
+    oss << "HSHM_GPU_FUN hipc::FullPtr<chi::Task> LocalAllocTask(\n";
+    oss << "    chi::u32 method) override {\n";
+    if (!gpu_methods.empty()) {
+      oss << "  auto *alloc = CHI_IPC->gpu_alloc_;\n";
+      oss << "  switch (method) {\n";
+      for (const auto& method : gpu_methods) {
+        std::string task_type = GetTaskTypeName(method.method_name, chimod_name);
+        oss << "    case Method::" << method.constant_name << ": {\n";
+        oss << "      auto task = alloc->template AllocateObjs<" << task_type << ">(1);\n";
+        oss << "      if (task.IsNull()) return hipc::FullPtr<chi::Task>::GetNull();\n";
+        oss << "      new (task.ptr_) " << task_type << "();\n";
+        oss << "      return task.template Cast<chi::Task>();\n";
+        oss << "    }\n";
+      }
+      oss << "    default: return hipc::FullPtr<chi::Task>::GetNull();\n";
+      oss << "  }\n";
+    } else {
+      oss << "  (void)method;\n";
+      oss << "  return hipc::FullPtr<chi::Task>::GetNull();\n";
+    }
+    oss << "}\n";
+    oss << "\n";
+
+    // --- Virtual override: LocalLoadTask (deserialize into existing task) ---
+    oss << "HSHM_GPU_FUN void LocalLoadTask(\n";
+    oss << "    chi::u32 method, chi::DefaultLoadArchive &archive,\n";
+    oss << "    const hipc::FullPtr<chi::Task> &task) override {\n";
+    oss << "  archive.SetMsgType(chi::LocalMsgType::kSerializeIn);\n";
+    oss << "  LoadTaskTmpl(method, archive, task);\n";
+    oss << "}\n";
+    oss << "\n";
+
+    // --- Virtual override: LocalSaveTask (serialize output) ---
+    oss << "HSHM_GPU_FUN void LocalSaveTask(\n";
+    oss << "    chi::u32 method, chi::DefaultSaveArchive &archive,\n";
+    oss << "    const hipc::FullPtr<chi::Task> &task) override {\n";
+    oss << "  SaveTaskTmpl(method, archive, task);\n";
+    oss << "}\n";
+    oss << "\n";
+
+    // --- Virtual override: LocalLoadTaskOutput (deserialize output into task) ---
+    oss << "HSHM_GPU_FUN void LocalLoadTaskOutput(\n";
+    oss << "    chi::u32 method, chi::DefaultLoadArchive &archive,\n";
+    oss << "    const hipc::FullPtr<chi::Task> &task) override {\n";
+    oss << "  archive.SetMsgType(chi::LocalMsgType::kSerializeOut);\n";
+    oss << "  LoadTaskTmpl(method, archive, task);\n";
+    oss << "}\n";
+    oss << "\n";
+
+    // --- Virtual override: LocalDestroyTask (typed destructor dispatch) ---
+    oss << "HSHM_GPU_FUN void LocalDestroyTask(\n";
+    oss << "    chi::u32 method, hipc::FullPtr<chi::Task> &task) override {\n";
+    oss << "  if (task.IsNull()) return;\n";
+    if (!gpu_methods.empty()) {
+      oss << "  switch (method) {\n";
+      for (const auto& method : gpu_methods) {
+        std::string task_type = GetTaskTypeName(method.method_name, chimod_name);
+        oss << "    case Method::" << method.constant_name << ":\n";
+        oss << "      task.template Cast<" << task_type << ">().ptr_->~" << task_type << "();\n";
+        oss << "      break;\n";
+      }
+      oss << "    default:\n";
+      oss << "      task.ptr_->~Task();\n";
+      oss << "      break;\n";
+      oss << "  }\n";
+    } else {
+      oss << "  task.ptr_->~Task();\n";
     }
     oss << "}\n";
 

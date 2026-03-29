@@ -1710,8 +1710,13 @@ chi::TaskResume Runtime::SubmitBatch(hipc::FullPtr<SubmitBatchTask> task,
     co_return;
   }
 
-  // Create LocalLoadTaskArchive from the serialized data
-  chi::LocalLoadTaskArchive archive(task->serialized_data_);
+  // Create DefaultLoadArchive from the serialized data
+  chi::priv::vector<char> load_buf;
+  load_buf.reserve(task->serialized_data_.size());
+  for (size_t i = 0; i < task->serialized_data_.size(); ++i) {
+    load_buf.push_back(task->serialized_data_[i]);
+  }
+  chi::DefaultLoadArchive archive(load_buf);
 
   // Process tasks in batches of 32
   constexpr size_t kMaxParallelTasks = 32;

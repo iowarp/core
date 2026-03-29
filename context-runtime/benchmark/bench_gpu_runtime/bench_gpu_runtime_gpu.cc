@@ -188,11 +188,11 @@ __global__ void gpu_bench_alloc_kernel(
 }
 
 /**
- * GPU alloc+free benchmark kernel for PutBlobTask + LocalSaveTaskArchive.
+ * GPU alloc+free benchmark kernel for PutBlobTask + DefaultSaveArchive.
  *
  * Each warp scheduler does total_tasks cycles of:
  *   1. NewTask<PutBlobTask> — allocate task
- *   2. NewObj<LocalSaveTaskArchive> — allocate save archive
+ *   2. NewObj<DefaultSaveArchive> — allocate save archive
  *   3. DelObj(ar_save) + DelTask(task) — free both
  *
  * No serialization — purely measures allocation/deallocation cost of the
@@ -234,14 +234,16 @@ __global__ void gpu_bench_alloc_serde_kernel(
 
       // --- Construct SaveArchive on stack ---
       tc = clock64();
-      chi::LocalSaveTaskArchive ar_save(chi::LocalMsgType::kSerializeIn);
+      chi::priv::vector<char> save_buf;
+      save_buf.reserve(256);
+      chi::DefaultSaveArchive ar_save(chi::LocalMsgType::kSerializeIn, save_buf);
       t_ctor_save += clock64() - tc;
 
       // --- (skip serialize) ---
 
       // --- Construct LoadArchive on stack ---
       tc = clock64();
-      chi::LocalLoadTaskArchive ar_load(ar_save.GetData());
+      chi::DefaultLoadArchive ar_load(save_buf);
       ar_load.SetMsgType(chi::LocalMsgType::kSerializeIn);
       t_ctor_load += clock64() - tc;
 
@@ -280,10 +282,10 @@ __global__ void gpu_bench_alloc_serde_kernel(
       printf("  NewTask<PutBlob>:       %llu  (%llu/task)\n",
              (unsigned long long)t_alloc_task,
              (unsigned long long)(t_alloc_task / total_tasks));
-      printf("  LocalSaveTaskArchive(): %llu  (%llu/task)\n",
+      printf("  DefaultSaveArchive(): %llu  (%llu/task)\n",
              (unsigned long long)t_ctor_save,
              (unsigned long long)(t_ctor_save / total_tasks));
-      printf("  LocalLoadTaskArchive(): %llu  (%llu/task)\n",
+      printf("  DefaultLoadArchive(): %llu  (%llu/task)\n",
              (unsigned long long)t_ctor_load,
              (unsigned long long)(t_ctor_load / total_tasks));
       printf("  NewObj<PutBlob> task2:  %llu  (%llu/task)\n",
@@ -464,7 +466,9 @@ __global__ void gpu_bench_serde_kernel(
     if (lane == 0) {
       // Write mock output: SerializeOut produces return_code_ + completer_ +
       // result_value_ Simulate by doing a SendDevice with output data
-      chi::LocalSaveTaskArchive out_save(chi::LocalMsgType::kSerializeOut);
+      chi::priv::vector<char> out_buf;
+      out_buf.reserve(256);
+      chi::DefaultSaveArchive out_save(chi::LocalMsgType::kSerializeOut, out_buf);
       task_fp->SerializeOut(out_save);
       hshm::lbm::LbmContext out_ctx;
       out_ctx.copy_space = fshm->copy_space;
@@ -1131,7 +1135,7 @@ extern "C" int run_gpu_bench_serde(
 }
 
 /**
- * Run the GPU alloc+free benchmark for PutBlobTask + LocalSaveTaskArchive.
+ * Run the GPU alloc+free benchmark for PutBlobTask + DefaultSaveArchive.
  *
  * Same backend setup as run_gpu_bench_serde but launches
  * gpu_bench_alloc_serde_kernel (alloc/free only, no serialization).

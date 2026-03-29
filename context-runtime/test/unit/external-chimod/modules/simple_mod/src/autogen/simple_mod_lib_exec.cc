@@ -66,7 +66,7 @@ hipc::FullPtr<chi::Task> Runtime::AllocLoadTask(chi::u32 method, chi::LoadTaskAr
   return task_ptr;
 }
 
-void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
+void Runtime::LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive,
                             hipc::FullPtr<chi::Task> task_ptr) {
   switch (method) {
     default: {
@@ -76,7 +76,7 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
   }
 }
 
-hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive) {
+hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive) {
   hipc::FullPtr<chi::Task> task_ptr = NewTask(method);
   if (!task_ptr.IsNull()) {
     LocalLoadTask(method, archive, task_ptr);
@@ -84,7 +84,7 @@ hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::Local
   return task_ptr;
 }
 
-void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive, 
+void Runtime::LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive& archive, 
                              hipc::FullPtr<chi::Task> task_ptr) {
   switch (method) {
     default: {

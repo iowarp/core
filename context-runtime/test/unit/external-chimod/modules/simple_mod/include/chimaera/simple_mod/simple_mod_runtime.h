@@ -137,12 +137,12 @@ public:
   /**
    * Deserialize task for local transfer (auto-generated)
    */
-  hipc::FullPtr<chi::Task> LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive) override;
+  hipc::FullPtr<chi::Task> LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive) override;
 
   /**
    * Serialize task for local transfer (auto-generated)
    */
-  void LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
+  void LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive& archive,
                      hipc::FullPtr<chi::Task> task_ptr) override;
 
   /**

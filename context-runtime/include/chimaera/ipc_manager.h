@@ -70,8 +70,10 @@ namespace chi {
 
 // Forward declarations — full definitions in local_task_archives.h,
 // included after CHI_IPC is defined at the bottom of this header.
-class LocalSaveTaskArchive;
-class LocalLoadTaskArchive;
+template <typename BufferT> class LocalSaveTaskArchive;
+template <typename BufferT> class LocalLoadTaskArchive;
+using DefaultSaveArchive = LocalSaveTaskArchive<chi::priv::vector<char>>;
+using DefaultLoadArchive = LocalLoadTaskArchive<chi::priv::vector<char>>;
 enum class LocalMsgType : uint8_t;
 
 /**
@@ -275,8 +277,8 @@ class IpcManager {
   struct WarpIpcManager {
     CHI_PRIV_ALLOC_T *priv_alloc_ = nullptr;
     chi::priv::vector<char> buffer_;
-    LocalSaveTaskArchive save_ar_;
-    LocalLoadTaskArchive load_ar_;
+    DefaultSaveArchive save_ar_;
+    DefaultLoadArchive load_ar_;
     hipc::FullPtr<char> fshm_;      /**< Cached FutureShm + 4KB copy_space */
     char *meta_buf_ = nullptr;      /**< Cached 256B framing buffer (device mem) */
     static constexpr size_t kCopySpaceSize = 4096;
@@ -475,7 +477,7 @@ class IpcManager {
   }
 
   /** Get per-warp cached save archive */
-  HSHM_CROSS_FUN LocalSaveTaskArchive *GetSaveArchive() {
+  HSHM_CROSS_FUN DefaultSaveArchive *GetSaveArchive() {
 #if HSHM_IS_GPU
     auto *mgr = GetWarpManager();
     return mgr ? &mgr->save_ar_ : nullptr;
@@ -485,7 +487,7 @@ class IpcManager {
   }
 
   /** Get per-warp cached load archive */
-  HSHM_CROSS_FUN LocalLoadTaskArchive *GetLoadArchive() {
+  HSHM_CROSS_FUN DefaultLoadArchive *GetLoadArchive() {
 #if HSHM_IS_GPU
     auto *mgr = GetWarpManager();
     return mgr ? &mgr->load_ar_ : nullptr;
@@ -2316,7 +2318,9 @@ send_bcast:
     hshm::lbm::LbmContext ctx;
     ctx.copy_space = future_shm->copy_space;
     ctx.shm_info_ = &future_shm->input_;
-    LocalSaveTaskArchive save_ar(LocalMsgType::kSerializeIn);
+    chi::priv::vector<char> save_buf;
+    save_buf.reserve(256);
+    DefaultSaveArchive save_ar(LocalMsgType::kSerializeIn, save_buf);
     task_ptr->SerializeIn(save_ar);
     hshm::lbm::ShmTransport::Send(save_ar, ctx);
 
@@ -3245,7 +3249,9 @@ HSHM_CROSS_FUN bool Future<TaskT, AllocT>::Wait(float max_sec,
         hshm::lbm::LbmContext ctx;
         ctx.copy_space = future_full->copy_space;
         ctx.shm_info_ = &future_full->output_;
-        LocalLoadTaskArchive load_ar;
+        chi::priv::vector<char> load_buf;
+        load_buf.reserve(256);
+        DefaultLoadArchive load_ar(load_buf);
         load_ar.SetMsgType(LocalMsgType::kSerializeOut);
         hshm::lbm::ShmTransport::Recv(load_ar, ctx);
         task_ptr_->SerializeOut(load_ar);
@@ -3282,7 +3288,9 @@ HSHM_CROSS_FUN bool Future<TaskT, AllocT>::Wait(float max_sec,
           hshm::lbm::LbmContext ctx;
           ctx.copy_space = future_full->copy_space;
           ctx.shm_info_ = &future_full->output_;
-          LocalLoadTaskArchive load_ar;
+          chi::priv::vector<char> load_buf;
+          load_buf.reserve(256);
+          DefaultLoadArchive load_ar(load_buf);
           load_ar.SetMsgType(LocalMsgType::kSerializeOut);
           hshm::lbm::ShmTransport::Recv(load_ar, ctx);
           task_ptr_->SerializeOut(load_ar);

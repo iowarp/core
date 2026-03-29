@@ -90,11 +90,11 @@ class Container {
   /**
    * Virtual dispatch for task deserialization
    * @param method Method ID identifying the task type
-   * @param archive LocalLoadTaskArchive containing serialized input
+   * @param archive DefaultLoadArchive containing serialized input
    * @return FullPtr to the deserialized task, or null on failure
    */
   HSHM_GPU_FUN virtual hipc::FullPtr<Task> LocalAllocLoadTask(
-      u32 method, LocalLoadTaskArchive &archive) {
+      u32 method, DefaultLoadArchive &archive) {
     (void)method; (void)archive;
     return hipc::FullPtr<Task>::GetNull();
   }
@@ -113,7 +113,7 @@ class Container {
    * All lanes call this with warp_converged set on the archive.
    */
   HSHM_GPU_FUN virtual void LocalLoadTask(
-      u32 method, LocalLoadTaskArchive &archive,
+      u32 method, DefaultLoadArchive &archive,
       const hipc::FullPtr<Task> &task) {
     (void)method; (void)archive; (void)task;
   }
@@ -121,27 +121,20 @@ class Container {
   /**
    * Virtual dispatch for task serialization
    * @param method Method ID identifying the task type
-   * @param archive LocalSaveTaskArchive to write output into
+   * @param archive DefaultSaveArchive to write output into
    * @param task FullPtr to the completed task
    */
   HSHM_GPU_FUN virtual void LocalSaveTask(
-      u32 method, LocalSaveTaskArchive &archive,
+      u32 method, DefaultSaveArchive &archive,
       const hipc::FullPtr<Task> &task) {
     (void)method; (void)archive; (void)task;
   }
 
   /**
    * Virtual dispatch for deserializing task output onto an existing task.
-   * Called by Worker before resuming a suspended coroutine, so the
-   * deserialization runs outside the coroutine frame (avoids GPU allocator
-   * issues in resumed coroutines).
-   *
-   * @param method Method ID identifying the task type
-   * @param archive LocalLoadTaskArchive containing serialized output
-   * @param task FullPtr to the task to populate output fields on
    */
   HSHM_GPU_FUN virtual void LocalLoadTaskOutput(
-      u32 method, LocalLoadTaskArchive &archive,
+      u32 method, DefaultLoadArchive &archive,
       const hipc::FullPtr<Task> &task) {
     (void)method; (void)archive; (void)task;
   }

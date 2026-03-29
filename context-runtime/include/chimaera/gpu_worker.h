@@ -548,7 +548,7 @@ class Worker {
 
     // Phase 2 (all lanes): warp-parallel RecvDevice
     if (lane_id == 0) _tc = clock64();
-    auto *load_ar_ptr = reinterpret_cast<LocalLoadTaskArchive *>(load_ar_ull);
+    auto *load_ar_ptr = reinterpret_cast<DefaultLoadArchive *>(load_ar_ull);
     if (is_gpu2gpu) {
       hshm::lbm::LbmContext in_ctx;
       in_ctx.copy_space = reinterpret_cast<char *>(ctx_cs);
@@ -763,7 +763,7 @@ class Worker {
 
     // Phase 2 (all lanes): warp-parallel SendDevice
     if (lane_id == 0) _tc = clock64();
-    auto *save_ar_ptr = reinterpret_cast<LocalSaveTaskArchive *>(save_ar_ull);
+    auto *save_ar_ptr = reinterpret_cast<DefaultSaveArchive *>(save_ar_ull);
     // SAC entering SendDevice
     if (is_gpu2gpu) {
       hshm::lbm::LbmContext out_ctx;

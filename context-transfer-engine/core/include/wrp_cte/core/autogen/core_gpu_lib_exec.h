@@ -121,14 +121,14 @@ HSHM_GPU_FUN chi::gpu::TaskResume Run(chi::u32 method, hipc::FullPtr<chi::Task> 
 // LocalAllocLoadTask and LocalSaveTask are declared here and defined in
 // core_runtime_gpu.cc where core_tasks.h is available for full type definitions.
 HSHM_GPU_FUN hipc::FullPtr<chi::Task> LocalAllocLoadTask(
-    chi::u32 method, chi::LocalLoadTaskArchive &archive) override;
+    chi::u32 method, chi::DefaultLoadArchive &archive) override;
 
 HSHM_GPU_FUN void LocalSaveTask(
-    chi::u32 method, chi::LocalSaveTaskArchive &archive,
+    chi::u32 method, chi::DefaultSaveArchive &archive,
     const hipc::FullPtr<chi::Task> &task) override;
 
 HSHM_GPU_FUN void LocalLoadTaskOutput(
-    chi::u32 method, chi::LocalLoadTaskArchive &archive,
+    chi::u32 method, chi::DefaultLoadArchive &archive,
     const hipc::FullPtr<chi::Task> &task) override;
 
 HSHM_GPU_FUN void LocalDestroyTask(

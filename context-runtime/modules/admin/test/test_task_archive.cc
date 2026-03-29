@@ -591,7 +591,7 @@ public:
     return hipc::FullPtr<chi::Task>();
   }
 
-  void LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive &archive,
+  void LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive &archive,
                      hipc::FullPtr<chi::Task> task_ptr) override {
     // Test implementation - do nothing for now
     (void)method;
@@ -599,7 +599,7 @@ public:
     (void)task_ptr;
   }
 
-  hipc::FullPtr<chi::Task> LocalAllocLoadTask(chi::u32 method, chi::LocalLoadTaskArchive &archive) override {
+  hipc::FullPtr<chi::Task> LocalAllocLoadTask(chi::u32 method, chi::DefaultLoadArchive &archive) override {
     // Test implementation - allocate task and call LocalLoadTask
     hipc::FullPtr<chi::Task> task_ptr = NewTask(method);
     if (!task_ptr.IsNull()) {
@@ -608,7 +608,7 @@ public:
     return task_ptr;
   }
 
-  void LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive &archive,
+  void LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive &archive,
                      hipc::FullPtr<chi::Task> task_ptr) override {
     // Test implementation - do nothing
     (void)method;

@@ -305,14 +305,16 @@ hipc::FullPtr<Task> Worker::GetOrCopyTaskFromFuture(Future<Task> &future,
     ctx.shm_info_ = &future_shm->input_;
 
     // Detect GPU→CPU tasks: SendGpu sets client_task_vaddr_=0 and uses
-    // LocalSaveTaskArchive (LocalSerialize format). SendShm (CPU→CPU) sets
+    // DefaultSaveArchive (LocalSerialize format). SendShm (CPU→CPU) sets
     // client_task_vaddr_ to the task pointer and uses SaveTaskArchive (cereal).
     bool is_gpu_task = (future_shm->client_task_vaddr_ == 0);
 
     if (is_gpu_task) {
-      // GPU→CPU path: task was serialized with LocalSaveTaskArchive.
-      // Use LocalLoadTaskArchive (LocalDeserialize) to match the wire format.
-      LocalLoadTaskArchive local_archive;
+      // GPU→CPU path: task was serialized with DefaultSaveArchive.
+      // Use DefaultLoadArchive (LocalDeserialize) to match the wire format.
+      chi::priv::vector<char> recv_buf;
+      recv_buf.reserve(256);
+      DefaultLoadArchive local_archive(recv_buf);
       auto info = shm_recv_transport_->Recv(local_archive, ctx);
       (void)info;
       task_full_ptr = container->LocalAllocLoadTask(method_id, local_archive);

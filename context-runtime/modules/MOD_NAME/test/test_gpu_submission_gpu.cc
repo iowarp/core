@@ -287,7 +287,9 @@ extern "C" int run_cpu_to_gpu_test(chi::PoolId pool_id,
           (size_t)fshm->output_.copy_space_size_.load(),
           (unsigned)fshm->flags_.bits_.load());
 
-  chi::LocalLoadTaskArchive load_ar;
+  chi::priv::vector<char> recv_buf;
+  recv_buf.reserve(256);
+  chi::DefaultLoadArchive load_ar(recv_buf);
   hshm::lbm::ShmTransport::Recv(load_ar, ctx);
   load_ar.SetMsgType(chi::LocalMsgType::kSerializeOut);
   task.ptr_->SerializeOut(load_ar);

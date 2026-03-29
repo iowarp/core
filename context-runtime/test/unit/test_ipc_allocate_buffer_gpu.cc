@@ -395,9 +395,9 @@ __global__ void test_gpu_serialize_deserialize_kernel(
       return;
     }
 
-    // Serialize task using LocalSaveTaskArchive
+    // Serialize task using DefaultSaveArchive
     auto *alloc = CHI_PRIV_ALLOC;
-    chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeIn, alloc);
+    chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeIn, alloc);
     original_task->SerializeIn(save_ar);
     size_t serialized_size = save_ar.GetSize();
 
@@ -411,8 +411,8 @@ __global__ void test_gpu_serialize_deserialize_kernel(
       return;
     }
 
-    // Deserialize using LocalLoadTaskArchive from save archive data
-    chi::LocalLoadTaskArchive load_ar(save_ar.GetData());
+    // Deserialize using DefaultLoadArchive from save archive data
+    chi::DefaultLoadArchive load_ar(save_ar.GetData());
     loaded_task->SerializeIn(load_ar);
 
     // Verify deserialized task matches original
@@ -431,7 +431,7 @@ __global__ void test_gpu_serialize_deserialize_kernel(
 
 /**
  * GPU kernel for testing task serialization on GPU for CPU deserialization
- * Creates task, serializes with LocalSaveTaskArchive, copies to output buffer
+ * Creates task, serializes with DefaultSaveArchive, copies to output buffer
  */
 __global__ void test_gpu_serialize_for_cpu_kernel(
     chi::IpcManagerGpu gpu_info, char *output_buffer, size_t *output_size,
@@ -458,9 +458,9 @@ __global__ void test_gpu_serialize_for_cpu_kernel(
       return;
     }
 
-    // Serialize task using LocalSaveTaskArchive
+    // Serialize task using DefaultSaveArchive
     auto *alloc = CHI_PRIV_ALLOC;
-    chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeIn, alloc);
+    chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeIn, alloc);
     task->SerializeIn(save_ar);
 
     // Copy serialized data to output buffer
@@ -807,7 +807,7 @@ TEST_CASE("GPU IPC AllocateBuffer basic functionality",
 
   SECTION("GPU kernel serialize/deserialize") {
     INFO("Testing GPU task serialization and deserialization");
-    // This kernel uses LocalSaveTaskArchive which requires CHI_PRIV_ALLOC.
+    // This kernel uses DefaultSaveArchive which requires CHI_PRIV_ALLOC.
     // run_gpu_kernel_test creates IpcManagerGpu without a heap backend, so
     // we must set up a GpuMalloc heap backend and call the kernel directly.
     hipc::MemoryBackendId heap_backend_id(23, 0);
@@ -852,7 +852,7 @@ TEST_CASE("GPU IPC AllocateBuffer basic functionality",
     size_t *d_output_size = hshm::GpuApi::Malloc<size_t>(sizeof(size_t));
     int *d_results = hshm::GpuApi::Malloc<int>(sizeof(int));
 
-    // Run GPU kernel to serialize task using LocalSaveTaskArchive
+    // Run GPU kernel to serialize task using DefaultSaveArchive
     test_gpu_serialize_for_cpu_kernel<<<1, 1>>>(gpu_info, d_buffer,
                                                 d_output_size, d_results);
 
@@ -872,9 +872,9 @@ TEST_CASE("GPU IPC AllocateBuffer basic functionality",
     // ShmTransport: Copy serialized data from GPU to pinned host memory
     hshm::GpuApi::Memcpy(h_buffer, d_buffer, h_output_size);
 
-    // Deserialize on CPU using LocalLoadTaskArchive
+    // Deserialize on CPU using DefaultLoadArchive
     std::vector<char> cpu_buffer(h_buffer, h_buffer + h_output_size);
-    chi::LocalLoadTaskArchive load_ar(cpu_buffer);
+    chi::DefaultLoadArchive load_ar(cpu_buffer);
 
     // Create a task to deserialize into
     chimaera::MOD_NAME::GpuSubmitTask cpu_task;
@@ -947,7 +947,7 @@ TEST_CASE("GPU IPC IpcManagerGpu per-thread allocators",
         queue_allocator, 1, 1, 256);
     REQUIRE(!gpu_queue.IsNull());
 
-    // SendGpu uses CHI_PRIV_ALLOC for LocalSaveTaskArchive — needs a heap backend
+    // SendGpu uses CHI_PRIV_ALLOC for DefaultSaveArchive — needs a heap backend
     hipc::MemoryBackendId heap_id2(30, 0);
     hipc::GpuMalloc heap_backend2;
     REQUIRE(heap_backend2.shm_init(heap_id2, 4 * 1024 * 1024,
@@ -983,12 +983,12 @@ TEST_CASE("GPU IPC IpcManagerGpu per-thread allocators",
     // Verify FUTURE_COPY_FROM_CLIENT flag
     REQUIRE(future_shm->flags_.Any(chi::FutureShm::FUTURE_COPY_FROM_CLIENT));
 
-    // CPU reads from ring buffer using ShmTransport::Recv with LocalLoadTaskArchive
+    // CPU reads from ring buffer using ShmTransport::Recv with DefaultLoadArchive
     hshm::lbm::LbmContext recv_ctx;
     recv_ctx.copy_space = future_shm->copy_space;
     recv_ctx.shm_info_ = &future_shm->input_;
 
-    chi::LocalLoadTaskArchive load_ar;
+    chi::DefaultLoadArchive load_ar;
     hshm::lbm::ShmTransport::Recv(load_ar, recv_ctx);
 
     // Deserialize task and verify fields
@@ -1032,7 +1032,7 @@ TEST_CASE("GPU IPC IpcManagerGpu per-thread allocators",
         queue_allocator, 1, 1, 256);
     REQUIRE(!gpu_queue.IsNull());
 
-    // SendGpu uses CHI_PRIV_ALLOC for LocalSaveTaskArchive — needs a heap backend
+    // SendGpu uses CHI_PRIV_ALLOC for DefaultSaveArchive — needs a heap backend
     hipc::MemoryBackendId heap_id3(31, 0);
     hipc::GpuMalloc heap_backend3;
     REQUIRE(heap_backend3.shm_init(heap_id3, 4 * 1024 * 1024,
@@ -1066,7 +1066,7 @@ TEST_CASE("GPU IPC IpcManagerGpu per-thread allocators",
     recv_ctx.copy_space = future_shm->copy_space;
     recv_ctx.shm_info_ = &future_shm->input_;
 
-    chi::LocalLoadTaskArchive load_ar;
+    chi::DefaultLoadArchive load_ar;
     hshm::lbm::ShmTransport::Recv(load_ar, recv_ctx);
 
     chimaera::MOD_NAME::GpuSubmitTask deserialized_task;
@@ -1080,8 +1080,8 @@ TEST_CASE("GPU IPC IpcManagerGpu per-thread allocators",
     send_ctx.copy_space = future_shm->copy_space;
     send_ctx.shm_info_ = &future_shm->output_;
 
-    // Serialize output via LocalSaveTaskArchive + ShmTransport::Send
-    chi::LocalSaveTaskArchive save_ar(chi::LocalMsgType::kSerializeOut);
+    // Serialize output via DefaultSaveArchive + ShmTransport::Send
+    chi::DefaultSaveArchive save_ar(chi::LocalMsgType::kSerializeOut);
     deserialized_task.SerializeOut(save_ar);
     hshm::lbm::ShmTransport::Send(save_ar, send_ctx);
 

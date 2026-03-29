@@ -1123,8 +1123,10 @@ class TaskBatch {
     // Create new task in IPC
     auto task = CHI_IPC->NewTask<TaskT>(std::forward<Args>(args)...);
 
-    // Serialize task inputs using LocalSaveTaskArchive
-    chi::LocalSaveTaskArchive archive(chi::LocalMsgType::kSerializeIn);
+    // Serialize task inputs using DefaultSaveArchive
+    chi::priv::vector<char> ser_buf;
+    ser_buf.reserve(256);
+    chi::DefaultSaveArchive archive(chi::LocalMsgType::kSerializeIn, ser_buf);
     archive << (*task);
 
     // Record task info
