@@ -70,6 +70,8 @@ class Container {
   // ====================================================================
   using RunFn = TaskResume (*)(Container *, u32, hipc::FullPtr<Task>, RunContext &);
   using AllocTaskFn = TaskContextBlock (*)(Container *, u32, size_t);
+  /** Alloc Task+RunContext+stack, deserialize input from WrapLoadArchive, return both */
+  using AllocLoadDeserFn = TaskContextBlock (*)(Container *, u32, size_t, WrapLoadArchive &);
   using WrapLoadTaskFn = void (*)(Container *, u32, WrapLoadArchive &, const hipc::FullPtr<Task> &);
   using WrapSaveTaskFn = void (*)(Container *, u32, WrapSaveArchive &, const hipc::FullPtr<Task> &);
   using DefaultLoadTaskFn = void (*)(Container *, u32, DefaultLoadArchive &, const hipc::FullPtr<Task> &);
@@ -88,6 +90,7 @@ class Container {
   // Inline function pointer table (one global memory read per dispatch)
   RunFn run_;
   AllocTaskFn alloc_task_;
+  AllocLoadDeserFn alloc_load_deser_;
   AllocLoadTaskDefaultFn alloc_load_task_default_;
   AllocLoadTaskWrapFn alloc_load_task_wrap_;
   WrapLoadTaskFn load_task_wrap_;
@@ -102,7 +105,7 @@ class Container {
   // ====================================================================
   HSHM_GPU_FUN Container()
       : container_id_(0),
-        run_(nullptr), alloc_task_(nullptr),
+        run_(nullptr), alloc_task_(nullptr), alloc_load_deser_(nullptr),
         alloc_load_task_default_(nullptr), alloc_load_task_wrap_(nullptr),
         load_task_wrap_(nullptr), load_task_default_(nullptr),
         save_task_wrap_(nullptr), save_task_default_(nullptr),
@@ -130,6 +133,12 @@ class Container {
 
   HSHM_GPU_FUN TaskContextBlock LocalAllocTask(u32 method, size_t stack_size = 0) {
     return alloc_task_(this, method, stack_size);
+  }
+
+  /** Alloc Task+RunContext+stack and deserialize input in one dispatch */
+  HSHM_GPU_FUN TaskContextBlock LocalAllocLoadDeser(
+      u32 method, size_t stack_size, WrapLoadArchive &archive) {
+    return alloc_load_deser_(this, method, stack_size, archive);
   }
 
   HSHM_GPU_FUN hipc::FullPtr<Task> LocalAllocLoadTask(u32 method, DefaultLoadArchive &archive) {

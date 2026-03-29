@@ -40,10 +40,12 @@
 
 #if CHI_GPU_WORKER_DEBUG
 #define GPU_WORKER_DPRINTF(...) printf(__VA_ARGS__)
-#define GPU_WORKER_TIMER_START(var) long long var = clock64()
+#define GPU_WORKER_TIMER_DEF(var) long long var = 0
+#define GPU_WORKER_TIMER_START(var) var = clock64()
 #define GPU_WORKER_TIMER_END(counter, var) counter += clock64() - var
 #else
 #define GPU_WORKER_DPRINTF(...) ((void)0)
+#define GPU_WORKER_TIMER_DEF(var) ((void)0)
 #define GPU_WORKER_TIMER_START(var) ((void)0)
 #define GPU_WORKER_TIMER_END(counter, var) ((void)0)
 #endif
@@ -188,6 +190,7 @@ class Worker {
     if (ctx == nullptr) return;
 
     // --- Coroutine creation and resume ---
+    GPU_WORKER_TIMER_DEF(_etc);
     bool participate = (ctx->parallelism_ > 1) || (lane_id == 0);
     if (participate) {
       if (ctx->task_coros_[0] == nullptr) {
@@ -314,6 +317,7 @@ class Worker {
                                         u32 range_off = 0,
                                         u32 range_width = 0) {
     static constexpr size_t kStackSize = 4096;
+    GPU_WORKER_TIMER_DEF(_actc);
     GPU_WORKER_TIMER_START(_actc);
     auto *ipc = CHI_IPC;
     auto *priv = ipc->GetPrivAlloc();
@@ -413,6 +417,7 @@ class Worker {
         }
       }
 
+      GPU_WORKER_TIMER_DEF(_qpop_tc);
       GPU_WORKER_TIMER_START(_qpop_tc);
       Future<Task> future;
       bool popped = is_gpu2gpu ? lane.PopDevice(future) : lane.Pop(future);
@@ -502,6 +507,7 @@ class Worker {
   HSHM_GPU_FUN RunContext *PrepareTaskCopy(u32 lane_id, FutureShm *fshm,
                                            Container *container, u32 method_id,
                                            bool is_gpu2gpu) {
+    GPU_WORKER_TIMER_DEF(_tc); GPU_WORKER_TIMER_DEF(_tc2); GPU_WORKER_TIMER_DEF(_tc3);
     auto *ipc = CHI_IPC;
 
     // Phase 1 (lane 0): validate + read PreallocHeader
@@ -537,79 +543,41 @@ class Worker {
     // Phase 2 (lane 0): single alloc for Task + RunContext + stack
     static constexpr size_t kStackSize = 4096;
 
-    unsigned long long data_ptr_ull = 0;
-    unsigned int data_size = 0;
-    unsigned long long task_ull = 0;
-    unsigned long long rctx_ull = 0;
-    int alloc_ok = 0;
+    TaskContextBlock block = {hipc::FullPtr<Task>::GetNull(), nullptr};
 
+    // Phase 2 (lane 0): single dispatch — alloc + deserialize
     if (lane_id == 0) {
-      char *data_ptr = fshm->copy_space + IpcManager::WarpIpcManager::kHeaderSize;
-      data_ptr_ull = reinterpret_cast<unsigned long long>(data_ptr);
-      data_size = hdr.data_size;
       GPU_WORKER_TIMER_END(prof_recv_device_, _tc);
 
       GPU_WORKER_TIMER_START(_tc2);
-      auto block = container->LocalAllocTask(method_id, kStackSize);
+      hipc::FullPtr<char> data_fp;
+      data_fp.ptr_ = fshm->copy_space + IpcManager::WarpIpcManager::kHeaderSize;
+      data_fp.shm_.alloc_id_.SetNull();
+      data_fp.shm_.off_ = reinterpret_cast<size_t>(data_fp.ptr_);
+      hshm::priv::wrap_vector recv_buf(data_fp, hdr.data_size);
+      recv_buf.resize(hdr.data_size);
+      WrapLoadArchive load_ar(recv_buf);
+
+      block = container->LocalAllocLoadDeser(method_id, kStackSize, load_ar);
       GPU_WORKER_TIMER_END(prof_alloc_task_, _tc2);
-      if (!block.task_ptr.IsNull()) {
-        task_ull = reinterpret_cast<unsigned long long>(block.task_ptr.ptr_);
-        rctx_ull = reinterpret_cast<unsigned long long>(block.rctx);
-        alloc_ok = 1;
+
+      if (block.task_ptr.IsNull()) {
+        MarkComplete(fshm, is_gpu2gpu);
       }
     }
 
-    // Broadcast for warp-parallel deserialization
-    data_ptr_ull = hipc::shfl_sync_u64(0xFFFFFFFF, data_ptr_ull, 0);
-    data_size = __shfl_sync(0xFFFFFFFF, data_size, 0);
-    task_ull = hipc::shfl_sync_u64(0xFFFFFFFF, task_ull, 0);
-    alloc_ok = __shfl_sync(0xFFFFFFFF, alloc_ok, 0);
+    if (block.task_ptr.IsNull() && lane_id == 0) return nullptr;
 
-    if (!alloc_ok) {
-      if (lane_id == 0) MarkComplete(fshm, is_gpu2gpu);
-      return nullptr;
-    }
-
-    // Phase 3 (all lanes): warp-parallel SerializeIn
-    if (lane_id == 0) { GPU_WORKER_TIMER_START(_tc3); }
-    {
-      hipc::FullPtr<char> data_fp;
-      data_fp.ptr_ = reinterpret_cast<char *>(data_ptr_ull);
-      data_fp.shm_.alloc_id_.SetNull();
-      data_fp.shm_.off_ = data_ptr_ull;
-      hshm::priv::wrap_vector recv_buf(data_fp, data_size);
-      recv_buf.resize(data_size);
-
-      WrapLoadArchive load_ar(recv_buf);
-      load_ar.SetMsgType(LocalMsgType::kSerializeIn);
-      load_ar.SetWarpConverged(true);
-
-      hipc::FullPtr<Task> task_fp;
-      task_fp.ptr_ = reinterpret_cast<Task *>(task_ull);
-      task_fp.shm_.alloc_id_.SetNull();
-      task_fp.shm_.off_ = task_ull;
-      container->LocalLoadTask(method_id, load_ar, task_fp);
-    }
-    __syncwarp();
-    if (lane_id == 0) {
-      GPU_WORKER_TIMER_END(prof_load_task_, _tc3);
-    }
-
-    // Phase 4 (lane 0): fill in RunContext fields (already constructed by LocalAllocTask)
+    // Phase 3 (lane 0): fill in RunContext fields
     RunContext *result = nullptr;
     if (lane_id == 0) {
-      GPU_WORKER_TIMER_START(_tc4);
-      hipc::FullPtr<Task> task_ptr;
-      task_ptr.ptr_ = reinterpret_cast<Task *>(task_ull);
-      task_ptr.shm_.alloc_id_.SetNull();
-      task_ptr.shm_.off_ = task_ull;
-
-      RunContext *ctx = reinterpret_cast<RunContext *>(rctx_ull);
-      u32 parallelism = task_ptr.ptr_->pool_query_.GetParallelism();
+      GPU_WORKER_TIMER_START(_tc3);
+      RunContext *ctx = block.rctx;
+      u32 parallelism = block.task_ptr.ptr_->pool_query_.GetParallelism();
       ctx->container_ = container;
       ctx->method_id_ = method_id;
       ctx->parallelism_ = parallelism;
-      ctx->task_ptr_ = task_ptr;
+      ctx->task_ptr_ = block.task_ptr;
       ctx->task_fshm_ = fshm;
       ctx->is_gpu2gpu_ = is_gpu2gpu;
       ctx->is_copy_path_ = true;
@@ -619,7 +587,7 @@ class Worker {
       ctx->awaited_fshm_ = nullptr;
       ctx->awaited_task_ = nullptr;
       result = ctx;
-      GPU_WORKER_TIMER_END(prof_alloc_ctx_, _tc4);
+      GPU_WORKER_TIMER_END(prof_alloc_ctx_, _tc3);
     }
     return result;
   }
@@ -766,6 +734,7 @@ class Worker {
                                          Container *container, u32 method_id,
                                          hipc::FullPtr<Task> &task_ptr,
                                          bool is_gpu2gpu) {
+    GPU_WORKER_TIMER_DEF(_tc); GPU_WORKER_TIMER_DEF(_tc2); GPU_WORKER_TIMER_DEF(_tc3);
     auto *ipc = CHI_IPC;
 
     // Phase 1 (lane 0): serialize task output directly into copy_space

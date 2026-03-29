@@ -733,6 +733,19 @@ class ChiModGenerator {
     oss << "  return block.task_ptr;\n";
     oss << "}\n\n";
 
+    // AllocLoadDeserImpl — single dispatch: alloc + deserialize from WrapLoadArchive
+    oss << "static HSHM_GPU_FUN chi::gpu::TaskContextBlock AllocLoadDeserImpl(\n";
+    oss << "    chi::gpu::Container *self_, chi::u32 method,\n";
+    oss << "    size_t stack_size, chi::WrapLoadArchive &ar) {\n";
+    oss << "  auto *self = static_cast<GpuRuntime *>(self_);\n";
+    oss << "  auto block = AllocTaskImpl(self_, method, stack_size);\n";
+    oss << "  if (!block.task_ptr.IsNull()) {\n";
+    oss << "    ar.SetMsgType(chi::LocalMsgType::kSerializeIn);\n";
+    oss << "    self->LoadTaskTmpl(method, ar, block.task_ptr);\n";
+    oss << "  }\n";
+    oss << "  return block;\n";
+    oss << "}\n\n";
+
     // LoadTaskDefaultImpl
     oss << "static HSHM_GPU_FUN void LoadTaskDefaultImpl(\n";
     oss << "    chi::gpu::Container *self_, chi::u32 method,\n";
@@ -804,6 +817,7 @@ class ChiModGenerator {
     oss << "HSHM_GPU_FUN GpuRuntime() {\n";
     oss << "  run_ = &RunImpl;\n";
     oss << "  alloc_task_ = &AllocTaskImpl;\n";
+    oss << "  alloc_load_deser_ = &AllocLoadDeserImpl;\n";
     oss << "  alloc_load_task_default_ = &AllocLoadTaskDefaultImpl;\n";
     oss << "  alloc_load_task_wrap_ = &AllocLoadTaskWrapImpl;\n";
     oss << "  load_task_default_ = &LoadTaskDefaultImpl;\n";

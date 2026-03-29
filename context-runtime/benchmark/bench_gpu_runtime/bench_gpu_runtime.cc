@@ -339,8 +339,6 @@ static void PrintResults(const BenchmarkConfig &cfg, float elapsed_ms) {
  * Uses CHI_IPC->ReadOrchestratorProfile() to access the GPU-side counters.
  */
 static void PrintOrchestratorProfile() {
-  // The orchestrator control struct is accessed through the opaque pointer.
-  // We use ReadOrchestratorProfile which is defined in ipc_manager.cc
   CHI_IPC->PrintGpuOrchestratorProfile();
 }
 
