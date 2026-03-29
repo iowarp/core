@@ -95,9 +95,10 @@ __global__ void gpu_bench_client_kernel(
 
   __syncwarp();
 
+  auto *ipc = CHI_IPC;
+
   // Allocate task once, reuse across iterations to avoid per-task alloc/free.
   // All lanes participate in NewTask (lane 0 allocates) and Send (warp-parallel).
-  auto *ipc = CHI_IPC;
   auto task = ipc->NewTask<chimaera::MOD_NAME::GpuSubmitTask>(
       chi::CreateTaskId(), pool_id, chi::PoolQuery::Local(),
       (chi::u32)0, (chi::u32)0);
@@ -947,6 +948,10 @@ extern "C" int run_gpu_bench_latency(
   // Pause orchestrator to free SMs, launch client kernel, then resume
   CHI_IPC->PauseGpuOrchestrator();
   cudaGetLastError();  // Clear any sticky CUDA errors
+
+  // Re-fetch gpu_info AFTER queue rebuild (SetGpuOrchestratorBlocks rebuilt it)
+  gpu_info = CHI_IPC->GetClientGpuInfo(0);
+  gpu_info.backend = gpu_backend;
 
   PrintKernelInfo("gpu_bench_client_kernel",
                   (const void *)chi_bench::gpu_bench_client_kernel,
