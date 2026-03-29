@@ -4,9 +4,8 @@
 #ifndef CHIMAERA_AUTOGEN_GPU_WORK_ORCHESTRATOR_MODULES_H_
 #define CHIMAERA_AUTOGEN_GPU_WORK_ORCHESTRATOR_MODULES_H_
 
-#include "chimaera/MOD_NAME/MOD_NAME_gpu_runtime.h"
-#include "chimaera/admin/admin_gpu_runtime.h"
-#include "chimaera/bdev/bdev_gpu_runtime.h"
+#include "wrp_cte/core/core_gpu_runtime.h"
+#include "wrp_cte/compressor/compressor_gpu_runtime.h"
 
 #include "chimaera/gpu_container.h"
 #include "chimaera/types.h"
@@ -23,9 +22,8 @@ __global__ void _gpu_alloc_container(Container **out, u32 module_id,
                                       const PoolId *pid, u32 cid) {
   Container *obj = nullptr;
   switch (module_id) {
-    case 0: obj = new chimaera::MOD_NAME::GpuRuntime(); break;
-    case 1: obj = new chimaera::admin::GpuRuntime(); break;
-    case 2: obj = new chimaera::bdev::GpuRuntime(); break;
+    case 0: obj = new wrp_cte::core::GpuRuntime(); break;
+    case 1: obj = new wrp_cte::compressor::GpuRuntime(); break;
     default: break;
   }
   if (obj) obj->Init(*pid, cid);
@@ -36,9 +34,8 @@ __global__ void _gpu_alloc_container(Container **out, u32 module_id,
  * Map ChiMod name to module ID for GPU container allocation.
  */
 inline u32 GetGpuModuleId(const char *chimod_name) {
-  if (strcmp(chimod_name, "chimaera_MOD_NAME") == 0) return 0;
-  if (strcmp(chimod_name, "chimaera_admin") == 0) return 1;
-  if (strcmp(chimod_name, "chimaera_bdev") == 0) return 2;
+  if (strcmp(chimod_name, "wrp_cte_core") == 0) return 0;
+  if (strcmp(chimod_name, "wrp_cte_compressor") == 0) return 1;
   return 0xFFFFFFFF;
 }
 

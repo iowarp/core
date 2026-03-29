@@ -455,7 +455,7 @@ class LocalSaveTaskArchive : public LocalLbmBase {
   }
 
   const LocalTaskInfoVec &GetTaskInfos() const { return task_infos_; }
-  LocalMsgType GetMsgType() const { return msg_type_; }
+  HSHM_CROSS_FUN LocalMsgType GetMsgType() const { return msg_type_; }
 
   HSHM_CROSS_FUN size_t GetSize() {
     serializer_.Finalize();
@@ -691,7 +691,7 @@ class LocalLoadTaskArchive : public LocalLbmBase {
   const LocalTaskInfo &GetCurrentTaskInfo() const {
     return task_infos_[current_task_index_];
   }
-  LocalMsgType GetMsgType() const { return msg_type_; }
+  HSHM_CROSS_FUN LocalMsgType GetMsgType() const { return msg_type_; }
   void ResetTaskIndex() { current_task_index_ = 0; }
   HSHM_CROSS_FUN void SetMsgType(LocalMsgType msg_type) {
     msg_type_ = msg_type;

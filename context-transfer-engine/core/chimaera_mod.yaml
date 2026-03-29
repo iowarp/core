@@ -42,23 +42,6 @@ kFlushData: 34         # Periodic task to flush data from volatile to non-volati
 has_gpu: true
 gpu_methods:
   - kRegisterTarget
-  - kUnregisterTarget
-  - kListTargets
-  - kStatTargets
   - kGetOrCreateTag
-  - kGetTagSize
-  - kDelTag
-  - kGetContainedBlobs
   - kPutBlob
   - kGetBlob
-  - kReorganizeBlob
-  - kDelBlob
-  - kGetBlobScore
-  - kGetBlobSize
-  - kGetBlobInfo
-  - kPollTelemetryLog
-  - kTagQuery
-  - kBlobQuery
-  - kGetTargetInfo
-  - kFlushMetadata
-  - kFlushData

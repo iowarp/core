@@ -88,6 +88,7 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       break;
     }
     case Method::kSubtaskTest: {
+      // Cast task FullPtr to specific type
       hipc::FullPtr<SubtaskTestTask> typed_task = task_ptr.template Cast<SubtaskTestTask>();
       co_await SubtaskTest(typed_task, rctx);
       break;
@@ -229,7 +230,7 @@ hipc::FullPtr<chi::Task> Runtime::AllocLoadTask(chi::u32 method, chi::LoadTaskAr
   return task_ptr;
 }
 
-void Runtime::LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive,
+void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
                             hipc::FullPtr<chi::Task> task_ptr) {
   switch (method) {
     case Method::kCreate: {
@@ -288,6 +289,7 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive,
     }
     case Method::kSubtaskTest: {
       auto typed_task = task_ptr.template Cast<SubtaskTestTask>();
+      // Use archive operator which respects msg_type
       archive >> *typed_task.ptr_;
       break;
     }
@@ -298,7 +300,7 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive,
   }
 }
 
-hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive) {
+hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive) {
   hipc::FullPtr<chi::Task> task_ptr = NewTask(method);
   if (!task_ptr.IsNull()) {
     LocalLoadTask(method, archive, task_ptr);
@@ -306,7 +308,7 @@ hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::Defau
   return task_ptr;
 }
 
-void Runtime::LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive& archive, 
+void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive, 
                              hipc::FullPtr<chi::Task> task_ptr) {
   switch (method) {
     case Method::kCreate: {
@@ -365,6 +367,7 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive& archive,
     }
     case Method::kSubtaskTest: {
       auto typed_task = task_ptr.template Cast<SubtaskTestTask>();
+      // Use archive operator which respects msg_type
       archive << *typed_task.ptr_;
       break;
     }
@@ -482,8 +485,10 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       break;
     }
     case Method::kSubtaskTest: {
+      // Allocate new task
       auto new_task_ptr = ipc_manager->NewTask<SubtaskTestTask>();
       if (!new_task_ptr.IsNull()) {
+        // Copy task fields (includes base Task fields)
         auto task_typed = orig_task_ptr.template Cast<SubtaskTestTask>();
         new_task_ptr->Copy(task_typed);
         return new_task_ptr.template Cast<chi::Task>();

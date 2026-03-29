@@ -40,8 +40,12 @@
 
 #if CHI_GPU_WORKER_DEBUG
 #define GPU_WORKER_DPRINTF(...) printf(__VA_ARGS__)
+#define GPU_WORKER_TIMER_START(var) long long var = clock64()
+#define GPU_WORKER_TIMER_END(counter, var) counter += clock64() - var
 #else
 #define GPU_WORKER_DPRINTF(...) ((void)0)
+#define GPU_WORKER_TIMER_START(var) ((void)0)
+#define GPU_WORKER_TIMER_END(counter, var) ((void)0)
 #endif
 
 #include "chimaera/gpu_container.h"
@@ -183,12 +187,11 @@ class Worker {
 
     if (ctx == nullptr) return;
 
-    long long _etc;
     // --- Coroutine creation and resume ---
     bool participate = (ctx->parallelism_ > 1) || (lane_id == 0);
     if (participate) {
       if (ctx->task_coros_[0] == nullptr) {
-        if (lane_id == 0) _etc = clock64();
+        if (lane_id == 0) { GPU_WORKER_TIMER_START(_etc); }
         auto *container = ctx->container_;
         TaskResume tmp = container->Run(ctx->method_id_, ctx->task_ptr_, *ctx);
         if (!tmp.get_handle()) {
@@ -202,11 +205,11 @@ class Worker {
           ctx->task_coros_[lane_id] = tmp.release();
         }
         if (ctx->parallelism_ > 1) __syncwarp();
-        if (lane_id == 0) prof_coro_create_ += clock64() - _etc;
+        if (lane_id == 0) { GPU_WORKER_TIMER_END(prof_coro_create_, _etc); }
       }
 
       if (ctx->task_coros_[lane_id] && !ctx->task_coros_[lane_id].done()) {
-        if (lane_id == 0) { ctx->is_yielded_ = false; _etc = clock64(); }
+        if (lane_id == 0) { ctx->is_yielded_ = false; GPU_WORKER_TIMER_START(_etc); }
         if (ctx->parallelism_ > 1) __syncwarp();
 
         auto &coro_h = ctx->coro_handles_[lane_id];
@@ -215,17 +218,17 @@ class Worker {
         } else {
           ctx->task_coros_[lane_id].resume();
         }
-        if (lane_id == 0) prof_coro_resume_ += clock64() - _etc;
+        if (lane_id == 0) { GPU_WORKER_TIMER_END(prof_coro_resume_, _etc); }
       }
 
       // Destroy completed coroutine frames (all participating lanes together)
-      if (lane_id == 0) _etc = clock64();
+      if (lane_id == 0) { GPU_WORKER_TIMER_START(_etc); }
       if (ctx->task_coros_[lane_id] && ctx->task_coros_[lane_id].done()) {
         ctx->task_coros_[lane_id].destroy();
         ctx->task_coros_[lane_id] = nullptr;
         ctx->coro_handles_[lane_id] = nullptr;
       }
-      if (lane_id == 0) prof_coro_destroy_ += clock64() - _etc;
+      if (lane_id == 0) { GPU_WORKER_TIMER_END(prof_coro_destroy_, _etc); }
     }
 
     __syncwarp();
@@ -311,7 +314,7 @@ class Worker {
                                         u32 range_off = 0,
                                         u32 range_width = 0) {
     static constexpr size_t kStackSize = 4096;
-    long long _actc = clock64();
+    GPU_WORKER_TIMER_START(_actc);
     auto *ipc = CHI_IPC;
     auto *priv = ipc->GetPrivAlloc();
     // Single allocation: RunContext + stack region contiguous
@@ -322,8 +325,7 @@ class Worker {
     new (ctx) RunContext();
     char *stack = alloc_result.ptr_ + sizeof(RunContext);
     ctx->InitStack(stack, kStackSize);
-    long long _alloc_done = clock64();
-    prof_ctx_alloc_ += (_alloc_done - _actc);
+    GPU_WORKER_TIMER_END(prof_ctx_alloc_, _actc);
     ctx->container_ = container;
     ctx->method_id_ = method_id;
     ctx->parallelism_ = parallelism;
@@ -411,7 +413,7 @@ class Worker {
         }
       }
 
-      long long _qpop_tc = clock64();
+      GPU_WORKER_TIMER_START(_qpop_tc);
       Future<Task> future;
       bool popped = is_gpu2gpu ? lane.PopDevice(future) : lane.Pop(future);
       if (popped) {
@@ -441,7 +443,7 @@ class Worker {
               CompleteAndResumeParent(fshm, is_gpu2gpu);
             } else {
               DbgTaskPopped();
-              prof_queue_pop_ += clock64() - _qpop_tc;
+              GPU_WORKER_TIMER_END(prof_queue_pop_, _qpop_tc);
               fshm_ull = reinterpret_cast<unsigned long long>(fshm);
               container_ull = reinterpret_cast<unsigned long long>(container);
               is_copy = fshm->flags_.AnyDevice(
@@ -500,7 +502,6 @@ class Worker {
   HSHM_GPU_FUN RunContext *PrepareTaskCopy(u32 lane_id, FutureShm *fshm,
                                            Container *container, u32 method_id,
                                            bool is_gpu2gpu) {
-    long long _tc;
     auto *ipc = CHI_IPC;
 
     // Phase 1 (lane 0): validate + read PreallocHeader
@@ -531,7 +532,7 @@ class Worker {
     valid = __shfl_sync(0xFFFFFFFF, valid, 0);
     if (!valid) return nullptr;
 
-    if (lane_id == 0) _tc = clock64();
+    if (lane_id == 0) { GPU_WORKER_TIMER_START(_tc); }
 
     // Phase 2 (lane 0): single alloc for Task + RunContext + stack
     static constexpr size_t kStackSize = 4096;
@@ -546,11 +547,11 @@ class Worker {
       char *data_ptr = fshm->copy_space + IpcManager::WarpIpcManager::kHeaderSize;
       data_ptr_ull = reinterpret_cast<unsigned long long>(data_ptr);
       data_size = hdr.data_size;
-      prof_recv_device_ += clock64() - _tc;
+      GPU_WORKER_TIMER_END(prof_recv_device_, _tc);
 
-      _tc = clock64();
+      GPU_WORKER_TIMER_START(_tc2);
       auto block = container->LocalAllocTask(method_id, kStackSize);
-      prof_alloc_task_ += clock64() - _tc;
+      GPU_WORKER_TIMER_END(prof_alloc_task_, _tc2);
       if (!block.task_ptr.IsNull()) {
         task_ull = reinterpret_cast<unsigned long long>(block.task_ptr.ptr_);
         rctx_ull = reinterpret_cast<unsigned long long>(block.rctx);
@@ -570,7 +571,7 @@ class Worker {
     }
 
     // Phase 3 (all lanes): warp-parallel SerializeIn
-    if (lane_id == 0) _tc = clock64();
+    if (lane_id == 0) { GPU_WORKER_TIMER_START(_tc3); }
     {
       hipc::FullPtr<char> data_fp;
       data_fp.ptr_ = reinterpret_cast<char *>(data_ptr_ull);
@@ -591,13 +592,13 @@ class Worker {
     }
     __syncwarp();
     if (lane_id == 0) {
-      prof_load_task_ += clock64() - _tc;
+      GPU_WORKER_TIMER_END(prof_load_task_, _tc3);
     }
 
     // Phase 4 (lane 0): fill in RunContext fields (already constructed by LocalAllocTask)
     RunContext *result = nullptr;
     if (lane_id == 0) {
-      _tc = clock64();
+      GPU_WORKER_TIMER_START(_tc4);
       hipc::FullPtr<Task> task_ptr;
       task_ptr.ptr_ = reinterpret_cast<Task *>(task_ull);
       task_ptr.shm_.alloc_id_.SetNull();
@@ -618,7 +619,7 @@ class Worker {
       ctx->awaited_fshm_ = nullptr;
       ctx->awaited_task_ = nullptr;
       result = ctx;
-      prof_alloc_ctx_ += clock64() - _tc;
+      GPU_WORKER_TIMER_END(prof_alloc_ctx_, _tc4);
     }
     return result;
   }
@@ -765,7 +766,6 @@ class Worker {
                                          Container *container, u32 method_id,
                                          hipc::FullPtr<Task> &task_ptr,
                                          bool is_gpu2gpu) {
-    long long _tc;
     auto *ipc = CHI_IPC;
 
     // Phase 1 (lane 0): serialize task output directly into copy_space
@@ -773,14 +773,14 @@ class Worker {
     unsigned int data_size = 0;
 
     if (lane_id == 0) {
-      _tc = clock64();
+      GPU_WORKER_TIMER_START(_tc);
       // Rebind buffer to CLIENT's copy_space and serialize output there
       auto *mgr = ipc->GetWarpManager();
       mgr->BindCopySpace(fshm->copy_space);
       auto *save_ar_ptr = &mgr->save_ar_;
       save_ar_ptr->Reset(LocalMsgType::kSerializeOut);
       container->LocalSaveTask(method_id, *save_ar_ptr, task_ptr);
-      prof_save_task_ += clock64() - _tc;
+      GPU_WORKER_TIMER_END(prof_save_task_, _tc);
 
       ctx_cs = reinterpret_cast<unsigned long long>(fshm->copy_space);
       ctx_si = reinterpret_cast<unsigned long long>(&fshm->output_);
@@ -793,7 +793,7 @@ class Worker {
     data_size = __shfl_sync(0xFFFFFFFF, data_size, 0);
 
     // Phase 2: Write PreallocHeader + mark ready
-    if (lane_id == 0) _tc = clock64();
+    if (lane_id == 0) { GPU_WORKER_TIMER_START(_tc2); }
     if (is_gpu2gpu) {
       PreallocHeader hdr;
       hdr.msg_type = LocalMsgType::kSerializeOut;
@@ -813,18 +813,18 @@ class Worker {
     }
     __syncwarp();
     if (lane_id == 0) {
-      prof_send_device_ += clock64() - _tc;
+      GPU_WORKER_TIMER_END(prof_send_device_, _tc2);
     }
 
     // Phase 3 (lane 0): cleanup + mark complete
     if (lane_id == 0) {
-      _tc = clock64();
+      GPU_WORKER_TIMER_START(_tc3);
       container->LocalDestroyTask(method_id, task_ptr);
       ipc->DelTask(task_ptr);
       hipc::threadfence();
       MarkComplete(fshm, is_gpu2gpu);
       ResumeParentIfPresent(fshm);
-      prof_complete_ += clock64() - _tc;
+      GPU_WORKER_TIMER_END(prof_complete_, _tc3);
       ++prof_task_count_;
     }
   }
