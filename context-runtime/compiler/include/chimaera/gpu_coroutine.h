@@ -105,6 +105,7 @@ HSHM_GPU_FUN void GpuCoroFreeRaw(void *ptr);
 struct alignas(8) FrameHeader {
   u32 parallelism_;
   u32 lane_id_; /**< Hardware lane at frame allocation (set in device pass) */
+  bool is_stack_; /**< True if allocated from RunContext bump stack */
 };
 
 // ============================================================================
@@ -169,6 +170,12 @@ struct RunContext {
   u32 range_off_; /**< Start of this warp's sub-range within [0, parallelism) */
   u32 range_width_; /**< Width of this warp's sub-range (typically <=32) */
 
+  // ==== Bump stack for coroutine frame allocation ====
+
+  char *stack_base_;    /**< Start of the bump stack region */
+  char *stack_cur_;     /**< Current bump pointer (grows upward) */
+  char *stack_end_;     /**< End of the bump stack region */
+
   // ==== Constructors ====
 
   __host__ __device__ RunContext()
@@ -184,32 +191,21 @@ struct RunContext {
         is_gpu2gpu_(false),
         is_copy_path_(false),
         range_off_(0),
-        range_width_(0) {
+        range_width_(0),
+        stack_base_(nullptr),
+        stack_cur_(nullptr),
+        stack_end_(nullptr) {
     for (u32 i = 0; i < kWarpSize; ++i) {
       coro_handles_[i] = nullptr;
       task_coros_[i] = nullptr;
     }
   }
 
-  __host__ __device__ RunContext(u32 block_id, u32 thread_id, u32 warp_id,
-                                 u32 lane_id)
-      : is_yielded_(false),
-        yield_spin_count_(0),
-        spins_remaining_(0),
-        awaited_fshm_(nullptr),
-        awaited_task_(nullptr),
-        container_(nullptr),
-        task_fshm_(nullptr),
-        method_id_(0),
-        parallelism_(1),
-        is_gpu2gpu_(false),
-        is_copy_path_(false),
-        range_off_(0),
-        range_width_(0) {
-    for (u32 i = 0; i < kWarpSize; ++i) {
-      coro_handles_[i] = nullptr;
-      task_coros_[i] = nullptr;
-    }
+  /** Initialize the bump stack with an externally-allocated region */
+  __host__ __device__ void InitStack(char *base, size_t size) {
+    stack_base_ = base;
+    stack_cur_ = base;
+    stack_end_ = base + size;
   }
 
   /** Get the warp offset index for this context's range */
@@ -217,14 +213,52 @@ struct RunContext {
     return range_off_ / kWarpSize;
   }
 
-  /** Allocate memory via CHI_PRIV_ALLOC (PrivateBuddyAllocator) */
+  /**
+   * Bump-allocate from the stack. Alignment is 16 bytes.
+   * Returns nullptr and traps if the stack is exhausted.
+   */
+  __device__ void *StackPush(size_t size) {
+    constexpr size_t kAlign = 16;
+    char *aligned = reinterpret_cast<char *>(
+        (reinterpret_cast<size_t>(stack_cur_) + kAlign - 1) & ~(kAlign - 1));
+    char *new_cur = aligned + size;
+    if (new_cur > stack_end_) {
+      printf("[STACK OVERFLOW] need=%llu avail=%llu\n",
+             (unsigned long long)size,
+             (unsigned long long)(stack_end_ - stack_cur_));
+      __trap();
+      return nullptr;
+    }
+    stack_cur_ = new_cur;
+    return aligned;
+  }
+
+  /**
+   * Pop the last allocation from the stack.
+   * Must be called in LIFO order (reverse of push).
+   */
+  __device__ void StackPop(void *ptr) {
+    // Simply reset cur to the given pointer (LIFO contract)
+    stack_cur_ = static_cast<char *>(ptr);
+  }
+
+  /** Reset the stack to empty (used between tasks) */
+  __host__ __device__ void StackReset() {
+    stack_cur_ = stack_base_;
+  }
+
+  /** Allocate memory via bump stack (fast path) or CHI_PRIV_ALLOC (fallback) */
   __device__ void *Alloc(size_t size) {
+    if (stack_base_) return StackPush(size);
     auto fp = GpuCoroAlloc(size);
     return fp.IsNull() ? nullptr : fp.ptr_;
   }
 
-  /** Free memory via CHI_PRIV_ALLOC (PrivateBuddyAllocator) */
-  __device__ void Free(void *ptr) { GpuCoroFreeRaw(ptr); }
+  /** Free memory — no-op for bump stack (freed in bulk), or CHI_PRIV_ALLOC */
+  __device__ void Free(void *ptr) {
+    if (stack_base_) return;  // Stack memory freed in bulk via StackReset
+    GpuCoroFreeRaw(ptr);
+  }
 
   /**
    * Free the top-level coroutine frame block directly (lane-0-only path).
@@ -232,14 +266,17 @@ struct RunContext {
    * we can't do __syncwarp for the full warp destroy path.
    */
   __device__ void FreeFramesDirect() {
-    if (task_coros_[0]) {
-      char *frame = static_cast<char *>(task_coros_[0].address());
-      GpuCoroFreeRaw(frame - sizeof(FrameHeader));
-      for (u32 i = 0; i < kWarpSize; ++i) {
-        task_coros_[i] = nullptr;
-        coro_handles_[i] = nullptr;
-      }
+    for (u32 i = 0; i < kWarpSize; ++i) {
+      task_coros_[i] = nullptr;
+      coro_handles_[i] = nullptr;
     }
+    // Stack memory freed in bulk — no per-frame free needed
+    if (stack_base_) {
+      StackReset();
+      return;
+    }
+    // Legacy path: free via allocator
+    // (should not be reached once all contexts use stack)
   }
 };
 
@@ -274,13 +311,41 @@ class TaskResume {
         : run_ctx_(nullptr), caller_handle_(nullptr), lane_id_(0) {}
 
     /**
-     * Warp-level bulk allocation helper shared by all operator new overloads.
-     * If parallelism > 1, lane 0 allocates 32 frames in one call and
-     * broadcasts the base via __shfl_sync. Each lane gets its own frame.
+     * Bump-allocate a coroutine frame from the RunContext stack.
+     * Falls back to GpuCoroAlloc if no RunContext is available.
      */
-    __device__ static void *AllocFrame(size_t size, u32 parallelism) noexcept {
+    __device__ static void *AllocFrame(size_t size, RunContext *ctx,
+                                        u32 parallelism) noexcept {
       size_t total = sizeof(FrameHeader) + size;
       u32 lane = threadIdx.x % kWarpSize;
+
+      // Fast path: bump-allocate from RunContext stack
+      if (ctx && ctx->stack_base_) {
+        if (parallelism > 1) {
+          unsigned long long base_ull = 0;
+          if (lane == 0) {
+            void *block = ctx->StackPush(kWarpSize * total);
+            base_ull = reinterpret_cast<unsigned long long>(block);
+          }
+          base_ull = __shfl_sync(0xFFFFFFFF, base_ull, 0);
+          if (base_ull == 0) return nullptr;
+          char *my_frame = reinterpret_cast<char *>(base_ull) + lane * total;
+          auto *hdr = reinterpret_cast<FrameHeader *>(my_frame);
+          hdr->parallelism_ = parallelism;
+          hdr->lane_id_ = lane;
+          hdr->is_stack_ = true;
+          return my_frame + sizeof(FrameHeader);
+        }
+        void *block = ctx->StackPush(total);
+        if (!block) return nullptr;
+        auto *hdr = reinterpret_cast<FrameHeader *>(block);
+        hdr->parallelism_ = 1;
+        hdr->lane_id_ = 0;
+        hdr->is_stack_ = true;
+        return static_cast<char *>(block) + sizeof(FrameHeader);
+      }
+
+      // Fallback: BuddyAllocator
       if (parallelism > 1) {
         unsigned long long base_ull = 0;
         if (lane == 0) {
@@ -294,6 +359,7 @@ class TaskResume {
         auto *hdr = reinterpret_cast<FrameHeader *>(my_frame);
         hdr->parallelism_ = parallelism;
         hdr->lane_id_ = lane;
+        hdr->is_stack_ = false;
         return my_frame + sizeof(FrameHeader);
       }
       auto fp = GpuCoroAlloc(total);
@@ -301,22 +367,22 @@ class TaskResume {
       auto *hdr = reinterpret_cast<FrameHeader *>(fp.ptr_);
       hdr->parallelism_ = 1;
       hdr->lane_id_ = 0;
+      hdr->is_stack_ = false;
       return fp.ptr_ + sizeof(FrameHeader);
     }
 
     /** operator new: catch-all for member function coroutines.
-     * C++20 passes coroutine function params to operator new.
-     * For member functions, the implicit object ref is first.
-     * We accept it as Self&& and scan remaining args for RunContext. */
+     * Scans args for RunContext to use its bump stack. */
     template <typename Self, typename... Args>
     __device__ static void *operator new(size_t size, Self&&,
                                          Args &&...args) noexcept {
-      return AllocFrame(size, ExtractParallelism(args...));
+      return AllocFrame(size, ExtractRunContext(args...),
+                        ExtractParallelism(args...));
     }
 
     /** operator new: fallback for parameterless coroutines. */
     __device__ static void *operator new(size_t size) noexcept {
-      return AllocFrame(size, 1);
+      return AllocFrame(size, nullptr, 1);
     }
 
    private:
@@ -332,17 +398,30 @@ class TaskResume {
       return ExtractParallelism(rest...);
     }
 
+    __device__ static RunContext *ExtractRunContext() { return nullptr; }
+
+    template <typename... Rest>
+    __device__ static RunContext *ExtractRunContext(RunContext &ctx, Rest &&...) {
+      return &ctx;
+    }
+
+    template <typename First, typename... Rest>
+    __device__ static RunContext *ExtractRunContext(First &&, Rest &&...rest) {
+      return ExtractRunContext(rest...);
+    }
+
    public:
 
     /**
-     * Warp-level bulk free: if the frame was bulk-allocated, __syncwarp
-     * ensures all lanes finish cleanup, then lane 0 frees the entire block.
-     * For single allocations, free directly.
+     * operator delete: no-op for stack-allocated frames (freed in bulk
+     * via StackReset). Falls back to GpuCoroFreeRaw for BuddyAllocator.
      */
     __device__ static void operator delete(void *ptr, size_t) {
       if (!ptr) return;
       char *raw = static_cast<char *>(ptr) - sizeof(FrameHeader);
       auto *hdr = reinterpret_cast<FrameHeader *>(raw);
+      // Stack frames are freed in bulk via RunContext::StackReset — skip
+      if (hdr->is_stack_) return;
 #if HSHM_IS_GPU_COMPILER
       if (hdr->parallelism_ > 1) {
         __syncwarp();

@@ -310,17 +310,18 @@ class Worker {
                                         bool is_copy_path, u32 parallelism,
                                         u32 range_off = 0,
                                         u32 range_width = 0) {
+    static constexpr size_t kStackSize = 4096;
     long long _actc = clock64();
-    RunContext *ctx;
-    if (cached_rctx_) {
-      ctx = cached_rctx_;
-      cached_rctx_ = nullptr;
-    } else {
-      auto *ipc = CHI_IPC;
-      auto alloc_result = ipc->gpu_alloc_->AllocateObjs<RunContext>(1);
-      ctx = alloc_result.ptr_;
-      if (!ctx) return nullptr;
-    }
+    auto *ipc = CHI_IPC;
+    auto *priv = ipc->GetPrivAlloc();
+    // Single allocation: RunContext + stack region contiguous
+    size_t total = sizeof(RunContext) + kStackSize;
+    auto alloc_result = priv->template AllocateObjs<char>(total);
+    if (alloc_result.IsNull()) return nullptr;
+    RunContext *ctx = reinterpret_cast<RunContext *>(alloc_result.ptr_);
+    new (ctx) RunContext();
+    char *stack = alloc_result.ptr_ + sizeof(RunContext);
+    ctx->InitStack(stack, kStackSize);
     long long _alloc_done = clock64();
     prof_ctx_alloc_ += (_alloc_done - _actc);
     ctx->container_ = container;
@@ -339,15 +340,9 @@ class Worker {
   }
 
   HSHM_GPU_FUN void FreeContext(RunContext *ctx) {
+    // RunContext is co-allocated with the Task — freed by DelTask.
+    // Just reset coroutine frame state (stack frames freed in bulk).
     ctx->FreeFramesDirect();
-    if (!cached_rctx_) {
-      cached_rctx_ = ctx;
-    } else {
-      auto *ipc = CHI_IPC;
-      hipc::FullPtr<RunContext> ptr(
-          reinterpret_cast<hipc::Allocator *>(ipc->gpu_alloc_), ctx);
-      ipc->gpu_alloc_->Free(ptr);
-    }
   }
 
   // ================================================================
@@ -538,10 +533,13 @@ class Worker {
 
     if (lane_id == 0) _tc = clock64();
 
-    // Phase 2 (lane 0): read header, allocate task
+    // Phase 2 (lane 0): single alloc for Task + RunContext + stack
+    static constexpr size_t kStackSize = 4096;
+
     unsigned long long data_ptr_ull = 0;
     unsigned int data_size = 0;
     unsigned long long task_ull = 0;
+    unsigned long long rctx_ull = 0;
     int alloc_ok = 0;
 
     if (lane_id == 0) {
@@ -550,11 +548,12 @@ class Worker {
       data_size = hdr.data_size;
       prof_recv_device_ += clock64() - _tc;
 
-      // Allocate task (lane 0 only — BuddyAllocator is not thread-safe)
       _tc = clock64();
-      hipc::FullPtr<Task> task_ptr = container->LocalAllocTask(method_id);
-      if (!task_ptr.IsNull()) {
-        task_ull = reinterpret_cast<unsigned long long>(task_ptr.ptr_);
+      auto block = container->LocalAllocTask(method_id, kStackSize);
+      prof_alloc_task_ += clock64() - _tc;
+      if (!block.task_ptr.IsNull()) {
+        task_ull = reinterpret_cast<unsigned long long>(block.task_ptr.ptr_);
+        rctx_ull = reinterpret_cast<unsigned long long>(block.rctx);
         alloc_ok = 1;
       }
     }
@@ -571,6 +570,7 @@ class Worker {
     }
 
     // Phase 3 (all lanes): warp-parallel SerializeIn
+    if (lane_id == 0) _tc = clock64();
     {
       hipc::FullPtr<char> data_fp;
       data_fp.ptr_ = reinterpret_cast<char *>(data_ptr_ull);
@@ -590,23 +590,34 @@ class Worker {
       container->LocalLoadTask(method_id, load_ar, task_fp);
     }
     __syncwarp();
-
     if (lane_id == 0) {
-      prof_alloc_task_ += clock64() - _tc;
+      prof_load_task_ += clock64() - _tc;
     }
 
-    // Phase 4 (lane 0): alloc context
+    // Phase 4 (lane 0): fill in RunContext fields (already constructed by LocalAllocTask)
     RunContext *result = nullptr;
     if (lane_id == 0) {
+      _tc = clock64();
       hipc::FullPtr<Task> task_ptr;
       task_ptr.ptr_ = reinterpret_cast<Task *>(task_ull);
       task_ptr.shm_.alloc_id_.SetNull();
       task_ptr.shm_.off_ = task_ull;
 
-      _tc = clock64();
+      RunContext *ctx = reinterpret_cast<RunContext *>(rctx_ull);
       u32 parallelism = task_ptr.ptr_->pool_query_.GetParallelism();
-      result = AllocForParallelism(fshm, container, method_id, task_ptr,
-                                   is_gpu2gpu, true, parallelism);
+      ctx->container_ = container;
+      ctx->method_id_ = method_id;
+      ctx->parallelism_ = parallelism;
+      ctx->task_ptr_ = task_ptr;
+      ctx->task_fshm_ = fshm;
+      ctx->is_gpu2gpu_ = is_gpu2gpu;
+      ctx->is_copy_path_ = true;
+      ctx->range_off_ = 0;
+      ctx->range_width_ = parallelism;
+      ctx->is_yielded_ = false;
+      ctx->awaited_fshm_ = nullptr;
+      ctx->awaited_task_ = nullptr;
+      result = ctx;
       prof_alloc_ctx_ += clock64() - _tc;
     }
     return result;
@@ -809,7 +820,7 @@ class Worker {
     if (lane_id == 0) {
       _tc = clock64();
       container->LocalDestroyTask(method_id, task_ptr);
-      ipc->gpu_alloc_->Free(task_ptr.template Cast<char>());
+      ipc->DelTask(task_ptr);
       hipc::threadfence();
       MarkComplete(fshm, is_gpu2gpu);
       ResumeParentIfPresent(fshm);

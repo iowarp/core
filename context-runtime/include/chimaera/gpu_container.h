@@ -109,13 +109,24 @@ class Container {
     return hipc::FullPtr<Task>::GetNull();
   }
 
+  /** Result of LocalAllocTask: task + co-allocated RunContext */
+  struct TaskContextBlock {
+    hipc::FullPtr<Task> task_ptr;
+    RunContext *rctx;
+  };
+
   /**
-   * Allocate + construct a task without deserializing (lane 0 only).
-   * Used with LocalLoadTask for warp-parallel deserialization.
+   * Allocate Task + RunContext + coroutine stack in a single allocation.
+   * The autogen knows sizeof(TaskT) and lays out the block as:
+   *   [TaskT] [RunContext] [stack of kStackSize bytes]
+   * Constructs both Task and RunContext. Caller fills in RunContext fields.
+   * @param method Method ID identifying the task type
+   * @param stack_size Size of the coroutine bump stack
    */
-  HSHM_GPU_FUN virtual hipc::FullPtr<Task> LocalAllocTask(u32 method) {
-    (void)method;
-    return hipc::FullPtr<Task>::GetNull();
+  HSHM_GPU_FUN virtual TaskContextBlock LocalAllocTask(
+      u32 method, size_t stack_size = 0) {
+    (void)method; (void)stack_size;
+    return {hipc::FullPtr<Task>::GetNull(), nullptr};
   }
 
   /**

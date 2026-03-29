@@ -171,13 +171,104 @@ __global__ void gpu_bench_alloc_kernel(
     int *d_done,
     chi::u32 total_threads) {
   CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
+  using GpuSubmitTask = chimaera::MOD_NAME::GpuSubmitTask;
 
   auto *ipc = CHI_IPC;
+  auto *priv_alloc = ipc->GetPrivAlloc();
+  if (!priv_alloc) return;
+
+  // Warm up
+  {
+    auto w = priv_alloc->template AllocateObjs<GpuSubmitTask>(1);
+    if (!w.IsNull()) priv_alloc->Free(w);
+  }
+
+  long long t_raw_alloc = 0, t_raw_free = 0;
+  long long t_ctor = 0, t_dtor = 0;
+  long long t_ser_in = 0, t_ser_out = 0;
+  long long t_coro_alloc = 0, t_coro_free = 0;
+  long long tc;
+
   for (chi::u32 i = 0; i < total_tasks; ++i) {
-    auto task = ipc->NewTask<wrp_cte::core::PutBlobTask>();
-    task->pool_id_ = pool_id;
-    task->size_ = 4096;
-    ipc->DelTask(task);
+    // 1. Raw alloc
+    tc = clock64();
+    auto fp = priv_alloc->template AllocateObjs<GpuSubmitTask>(1);
+    t_raw_alloc += clock64() - tc;
+    if (fp.IsNull()) continue;
+
+    // 2. Placement new (constructor)
+    tc = clock64();
+    new (fp.ptr_) GpuSubmitTask();
+    t_ctor += clock64() - tc;
+
+    // 3. SerializeIn (what the orchestrator does to populate the task)
+    // Simulate with direct field writes matching SerializeIn
+    tc = clock64();
+    fp->pool_id_ = pool_id;
+    fp->method_ = 25;
+    fp->gpu_id_ = 0;
+    fp->test_value_ = i;
+    fp->result_value_ = 0;
+    fp->counter_addr_ = 0;
+    t_ser_in += clock64() - tc;
+
+    // 4. "Run" the task (trivial — what GpuSubmit does)
+    fp->result_value_ = (fp->test_value_ * 3) + fp->gpu_id_;
+
+    // 5. SerializeOut
+    tc = clock64();
+    chi::u32 tmp = fp->result_value_;
+    (void)tmp;
+    t_ser_out += clock64() - tc;
+
+    // 6. Destructor
+    tc = clock64();
+    fp.ptr_->~GpuSubmitTask();
+    t_dtor += clock64() - tc;
+
+    // 7. Free
+    tc = clock64();
+    priv_alloc->Free(fp);
+    t_raw_free += clock64() - tc;
+  }
+
+  // 8. Coroutine frame alloc/free (simulates inner coroutine overhead)
+  // A coroutine frame is ~promise_type + locals, typically 64-128 bytes
+  for (chi::u32 i = 0; i < total_tasks; ++i) {
+    tc = clock64();
+    auto frame = priv_alloc->template AllocateObjs<char>(128);
+    t_coro_alloc += clock64() - tc;
+
+    tc = clock64();
+    if (!frame.IsNull()) priv_alloc->Free(frame);
+    t_coro_free += clock64() - tc;
+  }
+
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    printf("=== Orchestrator Task Lifecycle (%u tasks) ===\n", total_tasks);
+    printf("  sizeof(GpuSubmitTask):    %llu bytes\n",
+           (unsigned long long)sizeof(GpuSubmitTask));
+    printf("  1. Raw alloc:             %llu/task\n",
+           (unsigned long long)(t_raw_alloc / total_tasks));
+    printf("  2. Placement new (ctor):  %llu/task\n",
+           (unsigned long long)(t_ctor / total_tasks));
+    printf("  3. SerializeIn (fields):  %llu/task\n",
+           (unsigned long long)(t_ser_in / total_tasks));
+    printf("  4. SerializeOut (fields): %llu/task\n",
+           (unsigned long long)(t_ser_out / total_tasks));
+    printf("  5. Destructor:            %llu/task\n",
+           (unsigned long long)(t_dtor / total_tasks));
+    printf("  6. Free:                  %llu/task\n",
+           (unsigned long long)(t_raw_free / total_tasks));
+    long long t_task = t_raw_alloc + t_ctor + t_ser_in + t_ser_out + t_dtor + t_raw_free;
+    printf("  Task subtotal:            %llu/task\n",
+           (unsigned long long)(t_task / total_tasks));
+    printf("  7. Coro frame alloc:      %llu/task\n",
+           (unsigned long long)(t_coro_alloc / total_tasks));
+    printf("  8. Coro frame free:       %llu/task\n",
+           (unsigned long long)(t_coro_free / total_tasks));
+    printf("  Full lifecycle:           %llu/task\n",
+           (unsigned long long)((t_task + t_coro_alloc + t_coro_free) / total_tasks));
   }
 
   __threadfence();

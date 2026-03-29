@@ -688,11 +688,11 @@ class ChiModGenerator {
     oss << "HSHM_GPU_FUN hipc::FullPtr<chi::Task> LocalAllocLoadTask(\n";
     oss << "    chi::u32 method, chi::DefaultLoadArchive &archive) override {\n";
     if (!gpu_methods.empty()) {
-      oss << "  hipc::FullPtr<chi::Task> task = LocalAllocTask(method);\n";
-      oss << "  if (task.IsNull()) return task;\n";
+      oss << "  auto block = LocalAllocTask(method, 0);\n";
+      oss << "  if (block.task_ptr.IsNull()) return block.task_ptr;\n";
       oss << "  archive.SetMsgType(chi::LocalMsgType::kSerializeIn);\n";
-      oss << "  LoadTaskTmpl(method, archive, task);\n";
-      oss << "  return task;\n";
+      oss << "  LoadTaskTmpl(method, archive, block.task_ptr);\n";
+      oss << "  return block.task_ptr;\n";
     } else {
       oss << "  (void)method; (void)archive;\n";
       oss << "  return hipc::FullPtr<chi::Task>::GetNull();\n";
@@ -704,11 +704,11 @@ class ChiModGenerator {
     oss << "HSHM_GPU_FUN hipc::FullPtr<chi::Task> LocalAllocLoadTask(\n";
     oss << "    chi::u32 method, chi::WrapLoadArchive &archive) override {\n";
     if (!gpu_methods.empty()) {
-      oss << "  hipc::FullPtr<chi::Task> task = LocalAllocTask(method);\n";
-      oss << "  if (task.IsNull()) return task;\n";
+      oss << "  auto block = LocalAllocTask(method, 0);\n";
+      oss << "  if (block.task_ptr.IsNull()) return block.task_ptr;\n";
       oss << "  archive.SetMsgType(chi::LocalMsgType::kSerializeIn);\n";
-      oss << "  LoadTaskTmpl(method, archive, task);\n";
-      oss << "  return task;\n";
+      oss << "  LoadTaskTmpl(method, archive, block.task_ptr);\n";
+      oss << "  return block.task_ptr;\n";
     } else {
       oss << "  (void)method; (void)archive;\n";
       oss << "  return hipc::FullPtr<chi::Task>::GetNull();\n";
@@ -716,26 +716,31 @@ class ChiModGenerator {
     oss << "}\n";
     oss << "\n";
 
-    // --- Virtual override: LocalAllocTask (alloc only) ---
-    oss << "HSHM_GPU_FUN hipc::FullPtr<chi::Task> LocalAllocTask(\n";
-    oss << "    chi::u32 method) override {\n";
+    // --- Virtual override: LocalAllocTask (single alloc for Task + RunContext + stack) ---
+    oss << "HSHM_GPU_FUN TaskContextBlock LocalAllocTask(\n";
+    oss << "    chi::u32 method, size_t stack_size) override {\n";
     if (!gpu_methods.empty()) {
-      oss << "  auto *alloc = CHI_IPC->gpu_alloc_;\n";
+      oss << "  auto *alloc = CHI_IPC->GetPrivAlloc();\n";
+      oss << "  if (!alloc) return {hipc::FullPtr<chi::Task>::GetNull(), nullptr};\n";
+      oss << "  size_t rctx_total = sizeof(chi::gpu::RunContext) + stack_size;\n";
       oss << "  switch (method) {\n";
       for (const auto& method : gpu_methods) {
         std::string task_type = GetTaskTypeName(method.method_name, chimod_name);
         oss << "    case Method::" << method.constant_name << ": {\n";
-        oss << "      auto task = alloc->template AllocateObjs<" << task_type << ">(1);\n";
-        oss << "      if (task.IsNull()) return hipc::FullPtr<chi::Task>::GetNull();\n";
-        oss << "      new (task.ptr_) " << task_type << "();\n";
-        oss << "      return task.template Cast<chi::Task>();\n";
+        oss << "      auto fp = alloc->template AllocateObjs<char>(sizeof(" << task_type << ") + rctx_total);\n";
+        oss << "      if (fp.IsNull()) return {hipc::FullPtr<chi::Task>::GetNull(), nullptr};\n";
+        oss << "      new (fp.ptr_) " << task_type << "();\n";
+        oss << "      auto *rctx = reinterpret_cast<chi::gpu::RunContext *>(fp.ptr_ + sizeof(" << task_type << "));\n";
+        oss << "      new (rctx) chi::gpu::RunContext();\n";
+        oss << "      rctx->InitStack(reinterpret_cast<char *>(rctx) + sizeof(chi::gpu::RunContext), stack_size);\n";
+        oss << "      return {fp.template Cast<chi::Task>(), rctx};\n";
         oss << "    }\n";
       }
-      oss << "    default: return hipc::FullPtr<chi::Task>::GetNull();\n";
+      oss << "    default: return {hipc::FullPtr<chi::Task>::GetNull(), nullptr};\n";
       oss << "  }\n";
     } else {
-      oss << "  (void)method;\n";
-      oss << "  return hipc::FullPtr<chi::Task>::GetNull();\n";
+      oss << "  (void)method; (void)stack_size;\n";
+      oss << "  return {hipc::FullPtr<chi::Task>::GetNull(), nullptr};\n";
     }
     oss << "}\n";
     oss << "\n";

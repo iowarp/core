@@ -251,6 +251,9 @@ struct IpcManagerGpuInfo {
   /** Scratch allocator generation (from WorkOrchestratorControl) */
   u32 scratch_gen = 0;
 
+  /** Per-warp private BuddyAllocator region size (allocated from shared) */
+  size_t priv_region_size = 4096;
+
   HSHM_CROSS_FUN IpcManagerGpuInfo() = default;
 
   /** Convenience constructor: backend + gpu2gpu queue */
@@ -275,7 +278,7 @@ class IpcManager {
    *  buffer_ is the shared serialize/deserialize buffer — allocated once,
    *  reused for every task. Archives bind to it via reference at construction. */
   struct WarpIpcManager {
-    CHI_PRIV_ALLOC_T *priv_alloc_ = nullptr;
+    CHI_PRIV_ALLOC_T priv_alloc_;   /**< Per-warp private allocator (value) */
     hshm::priv::wrap_vector buffer_;  /**< Wraps copy_space task data region */
     WrapSaveArchive save_ar_;
     WrapLoadArchive load_ar_;
@@ -283,11 +286,25 @@ class IpcManager {
     static constexpr size_t kCopySpaceSize = 4096;
     static constexpr size_t kHeaderSize = sizeof(PreallocHeader);
 
-    HSHM_CROSS_FUN WarpIpcManager(CHI_PRIV_ALLOC_T *alloc)
-        : priv_alloc_(alloc),
+    /**
+     * Construct WarpIpcManager with a private BuddyAllocator.
+     * @param priv_region Pre-allocated region from the shared PartitionedAllocator
+     * @param priv_region_size Size of the private region in bytes
+     */
+    HSHM_CROSS_FUN WarpIpcManager(char *priv_region, size_t priv_region_size)
+        : priv_alloc_(),
           buffer_(),
-          save_ar_(LocalMsgType::kSerializeOut, alloc, buffer_),
-          load_ar_(alloc, buffer_) {}
+          save_ar_(LocalMsgType::kSerializeOut, &priv_alloc_, buffer_),
+          load_ar_(&priv_alloc_, buffer_) {
+#if HSHM_IS_GPU
+      hipc::MemoryBackend backend;
+      backend.data_ = priv_region;
+      backend.data_capacity_ = priv_region_size;
+      priv_alloc_.shm_init(backend, priv_region_size, /*shifted=*/true);
+#else
+      (void)priv_region; (void)priv_region_size;
+#endif
+    }
 
     /** Set up buffer_ to point at copy_space task data region */
     HSHM_CROSS_FUN void BindCopySpace(char *copy_space) {
@@ -394,6 +411,9 @@ class IpcManager {
     // Scratch generation — containers compare to detect stale metadata
     scratch_gen_ = gpu_info.scratch_gen;
 
+    // Per-warp private region size (configurable from GPU info)
+    priv_region_size_ = gpu_info.priv_region_size;
+
     // Zero the per-warp caches; populated lazily by GetWarpManager()
     for (u32 i = 0; i < kMaxCachedWarps; ++i) {
       warp_mgrs_[i] = nullptr;
@@ -451,7 +471,9 @@ class IpcManager {
    * On GPU: returns the per-warp PrivateBuddyAllocator from PartitionedAllocator.
    * On host: returns nullptr (host uses HSHM_MALLOC via CHI_PRIV_ALLOC).
    */
-  /** Get the per-warp manager (lazy: single heap alloc for all warp state) */
+  /** Get the per-warp manager (lazy: allocate from shared PartitionedAllocator).
+   *  Allocates WarpIpcManager + a private region, then constructs a private
+   *  BuddyAllocator over the private region for warp-local allocations. */
   HSHM_CROSS_FUN WarpIpcManager *GetWarpManager() {
 #if HSHM_IS_GPU
     u32 local_warp = threadIdx.x / 32;
@@ -459,10 +481,18 @@ class IpcManager {
       return warp_mgrs_[local_warp];
     }
     if (gpu_alloc_) {
-      auto *alloc = gpu_alloc_->GetWarpAllocator();
-      if (alloc) {
-        auto p = alloc->template AllocateObjs<WarpIpcManager>(1);
-        auto *mgr = new (p.ptr_) WarpIpcManager(alloc);
+      auto *shared_alloc = gpu_alloc_->GetWarpAllocator();
+      if (shared_alloc) {
+        // Allocate WarpIpcManager from shared allocator
+        auto p = shared_alloc->template AllocateObjs<WarpIpcManager>(1);
+        if (p.IsNull()) return nullptr;
+        // Allocate private region from shared allocator
+        auto priv = shared_alloc->template AllocateObjs<char>(priv_region_size_);
+        if (priv.IsNull()) {
+          shared_alloc->Free(p);
+          return nullptr;
+        }
+        auto *mgr = new (p.ptr_) WarpIpcManager(priv.ptr_, priv_region_size_);
         if (local_warp < kMaxCachedWarps) warp_mgrs_[local_warp] = mgr;
         return mgr;
       }
@@ -476,7 +506,7 @@ class IpcManager {
   HSHM_CROSS_FUN hipc::PrivateBuddyAllocator *GetPrivAlloc() {
 #if HSHM_IS_GPU
     auto *mgr = GetWarpManager();
-    return mgr ? mgr->priv_alloc_ : nullptr;
+    return mgr ? &mgr->priv_alloc_ : nullptr;
 #else
     return nullptr;
 #endif
@@ -647,44 +677,33 @@ class IpcManager {
   template <typename TaskT, typename... Args>
   HSHM_CROSS_FUN hipc::FullPtr<TaskT> NewTask(Args &&...args) {
 #if HSHM_IS_HOST
-    // Host path: use standard new
     TaskT *ptr = new TaskT(std::forward<Args>(args)...);
     hipc::FullPtr<TaskT> result(ptr);
     return result;
 #else
-    // GPU path: only warp leader allocates (non-leaders get null)
     if (!IsWarpScheduler()) return hipc::FullPtr<TaskT>();
-    auto result = NewObj<TaskT>(std::forward<Args>(args)...);
-    return result;
+    auto *priv = GetPrivAlloc();
+    if (!priv) return hipc::FullPtr<TaskT>();
+    return priv->template NewObj<TaskT>(std::forward<Args>(args)...);
 #endif
   }
 
   /**
-   * Delete a task from private memory
-   * Host: uses standard delete
-   * GPU: uses FreeBuffer
-   * @param task_ptr FullPtr to task to delete
+   * Delete a task
+   * Host: destructor + operator delete
+   * GPU: destructor + private allocator free
    */
   template <typename TaskT>
   HSHM_CROSS_FUN void DelTask(hipc::FullPtr<TaskT> task_ptr) {
     if (task_ptr.IsNull()) return;
 #if HSHM_IS_HOST
-    // Host path: explicitly call destructor then use unsized operator delete.
-    // Sized delete (generated by plain "delete ptr") fails ASan's
-    // new-delete-type-mismatch check when TaskT is a base class but the
-    // actual allocation was for a larger derived type. Unsized ::operator
-    // delete avoids the size validation while still freeing the correct
-    // allocation. IMPORTANT: cast to void* first so the compiler cannot infer
-    // the type size and generate a C++14 globally-sized deallocation call
-    // (operator delete (void*, size_t)) — which would still trigger the ASan
-    // mismatch when the object is a larger derived type.
     task_ptr.ptr_->~TaskT();
     void *raw = static_cast<void *>(task_ptr.ptr_);
     ::operator delete(raw);
 #else
-    // GPU path: call destructor and free from data allocator
     task_ptr.ptr_->~TaskT();
-    FreeBuffer(task_ptr.template Cast<char>());
+    auto *priv = GetPrivAlloc();
+    if (priv) priv->Free(task_ptr.template Cast<char>());
 #endif
   }
 
@@ -2738,6 +2757,7 @@ send_bcast:
   hipc::PartitionedAllocator *gpu_alloc_ = nullptr;
   static constexpr u32 kMaxCachedWarps = 32;
   WarpIpcManager *warp_mgrs_[kMaxCachedWarps] = {};
+  size_t priv_region_size_ = 4096;  /**< Per-warp private BuddyAllocator region */
 
   // --- GPU→CPU backend: pinned host for cross-direction FutureShm ---
   /** Pinned-host backend for GPU→CPU FutureShm allocation (ToLocalCpu path) */

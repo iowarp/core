@@ -1058,122 +1058,23 @@ struct PutBlobTask : public chi::Task {
     pool_query_ = pool_query;
   }
 
-  /** POD mirror of Task base + PutBlob fields for GPU bulk serialization.
-   *  Single range() call for the entire task (no pointers, no atomics). */
-  struct PutBlobPod {
-    // Task base fields
-    chi::PoolId pool_id;
-    chi::TaskId task_id;
-    chi::PoolQuery pool_query;
-    chi::MethodId method;
-    chi::ibitfield task_flags;
-    double period_ns;
-    chi::TaskGroup task_group;
-    chi::u32 return_code;
-    chi::ContainerId completer;
-    // PutBlob fields
-    TagId tag_id;
-    chi::priv::string::SsoState name_sso;
-    chi::u64 offset;
-    chi::u64 size;
-    float score;
-    Context context;
-    chi::u32 flags;
-  };
-
   /**
    * Serialize IN and INOUT parameters.
-   * GPU: packs Task base + PutBlob fields into one POD, single range() call.
-   * CPU: field-by-field serialization (supports heap strings, atomics).
+   * Single range() spanning Task base through flags_ (contiguous in memory).
    */
   template <typename Archive>
   HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
-#if HSHM_IS_GPU
-    PutBlobPod pod;
-    if constexpr (Archive::is_saving::value) {
-      // Task base
-      pod.pool_id = pool_id_;
-      pod.task_id = task_id_;
-      pod.pool_query = pool_query_;
-      pod.method = method_;
-      pod.task_flags = task_flags_;
-      pod.period_ns = period_ns_;
-      pod.task_group = task_group_;
-      pod.return_code = return_code_.load();
-      pod.completer = completer_.load();
-      // PutBlob
-      pod.tag_id = tag_id_;
-      pod.name_sso = blob_name_.GetSsoState();
-      pod.offset = offset_;
-      pod.size = size_;
-      pod.score = score_;
-      pod.context = context_;
-      pod.flags = flags_;
-    }
-    ar.range(pod);
-    if constexpr (Archive::is_loading::value) {
-      // Task base
-      pool_id_ = pod.pool_id;
-      task_id_ = pod.task_id;
-      pool_query_ = pod.pool_query;
-      method_ = pod.method;
-      task_flags_ = pod.task_flags;
-      period_ns_ = pod.period_ns;
-      task_group_ = pod.task_group;
-      return_code_.store(pod.return_code);
-      completer_.store(pod.completer);
-      // PutBlob
-      tag_id_ = pod.tag_id;
-      blob_name_.SetSsoState(pod.name_sso);
-      offset_ = pod.offset;
-      size_ = pod.size;
-      score_ = pod.score;
-      context_ = pod.context;
-      flags_ = pod.flags;
-    }
-#else
-    Task::SerializeIn(ar);
-    ar.range(tag_id_);
-    ar(blob_name_);
-    ar.range(offset_, size_);
-    ar.range(score_, context_, flags_);
-#endif
+    ar.range(pool_id_, flags_);
     ar.bulk(blob_data_, size_, BULK_XFER);
   }
 
   /**
-   * Serialize OUT and INOUT parameters
+   * Serialize OUT and INOUT parameters.
+   * range() from return_code_ through context_ (contiguous OUT/INOUT fields).
    */
-  /** POD for SerializeOut (Task base OUT + PutBlob INOUT). */
-  struct PutBlobOutPod {
-    chi::u32 return_code;
-    chi::ContainerId completer;
-    chi::priv::string::SsoState name_sso;
-    Context context;
-  };
-
   template <typename Archive>
   HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
-#if HSHM_IS_GPU
-    PutBlobOutPod pod;
-    if constexpr (Archive::is_saving::value) {
-      pod.return_code = return_code_.load();
-      pod.completer = completer_.load();
-      pod.name_sso = blob_name_.GetSsoState();
-      pod.context = context_;
-    }
-    ar.range(pod);
-    if constexpr (Archive::is_loading::value) {
-      return_code_.store(pod.return_code);
-      completer_.store(pod.completer);
-      blob_name_.SetSsoState(pod.name_sso);
-      context_ = pod.context;
-    }
-#else
-    Task::SerializeOut(ar);
-    ar(blob_name_);
-    ar.range(context_);
-#endif
+    ar.range(return_code_, context_);
   }
 
   /**
@@ -1268,102 +1169,22 @@ struct GetBlobTask : public chi::Task {
     pool_query_ = pool_query;
   }
 
-  /** POD mirror of Task base + GetBlob fields for GPU bulk serialization. */
-  struct GetBlobPod {
-    // Task base
-    chi::PoolId pool_id;
-    chi::TaskId task_id;
-    chi::PoolQuery pool_query;
-    chi::MethodId method;
-    chi::ibitfield task_flags;
-    double period_ns;
-    chi::TaskGroup task_group;
-    chi::u32 return_code;
-    chi::ContainerId completer;
-    // GetBlob
-    TagId tag_id;
-    chi::priv::string::SsoState name_sso;
-    chi::u64 offset;
-    chi::u64 size;
-    chi::u32 flags;
-  };
-
   /**
    * Serialize IN and INOUT parameters.
-   * GPU: single range() for Task base + GetBlob fields.
-   * CPU: field-by-field (supports heap strings, atomics).
+   * Single range() spanning Task base through flags_ (contiguous in memory).
    */
   template <typename Archive>
   HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
-#if HSHM_IS_GPU
-    GetBlobPod pod;
-    if constexpr (Archive::is_saving::value) {
-      pod.pool_id = pool_id_;
-      pod.task_id = task_id_;
-      pod.pool_query = pool_query_;
-      pod.method = method_;
-      pod.task_flags = task_flags_;
-      pod.period_ns = period_ns_;
-      pod.task_group = task_group_;
-      pod.return_code = return_code_.load();
-      pod.completer = completer_.load();
-      pod.tag_id = tag_id_;
-      pod.name_sso = blob_name_.GetSsoState();
-      pod.offset = offset_;
-      pod.size = size_;
-      pod.flags = flags_;
-    }
-    ar.range(pod);
-    if constexpr (Archive::is_loading::value) {
-      pool_id_ = pod.pool_id;
-      task_id_ = pod.task_id;
-      pool_query_ = pod.pool_query;
-      method_ = pod.method;
-      task_flags_ = pod.task_flags;
-      period_ns_ = pod.period_ns;
-      task_group_ = pod.task_group;
-      return_code_.store(pod.return_code);
-      completer_.store(pod.completer);
-      tag_id_ = pod.tag_id;
-      blob_name_.SetSsoState(pod.name_sso);
-      offset_ = pod.offset;
-      size_ = pod.size;
-      flags_ = pod.flags;
-    }
-#else
-    Task::SerializeIn(ar);
-    ar.range(tag_id_);
-    ar(blob_name_);
-    ar.range(offset_, size_, flags_);
-#endif
+    ar.range(pool_id_, flags_);
     ar.bulk(blob_data_, size_, BULK_EXPOSE);
   }
 
-  /** POD for GetBlob SerializeOut. */
-  struct GetBlobOutPod {
-    chi::u32 return_code;
-    chi::ContainerId completer;
-  };
-
   /**
-   * Serialize OUT and INOUT parameters
+   * Serialize OUT and INOUT parameters.
    */
   template <typename Archive>
   HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
-#if HSHM_IS_GPU
-    GetBlobOutPod pod;
-    if constexpr (Archive::is_saving::value) {
-      pod.return_code = return_code_.load();
-      pod.completer = completer_.load();
-    }
-    ar.range(pod);
-    if constexpr (Archive::is_loading::value) {
-      return_code_.store(pod.return_code);
-      completer_.store(pod.completer);
-    }
-#else
-    Task::SerializeOut(ar);
-#endif
+    ar.range(return_code_, completer_);
     ar.bulk(blob_data_, size_, BULK_XFER);
   }
 
