@@ -105,6 +105,11 @@ __global__ void chimaera_gpu_orchestrator(gpu::PoolManager *pool_mgr,
     worker.PollOnce(lane_id);
   }
 
+  // Flush orchestrator profile to pinned host memory before shutdown
+  if (lane_id == 0) {
+    worker.FlushProfile();
+  }
+
   worker.Finalize();
 }
 

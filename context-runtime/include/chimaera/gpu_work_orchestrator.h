@@ -94,6 +94,23 @@ struct WorkOrchestratorControl {
    *  a saved value to detect when their scratch-backed metadata became
    *  invalid and needs to be recreated. */
   volatile unsigned int scratch_gen;
+
+  /** Orchestrator profiling counters (written by GPU, read by CPU) */
+  volatile long long prof_queue_pop[kMaxDebugWorkers];
+  volatile long long prof_recv_device[kMaxDebugWorkers];
+  volatile long long prof_alloc_task[kMaxDebugWorkers];
+  volatile long long prof_load_task[kMaxDebugWorkers];
+  volatile long long prof_alloc_ctx[kMaxDebugWorkers];
+  volatile long long prof_coro_create[kMaxDebugWorkers];
+  volatile long long prof_coro_resume[kMaxDebugWorkers];
+  volatile long long prof_coro_destroy[kMaxDebugWorkers];
+  volatile long long prof_save_task[kMaxDebugWorkers];
+  volatile long long prof_send_device[kMaxDebugWorkers];
+  volatile long long prof_complete[kMaxDebugWorkers];
+  volatile long long prof_task_count[kMaxDebugWorkers];
+  volatile long long prof_ctx_alloc[kMaxDebugWorkers];
+  volatile long long prof_ctx_copy[kMaxDebugWorkers];
+  volatile long long prof_ctx_zero[kMaxDebugWorkers];
 };
 
 /**

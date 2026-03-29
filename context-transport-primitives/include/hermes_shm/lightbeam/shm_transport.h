@@ -44,6 +44,7 @@
 #endif
 #include <csignal>
 #include "hermes_shm/data_structures/serialization/local_serialize.h"
+#include "hermes_shm/data_structures/priv/array_vector.h"
 #include "hermes_shm/thread/thread_model_manager.h"
 #include "lightbeam.h"
 
@@ -56,8 +57,8 @@ namespace hshm::lbm {
 struct ShmTransferInfo {
   hipc::atomic<size_t> total_written_;   // Total bytes written by producer
   hipc::atomic<size_t> total_read_;      // Total bytes read by consumer
-  hipc::atomic<size_t> copy_space_size_; // Ring buffer capacity (atomic so
-                                         // GPU can bypass L2 cache on read)
+  hipc::atomic<size_t> copy_space_size_; // Ring buffer capacity (atomic for
+                                         // cross-SM L2 visibility on GPU)
 
   HSHM_CROSS_FUN ShmTransferInfo() {
     total_written_.store(0);
@@ -206,72 +207,194 @@ class ShmTransport
 
   /**
    * Device-scope Send for GPU→GPU on same device.
-   * Uses device-scope atomics and plain memcpy (no volatile).
+   * Uses pre-allocated array_vector scratch buffer (ctx.meta_buf_).
+   * Warp-parallel when called by all lanes; single-lane safe too.
    */
+
+  /**
+   * Warp-parallel strided memcpy: all 32 lanes copy 4-byte chunks.
+   * Uses 4-byte (uint32_t) access for alignment safety since copy_space
+   * may be offset by sizeof(uint32_t) from FutureShm base.
+   * @param dst Destination buffer (device memory)
+   * @param src Source buffer (device memory)
+   * @param n   Number of bytes to copy
+   */
+  HSHM_CROSS_FUN
+  static void WarpMemCpy(char* dst, const char* src, size_t n) {
+#if HSHM_IS_GPU
+    uint32_t lane = threadIdx.x & 31;
+    size_t chunks4 = n / 4;
+    auto* dst4 = reinterpret_cast<uint32_t*>(dst);
+    auto* src4 = reinterpret_cast<const uint32_t*>(src);
+    for (size_t i = lane; i < chunks4; i += 32) {
+      dst4[i] = src4[i];
+    }
+    // Lane 0 handles tail bytes
+    size_t tail_start = chunks4 * 4;
+    if (lane == 0) {
+      for (size_t i = tail_start; i < n; ++i) {
+        dst[i] = src[i];
+      }
+    }
+#else
+    std::memcpy(dst, src, n);
+#endif
+  }
+
   template <typename MetaT>
   HSHM_CROSS_FUN
   static int SendDevice(MetaT& meta, const LbmContext& ctx) {
-    using AllocT = typename MetaT::allocator_type;
-    using CharVec = hshm::priv::vector<char, AllocT>;
+    using ArrayVec = hshm::priv::array_vector<256>;
+#if HSHM_IS_GPU
+    uint32_t lane = threadIdx.x & 31;
+#else
+    uint32_t lane = 0;
+#endif
 
-    CharVec meta_buf(meta.alloc_);
-    meta_buf.reserve(ctx.shm_info_->copy_space_size_.load());
-    hshm::ipc::LocalSerialize<CharVec> ar(meta_buf);
-    ar(meta);
-    ar.Finalize();
+    // Phase 1: Lane 0 serializes metadata framing into pre-allocated buffer
+    unsigned long long src_ull = 0;
+    unsigned int total_write = 0;
+    if (lane == 0) {
+      ArrayVec& meta_buf = *reinterpret_cast<ArrayVec*>(ctx.meta_buf_);
+      meta_buf.clear();
 
-    uint32_t meta_len = static_cast<uint32_t>(meta_buf.size());
-    WriteTransferDevice(reinterpret_cast<const char*>(&meta_len),
-                        sizeof(meta_len), ctx);
-    WriteTransferDevice(meta_buf.data(), meta_buf.size(), ctx);
+      hshm::ipc::LocalSerialize<ArrayVec> ar(meta_buf);
+      ar(meta);
+      ar.Finalize();
 
-    for (size_t i = 0; i < meta.send.size(); ++i) {
-      if (meta.send[i].flags.Any(BULK_EXPOSE)) {
-        WriteTransferDevice(
-            reinterpret_cast<const char*>(&meta.send[i].data.shm_),
-            sizeof(meta.send[i].data.shm_), ctx);
-      } else if (meta.send[i].flags.Any(BULK_XFER)) {
-        WriteTransferDevice(
-            reinterpret_cast<const char*>(&meta.send[i].data.shm_),
-            sizeof(meta.send[i].data.shm_), ctx);
-        if (meta.send[i].data.shm_.alloc_id_.IsNull()) {
-          WriteTransferDevice(meta.send[i].data.ptr_, meta.send[i].size, ctx);
+      // Write 4-byte length prefix directly to copy_space
+      uint32_t meta_len = static_cast<uint32_t>(meta_buf.size());
+      memcpy(ctx.copy_space, &meta_len, sizeof(meta_len));
+
+      src_ull = reinterpret_cast<unsigned long long>(meta_buf.data());
+      total_write = sizeof(meta_len) + meta_len;
+
+      // Handle bulk descriptors (typically none for GPU tasks)
+      // Write them after metadata in copy_space
+      size_t bulk_off = total_write;
+      for (size_t i = 0; i < meta.send.size(); ++i) {
+        if (meta.send[i].flags.Any(BULK_EXPOSE)) {
+          memcpy(ctx.copy_space + bulk_off,
+                 reinterpret_cast<const char*>(&meta.send[i].data.shm_),
+                 sizeof(meta.send[i].data.shm_));
+          bulk_off += sizeof(meta.send[i].data.shm_);
+        } else if (meta.send[i].flags.Any(BULK_XFER)) {
+          memcpy(ctx.copy_space + bulk_off,
+                 reinterpret_cast<const char*>(&meta.send[i].data.shm_),
+                 sizeof(meta.send[i].data.shm_));
+          bulk_off += sizeof(meta.send[i].data.shm_);
+          if (meta.send[i].data.shm_.alloc_id_.IsNull()) {
+            // Large bulk data — will be warp-copied below if needed
+            // For now, lane 0 copies it (rare for GPU tasks)
+            memcpy(ctx.copy_space + bulk_off,
+                   meta.send[i].data.ptr_, meta.send[i].size);
+            bulk_off += meta.send[i].size;
+          }
         }
       }
+      total_write = static_cast<unsigned int>(bulk_off);
+    }
+
+    // Phase 2: Copy metadata to copy_space (warp-parallel or single-lane)
+#if HSHM_IS_GPU
+    if (ctx.warp_parallel_) {
+      unsigned int meta_size = 0;
+      if (lane == 0) {
+        ArrayVec& meta_buf = *reinterpret_cast<ArrayVec*>(ctx.meta_buf_);
+        meta_size = static_cast<unsigned int>(meta_buf.size());
+      }
+      src_ull = __shfl_sync(0xFFFFFFFF, src_ull, 0);
+      meta_size = __shfl_sync(0xFFFFFFFF, meta_size, 0);
+      total_write = __shfl_sync(0xFFFFFFFF, total_write, 0);
+      if (meta_size > 0) {
+        WarpMemCpy(ctx.copy_space + sizeof(uint32_t),
+                   reinterpret_cast<const char*>(src_ull), meta_size);
+      }
+      __syncwarp();
+    } else if (lane == 0) {
+      ArrayVec& meta_buf = *reinterpret_cast<ArrayVec*>(ctx.meta_buf_);
+      memcpy(ctx.copy_space + sizeof(uint32_t), meta_buf.data(), meta_buf.size());
+    }
+#endif
+
+    // Phase 3: Lane 0 updates ring buffer atomics
+    if (lane == 0) {
+      hshm::ipc::threadfence();
+      ctx.shm_info_->total_written_.store(
+          ctx.shm_info_->total_written_.load() + total_write);
     }
     return 0;
   }
 
   /**
    * Device-scope Recv for GPU→GPU on same device.
-   * Uses device-scope atomics and plain memcpy (no volatile).
+   * Uses pre-allocated array_vector scratch buffer (ctx.meta_buf_).
+   * Warp-parallel when called by all lanes; single-lane safe too.
    */
   template <typename MetaT>
   HSHM_CROSS_FUN
   static ClientInfo RecvDevice(MetaT& meta, const LbmContext& ctx) {
-    using AllocT = typename MetaT::allocator_type;
-    using CharVec = hshm::priv::vector<char, AllocT>;
+    using ArrayVec = hshm::priv::array_vector<256>;
+    ArrayVec& meta_buf = *reinterpret_cast<ArrayVec*>(ctx.meta_buf_);
     ClientInfo info;
 
-    uint32_t meta_len = 0;
-    ReadTransferDevice(reinterpret_cast<char*>(&meta_len), sizeof(meta_len),
-                       ctx);
+#if HSHM_IS_GPU
+    uint32_t lane = threadIdx.x & 31;
+#else
+    uint32_t lane = 0;
+#endif
 
-    CharVec meta_buf(meta_len, meta.alloc_);
-    ReadTransferDevice(meta_buf.data(), meta_len, ctx);
+    // Phase 1: Lane 0 reads the 4-byte length prefix
+    unsigned int meta_len = 0;
+    unsigned long long dst_ull = 0;
+    unsigned long long src_ull = 0;
+    if (lane == 0) {
+      size_t total_read = ctx.shm_info_->total_read_.load();
+      size_t read_pos = total_read % ctx.shm_info_->copy_space_size_.load();
+      memcpy(&meta_len, ctx.copy_space + read_pos, sizeof(uint32_t));
+      meta_buf.resize(meta_len);
 
-    hshm::ipc::LocalDeserialize<CharVec> ar(meta_buf);
-    ar(meta);
-
-    for (size_t i = 0; i < meta.send.size(); ++i) {
-      Bulk recv_bulk;
-      recv_bulk.size = meta.send[i].size;
-      recv_bulk.flags = meta.send[i].flags;
-      recv_bulk.data = hipc::FullPtr<char>::GetNull();
-      meta.recv.push_back(recv_bulk);
+      dst_ull = reinterpret_cast<unsigned long long>(meta_buf.data());
+      src_ull = reinterpret_cast<unsigned long long>(
+          ctx.copy_space + read_pos + sizeof(uint32_t));
     }
 
-    RecvBulksImplDevice(meta, ctx);
+    // Phase 2: Copy from copy_space → meta_buf (warp-parallel or single-lane)
+#if HSHM_IS_GPU
+    if (ctx.warp_parallel_) {
+      meta_len = __shfl_sync(0xFFFFFFFF, meta_len, 0);
+      dst_ull = __shfl_sync(0xFFFFFFFF, dst_ull, 0);
+      src_ull = __shfl_sync(0xFFFFFFFF, src_ull, 0);
+      if (meta_len > 0) {
+        WarpMemCpy(reinterpret_cast<char*>(dst_ull),
+                   reinterpret_cast<const char*>(src_ull), meta_len);
+      }
+      __syncwarp();
+    } else if (lane == 0 && meta_len > 0) {
+      memcpy(reinterpret_cast<char*>(dst_ull),
+             reinterpret_cast<const char*>(src_ull), meta_len);
+    }
+#endif
+
+    // Phase 3: Lane 0 deserializes and updates ring buffer atomics
+    if (lane == 0) {
+      size_t total_bytes = sizeof(uint32_t) + meta_len;
+      ctx.shm_info_->total_read_.store(
+          ctx.shm_info_->total_read_.load() + total_bytes);
+
+      hshm::ipc::LocalDeserialize<ArrayVec> ar(meta_buf);
+      ar(meta);
+
+      for (size_t i = 0; i < meta.send.size(); ++i) {
+        Bulk recv_bulk;
+        recv_bulk.size = meta.send[i].size;
+        recv_bulk.flags = meta.send[i].flags;
+        recv_bulk.data = hipc::FullPtr<char>::GetNull();
+        meta.recv.push_back(recv_bulk);
+      }
+
+      RecvBulksImplDevice(meta, ctx);
+    }
 
     info.rc = 0;
     return info;

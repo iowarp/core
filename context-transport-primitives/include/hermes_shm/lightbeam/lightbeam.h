@@ -158,6 +158,9 @@ struct LbmContext {
   int timeout_ms;      /**< Timeout in milliseconds (0 = no timeout) */
   char* copy_space = nullptr;                      /**< Shared buffer for chunked transfer */
   ShmTransferInfo* shm_info_ = nullptr;            /**< Transfer info in shared memory */
+  char* meta_buf_ = nullptr;                       /**< Pre-allocated buffer for ShmTransport framing (avoids heap alloc) */
+  size_t meta_buf_size_ = 0;                       /**< Capacity of meta_buf_ */
+  bool warp_parallel_ = false;                     /**< True = all 32 lanes participate in copy */
   int server_pid_ = 0;                             /**< Server PID for SHM liveness check */
   int dst_fd_ = -1;                                /**< Destination file descriptor for CPU→storage (-1 = none) */
   size_t dst_offset_ = 0;                          /**< Offset within destination file for CPU→storage */

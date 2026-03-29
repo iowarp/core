@@ -47,9 +47,9 @@ namespace hshm::priv {
  * @tparam N Capacity in bytes
  */
 template <size_t N>
-class array_vector {
+class alignas(8) array_vector {
  public:
-  char data_[N];
+  alignas(8) char data_[N];
   size_t size_ = 0;
 
   HSHM_CROSS_FUN array_vector() : size_(0) {}

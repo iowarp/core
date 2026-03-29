@@ -38,10 +38,10 @@
  * All IpcManager access is in bench_gpu_runtime.cc (g++-compiled) to avoid
  * ODR layout mismatches between nvcc and g++ views of IpcManager.
  *
- * Only thread 0 of each block submits tasks (matches the single-thread
- * pattern proven in unit tests). Parallelism comes from client_blocks:
- * each block independently submits total_tasks sequential tasks. Block 0
- * thread 0 writes d_done after its tasks complete to signal the CPU.
+ * All lanes in each warp call the Async* client methods; IpcManager's
+ * NewTask and SendGpu guard internally so only the warp leader (lane 0)
+ * allocates and dispatches. Parallelism comes from client_blocks: each
+ * block's warps independently submit total_tasks sequential tasks.
  */
 
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
@@ -72,11 +72,10 @@ namespace chi_bench {
 /**
  * GPU client benchmark kernel.
  *
- * Each block's thread 0 initializes its IpcManager (via
- * CHIMAERA_GPU_CLIENT_INIT for per-block backend partitioning), then
- * submits total_tasks tasks sequentially via AsyncGpuSubmit + Wait(). Other
- * threads in the block are idle. Block 0 thread 0 writes d_done after its
- * loop completes.
+ * Each block initializes its IpcManager (via CHIMAERA_GPU_CLIENT_INIT
+ * for per-block backend partitioning). All lanes call AsyncGpuSubmit +
+ * Wait(); NewTask and SendGpu guard internally so only lane 0 allocates
+ * and dispatches.
  *
  * @param gpu_info   IpcManagerGpuInfo with backend and GPU→GPU queue
  * @param pool_id    Pool ID of the MOD_NAME container
@@ -94,17 +93,20 @@ __global__ void gpu_bench_client_kernel(
   // Partition backend per block; initialize block-local IpcManager
   CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
-  // Only lane 0 of each warp submits tasks (warp-level dispatch model).
-  // The allocator is partitioned per-warp, so only one thread per warp
-  // should allocate to avoid contention.
-  if (chi::IpcManager::IsWarpScheduler()) {
-    chimaera::MOD_NAME::Client client(pool_id);
+  // Allocate task once, reuse across iterations to avoid per-task alloc/free.
+  // All lanes participate in NewTask (lane 0 allocates) and Send (warp-parallel).
+  auto *ipc = CHI_IPC;
+  auto task = ipc->NewTask<chimaera::MOD_NAME::GpuSubmitTask>(
+      chi::CreateTaskId(), pool_id, chi::PoolQuery::Local(),
+      (chi::u32)0, (chi::u32)0);
 
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      auto future = client.AsyncGpuSubmit(chi::PoolQuery::Local(), 0, i);
-      future.Wait();
-    }
+  for (chi::u32 i = 0; i < total_tasks; ++i) {
+    auto future = ipc->Send(task);
+    future.Wait(0, /*reuse_task=*/true);
   }
+
+  // Free the reused task after the loop
+  ipc->DelTask(task);
 
   // All warps signal completion via lane 0
   __syncwarp();
@@ -135,13 +137,11 @@ __global__ void gpu_bench_coroutine_kernel(
     chi::u32 total_warps) {
   CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
-  if (chi::IpcManager::IsWarpScheduler()) {
-    chimaera::MOD_NAME::Client client(pool_id);
-
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      auto future = client.AsyncSubtaskTest(chi::PoolQuery::Local(), i, subtasks);
-      future.Wait();
-    }
+  // All lanes call AsyncSubtaskTest — internally guarded by warp leader.
+  chimaera::MOD_NAME::Client client(pool_id);
+  for (chi::u32 i = 0; i < total_tasks; ++i) {
+    auto future = client.AsyncSubtaskTest(chi::PoolQuery::Local(), i, subtasks);
+    future.Wait();
   }
 
   __syncwarp();
@@ -324,14 +324,24 @@ __global__ void gpu_bench_alloc_serde_kernel(
 }
 
 /**
- * GPU alloc+serialize+deserialize+free benchmark kernel.
+ * GPU SendGpu+RecvGpu client-side breakdown kernel.
  *
- * Each thread does total_tasks cycles of:
- *   1. NewTask<PutBlobTask> — allocate
- *   2. LocalSaveTaskArchive << task — serialize input
- *   3. LocalLoadTaskArchive >> task2 — deserialize into new task
- *   4. DelTask — free both
+ * Mirrors the exact latency test path (GpuSubmitTask) but without the
+ * orchestrator round-trip. Each step is timed individually so we can
+ * see where the 122us is spent:
  *
+ *   SEND side (mirrors SendGpu):
+ *   1. NewTask<GpuSubmitTask>          — allocate task
+ *   2. GetWarpManager + reset save_ar  — prepare warp archives
+ *   3. SerializeIn (warp-parallel)     — serialize task fields
+ *   4. ShmTransport::SendDevice        — frame + copy to copy_space
+ *   5. threadfence + queue push        — enqueue for orchestrator
+ *
+ *   RECV side (mirrors RecvGpu):
+ *   6. Simulate FUTURE_COMPLETE        — mark done (no real orchestrator)
+ *   7. ShmTransport::RecvDevice        — unframe from copy_space
+ *   8. SerializeOut (warp-parallel)    — deserialize output fields
+ *   9. DelTask + cleanup               — free task memory
  */
 __global__ void gpu_bench_serde_kernel(
     chi::IpcManagerGpu gpu_info,
@@ -343,565 +353,394 @@ __global__ void gpu_bench_serde_kernel(
   CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
   auto *ipc = CHI_IPC;
+  chi::u32 lane = chi::IpcManager::GetLaneId();
 
-  // BuddyAllocator is not thread-safe for concurrent access by multiple
-  // threads within a warp.  Only the warp scheduler (lane 0) runs the
-  // serde benchmarks to avoid corrupting the allocator free lists.
-  if (chi::IpcManager::IsWarpScheduler()) {
+  // Accumulators (lane 0 only records times)
+  long long t_new_task = 0, t_warp_setup = 0, t_serialize_in = 0;
+  long long t_shm_send = 0, t_fence_push = 0;
+  long long t_shm_recv = 0, t_serialize_out = 0;
+  long long t_del_task = 0;
+  // SendDevice sub-breakdown
+  long long t_send_alloc = 0, t_send_frame = 0, t_send_write = 0;
+  // RecvDevice sub-breakdown
+  long long t_recv_alloc = 0, t_recv_read = 0, t_recv_deser = 0;
+  long long tc;
 
-  // === Baseline 1: 8x memcpy with offset tracking (stack→stack) ===
-  long long t_memcpy_stack = 0;
-  volatile char sink = 0;
-  {
-    constexpr size_t kBufSize = 512;
-    char stack_buf[kBufSize];
-    memset(stack_buf, 0, kBufSize);
-    char src_buf[92];
-    memset(src_buf, 0x42, sizeof(src_buf));
-    constexpr size_t field_sizes[8] = {8, 8, 32, 4, 4, 8, 24, 4};
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      long long tm0 = clock64();
-      size_t off = 0;
-      for (int f = 0; f < 8; ++f) {
-        memcpy(stack_buf + off, src_buf, field_sizes[f]);
-        off += field_sizes[f];
+  // Allocate task + WarpIpcManager once before the loop (reused every iteration)
+  unsigned long long mgr_ull = 0, task_ull = 0, fshm_ull = 0;
+  chi::FutureShm *fshm = nullptr;
+  hipc::FullPtr<chimaera::MOD_NAME::GpuSubmitTask> task_fp;
+  if (lane == 0) {
+    task_fp = ipc->NewTask<chimaera::MOD_NAME::GpuSubmitTask>(
+        chi::CreateTaskId(), pool_id, chi::PoolQuery::Local(),
+        (chi::u32)0, (chi::u32)0);
+    auto *mgr = ipc->GetWarpManager();
+    auto &buffer = ipc->GetCachedFutureShm();
+    fshm = reinterpret_cast<chi::FutureShm *>(buffer.ptr_);
+    mgr_ull = reinterpret_cast<unsigned long long>(mgr);
+    task_ull = reinterpret_cast<unsigned long long>(task_fp.ptr_);
+    fshm_ull = reinterpret_cast<unsigned long long>(fshm);
+  }
+  mgr_ull = __shfl_sync(0xFFFFFFFF, mgr_ull, 0);
+  task_ull = __shfl_sync(0xFFFFFFFF, task_ull, 0);
+  fshm_ull = __shfl_sync(0xFFFFFFFF, fshm_ull, 0);
+
+  for (chi::u32 i = 0; i < total_tasks; ++i) {
+    // ============================================================
+    // SEND side (mirrors SendGpu with task reuse)
+    // ============================================================
+
+    // Step 2: WarpMgr + FutureShm reset (no NewTask — task is reused)
+    if (lane == 0) {
+      tc = clock64();
+      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull);
+      mgr->save_ar_.Reset(chi::LocalMsgType::kSerializeIn);
+      mgr->save_ar_.SetWarpConverged(true);
+
+      fshm->Reset(task_fp->pool_id_, task_fp->method_);
+      fshm->flags_.SetBits(chi::FutureShm::FUTURE_COPY_FROM_CLIENT);
+      fshm->flags_.SetBits(chi::FutureShm::FUTURE_DEVICE_SCOPE);
+      fshm->input_.copy_space_size_.store(
+          chi::IpcManager::WarpIpcManager::kCopySpaceSize);
+      fshm->output_.copy_space_size_.store(
+          chi::IpcManager::WarpIpcManager::kCopySpaceSize);
+      t_warp_setup += clock64() - tc;
+    }
+
+    // Step 3: Warp-parallel SerializeIn
+    mgr_ull = __shfl_sync(0xFFFFFFFF, mgr_ull, 0);
+    task_ull = __shfl_sync(0xFFFFFFFF, task_ull, 0);
+    fshm_ull = __shfl_sync(0xFFFFFFFF, fshm_ull, 0);
+
+    tc = clock64();
+    if (mgr_ull && task_ull) {
+      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull);
+      auto *task = reinterpret_cast<chimaera::MOD_NAME::GpuSubmitTask *>(task_ull);
+      task->SerializeIn(mgr->save_ar_);
+    }
+    __syncwarp();
+    if (lane == 0) t_serialize_in += clock64() - tc;
+
+    // Step 4: ShmTransport::SendDevice (warp-parallel via prealloc path)
+    if (lane == 0 && mgr_ull && fshm_ull) {
+      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull);
+      fshm = reinterpret_cast<chi::FutureShm *>(fshm_ull);
+      mgr->save_ar_.SetWarpConverged(false);
+      fshm->input_.copy_space_size_.store(
+          chi::IpcManager::WarpIpcManager::kCopySpaceSize);
+    }
+    // All lanes participate in SendDevice (warp-parallel copy)
+    tc = clock64();
+    if (mgr_ull && fshm_ull) {
+      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull);
+      fshm = reinterpret_cast<chi::FutureShm *>(fshm_ull);
+      hshm::lbm::LbmContext ctx;
+      ctx.copy_space = fshm->copy_space;
+      ctx.shm_info_ = &fshm->input_;
+      ctx.meta_buf_ = ipc->GetCachedMetaBuf();
+      ctx.meta_buf_size_ = chi::IpcManager::WarpIpcManager::kMetaBufSize;
+      ctx.warp_parallel_ = true;
+      hshm::lbm::ShmTransport::SendDevice(mgr->save_ar_, ctx);
+    }
+    __syncwarp();
+    if (lane == 0) {
+      t_shm_send += clock64() - tc;
+      // Step 5: threadfence
+      tc = clock64();
+      hipc::threadfence();
+      t_fence_push += clock64() - tc;
+    }
+    __syncwarp();
+
+    // ============================================================
+    // RECV side (mirrors RecvGpu)
+    // ============================================================
+
+    // Step 6: Simulate FUTURE_COMPLETE + write mock output to copy_space
+    // In the real path the orchestrator does this. Here we just mark complete
+    // and write a small output (result_value_) so RecvDevice has data.
+    if (lane == 0) {
+      // Write mock output: SerializeOut produces return_code_ + completer_ +
+      // result_value_ Simulate by doing a SendDevice with output data
+      chi::LocalSaveTaskArchive out_save(chi::LocalMsgType::kSerializeOut);
+      task_fp->SerializeOut(out_save);
+      hshm::lbm::LbmContext out_ctx;
+      out_ctx.copy_space = fshm->copy_space;
+      out_ctx.shm_info_ = &fshm->output_;
+      hshm::lbm::ShmTransport::SendDevice(out_save, out_ctx);
+      hipc::threadfence();
+      fshm->flags_.SetBits(chi::FutureShm::FUTURE_COMPLETE);
+    }
+    __syncwarp();
+
+    // Step 7: ShmTransport::RecvDevice (warp-parallel via prealloc path)
+    unsigned long long mgr_ull2 = 0;
+    int has_output = 0;
+    if (lane == 0) {
+      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull);
+      size_t output_written = fshm->output_.total_written_.load_device();
+      if (output_written > 0) {
+        mgr_ull2 = mgr_ull;
+        has_output = 1;
       }
-      long long tm1 = clock64();
-      t_memcpy_stack += (tm1 - tm0);
     }
-    sink = stack_buf[0];
+    // All lanes participate in RecvDevice (warp-parallel copy)
+    mgr_ull2 = __shfl_sync(0xFFFFFFFF, mgr_ull2, 0);
+    has_output = __shfl_sync(0xFFFFFFFF, has_output, 0);
+    fshm_ull = __shfl_sync(0xFFFFFFFF, fshm_ull, 0);
+    tc = clock64();
+    if (has_output && mgr_ull2) {
+      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull2);
+      fshm = reinterpret_cast<chi::FutureShm *>(fshm_ull);
+      hshm::lbm::LbmContext ctx;
+      ctx.copy_space = fshm->copy_space;
+      ctx.shm_info_ = &fshm->output_;
+      ctx.meta_buf_ = ipc->GetCachedMetaBuf();
+      ctx.meta_buf_size_ = chi::IpcManager::WarpIpcManager::kMetaBufSize;
+      ctx.warp_parallel_ = true;
+      hshm::lbm::ShmTransport::RecvDevice(mgr->load_ar_, ctx);
+    }
+    __syncwarp();
+    if (lane == 0) {
+      t_shm_recv += clock64() - tc;
+      if (has_output) {
+        auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull2);
+        mgr->load_ar_.SetMsgType(chi::LocalMsgType::kSerializeOut);
+        mgr->load_ar_.SetWarpConverged(true);
+      }
+    }
+
+    // Step 8: Warp-parallel SerializeOut
+    mgr_ull2 = __shfl_sync(0xFFFFFFFF, mgr_ull2, 0);
+    task_ull = __shfl_sync(0xFFFFFFFF, task_ull, 0);
+    has_output = __shfl_sync(0xFFFFFFFF, has_output, 0);
+
+    tc = clock64();
+    if (has_output) {
+      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull2);
+      auto *task = reinterpret_cast<chimaera::MOD_NAME::GpuSubmitTask *>(task_ull);
+      task->SerializeOut(mgr->load_ar_);
+    }
+    __syncwarp();
+    if (lane == 0) t_serialize_out += clock64() - tc;
+
+    __syncwarp();
   }
 
-// === Baseline 2: LocalSerialize 8 scalars (stack locals, no arena) ===
-  long long t_ls_vec_alloc = 0, t_ls_serialize = 0;
-  {
-    chi::u64 f0 = 0x1111111111111111ULL, f1 = 0x2222222222222222ULL;
-    chi::u32 f2 = 0x33333333, f3 = 0x44444444;
-    chi::u64 f4 = 0x5555555555555555ULL, f5 = 0x6666666666666666ULL;
-    chi::u32 f6 = 0x77777777, f7 = 0x88888888;
+  // Free the reused task after the loop
+  if (lane == 0) {
+    ipc->DelTask(task_fp);
+  }
+  __syncwarp();
+
+  // === Sub-benchmarks: isolate SendDevice/RecvDevice internals ===
+  // Run only on lane 0 after main loop to avoid interfering with main timings.
+  if (lane == 0) {
+    auto *mgr = ipc->GetWarpManager();
+    auto &buffer = ipc->GetCachedFutureShm();
+    auto *fshm_sub = reinterpret_cast<chi::FutureShm *>(buffer.ptr_);
+
+    // Sub-benchmark: meta_buf alloc+reserve (the vector inside SendDevice)
     for (chi::u32 i = 0; i < total_tasks; ++i) {
-      long long tl0 = clock64();
-      chi::priv::vector<char> buf(CHI_PRIV_ALLOC);
-      buf.reserve(256);
-      long long tl1 = clock64();
-      hshm::ipc::LocalSerialize<chi::priv::vector<char>> ser(buf);
-      ser(f0, f1, f2, f3, f4, f5, f6, f7);
-      long long tl2 = clock64();
-      t_ls_vec_alloc += (tl1 - tl0);
-      t_ls_serialize += (tl2 - tl1);
+      tc = clock64();
+      chi::priv::vector<char> meta_buf(mgr->save_ar_.alloc_);
+      meta_buf.reserve(chi::IpcManager::WarpIpcManager::kCopySpaceSize);
+      t_send_alloc += clock64() - tc;
+    }
+
+    // Sub-benchmark: LocalSerialize framing (ar(save_ar) + Finalize)
+    // Re-serialize the last save_ar state (still valid from main loop)
+    for (chi::u32 i = 0; i < total_tasks; ++i) {
+      chi::priv::vector<char> meta_buf(mgr->save_ar_.alloc_);
+      meta_buf.reserve(chi::IpcManager::WarpIpcManager::kCopySpaceSize);
+      tc = clock64();
+      hshm::ipc::LocalSerialize<chi::priv::vector<char>> ar(meta_buf);
+      ar(mgr->save_ar_);
+      ar.Finalize();
+      t_send_frame += clock64() - tc;
+    }
+
+    // Sub-benchmark: WriteTransferDevice (memcpy to copy_space + atomics)
+    // Prepare a fixed-size source buffer and fresh copy_space
+    {
+      chi::priv::vector<char> meta_buf(mgr->save_ar_.alloc_);
+      meta_buf.reserve(chi::IpcManager::WarpIpcManager::kCopySpaceSize);
+      hshm::ipc::LocalSerialize<chi::priv::vector<char>> ar(meta_buf);
+      ar(mgr->save_ar_);
+      ar.Finalize();
+      uint32_t meta_len = static_cast<uint32_t>(meta_buf.size());
+
+      for (chi::u32 i = 0; i < total_tasks; ++i) {
+        // Reset copy_space ring buffer state for each iteration
+        new (fshm_sub) chi::FutureShm();
+        fshm_sub->input_.copy_space_size_.store(
+            chi::IpcManager::WarpIpcManager::kCopySpaceSize);
+        hshm::lbm::LbmContext ctx;
+        ctx.copy_space = fshm_sub->copy_space;
+        ctx.shm_info_ = &fshm_sub->input_;
+
+        tc = clock64();
+        // This is what WriteTransferDevice does: memcpy + threadfence + atomic store
+        size_t ring_size = ctx.shm_info_->copy_space_size_.load();
+        memcpy(ctx.copy_space, &meta_len, sizeof(meta_len));
+        memcpy(ctx.copy_space + sizeof(meta_len), meta_buf.data(), meta_len);
+        hipc::threadfence();
+        ctx.shm_info_->total_written_.store(sizeof(meta_len) + meta_len);
+        t_send_write += clock64() - tc;
+      }
+    }
+
+    // Sub-benchmark: ReadTransferDevice (memcpy from copy_space + atomics)
+    // similar to above but reading
+    {
+      // Prepare copy_space with valid data once
+      mgr->save_ar_.Reset(chi::LocalMsgType::kSerializeIn);
+      auto task_sub = ipc->NewTask<chimaera::MOD_NAME::GpuSubmitTask>(
+          chi::CreateTaskId(), pool_id, chi::PoolQuery::Local(),
+          (chi::u32)0, (chi::u32)999);
+      task_sub->SerializeIn(mgr->save_ar_);
+      new (fshm_sub) chi::FutureShm();
+      fshm_sub->input_.copy_space_size_.store(
+          chi::IpcManager::WarpIpcManager::kCopySpaceSize);
+      hshm::lbm::LbmContext prep_ctx;
+      prep_ctx.copy_space = fshm_sub->copy_space;
+      prep_ctx.shm_info_ = &fshm_sub->input_;
+      hshm::lbm::ShmTransport::SendDevice(mgr->save_ar_, prep_ctx);
+      size_t written = fshm_sub->input_.total_written_.load();
+
+      for (chi::u32 i = 0; i < total_tasks; ++i) {
+        // Reset read position but keep written data
+        fshm_sub->input_.total_read_.store(0);
+        hshm::lbm::LbmContext ctx;
+        ctx.copy_space = fshm_sub->copy_space;
+        ctx.shm_info_ = &fshm_sub->input_;
+
+        tc = clock64();
+        // Simulate ReadTransferDevice: memcpy from copy_space
+        size_t ring_size = ctx.shm_info_->copy_space_size_.load();
+        char local_buf[512];
+        memcpy(local_buf, ctx.copy_space, written);
+        ctx.shm_info_->total_read_.store(written);
+        t_recv_read += clock64() - tc;
+      }
+
+      // Sub-benchmark: LocalDeserialize framing (from meta_buf back to load_ar)
+      for (chi::u32 i = 0; i < total_tasks; ++i) {
+        fshm_sub->input_.total_read_.store(0);
+        hshm::lbm::LbmContext ctx;
+        ctx.copy_space = fshm_sub->copy_space;
+        ctx.shm_info_ = &fshm_sub->input_;
+
+        tc = clock64();
+        hshm::lbm::ShmTransport::RecvDevice(mgr->load_ar_, ctx);
+        t_recv_deser += clock64() - tc;
+      }
+
+      ipc->DelTask(task_sub);
     }
   }
-  long long t_ls_vec_free = 0;
-  {
-    chi::u64 f0 = 0x1111111111111111ULL, f1 = 0x2222222222222222ULL;
-    chi::u32 f2 = 0x33333333, f3 = 0x44444444;
-    chi::u64 f4 = 0x5555555555555555ULL, f5 = 0x6666666666666666ULL;
-    chi::u32 f6 = 0x77777777, f7 = 0x88888888;
+  __syncwarp();
+
+  // === RunContext sub-benchmarks (mirrors orchestrator AllocContext/FreeContext) ===
+  // RunContext is ~612 bytes. We measure alloc+memset+free at that size.
+  static constexpr size_t kRunContextSize = 640;  // rounded up
+  long long t_rctx_alloc = 0, t_rctx_memset = 0;
+  long long t_rctx_free = 0, t_rctx_total = 0;
+  if (lane == 0) {
     for (chi::u32 i = 0; i < total_tasks; ++i) {
-      chi::priv::vector<char> buf(CHI_PRIV_ALLOC);
-      buf.reserve(256);
-      hshm::ipc::LocalSerialize<chi::priv::vector<char>> ser(buf);
-      ser(f0, f1, f2, f3, f4, f5, f6, f7);
-      long long tf0 = clock64();
-      buf.clear();
-      buf.shrink_to_fit();
-      long long tf1 = clock64();
-      t_ls_vec_free += (tf1 - tf0);
-    }
-  }
+      // Allocate
+      tc = clock64();
+      auto alloc_result = ipc->gpu_alloc_->AllocateObjs<char>(kRunContextSize);
+      t_rctx_alloc += clock64() - tc;
 
-// === Baseline 3: LocalSerialize 8 scalars WITH arena (should be faster) ===
-  long long t_ls_arena_alloc = 0, t_ls_arena_ser = 0, t_ls_arena_free = 0;
-  long long t_ls_arena_push = 0, t_ls_arena_pop = 0;
-  {
-    chi::u64 f0 = 0x1111111111111111ULL, f1 = 0x2222222222222222ULL;
-    chi::u32 f2 = 0x33333333, f3 = 0x44444444;
-    chi::u64 f4 = 0x5555555555555555ULL, f5 = 0x6666666666666666ULL;
-    chi::u32 f6 = 0x77777777, f7 = 0x88888888;
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      long long tc;
-      tc = clock64();
-      auto ha = ipc->PushPrivArena(4096);
-      t_ls_arena_push += clock64() - tc;
-      tc = clock64();
-      chi::priv::vector<char> buf(CHI_PRIV_ALLOC);
-      buf.reserve(256);
-      t_ls_arena_alloc += clock64() - tc;
-      tc = clock64();
-      hshm::ipc::LocalSerialize<chi::priv::vector<char>> ser(buf);
-      ser(f0, f1, f2, f3, f4, f5, f6, f7);
-      t_ls_arena_ser += clock64() - tc;
-      tc = clock64();
-      buf.clear();
-      buf.shrink_to_fit();
-      t_ls_arena_free += clock64() - tc;
-      tc = clock64();
-      ha.Release();
-      t_ls_arena_pop += clock64() - tc;
-    }
-  }
+      char *ctx = alloc_result.ptr_;
+      if (!ctx) continue;
 
-// === Baseline 4: LocalSerialize 8 scalars from HEAP object ===
-  struct HeapFields {
-    chi::u64 f0, f1; chi::u32 f2, f3;
-    chi::u64 f4, f5; chi::u32 f6, f7;
-    HSHM_CROSS_FUN HeapFields()
-        : f0(0x11), f1(0x22), f2(0x33), f3(0x44),
-          f4(0x55), f5(0x66), f6(0x77), f7(0x88) {}
-  };
-  long long t_ls_heap_alloc = 0, t_ls_heap_ser = 0, t_ls_heap_free = 0;
-  {
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      long long tc;
+      // Memset (simulates struct copy + zero of 64 coro handles)
       tc = clock64();
-      auto hf = ipc->NewObj<HeapFields>();
-      chi::priv::vector<char> buf(CHI_PRIV_ALLOC);
-      buf.reserve(256);
-      t_ls_heap_alloc += clock64() - tc;
-      tc = clock64();
-      hshm::ipc::LocalSerialize<chi::priv::vector<char>> ser(buf);
-      ser(hf->f0, hf->f1, hf->f2, hf->f3, hf->f4, hf->f5, hf->f6, hf->f7);
-      t_ls_heap_ser += clock64() - tc;
-      tc = clock64();
-      buf.clear();
-      buf.shrink_to_fit();
-      ipc->DelObj(hf);
-      t_ls_heap_free += clock64() - tc;
-    }
-  }
-
-// === Baseline 5: LocalSerialize 8 scalars via POINTER to stack struct ===
-  long long t_ls_ptr_ser = 0;
-  {
-    HeapFields stack_obj;
-    HeapFields *ptr = &stack_obj;
-    // Prevent compiler from optimizing away the indirection
-    asm volatile("" : "+l"(ptr));
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      chi::priv::vector<char> buf(CHI_PRIV_ALLOC);
-      buf.reserve(256);
-      long long tc = clock64();
-      hshm::ipc::LocalSerialize<chi::priv::vector<char>> ser(buf);
-      ser(ptr->f0, ptr->f1, ptr->f2, ptr->f3, ptr->f4, ptr->f5, ptr->f6, ptr->f7);
-      t_ls_ptr_ser += clock64() - tc;
-    }
-  }
-
-// === Baseline 7: Copy struct fields to locals, THEN serialize locals ===
-  // Tests register-promotion theory: if overhead is pointer indirection,
-  // copying to locals first should match baseline 2 speed.
-  long long t_ls_copy_locals_ser = 0;
-  {
-    HeapFields stack_obj;
-    HeapFields *ptr = &stack_obj;
-    asm volatile("" : "+l"(ptr));
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      chi::priv::vector<char> buf(CHI_PRIV_ALLOC);
-      buf.reserve(256);
-      // Copy fields out through pointer into locals (forces loads)
-      chi::u64 l0 = ptr->f0, l1 = ptr->f1;
-      chi::u32 l2 = ptr->f2, l3 = ptr->f3;
-      chi::u64 l4 = ptr->f4, l5 = ptr->f5;
-      chi::u32 l6 = ptr->f6, l7 = ptr->f7;
-      // Now serialize from locals (should be register-promoted)
-      long long tc = clock64();
-      hshm::ipc::LocalSerialize<chi::priv::vector<char>> ser(buf);
-      ser(l0, l1, l2, l3, l4, l5, l6, l7);
-      t_ls_copy_locals_ser += clock64() - tc;
-    }
-  }
-
-// === Baseline 6: Serialize 8 scalars one-at-a-time (separate clock64 per field) ===
-  // Tests if clock64() granularity / per-call overhead inflates measurements
-  long long t_ls_1by1_total = 0;
-  long long t_ls_1by1_fields[8] = {};
-  {
-    chi::u64 f0 = 0x11, f1 = 0x22; chi::u32 f2 = 0x33, f3 = 0x44;
-    chi::u64 f4 = 0x55, f5 = 0x66; chi::u32 f6 = 0x77, f7 = 0x88;
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      chi::priv::vector<char> buf(CHI_PRIV_ALLOC);
-      buf.reserve(256);
-      hshm::ipc::LocalSerialize<chi::priv::vector<char>> ser(buf);
-      long long tc;
-      tc = clock64(); ser(f0); t_ls_1by1_fields[0] += clock64() - tc;
-      tc = clock64(); ser(f1); t_ls_1by1_fields[1] += clock64() - tc;
-      tc = clock64(); ser(f2); t_ls_1by1_fields[2] += clock64() - tc;
-      tc = clock64(); ser(f3); t_ls_1by1_fields[3] += clock64() - tc;
-      tc = clock64(); ser(f4); t_ls_1by1_fields[4] += clock64() - tc;
-      tc = clock64(); ser(f5); t_ls_1by1_fields[5] += clock64() - tc;
-      tc = clock64(); ser(f6); t_ls_1by1_fields[6] += clock64() - tc;
-      tc = clock64(); ser(f7); t_ls_1by1_fields[7] += clock64() - tc;
-    }
-    for (int j = 0; j < 8; ++j) t_ls_1by1_total += t_ls_1by1_fields[j];
-  }
-
-// === Baseline 8: String serialization cost ===
-  long long t_str_ser = 0, t_str_deser = 0;
-  long long t_str_alloc = 0, t_str_free = 0;
-  {
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      long long tc;
-      // Allocate string + buffer
-      tc = clock64();
-      chi::priv::string test_str(CHI_PRIV_ALLOC, "my_blob_name_test");
-      chi::priv::vector<char> buf(CHI_PRIV_ALLOC);
-      buf.reserve(256);
-      t_str_alloc += clock64() - tc;
-
-      // Serialize string
-      hshm::ipc::LocalSerialize<chi::priv::vector<char>> ser(buf);
-      tc = clock64();
-      ser << test_str;
-      t_str_ser += clock64() - tc;
-
-      // Deserialize string
-      hshm::ipc::LocalDeserialize<chi::priv::vector<char>> deser(buf);
-      chi::priv::string out_str(CHI_PRIV_ALLOC);
-      tc = clock64();
-      deser >> out_str;
-      t_str_deser += clock64() - tc;
+      memset(ctx, 0, kRunContextSize);
+      t_rctx_memset += clock64() - tc;
 
       // Free
       tc = clock64();
-      out_str.~basic_string();
-      test_str.~basic_string();
-      t_str_free += clock64() - tc;
+      ipc->gpu_alloc_->Free(alloc_result);
+      t_rctx_free += clock64() - tc;
     }
+    t_rctx_total = t_rctx_alloc + t_rctx_memset + t_rctx_free;
   }
-
-  // === Baseline 8b: DISABLED — sharing backend between allocators corrupts memory ===
-  long long t_str_arena_alloc = 0, t_str_arena_free = 0;
-  long long t_str_buddy_alloc = 0, t_str_buddy_free = 0;
-  long long t_str_thread_alloc = 0, t_str_thread_free = 0;
-
-// === Baseline 8c: LocalSerialize 8 scalars into stack array (range, no allocator) ===
-  long long t_ls_array_ser = 0;
-  {
-    struct Fields {
-      chi::u64 f0, f1;
-      chi::u32 f2, f3;
-      chi::u64 f4, f5;
-      chi::u32 f6, f7;
-    };
-    Fields fields = {0x1111111111111111ULL, 0x2222222222222222ULL,
-                     0x33333333, 0x44444444,
-                     0x5555555555555555ULL, 0x6666666666666666ULL,
-                     0x77777777, 0x88888888};
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      hshm::ipc::array<char, 4096> buf;
-      hshm::ipc::LocalSerialize<hshm::ipc::array<char, 4096>> ser(buf);
-      long long tc = clock64();
-      ser.range(fields.f0, fields.f1, fields.f2, fields.f3,
-                fields.f4, fields.f5, fields.f6, fields.f7);
-      t_ls_array_ser += clock64() - tc;
-    }
-  }
-
-// === Baseline 8d: LocalSerialize 8 scalars + string into stack array (range) ===
-  long long t_ls_array_str_ser = 0, t_ls_array_str_deser = 0;
-  {
-    struct Fields {
-      chi::u64 f0, f1;
-      chi::u32 f2, f3;
-      chi::u64 f4, f5;
-      chi::u32 f6, f7;
-    };
-    Fields fields = {0x1111111111111111ULL, 0x2222222222222222ULL,
-                     0x33333333, 0x44444444,
-                     0x5555555555555555ULL, 0x6666666666666666ULL,
-                     0x77777777, 0x88888888};
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      // Serialize
-      hshm::ipc::array<char, 4096> buf;
-      hshm::ipc::LocalSerialize<hshm::ipc::array<char, 4096>> ser(buf);
-      chi::priv::string test_str(CHI_PRIV_ALLOC, "my_blob_name_test");
-      long long tc = clock64();
-      ser.range(fields.f0, fields.f1, fields.f2, fields.f3,
-                fields.f4, fields.f5, fields.f6, fields.f7);
-      ser << test_str;
-      ser.Finalize();
-      t_ls_array_str_ser += clock64() - tc;
-
-      // Deserialize
-      hshm::ipc::LocalDeserialize<hshm::ipc::array<char, 4096>> deser(buf);
-      Fields out_fields;
-      chi::priv::string out_str(CHI_PRIV_ALLOC);
-      tc = clock64();
-      deser.range(out_fields.f0, out_fields.f1, out_fields.f2, out_fields.f3,
-                  out_fields.f4, out_fields.f5, out_fields.f6, out_fields.f7);
-      deser >> out_str;
-      t_ls_array_str_deser += clock64() - tc;
-    }
-  }
-
-// === Baseline 8e: Matrix A = B + C (global memory, varying sizes) ===
-  // Tests raw global memory throughput for comparison
-  long long t_mat_64 = 0, t_mat_256 = 0, t_mat_1024 = 0, t_mat_4096 = 0;
-  {
-    auto *alloc = CHI_PRIV_ALLOC;
-    // 64 bytes (8 doubles)
-    {
-      auto pa = alloc->AllocateObjs<double>(8);
-      auto pb = alloc->AllocateObjs<double>(8);
-      auto pc = alloc->AllocateObjs<double>(8);
-      for (int j = 0; j < 8; ++j) { pb.ptr_[j] = 1.0; pc.ptr_[j] = 2.0; }
-      for (chi::u32 i = 0; i < total_tasks; ++i) {
-        long long tc = clock64();
-        for (int j = 0; j < 8; ++j) pa.ptr_[j] = pb.ptr_[j] + pc.ptr_[j];
-        t_mat_64 += clock64() - tc;
-      }
-      alloc->Free(pc); alloc->Free(pb); alloc->Free(pa);
-    }
-    // 256 bytes (32 doubles)
-    {
-      auto pa = alloc->AllocateObjs<double>(32);
-      auto pb = alloc->AllocateObjs<double>(32);
-      auto pc = alloc->AllocateObjs<double>(32);
-      for (int j = 0; j < 32; ++j) { pb.ptr_[j] = 1.0; pc.ptr_[j] = 2.0; }
-      for (chi::u32 i = 0; i < total_tasks; ++i) {
-        long long tc = clock64();
-        for (int j = 0; j < 32; ++j) pa.ptr_[j] = pb.ptr_[j] + pc.ptr_[j];
-        t_mat_256 += clock64() - tc;
-      }
-      alloc->Free(pc); alloc->Free(pb); alloc->Free(pa);
-    }
-    // 1024 bytes (128 doubles)
-    {
-      auto pa = alloc->AllocateObjs<double>(128);
-      auto pb = alloc->AllocateObjs<double>(128);
-      auto pc = alloc->AllocateObjs<double>(128);
-      for (int j = 0; j < 128; ++j) { pb.ptr_[j] = 1.0; pc.ptr_[j] = 2.0; }
-      for (chi::u32 i = 0; i < total_tasks; ++i) {
-        long long tc = clock64();
-        for (int j = 0; j < 128; ++j) pa.ptr_[j] = pb.ptr_[j] + pc.ptr_[j];
-        t_mat_1024 += clock64() - tc;
-      }
-      alloc->Free(pc); alloc->Free(pb); alloc->Free(pa);
-    }
-    // 4096 bytes (512 doubles)
-    {
-      auto pa = alloc->AllocateObjs<double>(512);
-      auto pb = alloc->AllocateObjs<double>(512);
-      auto pc = alloc->AllocateObjs<double>(512);
-      for (int j = 0; j < 512; ++j) { pb.ptr_[j] = 1.0; pc.ptr_[j] = 2.0; }
-      for (chi::u32 i = 0; i < total_tasks; ++i) {
-        long long tc = clock64();
-        for (int j = 0; j < 512; ++j) pa.ptr_[j] = pb.ptr_[j] + pc.ptr_[j];
-        t_mat_4096 += clock64() - tc;
-      }
-      alloc->Free(pc); alloc->Free(pb); alloc->Free(pa);
-    }
-  }
-
-// === Baseline 9: CHI_IPC singleton access latency ===
-  long long t_ipc_access = 0;
-  {
-    volatile void *sink_ptr = nullptr;
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      long long tc = clock64();
-      auto *ipc_ptr = CHI_IPC;
-      t_ipc_access += clock64() - tc;
-      sink_ptr = ipc_ptr;  // prevent optimization
-    }
-    (void)sink_ptr;
-  }
-
-  // === Baseline 10: CHI_PRIV_ALLOC access latency ===
-  long long t_priv_alloc_access = 0;
-  {
-    volatile void *sink_ptr = nullptr;
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      long long tc = clock64();
-      auto *alloc_ptr = CHI_PRIV_ALLOC;
-      t_priv_alloc_access += clock64() - tc;
-      sink_ptr = alloc_ptr;  // prevent optimization
-    }
-    (void)sink_ptr;
-  }
-
-  // === Baseline 11: Raw BuddyAllocator Allocate+Free (256 bytes) ===
-  long long t_buddy_alloc = 0, t_buddy_free = 0;
-  {
-    auto *alloc = CHI_PRIV_ALLOC;
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      long long tc;
-      tc = clock64();
-      auto p = alloc->AllocateOffset(256);
-      t_buddy_alloc += clock64() - tc;
-      tc = clock64();
-      alloc->FreeOffsetNoNullCheck(p);
-      t_buddy_free += clock64() - tc;
-    }
-  }
-
-  // === Baseline 12: Raw BuddyAllocator Allocate+Free (32 bytes, min size) ===
-  long long t_buddy32_alloc = 0, t_buddy32_free = 0;
-  {
-    auto *alloc = CHI_PRIV_ALLOC;
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      long long tc;
-      tc = clock64();
-      auto p = alloc->AllocateOffset(32);
-      t_buddy32_alloc += clock64() - tc;
-      tc = clock64();
-      alloc->FreeOffsetNoNullCheck(p);
-      t_buddy32_free += clock64() - tc;
-    }
-  }
-
-  // === Baseline 13: priv::vector<char> construct+reserve+destroy (no serialize) ===
-  long long t_vec_ctor = 0, t_vec_reserve = 0, t_vec_dtor = 0;
-  {
-    auto *alloc = CHI_PRIV_ALLOC;
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      long long tc;
-      tc = clock64();
-      chi::priv::vector<char> buf(alloc);
-      t_vec_ctor += clock64() - tc;
-      tc = clock64();
-      buf.reserve(256);
-      t_vec_reserve += clock64() - tc;
-      tc = clock64();
-      buf.~vector();
-      t_vec_dtor += clock64() - tc;
-    }
-  }
-
-  }  // IsWarpScheduler (baselines end here)
   __syncwarp();
 
-// ================================================================
-// Full PutBlobTask serde — ALL LANES participate
-// Lane 0: allocator ops + timing. All lanes: serialize/deserialize.
-// ================================================================
-  chi::u32 lane_id = chi::IpcManager::GetLaneId();
-
-  long long t_push_arena = 0, t_pop_arena = 0;
-  long long t_alloc_task = 0, t_ctor_save = 0, t_ctor_load = 0, t_alloc_task2 = 0;
-  long long t_serialize = 0, t_deserialize = 0;
-  long long t_free_task2 = 0, t_dtor_load = 0, t_dtor_save = 0, t_free_task = 0;
-
-  long long tc = 0;
-
-  // Per-warp cached archives from IpcManager (allocated once, reused)
-  chi::LocalSaveTaskArchive *save_ar = nullptr;
-  chi::LocalLoadTaskArchive *load_ar = nullptr;
-  if (lane_id == 0) {
-    save_ar = CHI_IPC->GetSaveArchive();
-    save_ar->SetWarpConverged(true);
-    load_ar = CHI_IPC->GetLoadArchive();
-    load_ar->SetWarpConverged(true);
-  }
-  // Broadcast pointers to all lanes
-  {
-    uint64_t v = reinterpret_cast<uint64_t>(save_ar);
-    uint32_t lo = __shfl_sync(0xFFFFFFFF, (uint32_t)v, 0);
-    uint32_t hi = __shfl_sync(0xFFFFFFFF, (uint32_t)(v >> 32), 0);
-    save_ar = reinterpret_cast<chi::LocalSaveTaskArchive *>(((uint64_t)hi << 32) | lo);
-    v = reinterpret_cast<uint64_t>(load_ar);
-    lo = __shfl_sync(0xFFFFFFFF, (uint32_t)v, 0);
-    hi = __shfl_sync(0xFFFFFFFF, (uint32_t)(v >> 32), 0);
-    load_ar = reinterpret_cast<chi::LocalLoadTaskArchive *>(((uint64_t)hi << 32) | lo);
-  }
-  wrp_cte::core::PutBlobTask *task_ptr = nullptr;
-  wrp_cte::core::PutBlobTask *task2_ptr = nullptr;
-  hipc::FullPtr<wrp_cte::core::PutBlobTask> task, task2;
-
-  for (chi::u32 i = 0; i < total_tasks; ++i) {
-    // --- Lane 0: Alloc task + reset save archive ---
-    if (lane_id == 0) {
-      tc = clock64();
-      task = ipc->NewTask<wrp_cte::core::PutBlobTask>();
-      task->pool_id_ = pool_id;
-      task->size_ = 0;
-      t_alloc_task += clock64() - tc;
-
-      tc = clock64();
-      save_ar->Reset(chi::LocalMsgType::kSerializeIn);
-      task_ptr = task.ptr_;
-      t_ctor_save += clock64() - tc;
-    }
-    // Broadcast task_ptr
-    {
-      uint64_t v = reinterpret_cast<uint64_t>(task_ptr);
-      uint32_t lo = __shfl_sync(0xFFFFFFFF, (uint32_t)v, 0);
-      uint32_t hi = __shfl_sync(0xFFFFFFFF, (uint32_t)(v >> 32), 0);
-      task_ptr = reinterpret_cast<wrp_cte::core::PutBlobTask *>(
-          ((uint64_t)hi << 32) | lo);
-    }
-
-    // --- All lanes: Serialize ---
-    tc = clock64();
-    (*save_ar) << (*task_ptr);
-    __syncwarp();
-    if (lane_id == 0) t_serialize += clock64() - tc;
-
-    // --- Lane 0: Reset load archive + Alloc task2 ---
-    if (lane_id == 0) {
-      tc = clock64();
-      load_ar->Reset(save_ar->GetData(), chi::LocalMsgType::kSerializeIn);
-      t_ctor_load += clock64() - tc;
-
-      tc = clock64();
-      task2 = ipc->NewObj<wrp_cte::core::PutBlobTask>();
-      task2_ptr = task2.ptr_;
-      t_alloc_task2 += clock64() - tc;
-    }
-    // Broadcast task2_ptr
-    {
-      uint64_t v = reinterpret_cast<uint64_t>(task2_ptr);
-      uint32_t lo = __shfl_sync(0xFFFFFFFF, (uint32_t)v, 0);
-      uint32_t hi = __shfl_sync(0xFFFFFFFF, (uint32_t)(v >> 32), 0);
-      task2_ptr = reinterpret_cast<wrp_cte::core::PutBlobTask *>(
-          ((uint64_t)hi << 32) | lo);
-    }
-
-    // --- All lanes: Deserialize ---
-    tc = clock64();
-    (*load_ar) >> (*task2_ptr);
-    __syncwarp();
-    if (lane_id == 0) t_deserialize += clock64() - tc;
-
-    // --- Lane 0: Free task objects (archives are cached, not destroyed) ---
-    if (lane_id == 0) {
-      tc = clock64(); ipc->DelObj(task2);
-      t_free_task2 += clock64() - tc;
-      t_dtor_load = 0;
-      t_dtor_save = 0;
-      tc = clock64(); ipc->DelTask(task);
-      t_free_task += clock64() - tc;
-    }
-    __syncwarp();
-  }
-
-  __syncwarp();
-
+  // Print breakdown (block 0, lane 0 only)
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    printf("--- Full PutBlobTask serde (warp-parallel) ---\n");
-    printf("  PushArena:              %llu  (%llu/task)\n", (unsigned long long)t_push_arena, (unsigned long long)(t_push_arena/total_tasks));
-    printf("  NewTask<PutBlob>:       %llu  (%llu/task)\n", (unsigned long long)t_alloc_task, (unsigned long long)(t_alloc_task/total_tasks));
-    printf("  LocalSaveTaskArchive(): %llu  (%llu/task)\n", (unsigned long long)t_ctor_save, (unsigned long long)(t_ctor_save/total_tasks));
-    printf("  Serialize (full):       %llu  (%llu/task)\n", (unsigned long long)t_serialize, (unsigned long long)(t_serialize/total_tasks));
-    printf("  LocalLoadTaskArchive(): %llu  (%llu/task)\n", (unsigned long long)t_ctor_load, (unsigned long long)(t_ctor_load/total_tasks));
-    printf("  NewObj<PutBlob> task2:  %llu  (%llu/task)\n", (unsigned long long)t_alloc_task2, (unsigned long long)(t_alloc_task2/total_tasks));
-    printf("  Deserialize (full):     %llu  (%llu/task)\n", (unsigned long long)t_deserialize, (unsigned long long)(t_deserialize/total_tasks));
-    printf("  Free:\n");
-    printf("    DelObj(task2):        %llu  (%llu/task)\n", (unsigned long long)t_free_task2, (unsigned long long)(t_free_task2/total_tasks));
-    printf("    ~LoadArchive():       %llu  (%llu/task)\n", (unsigned long long)t_dtor_load, (unsigned long long)(t_dtor_load/total_tasks));
-    printf("    ~SaveArchive():       %llu  (%llu/task)\n", (unsigned long long)t_dtor_save, (unsigned long long)(t_dtor_save/total_tasks));
-    printf("    DelTask(task):        %llu  (%llu/task)\n", (unsigned long long)t_free_task, (unsigned long long)(t_free_task/total_tasks));
-    long long t_free_total = t_free_task2 + t_dtor_load + t_dtor_save + t_free_task;
-    printf("    SUBTOTAL:             %llu  (%llu/task)\n", (unsigned long long)t_free_total, (unsigned long long)(t_free_total/total_tasks));
-    printf("  PopArena:               %llu  (%llu/task)\n", (unsigned long long)t_pop_arena, (unsigned long long)(t_pop_arena/total_tasks));
-    long long total = t_push_arena + t_alloc_task + t_ctor_save +
-                      t_serialize + t_ctor_load + t_alloc_task2 +
-                      t_deserialize + t_free_total + t_pop_arena;
-    printf("  TOTAL:                  %llu  (%llu/task)\n", (unsigned long long)total, (unsigned long long)(total / total_tasks));
+    printf("--- SendGpu + RecvGpu Client-Side Breakdown (GpuSubmitTask) ---\n");
+    printf("  SEND:\n");
+    printf("    1. NewTask<GpuSubmit>:    %llu  (%llu/task)\n",
+           (unsigned long long)t_new_task,
+           (unsigned long long)(t_new_task / total_tasks));
+    printf("    2. WarpMgr+FutureShm:    %llu  (%llu/task)\n",
+           (unsigned long long)t_warp_setup,
+           (unsigned long long)(t_warp_setup / total_tasks));
+    printf("    3. SerializeIn (warp):   %llu  (%llu/task)\n",
+           (unsigned long long)t_serialize_in,
+           (unsigned long long)(t_serialize_in / total_tasks));
+    printf("    4. ShmTransport::Send:   %llu  (%llu/task)\n",
+           (unsigned long long)t_shm_send,
+           (unsigned long long)(t_shm_send / total_tasks));
+    printf("    5. threadfence:          %llu  (%llu/task)\n",
+           (unsigned long long)t_fence_push,
+           (unsigned long long)(t_fence_push / total_tasks));
+    long long t_send = t_new_task + t_warp_setup + t_serialize_in +
+                       t_shm_send + t_fence_push;
+    printf("    SEND TOTAL:              %llu  (%llu/task)\n",
+           (unsigned long long)t_send,
+           (unsigned long long)(t_send / total_tasks));
+    printf("  RECV:\n");
+    printf("    7. ShmTransport::Recv:   %llu  (%llu/task)\n",
+           (unsigned long long)t_shm_recv,
+           (unsigned long long)(t_shm_recv / total_tasks));
+    printf("    8. SerializeOut (warp):  %llu  (%llu/task)\n",
+           (unsigned long long)t_serialize_out,
+           (unsigned long long)(t_serialize_out / total_tasks));
+    long long t_recv = t_shm_recv + t_serialize_out;
+    printf("    RECV TOTAL:              %llu  (%llu/task)\n",
+           (unsigned long long)t_recv,
+           (unsigned long long)(t_recv / total_tasks));
+    long long total = t_send + t_recv;
+    printf("  CLIENT TOTAL:              %llu  (%llu/task)\n",
+           (unsigned long long)total,
+           (unsigned long long)(total / total_tasks));
+    printf("\n--- ShmTransport Sub-Breakdown (isolated micro-benchmarks) ---\n");
+    printf("  SendDevice internals:\n");
+    printf("    meta_buf alloc+reserve:  %llu  (%llu/task)\n",
+           (unsigned long long)t_send_alloc,
+           (unsigned long long)(t_send_alloc / total_tasks));
+    printf("    LocalSerialize framing:  %llu  (%llu/task)\n",
+           (unsigned long long)t_send_frame,
+           (unsigned long long)(t_send_frame / total_tasks));
+    printf("    memcpy to copy_space:    %llu  (%llu/task)\n",
+           (unsigned long long)t_send_write,
+           (unsigned long long)(t_send_write / total_tasks));
+    printf("  RecvDevice internals:\n");
+    printf("    memcpy from copy_space:  %llu  (%llu/task)\n",
+           (unsigned long long)t_recv_read,
+           (unsigned long long)(t_recv_read / total_tasks));
+    printf("    RecvDevice full:         %llu  (%llu/task)\n",
+           (unsigned long long)t_recv_deser,
+           (unsigned long long)(t_recv_deser / total_tasks));
+    printf("\n--- RunContext Sub-Breakdown (640B alloc, mirrors orchestrator) ---\n");
+    printf("  Allocate 640B:             %llu  (%llu/task)\n",
+           (unsigned long long)t_rctx_alloc,
+           (unsigned long long)(t_rctx_alloc / total_tasks));
+    printf("  Memset 640B:               %llu  (%llu/task)\n",
+           (unsigned long long)t_rctx_memset,
+           (unsigned long long)(t_rctx_memset / total_tasks));
+    printf("  Free 640B:                 %llu  (%llu/task)\n",
+           (unsigned long long)t_rctx_free,
+           (unsigned long long)(t_rctx_free / total_tasks));
+    printf("  TOTAL:                     %llu  (%llu/task)\n",
+           (unsigned long long)t_rctx_total,
+           (unsigned long long)(t_rctx_total / total_tasks));
   }
-
-  // Baselines printf (lane 0 only — these ran in IsWarpScheduler gate)
-  // Removed for now — baselines still run on lane 0 inside the gate above.
-  // The full serde section is the warp-parallel measurement.
 
   __threadfence();
   int prev = atomicAdd(d_done, 1);
@@ -1637,7 +1476,7 @@ __global__ void gpu_putblob_alloc_kernel(
 /**
  * Kernel 2: Each warp memsets its slice of A to a constant, then calls
  * AsyncPutBlob to store that slice as a blob via the CTE runtime.
- * Only the warp scheduler (lane 0) submits the PutBlob task.
+ * All lanes call AsyncPutBlob; NewTask and SendGpu guard internally.
  */
 __global__ void gpu_putblob_kernel(
     chi::IpcManagerGpu gpu_info,
@@ -1667,40 +1506,38 @@ __global__ void gpu_putblob_kernel(
     }
     __syncwarp();
 
-    // Only lane 0 submits PutBlob
-    if (chi::IpcManager::IsWarpScheduler()) {
-      wrp_cte::core::Client cte_client(cte_pool_id);
+    // All lanes call AsyncPutBlob — internally guarded by warp leader
+    wrp_cte::core::Client cte_client(cte_pool_id);
 
-      // Build ShmPtr referencing the data allocator backend
-      hipc::ShmPtr<> blob_shm;
-      blob_shm.alloc_id_ = data_alloc_id;
-      // offset = distance from backend base
-      size_t base_off = array_ptr.shm_.off_.load();
-      blob_shm.off_.exchange(base_off + my_offset);
+    // Build ShmPtr referencing the data allocator backend
+    hipc::ShmPtr<> blob_shm;
+    blob_shm.alloc_id_ = data_alloc_id;
+    // offset = distance from backend base
+    size_t base_off = array_ptr.shm_.off_.load();
+    blob_shm.off_.exchange(base_off + my_offset);
 
-      // Build blob name: "warp_<id>"
-      char name_buf[32];
-      int pos = 0;
-      name_buf[pos++] = 'w';
-      name_buf[pos++] = '_';
-      chi::u32 wid = warp_id;
-      // Simple itoa
-      char digits[10];
-      int nd = 0;
-      do { digits[nd++] = '0' + (wid % 10); wid /= 10; } while (wid > 0);
-      for (int d = nd - 1; d >= 0; --d) name_buf[pos++] = digits[d];
-      name_buf[pos] = '\0';
+    // Build blob name: "warp_<id>"
+    char name_buf[32];
+    int pos = 0;
+    name_buf[pos++] = 'w';
+    name_buf[pos++] = '_';
+    chi::u32 wid = warp_id;
+    // Simple itoa
+    char digits[10];
+    int nd = 0;
+    do { digits[nd++] = '0' + (wid % 10); wid /= 10; } while (wid > 0);
+    for (int d = nd - 1; d >= 0; --d) name_buf[pos++] = digits[d];
+    name_buf[pos] = '\0';
 
-      auto future = cte_client.AsyncPutBlob(
-          tag_id, name_buf,
-          /*offset=*/0, /*size=*/slice_size,
-          blob_shm, /*score=*/-1.0f,
-          wrp_cte::core::Context(), /*flags=*/0,
-          to_cpu ? chi::PoolQuery::ToLocalCpu()
-                 : chi::PoolQuery::Local());
+    auto future = cte_client.AsyncPutBlob(
+        tag_id, name_buf,
+        /*offset=*/0, /*size=*/slice_size,
+        blob_shm, /*score=*/-1.0f,
+        wrp_cte::core::Context(), /*flags=*/0,
+        to_cpu ? chi::PoolQuery::ToLocalCpu()
+               : chi::PoolQuery::Local());
 
-      future.Wait();
-    }
+    future.Wait();
   }
 
   __syncwarp();

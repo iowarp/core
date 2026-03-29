@@ -528,6 +528,26 @@ struct FutureShm {
     total_warps_ = 1;
     flags_.Clear();
   }
+
+  /**
+   * Lightweight reset for per-task reuse on GPU.
+   * Only resets fields that change between tasks or that the
+   * orchestrator reads before processing. Avoids redundant atomic
+   * stores to fields that stay constant (origin_, response_*, etc.).
+   *
+   * Call this instead of placement-new when reusing a cached FutureShm.
+   */
+  HSHM_CROSS_FUN void Reset(PoolId pool_id, u32 method_id) {
+    pool_id_ = pool_id;
+    method_id_ = method_id;
+    client_task_vaddr_ = 0;
+    parent_gpu_rctx_ = nullptr;
+    flags_.Clear();
+    input_.total_written_.store(0);
+    input_.total_read_.store(0);
+    output_.total_written_.store(0);
+    output_.total_read_.store(0);
+  }
 };
 
 /**
@@ -758,9 +778,11 @@ class Future {
    * GPU: Simple polling on FUTURE_COMPLETE flag
    * CPU: Calls IpcManager::Recv() to handle task completion and deserialization
    * @param max_sec Maximum seconds to wait (0 = wait indefinitely)
+   * @param reuse_task If true, skip task deletion on destroy so the task
+   *                   object can be resubmitted. Caller owns the task lifetime.
    * @return true if task completed, false if timed out
    */
-  HSHM_CROSS_FUN bool Wait(float max_sec = 0);
+  HSHM_CROSS_FUN bool Wait(float max_sec = 0, bool reuse_task = false);
 
   /**
    * Mark the task as complete

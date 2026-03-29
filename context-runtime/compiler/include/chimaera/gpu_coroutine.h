@@ -142,13 +142,6 @@ struct RunContext {
   /** Countdown decremented by the scheduler each iteration */
   u32 spins_remaining_;
 
-  // ==== Thread identity ====
-
-  u32 block_id_;
-  u32 thread_id_;
-  u32 warp_id_; /**< Warp index within the grid */
-  u32 lane_id_; /**< Thread lane within the warp (0-31) */
-
   // ==== Awaited sub-task (co_await tracking) ====
 
   chi::FutureShm *awaited_fshm_;
@@ -182,10 +175,6 @@ struct RunContext {
       : is_yielded_(false),
         yield_spin_count_(0),
         spins_remaining_(0),
-        block_id_(0),
-        thread_id_(0),
-        warp_id_(0),
-        lane_id_(0),
         awaited_fshm_(nullptr),
         awaited_task_(nullptr),
         container_(nullptr),
@@ -207,10 +196,6 @@ struct RunContext {
       : is_yielded_(false),
         yield_spin_count_(0),
         spins_remaining_(0),
-        block_id_(block_id),
-        thread_id_(thread_id),
-        warp_id_(warp_id),
-        lane_id_(lane_id),
         awaited_fshm_(nullptr),
         awaited_task_(nullptr),
         container_(nullptr),

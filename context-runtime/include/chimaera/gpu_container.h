@@ -101,6 +101,25 @@ class Container {
   }
 
   /**
+   * Allocate + construct a task without deserializing (lane 0 only).
+   * Used with LocalLoadTask for warp-parallel deserialization.
+   */
+  HSHM_GPU_FUN virtual hipc::FullPtr<Task> LocalAllocTask(u32 method) {
+    (void)method;
+    return hipc::FullPtr<Task>::GetNull();
+  }
+
+  /**
+   * Deserialize input into an existing task (warp-parallel safe).
+   * All lanes call this with warp_converged set on the archive.
+   */
+  HSHM_GPU_FUN virtual void LocalLoadTask(
+      u32 method, LocalLoadTaskArchive &archive,
+      const hipc::FullPtr<Task> &task) {
+    (void)method; (void)archive; (void)task;
+  }
+
+  /**
    * Virtual dispatch for task serialization
    * @param method Method ID identifying the task type
    * @param archive LocalSaveTaskArchive to write output into

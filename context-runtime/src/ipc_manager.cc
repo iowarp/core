@@ -957,6 +957,48 @@ void *IpcManager::AllocGpuContainer(const PoolId &pool_id, u32 container_id,
 
 #endif
 
+void IpcManager::PrintGpuOrchestratorProfile() {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  if (!gpu_orchestrator_) return;
+  auto *orch = static_cast<gpu::WorkOrchestrator *>(gpu_orchestrator_);
+  if (!orch->control_) return;
+  // Ensure GPU kernel has flushed profile data to pinned memory
+  cudaDeviceSynchronize();
+  auto *ctrl = orch->control_;
+  for (int w = 0; w < gpu::WorkOrchestratorControl::kMaxDebugWorkers; ++w) {
+    long long n = ctrl->prof_task_count[w];
+    if (n == 0) continue;
+    printf("\n--- Orchestrator Worker %d Profile (%lld tasks) ---\n", w, n);
+    printf("  1. QueuePop+Resolve:     %lld  (%lld/task)\n", (long long)ctrl->prof_queue_pop[w], (long long)ctrl->prof_queue_pop[w]/n);
+    printf("  2. RecvDevice (input):   %lld  (%lld/task)\n", (long long)ctrl->prof_recv_device[w], (long long)ctrl->prof_recv_device[w]/n);
+    printf("  3. AllocTask:            %lld  (%lld/task)\n", (long long)ctrl->prof_alloc_task[w], (long long)ctrl->prof_alloc_task[w]/n);
+    printf("  4. LoadTask (SerIn):     %lld  (%lld/task)\n", (long long)ctrl->prof_load_task[w], (long long)ctrl->prof_load_task[w]/n);
+    printf("  5. AllocContext:         %lld  (%lld/task)\n", (long long)ctrl->prof_alloc_ctx[w], (long long)ctrl->prof_alloc_ctx[w]/n);
+    printf("  6. CoroCreate:           %lld  (%lld/task)\n", (long long)ctrl->prof_coro_create[w], (long long)ctrl->prof_coro_create[w]/n);
+    printf("  7. CoroResume (Run):     %lld  (%lld/task)\n", (long long)ctrl->prof_coro_resume[w], (long long)ctrl->prof_coro_resume[w]/n);
+    printf("  8. CoroDestroy:          %lld  (%lld/task)\n", (long long)ctrl->prof_coro_destroy[w], (long long)ctrl->prof_coro_destroy[w]/n);
+    printf("  9. SaveTask (SerOut):    %lld  (%lld/task)\n", (long long)ctrl->prof_save_task[w], (long long)ctrl->prof_save_task[w]/n);
+    printf("  10. SendDevice (output): %lld  (%lld/task)\n", (long long)ctrl->prof_send_device[w], (long long)ctrl->prof_send_device[w]/n);
+    printf("  11. Complete+Free:       %lld  (%lld/task)\n", (long long)ctrl->prof_complete[w], (long long)ctrl->prof_complete[w]/n);
+    long long total = ctrl->prof_queue_pop[w] + ctrl->prof_recv_device[w] +
+                      ctrl->prof_alloc_task[w] + ctrl->prof_load_task[w] +
+                      ctrl->prof_alloc_ctx[w] + ctrl->prof_coro_create[w] +
+                      ctrl->prof_coro_resume[w] + ctrl->prof_coro_destroy[w] +
+                      ctrl->prof_save_task[w] + ctrl->prof_send_device[w] +
+                      ctrl->prof_complete[w];
+    printf("  TOTAL:                   %lld  (%lld/task)\n", total, total/n);
+    // AllocContext sub-breakdown
+    long long ac_alloc = (long long)ctrl->prof_ctx_alloc[w];
+    long long ac_copy = (long long)ctrl->prof_ctx_copy[w];
+    long long ac_zero = (long long)ctrl->prof_ctx_zero[w];
+    printf("  AllocContext sub-breakdown:\n");
+    printf("    alloc/cache:           %lld  (%lld/task)\n", ac_alloc, ac_alloc/n);
+    printf("    struct copy:           %lld  (%lld/task)\n", ac_copy, ac_copy/n);
+    printf("    zero coro handles:     %lld  (%lld/task)\n", ac_zero, ac_zero/n);
+  }
+#endif
+}
+
 bool IpcManager::PauseGpuOrchestrator() {
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
   if (!gpu_orchestrator_) {

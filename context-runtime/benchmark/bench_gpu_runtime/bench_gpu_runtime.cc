@@ -335,6 +335,16 @@ static void PrintResults(const BenchmarkConfig &cfg, float elapsed_ms) {
 }
 
 /**
+ * Print orchestrator profiling breakdown from pinned host memory.
+ * Uses CHI_IPC->ReadOrchestratorProfile() to access the GPU-side counters.
+ */
+static void PrintOrchestratorProfile() {
+  // The orchestrator control struct is accessed through the opaque pointer.
+  // We use ReadOrchestratorProfile which is defined in ipc_manager.cc
+  CHI_IPC->PrintGpuOrchestratorProfile();
+}
+
+/**
  * Run the GPU runtime latency benchmark end-to-end.
  *
  * Initializes Chimaera, creates a MOD_NAME pool, then calls into
@@ -445,14 +455,17 @@ static int RunBenchmark(const BenchmarkConfig &cfg) {
                                   &elapsed_ms);
     }
   }
-  chi::CHIMAERA_FINALIZE();
-
   if (rc != 0) {
+    chi::CHIMAERA_FINALIZE();
     HLOG(kError, "GPU benchmark failed with code {}", rc);
     return 1;
   }
 
   PrintResults(cfg, elapsed_ms);
+  // Pause orchestrator to trigger FlushProfile, then read counters
+  CHI_IPC->PauseGpuOrchestrator();
+  PrintOrchestratorProfile();
+  chi::CHIMAERA_FINALIZE();
   return 0;
 }
 

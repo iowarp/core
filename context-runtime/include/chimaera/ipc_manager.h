@@ -277,8 +277,10 @@ class IpcManager {
     chi::priv::vector<char> buffer_;
     LocalSaveTaskArchive save_ar_;
     LocalLoadTaskArchive load_ar_;
-    hipc::FullPtr<char> fshm_;  /**< Cached FutureShm + 4KB copy_space */
+    hipc::FullPtr<char> fshm_;      /**< Cached FutureShm + 4KB copy_space */
+    char *meta_buf_ = nullptr;      /**< Cached 256B framing buffer (device mem) */
     static constexpr size_t kCopySpaceSize = 4096;
+    static constexpr size_t kMetaBufSize = 256;
 
     HSHM_CROSS_FUN WarpIpcManager(CHI_PRIV_ALLOC_T *alloc)
         : priv_alloc_(alloc),
@@ -499,11 +501,33 @@ class IpcManager {
     if (mgr->fshm_.IsNull() && gpu_alloc_) {
       size_t alloc_size = sizeof(FutureShm) + WarpIpcManager::kCopySpaceSize;
       mgr->fshm_ = gpu_alloc_->template AllocateObjs<char>(alloc_size);
+      if (!mgr->fshm_.IsNull()) {
+        new (mgr->fshm_.ptr_) FutureShm();
+      }
     }
     return mgr->fshm_;
 #else
     static hipc::FullPtr<char> null = hipc::FullPtr<char>::GetNull();
     return null;
+#endif
+  }
+
+  /** Get cached meta_buf for ShmTransport framing (lazy-allocated once per warp).
+   *  Returns pointer to an array_vector<256> in device global memory. */
+  HSHM_CROSS_FUN char *GetCachedMetaBuf() {
+#if HSHM_IS_GPU
+    auto *mgr = GetWarpManager();
+    if (!mgr->meta_buf_ && gpu_alloc_) {
+      using ArrayVec = hshm::priv::array_vector<WarpIpcManager::kMetaBufSize>;
+      auto fp = gpu_alloc_->template AllocateObjs<char>(sizeof(ArrayVec));
+      if (!fp.IsNull()) {
+        new (fp.ptr_) ArrayVec();
+        mgr->meta_buf_ = fp.ptr_;
+      }
+    }
+    return mgr->meta_buf_;
+#else
+    return nullptr;
 #endif
   }
 
@@ -622,7 +646,8 @@ class IpcManager {
     hipc::FullPtr<TaskT> result(ptr);
     return result;
 #else
-    // GPU path: allocate from shared memory buffer and construct task
+    // GPU path: only warp leader allocates (non-leaders get null)
+    if (!IsWarpScheduler()) return hipc::FullPtr<TaskT>();
     auto result = NewObj<TaskT>(std::forward<Args>(args)...);
     return result;
 #endif
@@ -841,80 +866,136 @@ class IpcManager {
 #if HSHM_IS_GPU_COMPILER
   template <typename TaskT>
   HSHM_GPU_FUN Future<TaskT> SendGpu(const hipc::FullPtr<TaskT> &task_ptr) {
-    // Select allocator and queue based on routing mode
-    RoutingMode mode = task_ptr->pool_query_.GetRoutingMode();
-    bool to_cpu = (mode == RoutingMode::ToLocalCpu);
+    // Warp-cooperative: all lanes enter, lane 0 handles control plane,
+    // all lanes participate in serialization via warp_converged write_binary.
+    u32 lane = GetLaneId();
 
-    hipc::PartitionedAllocator *alloc;
-    TaskQueue *queue;
-    if (to_cpu) {
-      if (!gpu2cpu_alloc_ || !gpu2cpu_queue_) return Future<TaskT>();
-      alloc = gpu2cpu_alloc_;
-      queue = gpu2cpu_queue_;
-    } else {
-      if (!gpu_alloc_ || !gpu2gpu_queue_) return Future<TaskT>();
-      alloc = gpu_alloc_;
-      queue = gpu2gpu_queue_;
-    }
-
-    // Reuse cached FutureShm + copy_space (preallocated per warp)
-    hipc::FullPtr<char> &buffer = GetCachedFutureShm();
-    if (buffer.IsNull()) {
-      return Future<TaskT>();
-    }
+    // === Phase 1: Lane 0 setup ===
+    unsigned long long mgr_ull = 0, task_ull = 0;
+    FutureShm *fshm = nullptr;
+    hipc::ShmPtr<FutureShm> fshmptr;
+    bool to_cpu = false;
+    TaskQueue *queue = nullptr;
     size_t copy_space_size = WarpIpcManager::kCopySpaceSize;
 
-    // Re-init FutureShm in-place (reuse same memory)
-    FutureShm *fshm = new (buffer.ptr_) FutureShm();
-    fshm->pool_id_ = task_ptr->pool_id_;
-    fshm->method_id_ = task_ptr->method_;
-    fshm->origin_ = FutureShm::FUTURE_CLIENT_SHM;
-    fshm->client_task_vaddr_ = 0;
-    fshm->flags_.SetBits(FutureShm::FUTURE_COPY_FROM_CLIENT);
+    if (lane == 0) {
+      if (task_ptr.IsNull()) {
+        // Broadcast zero to abort all lanes
+        mgr_ull = 0;
+      } else {
+        RoutingMode mode = task_ptr->pool_query_.GetRoutingMode();
+        to_cpu = (mode == RoutingMode::ToLocalCpu);
 
-    hipc::ShmPtr<FutureShm> fshmptr;
-    fshmptr.alloc_id_ = hipc::AllocatorId::GetNull();
-    fshmptr.off_ =
-        reinterpret_cast<size_t>(reinterpret_cast<FutureShm *>(buffer.ptr_));
-    Future<TaskT> future(fshmptr, task_ptr);
+        if (to_cpu) {
+          if (!gpu2cpu_alloc_ || !gpu2cpu_queue_) { mgr_ull = 0; goto send_bcast; }
+          queue = gpu2cpu_queue_;
+        } else {
+          if (!gpu_alloc_ || !gpu2gpu_queue_) { mgr_ull = 0; goto send_bcast; }
+          queue = gpu2gpu_queue_;
+        }
 
-    // Ring-buffer context using inline copy_space
-    hshm::lbm::LbmContext ctx;
-    ctx.copy_space = fshm->copy_space;
-    ctx.shm_info_ = &fshm->input_;
+        hipc::FullPtr<char> &buffer = GetCachedFutureShm();
+        if (buffer.IsNull()) { mgr_ull = 0; goto send_bcast; }
 
-    // Serialize task input into the ring buffer BEFORE enqueuing,
-    // so the worker sees complete data when it pops.
-    LocalSaveTaskArchive save_ar(LocalMsgType::kSerializeIn);
-    task_ptr->SerializeIn(save_ar);
+        // Lightweight reset (avoids full placement-new constructor)
+        fshm = reinterpret_cast<FutureShm *>(buffer.ptr_);
+        fshm->Reset(task_ptr->pool_id_, task_ptr->method_);
+        fshm->flags_.SetBits(FutureShm::FUTURE_COPY_FROM_CLIENT);
 
-    // Distribute across gpu2gpu lanes using client's warp ID
-    u32 lane_id = 0;
-#if HSHM_IS_GPU
-    if (!to_cpu && gpu2gpu_num_lanes_ > 1) {
-      lane_id = GetWarpId() % gpu2gpu_num_lanes_;
+        fshmptr.alloc_id_ = hipc::AllocatorId::GetNull();
+        fshmptr.off_ =
+            reinterpret_cast<size_t>(reinterpret_cast<FutureShm *>(buffer.ptr_));
+
+        // Prepare WarpIpcManager for warp-parallel serialization
+        auto *mgr = GetWarpManager();
+        mgr->save_ar_.Reset(LocalMsgType::kSerializeIn);
+        mgr->save_ar_.SetWarpConverged(true);
+
+        mgr_ull = reinterpret_cast<unsigned long long>(mgr);
+        task_ull = reinterpret_cast<unsigned long long>(task_ptr.ptr_);
+      }
     }
-#endif
-    auto &lane = queue->GetLane(lane_id, 0);
-    Future<Task> task_future(future.GetFutureShmPtr());
+send_bcast:
 
-    if (to_cpu) {
-      // GPU→CPU: system-scope atomics for cross-device visibility
-      fshm->input_.copy_space_size_.store_system(copy_space_size);
-      fshm->output_.copy_space_size_.store_system(copy_space_size);
-      hshm::lbm::ShmTransport::Send(save_ar, ctx);
-      lane.PushSystem(task_future);
-    } else {
-      // GPU→GPU: device-scope atomics (same device, ~10x faster)
-      fshm->flags_.SetBits(FutureShm::FUTURE_DEVICE_SCOPE);
-      fshm->input_.copy_space_size_.store(copy_space_size);
-      fshm->output_.copy_space_size_.store(copy_space_size);
-      hshm::lbm::ShmTransport::SendDevice(save_ar, ctx);
-      // Fence: ensure all FutureShm fields (pool_id, method_id, flags,
-      // copy_space data) are flushed from L1 to L2 before the queue
-      // entry becomes visible to orchestrator warps on other SMs.
-      hipc::threadfence();
-      lane.Push(task_future);
+    // === Phase 2: Warp-parallel SerializeIn ===
+    mgr_ull = __shfl_sync(0xFFFFFFFF, mgr_ull, 0);
+    task_ull = __shfl_sync(0xFFFFFFFF, task_ull, 0);
+
+    if (mgr_ull != 0 && task_ull != 0) {
+      auto *mgr = reinterpret_cast<WarpIpcManager *>(mgr_ull);
+      auto *task = reinterpret_cast<TaskT *>(task_ull);
+      task->SerializeIn(mgr->save_ar_);
+    }
+    __syncwarp();
+
+    // === Phase 3: ShmTransport framing (warp-parallel copy) + queue push ===
+    // Broadcast ctx fields so all lanes can participate in SendDevice copy.
+    unsigned long long cs_ull = 0;
+    unsigned long long si_ull = 0;
+    unsigned long long mb_ull = 0;
+    int is_to_cpu = 0;
+
+    if (lane == 0 && mgr_ull != 0) {
+      auto *mgr = reinterpret_cast<WarpIpcManager *>(mgr_ull);
+      mgr->save_ar_.SetWarpConverged(false);
+      is_to_cpu = to_cpu ? 1 : 0;
+
+      if (!to_cpu) {
+        fshm->flags_.SetBits(FutureShm::FUTURE_DEVICE_SCOPE);
+        fshm->input_.copy_space_size_.store(copy_space_size);
+        fshm->output_.copy_space_size_.store(copy_space_size);
+      } else {
+        fshm->input_.copy_space_size_.store_system(copy_space_size);
+        fshm->output_.copy_space_size_.store_system(copy_space_size);
+      }
+
+      cs_ull = reinterpret_cast<unsigned long long>(fshm->copy_space);
+      si_ull = reinterpret_cast<unsigned long long>(&fshm->input_);
+      mb_ull = reinterpret_cast<unsigned long long>(GetCachedMetaBuf());
+    }
+
+    // Broadcast for warp-parallel SendDevice
+    cs_ull = __shfl_sync(0xFFFFFFFF, cs_ull, 0);
+    si_ull = __shfl_sync(0xFFFFFFFF, si_ull, 0);
+    mb_ull = __shfl_sync(0xFFFFFFFF, mb_ull, 0);
+    is_to_cpu = __shfl_sync(0xFFFFFFFF, is_to_cpu, 0);
+
+    Future<TaskT> future;
+    if (mgr_ull != 0 && cs_ull != 0 && !is_to_cpu) {
+      auto *mgr = reinterpret_cast<WarpIpcManager *>(mgr_ull);
+      hshm::lbm::LbmContext ctx;
+      ctx.copy_space = reinterpret_cast<char*>(cs_ull);
+      ctx.shm_info_ = reinterpret_cast<hshm::lbm::ShmTransferInfo*>(si_ull);
+      ctx.meta_buf_ = reinterpret_cast<char*>(mb_ull);
+      ctx.meta_buf_size_ = WarpIpcManager::kMetaBufSize;
+      ctx.warp_parallel_ = true;
+
+      // Warp-parallel SendDevice (all lanes participate in copy)
+      hshm::lbm::ShmTransport::SendDevice(mgr->save_ar_, ctx);
+    }
+
+    // Lane 0: queue push + Future creation
+    if (lane == 0 && mgr_ull != 0) {
+      auto *mgr = reinterpret_cast<WarpIpcManager *>(mgr_ull);
+      u32 queue_lane_id = 0;
+      if (!to_cpu && gpu2gpu_num_lanes_ > 1) {
+        queue_lane_id = GetWarpId() % gpu2gpu_num_lanes_;
+      }
+      auto &qlane = queue->GetLane(queue_lane_id, 0);
+      future = Future<TaskT>(fshmptr, task_ptr);
+      Future<Task> task_future(future.GetFutureShmPtr());
+
+      if (to_cpu) {
+        // CPU path: single-lane Send (system-scope, no warp parallel)
+        hshm::lbm::LbmContext cpu_ctx;
+        cpu_ctx.copy_space = fshm->copy_space;
+        cpu_ctx.shm_info_ = &fshm->input_;
+        hshm::lbm::ShmTransport::Send(mgr->save_ar_, cpu_ctx);
+        qlane.PushSystem(task_future);
+      } else {
+        hipc::threadfence();
+        qlane.Push(task_future);
+      }
     }
     return future;
   }
@@ -997,20 +1078,38 @@ class IpcManager {
    */
   template <typename TaskT>
   HSHM_GPU_FUN void RecvGpu(Future<TaskT> &future, TaskT *task_ptr) {
-    hipc::FullPtr<FutureShm> fshm_full = future.GetFutureShm();
-    FutureShm *fshm = fshm_full.ptr_;
+    // Warp-cooperative: all lanes enter, lane 0 handles control plane,
+    // all lanes participate in deserialization via warp_converged read_binary.
+    u32 lane = GetLaneId();
 
-    // Use system-scope to read the scope flag (works on both host/device pass)
-    bool device_scope = fshm->flags_.AnySystem(FutureShm::FUTURE_DEVICE_SCOPE);
+    // === Phase 1: Broadcast FutureShm pointer from lane 0 ===
+    unsigned long long fshm_ull = 0;
+    if (lane == 0) {
+      hipc::FullPtr<FutureShm> fshm_full = future.GetFutureShm();
+      if (!fshm_full.IsNull()) {
+        fshm_ull = reinterpret_cast<unsigned long long>(fshm_full.ptr_);
+      }
+    }
+    fshm_ull = __shfl_sync(0xFFFFFFFF, fshm_ull, 0);
+    if (fshm_ull == 0) return;
+    FutureShm *fshm = reinterpret_cast<FutureShm *>(fshm_ull);
+
+    // Broadcast device_scope flag
+    int ds_int = 0;
+    if (lane == 0) {
+      ds_int = fshm->flags_.AnySystem(FutureShm::FUTURE_DEVICE_SCOPE) ? 1 : 0;
+    }
+    ds_int = __shfl_sync(0xFFFFFFFF, ds_int, 0);
+    bool device_scope = (ds_int != 0);
+
+    // === Phase 2: All lanes spin-wait on FUTURE_COMPLETE ===
 #if !HSHM_IS_HOST
     if (device_scope) {
-      // GPU→GPU: device-scope L2-direct reads (bypass L1 for cross-SM
-      // visibility)
       int spin_count = 0;
       while (!fshm->flags_.AnyDevice(FutureShm::FUTURE_COMPLETE)) {
         HSHM_THREAD_MODEL->Yield();
         ++spin_count;
-        if (spin_count == 1000000) {
+        if (spin_count == 1000000 && lane == 0) {
           u32 raw_flags = fshm->flags_.bits_.load_device();
           printf("[RECV] warp=%u STUCK: fshm=%p flags=0x%x (device) spin=%d\n",
                  (blockIdx.x * blockDim.x + threadIdx.x) / 32, (void *)fshm,
@@ -1019,40 +1118,84 @@ class IpcManager {
         }
       }
       hipc::threadfence();
-
-      if (fshm->output_.total_written_.load_device() > 0) {
-        hshm::lbm::LbmContext ctx;
-        ctx.copy_space = fshm->copy_space;
-        ctx.shm_info_ = &fshm->output_;
-
-        LocalLoadTaskArchive load_ar;
-        hshm::lbm::ShmTransport::RecvDevice(load_ar, ctx);
-        load_ar.SetMsgType(LocalMsgType::kSerializeOut);
-        task_ptr->SerializeOut(load_ar);
-      }
     } else
 #endif
     {
-      // GPU→CPU (or host fallback): system-scope atomics
       (void)device_scope;
       while (!fshm->flags_.AnySystem(FutureShm::FUTURE_COMPLETE)) {
         HSHM_THREAD_MODEL->Yield();
       }
       hipc::threadfence();
+    }
 
-      if (fshm->output_.total_written_.load_system() > 0) {
-        hshm::lbm::LbmContext ctx;
-        ctx.copy_space = fshm->copy_space;
-        ctx.shm_info_ = &fshm->output_;
+    // === Phase 3: ShmTransport recv (warp-parallel copy) ===
+    unsigned long long mgr_ull = 0, task_ull = 0;
+    int has_output = 0;
+    unsigned long long recv_cs_ull = 0, recv_si_ull = 0, recv_mb_ull = 0;
 
-        LocalLoadTaskArchive load_ar;
-        hshm::lbm::ShmTransport::Recv(load_ar, ctx);
-        load_ar.SetMsgType(LocalMsgType::kSerializeOut);
-        task_ptr->SerializeOut(load_ar);
+    if (lane == 0) {
+      size_t output_written = device_scope
+          ? fshm->output_.total_written_.load_device()
+          : fshm->output_.total_written_.load_system();
+
+      if (output_written > 0) {
+        auto *mgr = GetWarpManager();
+        mgr_ull = reinterpret_cast<unsigned long long>(mgr);
+        task_ull = reinterpret_cast<unsigned long long>(task_ptr);
+        recv_cs_ull = reinterpret_cast<unsigned long long>(fshm->copy_space);
+        recv_si_ull = reinterpret_cast<unsigned long long>(&fshm->output_);
+        recv_mb_ull = reinterpret_cast<unsigned long long>(GetCachedMetaBuf());
+        has_output = 1;
       }
     }
-    // Mark consumed so ~Future() frees FutureShm + task memory
-    future.Destroy(true);
+
+    // Broadcast for warp-parallel RecvDevice
+    mgr_ull = __shfl_sync(0xFFFFFFFF, mgr_ull, 0);
+    task_ull = __shfl_sync(0xFFFFFFFF, task_ull, 0);
+    has_output = __shfl_sync(0xFFFFFFFF, has_output, 0);
+    recv_cs_ull = __shfl_sync(0xFFFFFFFF, recv_cs_ull, 0);
+    recv_si_ull = __shfl_sync(0xFFFFFFFF, recv_si_ull, 0);
+    recv_mb_ull = __shfl_sync(0xFFFFFFFF, recv_mb_ull, 0);
+
+    if (has_output && device_scope) {
+      auto *mgr = reinterpret_cast<WarpIpcManager *>(mgr_ull);
+      hshm::lbm::LbmContext ctx;
+      ctx.copy_space = reinterpret_cast<char*>(recv_cs_ull);
+      ctx.shm_info_ = reinterpret_cast<hshm::lbm::ShmTransferInfo*>(recv_si_ull);
+      ctx.meta_buf_ = reinterpret_cast<char*>(recv_mb_ull);
+      ctx.meta_buf_size_ = WarpIpcManager::kMetaBufSize;
+      ctx.warp_parallel_ = true;
+
+      // Warp-parallel RecvDevice (all lanes participate in copy)
+      hshm::lbm::ShmTransport::RecvDevice(mgr->load_ar_, ctx);
+    }
+
+    // Lane 0: finalize recv for non-device-scope or set up warp deser
+    if (lane == 0 && has_output) {
+      auto *mgr = reinterpret_cast<WarpIpcManager *>(mgr_ull);
+      if (!device_scope) {
+        // CPU path: single-lane Recv (system-scope)
+        hshm::lbm::LbmContext cpu_ctx;
+        cpu_ctx.copy_space = fshm->copy_space;
+        cpu_ctx.shm_info_ = &fshm->output_;
+        hshm::lbm::ShmTransport::Recv(mgr->load_ar_, cpu_ctx);
+      }
+      mgr->load_ar_.SetMsgType(LocalMsgType::kSerializeOut);
+      mgr->load_ar_.SetWarpConverged(true);
+    }
+
+    // === Phase 4: Warp-parallel SerializeOut ===
+    if (has_output) {
+      auto *mgr = reinterpret_cast<WarpIpcManager *>(mgr_ull);
+      auto *task = reinterpret_cast<TaskT *>(task_ull);
+      task->SerializeOut(mgr->load_ar_);
+    }
+    __syncwarp();
+
+    // === Phase 5: Lane 0 cleanup ===
+    if (lane == 0) {
+      future.Destroy(true);
+    }
   }
 
   /**
@@ -2743,6 +2886,9 @@ class IpcManager {
   IpcManagerGpuInfo GetClientGpuInfo(u32 gpu_id = 0);
 #endif
 
+  /** Print GPU orchestrator profiling breakdown from pinned host memory */
+  void PrintGpuOrchestratorProfile();
+
   /** Pause the GPU orchestrator to free SMs for other GPU kernels.
    *  Returns true if actually paused, false if already paused. */
   bool PauseGpuOrchestrator();
@@ -3042,15 +3188,21 @@ Future<TaskT, AllocT>::GetFutureShm() const {
 }
 
 template <typename TaskT, typename AllocT>
-HSHM_CROSS_FUN bool Future<TaskT, AllocT>::Wait(float max_sec) {
+HSHM_CROSS_FUN bool Future<TaskT, AllocT>::Wait(float max_sec,
+                                                 bool reuse_task) {
 #if HSHM_IS_GPU
-  // GPU CLIENT PATH: RecvGpu handles ring buffer deserialization +
-  // FUTURE_COMPLETE wait
-  if (future_shm_.IsNull()) {
-    return true;
-  }
+  // GPU CLIENT PATH: All lanes enter RecvGpu for warp-cooperative
+  // serialization via __shfl_sync. Non-leaders have null future_shm_ —
+  // RecvGpu broadcasts the real FutureShm pointer from lane 0.
   CHI_IPC->RecvGpu(*this, task_ptr_.ptr_);
-  Destroy(true);
+  // Only lane 0 owns the Future — only lane 0 marks consumed
+  if (IpcManager::IsWarpScheduler()) {
+    if (reuse_task) {
+      // Caller will reuse the task — detach so ~Future() won't free it
+      task_ptr_.SetNull();
+    }
+    // Destroy already called inside RecvGpu for lane 0
+  }
   return true;
 #else
   if (!task_ptr_.IsNull() && !future_shm_.IsNull()) {
@@ -3148,6 +3300,10 @@ HSHM_CROSS_FUN bool Future<TaskT, AllocT>::Wait(float max_sec) {
     }
 
     // PostWait + free FutureShm; task freed by ~Future()
+    if (reuse_task) {
+      // Caller will reuse the task — detach so ~Future() won't free it
+      task_ptr_.SetNull();
+    }
     Destroy(true);
   }
   return true;
