@@ -332,6 +332,73 @@ if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
     ${CMAKE_CURRENT_SOURCE_DIR}
   )
   install(TARGETS cae_hdf5_discovery_bench DESTINATION bin)
+
+  # KG Backend comparison test (standalone, no CTE runtime needed)
+  add_executable(test_kg_backends
+    ${CMAKE_CURRENT_SOURCE_DIR}/hdf5_assim/test_kg_backends.cc
+  )
+  target_link_libraries(test_kg_backends
+    PRIVATE
+      wrp_cte_core_client
+      chimaera::cxx
+      hshm::configure
+      nlohmann_json::nlohmann_json
+  )
+  target_compile_definitions(test_kg_backends PRIVATE
+    WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+  )
+  target_include_directories(test_kg_backends PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+
+  # Optional backends
+  option(WRP_CTE_KG_ELASTICSEARCH "Enable Elasticsearch KG backend" OFF)
+  option(WRP_CTE_KG_NEO4J "Enable Neo4j KG backend" OFF)
+  option(WRP_CTE_KG_REDIS "Enable Redis KG backend" OFF)
+  option(WRP_CTE_KG_QDRANT "Enable Qdrant KG backend" OFF)
+
+  if(WRP_CTE_KG_ELASTICSEARCH OR WRP_CTE_KG_NEO4J OR WRP_CTE_KG_QDRANT)
+    target_include_directories(test_kg_backends PRIVATE
+      ${CMAKE_SOURCE_DIR}/external/httplib
+    )
+  endif()
+
+  if(WRP_CTE_KG_ELASTICSEARCH)
+    target_compile_definitions(test_kg_backends PRIVATE WRP_CTE_KG_ELASTICSEARCH)
+  endif()
+  if(WRP_CTE_KG_NEO4J)
+    target_compile_definitions(test_kg_backends PRIVATE WRP_CTE_KG_NEO4J)
+  endif()
+  if(WRP_CTE_KG_REDIS)
+    find_library(HIREDIS_LIB NAMES hiredis
+      PATHS /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib
+      PATH_SUFFIXES hiredis)
+    if(NOT HIREDIS_LIB)
+      # Try versioned .so on systems without symlink
+      find_file(HIREDIS_LIB NAMES libhiredis.so.0.14 libhiredis.so.1
+        PATHS /usr/lib/x86_64-linux-gnu /usr/lib)
+    endif()
+    if(HIREDIS_LIB)
+      target_compile_definitions(test_kg_backends PRIVATE WRP_CTE_KG_REDIS)
+      target_include_directories(test_kg_backends PRIVATE
+        ${CMAKE_SOURCE_DIR}/external
+      )
+      target_link_libraries(test_kg_backends PRIVATE ${HIREDIS_LIB})
+      message(STATUS "Found hiredis: ${HIREDIS_LIB}")
+    else()
+      message(WARNING "hiredis library not found, Redis backend disabled")
+    endif()
+  endif()
+  if(WRP_CTE_KG_QDRANT)
+    target_compile_definitions(test_kg_backends PRIVATE WRP_CTE_KG_QDRANT)
+  endif()
+
+  option(WRP_CTE_KG_ZEP "Enable Zep KG backend" OFF)
+  if(WRP_CTE_KG_ZEP)
+    target_compile_definitions(test_kg_backends PRIVATE WRP_CTE_KG_ZEP)
+  endif()
+
+  install(TARGETS test_kg_backends DESTINATION bin)
 endif()
 
 #------------------------------------------------------------------------------

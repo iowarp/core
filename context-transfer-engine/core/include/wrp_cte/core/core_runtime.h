@@ -42,7 +42,8 @@
 #include <hermes_shm/data_structures/ipc/ring_buffer.h>
 #include <hermes_shm/memory/allocator/malloc_allocator.h>
 #ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
-#include <hermes_shm/data_structures/priv/knowledge_graph/knowledge_graph.h>
+#include <wrp_cte/core/kg_backend.h>
+#include <wrp_cte/core/kg_backend_factory.h>
 #endif
 #include <wrp_cte/core/core_client.h>
 #include <wrp_cte/core/core_config.h>
@@ -255,8 +256,8 @@ private:
   std::vector<std::unique_ptr<TransactionLog>> tag_txn_logs_;
 
 #ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
-  // Knowledge graph for semantic search over tag summaries
-  hshm::priv::KnowledgeGraph<TagId, hshm::hash<TagId>> knowledge_graph_;
+  // Pluggable knowledge graph backend (default: BM25)
+  std::unique_ptr<KGBackend> kg_backend_;
   chi::CoRwLock kg_lock_;  // Lock for knowledge graph access
 #endif
 

@@ -309,6 +309,14 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
                            config_.performance_.flush_data_min_persistence_,
                            config_.performance_.flush_data_period_ms_ * 1000.0);
   }
+
+#ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+  // Initialize pluggable KG backend (default: BM25)
+  // TODO: read backend type from compose YAML config
+  kg_backend_ = CreateKGBackend("bm25");
+  kg_backend_->Init("");
+#endif
+
   co_return;
 }
 
@@ -3145,7 +3153,7 @@ chi::TaskResume Runtime::UpdateKnowledgeGraph(
     // Add to knowledge graph
     {
       chi::ScopedCoRwWriteLock write_lock(kg_lock_);
-      knowledge_graph_.Add(tag_id, summary);
+      kg_backend_->Add(tag_id, summary);
     }
 
     HLOG(kDebug, "Updated knowledge graph for tag {}.{}: {}",
@@ -3166,7 +3174,7 @@ chi::TaskResume Runtime::SemanticQuery(
 
     // Search the knowledge graph
     chi::ScopedCoRwReadLock read_lock(kg_lock_);
-    auto results = knowledge_graph_.Search(prompt, static_cast<int>(top_k));
+    auto results = kg_backend_->Search(prompt, static_cast<int>(top_k));
 
     // Extract TagIds and scores from search results
     task->result_tags_.clear();
@@ -3198,14 +3206,14 @@ chi::TaskResume Runtime::SyncKnowledgeGraph(
           ? static_cast<float>(task->global_total_terms_) /
             static_cast<float>(task->global_n_)
           : 1.0f;
-      knowledge_graph_.SetGlobalIdf(
+      kg_backend_->SetGlobalIdf(
           task->global_n_, std::move(task->global_df_), global_avg_dl);
     } else {
       // Collect mode: return local stats for aggregation
       chi::ScopedCoRwReadLock read_lock(kg_lock_);
-      task->global_n_ = knowledge_graph_.GetLocalN();
-      task->global_total_terms_ = knowledge_graph_.GetLocalTotalTerms();
-      task->global_df_ = knowledge_graph_.GetLocalDf();
+      task->global_n_ = kg_backend_->GetLocalN();
+      task->global_total_terms_ = kg_backend_->GetLocalTotalTerms();
+      task->global_df_ = kg_backend_->GetLocalDf();
     }
     task->SetReturnCode(0);
   } catch (const std::exception &e) {
