@@ -85,7 +85,7 @@ class Worker {
       hshm::ipc::ext_ring_buffer<RunContext *, CHI_PRIV_ALLOC_T>;
   SuspendedQueue *suspended_;
   u32 num_suspended_;
-  RunContext *cached_rctx_;  /**< Cached RunContext to avoid per-task alloc */
+  RunContext *cached_rctx_; /**< Cached RunContext to avoid per-task alloc */
 
   // Profiling counters (lane 0 only, flushed to pinned host memory on exit)
   long long prof_queue_pop_, prof_recv_device_, prof_alloc_task_;
@@ -94,7 +94,6 @@ class Worker {
   long long prof_send_device_, prof_complete_, prof_task_count_;
   // AllocContext sub-breakdown
   long long prof_ctx_alloc_, prof_ctx_copy_, prof_ctx_zero_;
-
 
   HSHM_GPU_FUN void Init(u32 worker_id, u32 lane_id, TaskQueue *cpu2gpu_queue,
                          TaskQueue *gpu2gpu_queue, TaskQueue *internal_queue,
@@ -123,15 +122,26 @@ class Worker {
     }
     rctx_ = RunContext();
     cached_rctx_ = nullptr;
-    prof_queue_pop_ = 0; prof_recv_device_ = 0; prof_alloc_task_ = 0;
-    prof_load_task_ = 0; prof_alloc_ctx_ = 0; prof_coro_create_ = 0;
-    prof_coro_resume_ = 0; prof_coro_destroy_ = 0; prof_save_task_ = 0;
-    prof_send_device_ = 0; prof_complete_ = 0; prof_task_count_ = 0;
-    prof_ctx_alloc_ = 0; prof_ctx_copy_ = 0; prof_ctx_zero_ = 0;
+    prof_queue_pop_ = 0;
+    prof_recv_device_ = 0;
+    prof_alloc_task_ = 0;
+    prof_load_task_ = 0;
+    prof_alloc_ctx_ = 0;
+    prof_coro_create_ = 0;
+    prof_coro_resume_ = 0;
+    prof_coro_destroy_ = 0;
+    prof_save_task_ = 0;
+    prof_send_device_ = 0;
+    prof_complete_ = 0;
+    prof_task_count_ = 0;
+    prof_ctx_alloc_ = 0;
+    prof_ctx_copy_ = 0;
+    prof_ctx_zero_ = 0;
   }
 
   HSHM_GPU_FUN void FlushProfile() {
-    if (!dbg_ctrl_ || worker_id_ >= WorkOrchestratorControl::kMaxDebugWorkers) return;
+    if (!dbg_ctrl_ || worker_id_ >= WorkOrchestratorControl::kMaxDebugWorkers)
+      return;
     dbg_ctrl_->prof_queue_pop[worker_id_] = prof_queue_pop_;
     dbg_ctrl_->prof_recv_device[worker_id_] = prof_recv_device_;
     dbg_ctrl_->prof_alloc_task[worker_id_] = prof_alloc_task_;
@@ -149,7 +159,6 @@ class Worker {
     dbg_ctrl_->prof_ctx_zero[worker_id_] = prof_ctx_zero_;
   }
 
-
   HSHM_GPU_FUN void Stop() { is_running_ = false; }
   HSHM_GPU_FUN void Finalize() { is_running_ = false; }
 
@@ -157,19 +166,25 @@ class Worker {
   // Main poll loop
   // ================================================================
 
-  HSHM_GPU_FUN bool PollOnce(u32 lane_id) {
+  HSHM_GPU_FUN int PollOnce(u32 lane_id) {
     if (lane_id == 0) {
       DbgPoll();
     }
-    if (CheckAndResumeSuspended(lane_id)) return true;
-    if (TryPopFromQueue(lane_id, internal_queue_, lane_id_, true)) return true;
-    if (TryPopCrossWarpTask(lane_id)) return true;
-    if (TryPopFromQueue(lane_id, gpu2gpu_queue_, lane_id_, true)) return true;
+    // High-priority: gpu2gpu, internal, and suspended queues
+    // Polled 8x more frequently than cross-warp and cpu2gpu
+    int count = 0;
+    for (int i = 0; i < 16; ++i) {
+      count += TryPopFromQueue(lane_id, gpu2gpu_queue_, lane_id_, true);
+      count += TryPopFromQueue(lane_id, internal_queue_, lane_id_, true);
+      count += CheckAndResumeSuspended(lane_id);
+    }
+    // Lower-priority: cross-warp and cpu2gpu queues
+    count += TryPopCrossWarpTask(lane_id);
     // cpu2gpu_queue only polled by warp 0 — pass null for other warps
     // so all lanes still enter TryPopFromQueue for __shfl_sync convergence
-    if (TryPopFromQueue(lane_id, lane_id_ == 0 ? cpu2gpu_queue_ : nullptr,
-                        0, false)) return true;
-    return false;
+    count += TryPopFromQueue(lane_id, lane_id_ == 0 ? cpu2gpu_queue_ : nullptr,
+                             0, false);
+    return count;
   }
 
   // ================================================================
@@ -192,13 +207,15 @@ class Worker {
     // --- Coroutine creation and resume (all 32 lanes always participate) ---
     GPU_WORKER_TIMER_DEF(_etc);
     if (ctx->task_coros_[0] == nullptr) {
-      if (lane_id == 0) { GPU_WORKER_TIMER_START(_etc); }
+      if (lane_id == 0) {
+        GPU_WORKER_TIMER_START(_etc);
+      }
       auto *container = ctx->container_;
       TaskResume tmp = container->Run(ctx->method_id_, ctx->task_ptr_, *ctx);
       if (!tmp.get_handle()) {
         if (lane_id == 0) {
-          GPU_WORKER_DPRINTF("[W%u] CORO ALLOC FAILED: method=%u\n",
-                             worker_id_, ctx->method_id_);
+          GPU_WORKER_DPRINTF("[W%u] CORO ALLOC FAILED: method=%u\n", worker_id_,
+                             ctx->method_id_);
         }
       } else {
         tmp.get_handle().promise().set_run_context(ctx);
@@ -206,11 +223,16 @@ class Worker {
         ctx->task_coros_[lane_id] = tmp.release();
       }
       __syncwarp();
-      if (lane_id == 0) { GPU_WORKER_TIMER_END(prof_coro_create_, _etc); }
+      if (lane_id == 0) {
+        GPU_WORKER_TIMER_END(prof_coro_create_, _etc);
+      }
     }
 
     if (ctx->task_coros_[lane_id] && !ctx->task_coros_[lane_id].done()) {
-      if (lane_id == 0) { ctx->is_yielded_ = false; GPU_WORKER_TIMER_START(_etc); }
+      if (lane_id == 0) {
+        ctx->is_yielded_ = false;
+        GPU_WORKER_TIMER_START(_etc);
+      }
       __syncwarp();
 
       auto &coro_h = ctx->coro_handles_[lane_id];
@@ -219,17 +241,23 @@ class Worker {
       } else {
         ctx->task_coros_[lane_id].resume();
       }
-      if (lane_id == 0) { GPU_WORKER_TIMER_END(prof_coro_resume_, _etc); }
+      if (lane_id == 0) {
+        GPU_WORKER_TIMER_END(prof_coro_resume_, _etc);
+      }
     }
 
     // Destroy completed coroutine frames (all 32 lanes)
-    if (lane_id == 0) { GPU_WORKER_TIMER_START(_etc); }
+    if (lane_id == 0) {
+      GPU_WORKER_TIMER_START(_etc);
+    }
     if (ctx->task_coros_[lane_id] && ctx->task_coros_[lane_id].done()) {
       ctx->task_coros_[lane_id].destroy();
       ctx->task_coros_[lane_id] = nullptr;
       ctx->coro_handles_[lane_id] = nullptr;
     }
-    if (lane_id == 0) { GPU_WORKER_TIMER_END(prof_coro_destroy_, _etc); }
+    if (lane_id == 0) {
+      GPU_WORKER_TIMER_END(prof_coro_destroy_, _etc);
+    }
 
     __syncwarp();
 
@@ -351,42 +379,35 @@ class Worker {
   // Suspended task management (lane 0 only)
   // ================================================================
 
-  HSHM_GPU_FUN bool CheckAndResumeSuspended(u32 lane_id) {
+  HSHM_GPU_FUN int CheckAndResumeSuspended(u32 lane_id) {
     RunContext *ctx = nullptr;
     if (lane_id == 0 && num_suspended_ > 0) {
-      u32 count = num_suspended_;
-      for (u32 i = 0; i < count; ++i) {
-        RunContext *entry;
-        if (!suspended_->Pop(entry)) break;
-
-        if (entry->awaited_fshm_) {
-          if (!entry->awaited_fshm_->flags_.AnyDevice(
-                  FutureShm::FUTURE_COMPLETE)) {
-            suspended_->Push(entry);
-            continue;
-          }
+      RunContext *entry;
+      if (suspended_->Pop(entry)) {
+        if (entry->awaited_fshm_ && !entry->awaited_fshm_->flags_.AnyDevice(
+                                        FutureShm::FUTURE_COMPLETE)) {
+          // Not ready yet — push back
+          suspended_->Push(entry);
+        } else {
           entry->awaited_fshm_ = nullptr;
+          DbgTaskResumed();
+          --num_suspended_;
+          ctx = entry;
         }
-
-        DbgTaskResumed();
-        --num_suspended_;
-        ctx = entry;
-        break;
       }
     }
     ExecTask(lane_id, ctx);
-    // Broadcast result to all lanes to avoid warp divergence
     int found = (ctx != nullptr) ? 1 : 0;
     found = __shfl_sync(0xFFFFFFFF, found, 0);
-    return found != 0;
+    return found;
   }
 
   // ================================================================
   // New task popping (lane 0 only)
   // ================================================================
 
-  HSHM_GPU_FUN bool TryPopFromQueue(u32 lane_id, TaskQueue *queue, u32 qlane,
-                                    bool is_gpu2gpu) {
+  HSHM_GPU_FUN int TryPopFromQueue(u32 lane_id, TaskQueue *queue, u32 qlane,
+                                   bool is_gpu2gpu) {
     RunContext *ctx = nullptr;
 
     // Lane 0: pop queue, validate, look up container
@@ -447,8 +468,10 @@ class Worker {
               GPU_WORKER_TIMER_END(prof_queue_pop_, _qpop_tc);
               fshm_ull = reinterpret_cast<unsigned long long>(fshm);
               container_ull = reinterpret_cast<unsigned long long>(container);
-              is_copy = fshm->flags_.AnyDevice(
-                  FutureShm::FUTURE_COPY_FROM_CLIENT) ? 1 : 0;
+              is_copy =
+                  fshm->flags_.AnyDevice(FutureShm::FUTURE_COPY_FROM_CLIENT)
+                      ? 1
+                      : 0;
               need_prepare = 1;
             }
           }
@@ -503,7 +526,9 @@ class Worker {
   HSHM_GPU_FUN RunContext *PrepareTaskCopy(u32 lane_id, FutureShm *fshm,
                                            Container *container, u32 method_id,
                                            bool is_gpu2gpu) {
-    GPU_WORKER_TIMER_DEF(_tc); GPU_WORKER_TIMER_DEF(_tc2); GPU_WORKER_TIMER_DEF(_tc3);
+    GPU_WORKER_TIMER_DEF(_tc);
+    GPU_WORKER_TIMER_DEF(_tc2);
+    GPU_WORKER_TIMER_DEF(_tc3);
     auto *ipc = CHI_IPC;
 
     // Phase 1 (lane 0): validate + read PreallocHeader
@@ -525,7 +550,7 @@ class Worker {
           in_ctx.copy_space = fshm->copy_space;
           in_ctx.shm_info_ = &fshm->input_;
           hshm::lbm::ShmTransport::RecvDevicePrealloc(
-              reinterpret_cast<char*>(&hdr), sizeof(hdr), in_ctx);
+              reinterpret_cast<char *>(&hdr), sizeof(hdr), in_ctx);
           valid = 1;
         }
       }
@@ -534,7 +559,9 @@ class Worker {
     valid = __shfl_sync(0xFFFFFFFF, valid, 0);
     if (!valid) return nullptr;
 
-    if (lane_id == 0) { GPU_WORKER_TIMER_START(_tc); }
+    if (lane_id == 0) {
+      GPU_WORKER_TIMER_START(_tc);
+    }
 
     // Phase 2 (lane 0): single alloc for Task + RunContext + stack
     static constexpr size_t kStackSize = 4096;
@@ -681,7 +708,7 @@ class Worker {
     }
   }
 
-  HSHM_GPU_FUN bool TryPopCrossWarpTask(u32 lane_id) {
+  HSHM_GPU_FUN int TryPopCrossWarpTask(u32 lane_id) {
     RunContext *ctx = nullptr;
     if (lane_id == 0 && warp_group_queue_) {
       u32 qlane = worker_id_ % warp_group_queue_->GetNumLanes();
@@ -730,7 +757,9 @@ class Worker {
                                          Container *container, u32 method_id,
                                          hipc::FullPtr<Task> &task_ptr,
                                          bool is_gpu2gpu) {
-    GPU_WORKER_TIMER_DEF(_tc); GPU_WORKER_TIMER_DEF(_tc2); GPU_WORKER_TIMER_DEF(_tc3);
+    GPU_WORKER_TIMER_DEF(_tc);
+    GPU_WORKER_TIMER_DEF(_tc2);
+    GPU_WORKER_TIMER_DEF(_tc3);
     auto *ipc = CHI_IPC;
 
     // Phase 1 (lane 0): serialize task output directly into copy_space
@@ -741,7 +770,9 @@ class Worker {
       GPU_WORKER_TIMER_START(_tc);
       // Rebind buffer to CLIENT's copy_space and serialize output there
       auto *mgr = ipc->GetWarpManager();
-      mgr->BindCopySpace(fshm->copy_space);
+      // Use input copy_space_size (same as output, set by client's SendGpu)
+      size_t cs_size = fshm->input_.copy_space_size_.load_device();
+      mgr->BindCopySpace(fshm->copy_space, cs_size);
       auto *save_ar_ptr = &mgr->save_ar_;
       save_ar_ptr->Reset(LocalMsgType::kSerializeOut);
       container->LocalSaveTask(method_id, *save_ar_ptr, task_ptr);
@@ -758,22 +789,26 @@ class Worker {
     data_size = __shfl_sync(0xFFFFFFFF, data_size, 0);
 
     // Phase 2: Write PreallocHeader + mark ready
-    if (lane_id == 0) { GPU_WORKER_TIMER_START(_tc2); }
+    if (lane_id == 0) {
+      GPU_WORKER_TIMER_START(_tc2);
+    }
     if (is_gpu2gpu) {
       PreallocHeader hdr;
       hdr.msg_type = LocalMsgType::kSerializeOut;
       hdr.data_size = data_size;
       hshm::lbm::LbmContext out_ctx;
       out_ctx.copy_space = reinterpret_cast<char *>(ctx_cs);
-      out_ctx.shm_info_ = reinterpret_cast<hshm::lbm::ShmTransferInfo *>(ctx_si);
+      out_ctx.shm_info_ =
+          reinterpret_cast<hshm::lbm::ShmTransferInfo *>(ctx_si);
       hshm::lbm::ShmTransport::SendDevicePrealloc(
-          reinterpret_cast<const char*>(&hdr), sizeof(hdr),
-          hdr.data_size, out_ctx);
+          reinterpret_cast<const char *>(&hdr), sizeof(hdr), hdr.data_size,
+          out_ctx);
     } else if (lane_id == 0) {
       auto *mgr = ipc->GetWarpManager();
       hshm::lbm::LbmContext out_ctx;
       out_ctx.copy_space = reinterpret_cast<char *>(ctx_cs);
-      out_ctx.shm_info_ = reinterpret_cast<hshm::lbm::ShmTransferInfo *>(ctx_si);
+      out_ctx.shm_info_ =
+          reinterpret_cast<hshm::lbm::ShmTransferInfo *>(ctx_si);
       hshm::lbm::ShmTransport::Send(mgr->save_ar_, out_ctx);
     }
     __syncwarp();

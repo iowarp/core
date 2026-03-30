@@ -785,6 +785,12 @@ class Future {
    */
   HSHM_CROSS_FUN bool Wait(float max_sec = 0, bool reuse_task = false);
 
+  /** Wait phase 1: spin until FUTURE_COMPLETE (no deserialization) */
+  HSHM_CROSS_FUN void WaitPoll(float max_sec = 0, bool reuse_task = false);
+
+  /** Wait phase 2: deserialize output + cleanup (call after WaitPoll) */
+  HSHM_CROSS_FUN void WaitRecv(float max_sec = 0, bool reuse_task = false);
+
   /**
    * Mark the task as complete
    */

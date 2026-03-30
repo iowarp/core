@@ -49,7 +49,8 @@ static chi::PoolId g_pool_id;
 static void EnsureInit() {
   if (g_initialized) return;
 
-  bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kServer, true);
+  setenv("CHI_WITH_RUNTIME", "1", 1);
+  bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient);
   REQUIRE(success);
   SimpleTest::g_test_finalize = chi::CHIMAERA_FINALIZE;
   std::this_thread::sleep_for(500ms);

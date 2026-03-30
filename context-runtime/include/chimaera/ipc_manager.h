@@ -282,7 +282,7 @@ class IpcManager {
     hshm::priv::wrap_vector buffer_;  /**< Wraps copy_space task data region */
     WrapSaveArchive save_ar_;
     WrapLoadArchive load_ar_;
-    static constexpr size_t kCopySpaceSize = 4096;
+    static constexpr size_t kCopySpaceSize = 256;
     static constexpr size_t kHeaderSize = sizeof(PreallocHeader);
 
     /**
@@ -306,12 +306,12 @@ class IpcManager {
     }
 
     /** Set up buffer_ to point at copy_space task data region */
-    HSHM_CROSS_FUN void BindCopySpace(char *copy_space) {
+    HSHM_CROSS_FUN void BindCopySpace(char *copy_space, size_t copy_space_size) {
       hipc::FullPtr<char> fp;
       fp.ptr_ = copy_space + kHeaderSize;
       fp.shm_.alloc_id_.SetNull();
       fp.shm_.off_ = reinterpret_cast<size_t>(fp.ptr_);
-      buffer_.set(fp, kCopySpaceSize - kHeaderSize);
+      buffer_.set(fp, copy_space_size - kHeaderSize);
     }
   };
  public:
@@ -663,8 +663,8 @@ class IpcManager {
     // Bulk allocation: Task + FutureShm + copy_space in one call.
     // Each task gets its own FutureShm so multiple in-flight tasks
     // from the same warp don't corrupt each other's completion state.
-    size_t total = sizeof(TaskT) + sizeof(FutureShm)
-                   + WarpIpcManager::kCopySpaceSize;
+    size_t copy_space = sizeof(TaskT) + 256;
+    size_t total = sizeof(TaskT) + sizeof(FutureShm) + copy_space;
     auto fp = priv->template AllocateObjs<char>(total);
     if (fp.IsNull()) return hipc::FullPtr<TaskT>();
     auto *task = new (fp.ptr_) TaskT(std::forward<Args>(args)...);
@@ -887,7 +887,7 @@ class IpcManager {
     hipc::ShmPtr<FutureShm> fshmptr;
     bool to_cpu = false;
     TaskQueue *queue = nullptr;
-    size_t copy_space_size = WarpIpcManager::kCopySpaceSize;
+    size_t copy_space_size = sizeof(TaskT) + 256;
 
     if (lane == 0) {
       if (task_ptr.IsNull()) {
@@ -915,7 +915,7 @@ class IpcManager {
 
         // Prepare WarpIpcManager: bind buffer_ to this task's copy_space
         auto *mgr = GetWarpManager();
-        mgr->BindCopySpace(fshm->copy_space);
+        mgr->BindCopySpace(fshm->copy_space, copy_space_size);
         mgr->buffer_.clear();
         mgr->save_ar_.Reset(LocalMsgType::kSerializeIn);
         mgr->save_ar_.SetWarpConverged(true);
@@ -3329,6 +3329,92 @@ HSHM_CROSS_FUN void Future<TaskT, AllocT>::DelTask() {
     CHI_IPC->DelTask(task_ptr_);
     task_ptr_.SetNull();
   }
+}
+
+// WaitPoll: spin until FUTURE_COMPLETE (GPU only, no deserialization)
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN void Future<TaskT, AllocT>::WaitPoll(float max_sec,
+                                                      bool reuse_task) {
+  (void)max_sec; (void)reuse_task;
+#if HSHM_IS_GPU
+  u32 lane = IpcManager::GetLaneId();
+  // Broadcast FutureShm pointer from lane 0
+  unsigned long long fshm_ull = 0;
+  if (lane == 0) {
+    auto fshm_full = GetFutureShm();
+    if (!fshm_full.IsNull())
+      fshm_ull = reinterpret_cast<unsigned long long>(fshm_full.ptr_);
+  }
+  fshm_ull = hipc::shfl_sync_u64(0xFFFFFFFF, fshm_ull, 0);
+  if (fshm_ull == 0) return;
+  auto *fshm = reinterpret_cast<FutureShm *>(fshm_ull);
+
+  // Spin-wait on FUTURE_COMPLETE (device-scope atomics)
+  while (!fshm->flags_.AnyDevice(FutureShm::FUTURE_COMPLETE)) {
+    HSHM_THREAD_MODEL->Yield();
+  }
+  hipc::threadfence();
+#endif
+}
+
+// WaitRecv: deserialize output after WaitPoll (GPU only)
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN void Future<TaskT, AllocT>::WaitRecv(float max_sec,
+                                                      bool reuse_task) {
+  (void)max_sec;
+#if HSHM_IS_GPU
+  u32 lane = IpcManager::GetLaneId();
+  // Broadcast FutureShm pointer from lane 0
+  unsigned long long fshm_ull = 0;
+  if (lane == 0) {
+    auto fshm_full = GetFutureShm();
+    if (!fshm_full.IsNull())
+      fshm_ull = reinterpret_cast<unsigned long long>(fshm_full.ptr_);
+  }
+  fshm_ull = hipc::shfl_sync_u64(0xFFFFFFFF, fshm_ull, 0);
+  if (fshm_ull == 0) return;
+  auto *fshm = reinterpret_cast<FutureShm *>(fshm_ull);
+
+  // Read output if any was written
+  unsigned long long task_ull = 0;
+  int has_output = 0;
+  if (lane == 0) {
+    size_t output_written = fshm->output_.total_written_.load_device();
+    if (output_written > 0) {
+      task_ull = reinterpret_cast<unsigned long long>(task_ptr_.ptr_);
+      has_output = 1;
+    }
+  }
+  task_ull = hipc::shfl_sync_u64(0xFFFFFFFF, task_ull, 0);
+  has_output = __shfl_sync(0xFFFFFFFF, has_output, 0);
+
+  if (lane == 0 && has_output) {
+    PreallocHeader hdr;
+    hshm::lbm::LbmContext ctx;
+    ctx.copy_space = fshm->copy_space;
+    ctx.shm_info_ = &fshm->output_;
+    hshm::lbm::ShmTransport::RecvDevicePrealloc(
+        reinterpret_cast<char*>(&hdr), sizeof(hdr), ctx);
+
+    hipc::FullPtr<char> data_fp;
+    data_fp.ptr_ = fshm->copy_space + IpcManager::WarpIpcManager::kHeaderSize;
+    data_fp.shm_.alloc_id_.SetNull();
+    data_fp.shm_.off_ = reinterpret_cast<size_t>(data_fp.ptr_);
+    hshm::priv::wrap_vector recv_buf(data_fp, hdr.data_size);
+    recv_buf.resize(hdr.data_size);
+    WrapLoadArchive load_ar(recv_buf);
+    load_ar.SetMsgType(hdr.msg_type);
+    task_ptr_.ptr_->SerializeOut(load_ar);
+  }
+
+  // Cleanup
+  if (IpcManager::IsWarpScheduler()) {
+    Destroy(true);
+    if (reuse_task) {
+      task_ptr_.SetNull();
+    }
+  }
+#endif
 }
 
 }  // namespace chi

@@ -33,16 +33,6 @@ __global__ void gpu_leaf_task_kernel(
 
   auto *ipc = CHI_IPC;
   if (threadIdx.x == 0) {
-    printf("[GPU kernel] ipc=%p gpu_alloc=%p gpu2gpu=%p priv_region=%llu\n",
-           (void*)ipc, (void*)ipc->gpu_alloc_, (void*)ipc->gpu2gpu_queue_,
-           (unsigned long long)ipc->priv_region_size_);
-    auto *priv = ipc->GetPrivAlloc();
-    printf("[GPU kernel] priv_alloc=%p sizeof(GpuSubmitTask)=%llu sizeof(FutureShm)=%llu kCopySpace=%llu total=%llu\n",
-           (void*)priv, (unsigned long long)sizeof(chimaera::MOD_NAME::GpuSubmitTask),
-           (unsigned long long)sizeof(chi::FutureShm),
-           (unsigned long long)chi::IpcManager::WarpIpcManager::kCopySpaceSize,
-           (unsigned long long)(sizeof(chimaera::MOD_NAME::GpuSubmitTask) + sizeof(chi::FutureShm)
-           + chi::IpcManager::WarpIpcManager::kCopySpaceSize));
     printf("[GPU kernel] Calling AsyncGpuSubmit(gpu_id=0, test_value=7)\n");
   }
 
@@ -50,10 +40,6 @@ __global__ void gpu_leaf_task_kernel(
   auto sub = ipc->NewTask<chimaera::MOD_NAME::GpuSubmitTask>(
       chi::CreateTaskId(), pool_id, chi::PoolQuery::Local(),
       chi::u32(0), chi::u32(7));
-  if (threadIdx.x == 0) {
-    printf("[GPU kernel] NewTask: sub.ptr=%p sub.IsNull=%d\n",
-           (void*)sub.ptr_, sub.IsNull() ? 1 : 0);
-  }
   auto future = ipc->Send(sub);
 
   // Broadcast null check to all lanes
@@ -87,18 +73,11 @@ __global__ void gpu_leaf_task_kernel(
 }
 
 extern "C" int run_gpu_leaf_task_test(chi::PoolId pool_id) {
-  // GPU memory backend for kernel allocations
+  // GPU memory backend (device memory for GPU→GPU device-scope atomics)
   hipc::MemoryBackendId backend_id(30, 0);
-  hipc::GpuShmMmap gpu_backend;
-  if (!gpu_backend.shm_init(backend_id, 10 * 1024 * 1024,
-                             "/gpu_coro_leaf", 0))
+  hipc::GpuMalloc gpu_backend;
+  if (!gpu_backend.shm_init(backend_id, 10 * 1024 * 1024, "", 0))
     return -100;
-
-  // GPU heap for serialization
-  hipc::MemoryBackendId heap_id(31, 0);
-  hipc::GpuMalloc gpu_heap;
-  if (!gpu_heap.shm_init(heap_id, 4 * 1024 * 1024, "", 0))
-    return -102;
 
   CHI_IPC->RegisterGpuAllocator(backend_id, gpu_backend.data_,
                                  gpu_backend.data_capacity_);
@@ -113,12 +92,20 @@ extern "C" int run_gpu_leaf_task_test(chi::PoolId pool_id) {
   chi::IpcManagerGpuInfo gpu_info = CHI_IPC->GetClientGpuInfo(0);
   gpu_info.backend = gpu_backend;
 
+  printf("[CTE-TEST] gpu2gpu=%p gpu2gpu_base=%p gpu2gpu_lanes=%u\n",
+         (void*)gpu_info.gpu2gpu_queue, (void*)gpu_info.gpu2gpu_queue_base,
+         gpu_info.gpu2gpu_num_lanes);
+  printf("[CTE-TEST] cpu2gpu=%p internal=%p backend.data=%p\n",
+         (void*)gpu_info.cpu2gpu_queue, (void*)gpu_info.internal_queue,
+         (void*)gpu_info.backend.data_);
+
   void *stream = hshm::GpuApi::CreateStream();
   gpu_leaf_task_kernel<<<1, 32, 0, static_cast<cudaStream_t>(stream)>>>(
       gpu_info, pool_id, d_result);
 
   cudaError_t launch_err = cudaGetLastError();
   if (launch_err != cudaSuccess) {
+    printf("[CTE-TEST] kernel launch failed: %s\n", cudaGetErrorString(launch_err));
     CHI_IPC->ResumeGpuOrchestrator();
     hshm::GpuApi::DestroyStream(stream);
     return -201;
@@ -190,18 +177,11 @@ __global__ void gpu_subtask_kernel(
 extern "C" int run_gpu_subtask_test(chi::PoolId pool_id,
                                      chi::u32 test_value,
                                      chi::u32 *out_result_value) {
-  // GPU memory backend for kernel allocations
+  // GPU memory backend (device memory for GPU→GPU device-scope atomics)
   hipc::MemoryBackendId backend_id(32, 0);
-  hipc::GpuShmMmap gpu_backend;
-  if (!gpu_backend.shm_init(backend_id, 10 * 1024 * 1024,
-                             "/gpu_coro_sub", 0))
+  hipc::GpuMalloc gpu_backend;
+  if (!gpu_backend.shm_init(backend_id, 10 * 1024 * 1024, "", 0))
     return -100;
-
-  // GPU heap for serialization
-  hipc::MemoryBackendId heap_id(33, 0);
-  hipc::GpuMalloc gpu_heap;
-  if (!gpu_heap.shm_init(heap_id, 4 * 1024 * 1024, "", 0))
-    return -102;
 
   CHI_IPC->RegisterGpuAllocator(backend_id, gpu_backend.data_,
                                  gpu_backend.data_capacity_);
