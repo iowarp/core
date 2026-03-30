@@ -415,7 +415,7 @@ class ChiModGenerator {
     oss << "  return task_ptr;\n";
     oss << "}\n";
     oss << "\n";
-    oss << "void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,\n";
+    oss << "void Runtime::LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive,\n";
     oss << "                            hipc::FullPtr<chi::Task> task_ptr) {\n";
     oss << "  switch (method) {\n";
 
@@ -437,7 +437,7 @@ class ChiModGenerator {
     oss << "  }\n";
     oss << "}\n";
     oss << "\n";
-    oss << "hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive) {\n";
+    oss << "hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive) {\n";
     oss << "  hipc::FullPtr<chi::Task> task_ptr = NewTask(method);\n";
     oss << "  if (!task_ptr.IsNull()) {\n";
     oss << "    LocalLoadTask(method, archive, task_ptr);\n";
@@ -445,7 +445,7 @@ class ChiModGenerator {
     oss << "  return task_ptr;\n";
     oss << "}\n";
     oss << "\n";
-    oss << "void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive, \n";
+    oss << "void Runtime::LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive& archive, \n";
     oss << "                             hipc::FullPtr<chi::Task> task_ptr) {\n";
     oss << "  switch (method) {\n";
 

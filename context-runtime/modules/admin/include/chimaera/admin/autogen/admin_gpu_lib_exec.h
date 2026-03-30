@@ -50,6 +50,18 @@ static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocLoadTaskWrapImpl(
   return block.task_ptr;
 }
 
+static HSHM_GPU_FUN chi::gpu::TaskContextBlock AllocLoadDeserImpl(
+    chi::gpu::Container *self_, chi::u32 method,
+    size_t stack_size, chi::WrapLoadArchive &ar) {
+  auto *self = static_cast<GpuRuntime *>(self_);
+  auto block = AllocTaskImpl(self_, method, stack_size);
+  if (!block.task_ptr.IsNull()) {
+    ar.SetMsgType(chi::LocalMsgType::kSerializeIn);
+    self->LoadTaskTmpl(method, ar, block.task_ptr);
+  }
+  return block;
+}
+
 static HSHM_GPU_FUN void LoadTaskDefaultImpl(
     chi::gpu::Container *self_, chi::u32 method,
     chi::DefaultLoadArchive &ar, const hipc::FullPtr<chi::Task> &task) {
@@ -73,18 +85,6 @@ static HSHM_GPU_FUN void SaveTaskWrapImpl(
     chi::gpu::Container *self_, chi::u32 method,
     chi::WrapSaveArchive &ar, const hipc::FullPtr<chi::Task> &task) {
   static_cast<GpuRuntime *>(self_)->SaveTaskTmpl(method, ar, task);
-}
-
-static HSHM_GPU_FUN chi::gpu::TaskContextBlock AllocLoadDeserImpl(
-    chi::gpu::Container *self_, chi::u32 method,
-    size_t stack_size, chi::WrapLoadArchive &ar) {
-  auto *self = static_cast<GpuRuntime *>(self_);
-  auto block = AllocTaskImpl(self_, method, stack_size);
-  if (!block.task_ptr.IsNull()) {
-    ar.SetMsgType(chi::LocalMsgType::kSerializeIn);
-    self->LoadTaskTmpl(method, ar, block.task_ptr);
-  }
-  return block;
 }
 
 static HSHM_GPU_FUN void LoadTaskOutputImpl(

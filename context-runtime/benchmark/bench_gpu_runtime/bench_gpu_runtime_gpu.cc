@@ -471,8 +471,7 @@ __global__ void gpu_bench_serde_kernel(
         chi::CreateTaskId(), pool_id, chi::PoolQuery::Local(),
         (chi::u32)0, (chi::u32)0);
     auto *mgr = ipc->GetWarpManager();
-    auto &buffer = ipc->GetCachedFutureShm();
-    fshm = reinterpret_cast<chi::FutureShm *>(buffer.ptr_);
+    fshm = chi::IpcManager::GetTaskFutureShm(task_fp.ptr_);
     mgr_ull = reinterpret_cast<unsigned long long>(mgr);
     task_ull = reinterpret_cast<unsigned long long>(task_fp.ptr_);
     fshm_ull = reinterpret_cast<unsigned long long>(fshm);
@@ -637,8 +636,7 @@ __global__ void gpu_bench_serde_kernel(
   // Run only on lane 0 after main loop to avoid interfering with main timings.
   if (lane == 0) {
     auto *mgr = ipc->GetWarpManager();
-    auto &buffer = ipc->GetCachedFutureShm();
-    auto *fshm_sub = reinterpret_cast<chi::FutureShm *>(buffer.ptr_);
+    auto *fshm_sub = chi::IpcManager::GetTaskFutureShm(task_fp.ptr_);
 
     // Sub-benchmark: meta_buf alloc+reserve (the vector inside SendDevice)
     for (chi::u32 i = 0; i < total_tasks; ++i) {

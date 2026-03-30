@@ -177,18 +177,6 @@ static HSHM_GPU_FUN void SaveTaskWrapImpl(
   static_cast<GpuRuntime *>(self_)->SaveTaskTmpl(method, ar, task);
 }
 
-static HSHM_GPU_FUN chi::gpu::TaskContextBlock AllocLoadDeserImpl(
-    chi::gpu::Container *self_, chi::u32 method,
-    size_t stack_size, chi::WrapLoadArchive &ar) {
-  auto *self = static_cast<GpuRuntime *>(self_);
-  auto block = AllocTaskImpl(self_, method, stack_size);
-  if (!block.task_ptr.IsNull()) {
-    ar.SetMsgType(chi::LocalMsgType::kSerializeIn);
-    self->LoadTaskTmpl(method, ar, block.task_ptr);
-  }
-  return block;
-}
-
 static HSHM_GPU_FUN void LoadTaskOutputImpl(
     chi::gpu::Container *self_, chi::u32 method,
     chi::DefaultLoadArchive &ar, const hipc::FullPtr<chi::Task> &task) {
@@ -205,7 +193,7 @@ static HSHM_GPU_FUN void DestroyTaskImpl(
       task.template Cast<RegisterTargetTask>().ptr_->~RegisterTargetTask();
       break;
     case Method::kGetOrCreateTag:
-      task.template Cast<core::GetOrCreateTagTask<core::CreateParams>>().ptr_->~GetOrCreateTagTask();
+      task.template Cast<core::GetOrCreateTagTask<core::CreateParams>>().ptr_->~CreateParams>();
       break;
     case Method::kPutBlob:
       task.template Cast<PutBlobTask>().ptr_->~PutBlobTask();
@@ -220,7 +208,6 @@ static HSHM_GPU_FUN void DestroyTaskImpl(
 HSHM_GPU_FUN GpuRuntime() {
   run_ = &RunImpl;
   alloc_task_ = &AllocTaskImpl;
-  alloc_load_deser_ = &AllocLoadDeserImpl;
   alloc_load_task_default_ = &AllocLoadTaskDefaultImpl;
   alloc_load_task_wrap_ = &AllocLoadTaskWrapImpl;
   load_task_default_ = &LoadTaskDefaultImpl;

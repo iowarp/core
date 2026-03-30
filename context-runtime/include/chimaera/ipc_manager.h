@@ -282,7 +282,6 @@ class IpcManager {
     hshm::priv::wrap_vector buffer_;  /**< Wraps copy_space task data region */
     WrapSaveArchive save_ar_;
     WrapLoadArchive load_ar_;
-    hipc::FullPtr<char> fshm_;      /**< Cached FutureShm + copy_space */
     static constexpr size_t kCopySpaceSize = 4096;
     static constexpr size_t kHeaderSize = sizeof(PreallocHeader);
 
@@ -534,37 +533,14 @@ class IpcManager {
 
   /** Get cached FutureShm + copy_space (lazy-allocated once per warp).
    *  Also binds the wrap_vector buffer_ to the copy_space task data region. */
-  HSHM_CROSS_FUN hipc::FullPtr<char> &GetCachedFutureShm() {
-#if HSHM_IS_GPU
-    auto *mgr = GetWarpManager();
-    if (mgr->fshm_.IsNull() && gpu_alloc_) {
-      size_t alloc_size = sizeof(FutureShm) + WarpIpcManager::kCopySpaceSize;
-      mgr->fshm_ = gpu_alloc_->template AllocateObjs<char>(alloc_size);
-      if (!mgr->fshm_.IsNull()) {
-        new (mgr->fshm_.ptr_) FutureShm();
-        auto *fshm = reinterpret_cast<FutureShm *>(mgr->fshm_.ptr_);
-        mgr->BindCopySpace(fshm->copy_space);
-      }
-    }
-    return mgr->fshm_;
-#else
-    static hipc::FullPtr<char> null = hipc::FullPtr<char>::GetNull();
-    return null;
-#endif
-  }
-
-  /** Get the copy_space pointer for the cached FutureShm */
-  HSHM_CROSS_FUN char *GetCachedCopySpace() {
-#if HSHM_IS_GPU
-    auto *mgr = GetWarpManager();
-    if (!mgr->fshm_.IsNull()) {
-      auto *fshm = reinterpret_cast<FutureShm *>(mgr->fshm_.ptr_);
-      return fshm->copy_space;
-    }
-    return nullptr;
-#else
-    return nullptr;
-#endif
+  /**
+   * Get the co-located FutureShm for a task allocated by NewTask (GPU).
+   * The FutureShm is placed right after the task in the bulk allocation.
+   */
+  template <typename TaskT>
+  HSHM_CROSS_FUN static FutureShm *GetTaskFutureShm(TaskT *task) {
+    return reinterpret_cast<FutureShm *>(
+        reinterpret_cast<char *>(task) + sizeof(TaskT));
   }
 
   /**
@@ -684,7 +660,17 @@ class IpcManager {
     if (!IsWarpScheduler()) return hipc::FullPtr<TaskT>();
     auto *priv = GetPrivAlloc();
     if (!priv) return hipc::FullPtr<TaskT>();
-    return priv->template NewObj<TaskT>(std::forward<Args>(args)...);
+    // Bulk allocation: Task + FutureShm + copy_space in one call.
+    // Each task gets its own FutureShm so multiple in-flight tasks
+    // from the same warp don't corrupt each other's completion state.
+    size_t total = sizeof(TaskT) + sizeof(FutureShm)
+                   + WarpIpcManager::kCopySpaceSize;
+    auto fp = priv->template AllocateObjs<char>(total);
+    if (fp.IsNull()) return hipc::FullPtr<TaskT>();
+    auto *task = new (fp.ptr_) TaskT(std::forward<Args>(args)...);
+    // Construct the co-located FutureShm (right after the task)
+    new (fp.ptr_ + sizeof(TaskT)) FutureShm();
+    return fp.template Cast<TaskT>();
 #endif
   }
 
@@ -918,20 +904,18 @@ class IpcManager {
           queue = gpu2gpu_queue_;
         }
 
-        hipc::FullPtr<char> &buffer = GetCachedFutureShm();
-        if (buffer.IsNull()) { mgr_ull = 0; goto send_bcast; }
-
-        fshm = reinterpret_cast<FutureShm *>(buffer.ptr_);
+        // FutureShm is co-located right after the task (bulk-allocated by NewTask)
+        fshm = reinterpret_cast<FutureShm *>(
+            reinterpret_cast<char *>(task_ptr.ptr_) + sizeof(TaskT));
         fshm->Reset(task_ptr->pool_id_, task_ptr->method_);
         fshm->flags_.SetBits(FutureShm::FUTURE_COPY_FROM_CLIENT);
 
         fshmptr.alloc_id_ = hipc::AllocatorId::GetNull();
-        fshmptr.off_ =
-            reinterpret_cast<size_t>(reinterpret_cast<FutureShm *>(buffer.ptr_));
+        fshmptr.off_ = reinterpret_cast<size_t>(fshm);
 
-        // Prepare WarpIpcManager: reset buffer_ and save_ar_ for serialization
-        // buffer_ already wraps copy_space + kHeaderSize (set by BindCopySpace)
+        // Prepare WarpIpcManager: bind buffer_ to this task's copy_space
         auto *mgr = GetWarpManager();
+        mgr->BindCopySpace(fshm->copy_space);
         mgr->buffer_.clear();
         mgr->save_ar_.Reset(LocalMsgType::kSerializeIn);
         mgr->save_ar_.SetWarpConverged(true);
@@ -1040,19 +1024,12 @@ send_bcast:
       const hipc::FullPtr<TaskT> &task_ptr) {
     // Use internal queue if available (orchestrator context), else gpu2gpu
     TaskQueue *queue = internal_queue_ ? internal_queue_ : gpu2gpu_queue_;
-    if (!gpu_alloc_ || !queue) return Future<TaskT>();
+    if (!queue) return Future<TaskT>();
 
-    // Allocate a minimal FutureShm (no copy_space needed)
-    size_t alloc_size = sizeof(FutureShm);
-    hipc::FullPtr<char> buffer = gpu_alloc_->AllocateObjs<char>(alloc_size);
-    if (buffer.IsNull()) {
-      return Future<TaskT>();
-    }
-
-    // Construct FutureShm — NO FUTURE_COPY_FROM_CLIENT
-    FutureShm *fshm = new (buffer.ptr_) FutureShm();
-    fshm->pool_id_ = task_ptr->pool_id_;
-    fshm->method_id_ = task_ptr->method_;
+    // FutureShm is co-located right after the task (bulk-allocated by NewTask)
+    FutureShm *fshm = reinterpret_cast<FutureShm *>(
+        reinterpret_cast<char *>(task_ptr.ptr_) + sizeof(TaskT));
+    fshm->Reset(task_ptr->pool_id_, task_ptr->method_);
     fshm->origin_ = FutureShm::FUTURE_CLIENT_SHM;
     // Store task UVA so DispatchTaskDirect can reconstruct the pointer
     fshm->client_task_vaddr_ =
@@ -1062,8 +1039,7 @@ send_bcast:
 
     hipc::ShmPtr<FutureShm> fshmptr;
     fshmptr.alloc_id_ = hipc::AllocatorId::GetNull();
-    fshmptr.off_ =
-        reinterpret_cast<size_t>(reinterpret_cast<FutureShm *>(buffer.ptr_));
+    fshmptr.off_ = reinterpret_cast<size_t>(fshm);
     Future<TaskT> future(fshmptr, task_ptr);
 
     // Distribute across queue lanes using warp ID
