@@ -711,17 +711,6 @@ class ChiModGenerator {
 
     // AllocLoadTaskDefaultImpl
     oss << "static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocLoadTaskDefaultImpl(\n";
-    oss << "    chi::gpu::Container *self_, chi::u32 method, chi::DefaultLoadArchive &ar) {\n";
-    oss << "  auto *self = static_cast<GpuRuntime *>(self_);\n";
-    oss << "  auto block = self->alloc_task_(self_, method, 0);\n";
-    oss << "  if (block.task_ptr.IsNull()) return block.task_ptr;\n";
-    oss << "  ar.SetMsgType(chi::LocalMsgType::kSerializeIn);\n";
-    oss << "  self->LoadTaskTmpl(method, ar, block.task_ptr);\n";
-    oss << "  return block.task_ptr;\n";
-    oss << "}\n\n";
-
-    // AllocLoadTaskWrapImpl
-    oss << "static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocLoadTaskWrapImpl(\n";
     oss << "    chi::gpu::Container *self_, chi::u32 method, chi::GpuLoadTaskArchive &ar) {\n";
     oss << "  auto *self = static_cast<GpuRuntime *>(self_);\n";
     oss << "  auto block = self->alloc_task_(self_, method, 0);\n";
@@ -747,27 +736,13 @@ class ChiModGenerator {
     // LoadTaskDefaultImpl
     oss << "static HSHM_GPU_FUN void LoadTaskDefaultImpl(\n";
     oss << "    chi::gpu::Container *self_, chi::u32 method,\n";
-    oss << "    chi::DefaultLoadArchive &ar, const hipc::FullPtr<chi::Task> &task) {\n";
-    oss << "  ar.SetMsgType(chi::LocalMsgType::kSerializeIn);\n";
-    oss << "  static_cast<GpuRuntime *>(self_)->LoadTaskTmpl(method, ar, task);\n";
-    oss << "}\n\n";
-
-    // LoadTaskWrapImpl
-    oss << "static HSHM_GPU_FUN void LoadTaskWrapImpl(\n";
-    oss << "    chi::gpu::Container *self_, chi::u32 method,\n";
     oss << "    chi::GpuLoadTaskArchive &ar, const hipc::FullPtr<chi::Task> &task) {\n";
+    oss << "  ar.SetMsgType(chi::LocalMsgType::kSerializeIn);\n";
     oss << "  static_cast<GpuRuntime *>(self_)->LoadTaskTmpl(method, ar, task);\n";
     oss << "}\n\n";
 
     // SaveTaskDefaultImpl
     oss << "static HSHM_GPU_FUN void SaveTaskDefaultImpl(\n";
-    oss << "    chi::gpu::Container *self_, chi::u32 method,\n";
-    oss << "    chi::DefaultSaveArchive &ar, const hipc::FullPtr<chi::Task> &task) {\n";
-    oss << "  static_cast<GpuRuntime *>(self_)->SaveTaskTmpl(method, ar, task);\n";
-    oss << "}\n\n";
-
-    // SaveTaskWrapImpl
-    oss << "static HSHM_GPU_FUN void SaveTaskWrapImpl(\n";
     oss << "    chi::gpu::Container *self_, chi::u32 method,\n";
     oss << "    chi::GpuSaveTaskArchive &ar, const hipc::FullPtr<chi::Task> &task) {\n";
     oss << "  static_cast<GpuRuntime *>(self_)->SaveTaskTmpl(method, ar, task);\n";
@@ -776,7 +751,7 @@ class ChiModGenerator {
     // LoadTaskOutputImpl
     oss << "static HSHM_GPU_FUN void LoadTaskOutputImpl(\n";
     oss << "    chi::gpu::Container *self_, chi::u32 method,\n";
-    oss << "    chi::DefaultLoadArchive &ar, const hipc::FullPtr<chi::Task> &task) {\n";
+    oss << "    chi::GpuLoadTaskArchive &ar, const hipc::FullPtr<chi::Task> &task) {\n";
     oss << "  ar.SetMsgType(chi::LocalMsgType::kSerializeOut);\n";
     oss << "  static_cast<GpuRuntime *>(self_)->LoadTaskTmpl(method, ar, task);\n";
     oss << "}\n\n";
@@ -816,12 +791,9 @@ class ChiModGenerator {
     oss << "  run_ = &RunImpl;\n";
     oss << "  alloc_task_ = &AllocTaskImpl;\n";
     oss << "  alloc_load_deser_ = &AllocLoadDeserImpl;\n";
-    oss << "  alloc_load_task_default_ = &AllocLoadTaskDefaultImpl;\n";
-    oss << "  alloc_load_task_wrap_ = &AllocLoadTaskWrapImpl;\n";
-    oss << "  load_task_default_ = &LoadTaskDefaultImpl;\n";
-    oss << "  load_task_wrap_ = &LoadTaskWrapImpl;\n";
-    oss << "  save_task_default_ = &SaveTaskDefaultImpl;\n";
-    oss << "  save_task_wrap_ = &SaveTaskWrapImpl;\n";
+    oss << "  alloc_load_task_ = &AllocLoadTaskDefaultImpl;\n";
+    oss << "  load_task_ = &LoadTaskDefaultImpl;\n";
+    oss << "  save_task_ = &SaveTaskDefaultImpl;\n";
     oss << "  load_task_output_ = &LoadTaskOutputImpl;\n";
     oss << "  destroy_task_ = &DestroyTaskImpl;\n";
     oss << "}\n";

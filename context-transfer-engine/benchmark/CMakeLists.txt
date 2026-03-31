@@ -83,7 +83,6 @@ if(WRP_CORE_ENABLE_CUDA)
           ${CMAKE_SOURCE_DIR}/context-runtime/modules/admin/include
           ${CMAKE_SOURCE_DIR}/context-runtime/modules/bdev/include
           ${CMAKE_SOURCE_DIR}/context-transport-primitives/include
-          ${CMAKE_SOURCE_DIR}/context-runtime/compiler/include
           ${_CTE_GPU_BENCH_EXTRA_INCLUDES}
           ${_BAM_INCLUDE_DIRS}
       LINK_LIBS

@@ -1,0 +1,203 @@
+% Architecture overview figure (TikZ)
+% Requires: \usepackage{tikz}
+%           \usetikzlibrary{positioning, arrows.meta, fit, backgrounds,
+%                           patterns, calc, decorations.pathreplacing}
+
+\begin{tikzpicture}[
+    >=Stealth,
+    node distance=0.4cm and 0.6cm,
+    % Styles
+    runtime/.style={draw, thick, rounded corners=3pt,
+                    minimum width=2.8cm, minimum height=0.7cm,
+                    font=\small\sffamily},
+    worker/.style={draw, fill=blue!12, rounded corners=2pt,
+                   minimum width=0.55cm, minimum height=0.55cm,
+                   font=\tiny\sffamily, inner sep=1pt},
+    queue/.style={draw, fill=orange!15, rounded corners=1pt,
+                  minimum width=0.45cm, minimum height=0.35cm,
+                  font=\tiny\sffamily, inner sep=1pt},
+    module/.style={draw, fill=green!12, rounded corners=2pt,
+                   minimum width=1.2cm, minimum height=0.5cm,
+                   font=\small\sffamily},
+    client/.style={draw, fill=gray!15, rounded corners=3pt,
+                   minimum width=1.6cm, minimum height=0.6cm,
+                   font=\small\sffamily},
+    label/.style={font=\footnotesize\sffamily, text=black!70},
+    arrow/.style={->, thick, >=Stealth},
+    dasharrow/.style={->, thick, dashed, >=Stealth},
+    biarrow/.style={<->, thick, >=Stealth},
+  ]
+
+  %% ============ GPU Runtime Box ============
+  \node[runtime, fill=blue!5, minimum width=9.8cm, minimum height=4.8cm]
+    (gpu_rt) {};
+  \node[above=0pt of gpu_rt.north, font=\small\bfseries\sffamily]
+    {GPU Runtime};
+
+  %% -- Warp Group 0 --
+  \node[label, anchor=north west] at ([shift={(0.2,-0.3)}]gpu_rt.north west)
+    (wg0_label) {Warp Group 0};
+
+  \node[worker, below=0.1cm of wg0_label.south west, anchor=north west]
+    (w00) {W$_0$};
+  \node[worker, right=0.08cm of w00] (w01) {W$_1$};
+  \node[worker, right=0.08cm of w01] (w02) {W$_2$};
+  \node[right=0.08cm of w02, font=\tiny] (wdots0) {$\cdots$};
+  \node[worker, right=0.08cm of wdots0] (w0g) {W$_G$};
+
+  % Queues under warps
+  \node[queue, below=0.08cm of w00] (q00) {Q};
+  \node[queue, below=0.08cm of w01] (q01) {Q};
+  \node[queue, below=0.08cm of w02] (q02) {Q};
+  \node[queue, below=0.08cm of w0g] (q0g) {Q};
+
+  % Coroutine indicators
+  \node[below=0.08cm of q00, font=\tiny\sffamily, text=blue!60]
+    (c00) {coro};
+  \node[below=0.08cm of q01, font=\tiny\sffamily, text=blue!60]
+    (c01) {coro};
+  \node[below=0.08cm of q02, font=\tiny\sffamily, text=blue!60]
+    (c02) {coro};
+  \node[below=0.08cm of q0g, font=\tiny\sffamily, text=blue!60]
+    (c0g) {coro};
+
+  %% -- Warp Group 1 --
+  \node[label, right=1.0cm of wg0_label] (wg1_label) {Warp Group 1};
+
+  \node[worker, below=0.1cm of wg1_label.south west, anchor=north west]
+    (w10) {W$_0$};
+  \node[worker, right=0.08cm of w10] (w11) {W$_1$};
+  \node[right=0.08cm of w11, font=\tiny] (wdots1) {$\cdots$};
+  \node[worker, right=0.08cm of wdots1] (w1g) {W$_G$};
+
+  \node[queue, below=0.08cm of w10] (q10) {Q};
+  \node[queue, below=0.08cm of w11] (q11) {Q};
+  \node[queue, below=0.08cm of w1g] (q1g) {Q};
+
+  \node[below=0.08cm of q10, font=\tiny\sffamily, text=blue!60] {coro};
+  \node[below=0.08cm of q11, font=\tiny\sffamily, text=blue!60] {coro};
+  \node[below=0.08cm of q1g, font=\tiny\sffamily, text=blue!60] {coro};
+
+  %% -- More groups dots --
+  \node[right=0.3cm of w1g, font=\small] (gdots) {$\cdots$};
+
+  %% -- Load Tables --
+  \node[draw, fill=yellow!10, rounded corners=2pt,
+        minimum width=3.8cm, minimum height=0.5cm,
+        font=\tiny\sffamily,
+        below=0.6cm of c00.south west, anchor=north west]
+    (load_grp) {\texttt{warp\_group\_load\_[G]}};
+
+  \node[draw, fill=yellow!10, rounded corners=2pt,
+        minimum width=3.8cm, minimum height=0.5cm,
+        font=\tiny\sffamily, right=0.3cm of load_grp]
+    (load_warp) {\texttt{warp\_load\_[G][G]}};
+
+  %% -- Modules row --
+  \node[module, below=0.4cm of load_grp.south west, anchor=north west]
+    (mod_aggro) {AggroFS};
+  \node[module, right=0.3cm of mod_aggro] (mod_bdev) {BDEV};
+  \node[module, right=0.3cm of mod_bdev] (mod_nvme) {NVMe};
+  \node[right=0.3cm of mod_nvme, font=\small] {$\cdots$};
+
+  %% ============ CPU Runtime Box ============
+  \node[runtime, fill=red!5, minimum width=9.8cm, minimum height=1.2cm,
+        below=0.8cm of gpu_rt]
+    (cpu_rt) {};
+  \node[above=0pt of cpu_rt.north, font=\small\bfseries\sffamily]
+    {CPU Runtime};
+
+  \node[module, fill=red!8] at ([shift={(-2.5,0)}]cpu_rt.center)
+    (cpu_mod1) {NVMe Drv};
+  \node[module, fill=red!8, right=0.3cm of cpu_mod1]
+    (cpu_mod2) {Network};
+  \node[module, fill=red!8, right=0.3cm of cpu_mod2]
+    (cpu_mod3) {Flush Svc};
+
+  \node[draw, fill=orange!15, rounded corners=2pt,
+        minimum width=1.8cm, minimum height=0.5cm,
+        font=\tiny\sffamily, right=0.5cm of cpu_mod3]
+    (ipc_mgr) {IPC Manager};
+
+  %% ============ Clients ============
+  \node[client, above right=0.6cm and -0.5cm of gpu_rt.north east]
+    (gpu_client) {GPU Client};
+  \node[client, right=0.5cm of gpu_client]
+    (cpu_client) {CPU Client};
+
+  %% ============ Arrows ============
+
+  % GPU Client -> GPU Runtime (device memory queues)
+  \draw[arrow, blue!70] (gpu_client.south) -- ++(0,-0.4)
+    -| ([shift={(0.3,0)}]gpu_rt.north east)
+    node[pos=0.25, right, font=\tiny\sffamily] {dev mem};
+
+  % CPU Client -> IPC Manager -> GPU Runtime
+  \draw[arrow, red!70] (cpu_client.south) -- ++(0,-1.2)
+    -| (ipc_mgr.north)
+    node[pos=0.25, right, font=\tiny\sffamily] {SHM/TCP/IPC};
+
+  % GPU <-> CPU bidirectional (pinned host queues)
+  \draw[biarrow, purple!70]
+    ([shift={(-1.5,0)}]gpu_rt.south) --
+    ([shift={(-1.5,0)}]cpu_rt.north)
+    node[midway, left, font=\tiny\sffamily] {Pinned host queues};
+
+  % GPU -> CPU (ToLocalCpu)
+  \draw[arrow, red!60]
+    ([shift={(1.5,0)}]gpu_rt.south) --
+    ([shift={(1.5,0)}]cpu_rt.north)
+    node[midway, right, font=\tiny\sffamily] {\texttt{ToLocalCpu}};
+
+  % CPU -> GPU (ToLocalGpu)
+  \draw[arrow, blue!60]
+    ([shift={(2.5,0)}]cpu_rt.north) --
+    ([shift={(2.5,0)}]gpu_rt.south)
+    node[midway, right, font=\tiny\sffamily] {\texttt{ToLocalGpu}};
+
+  %% ============ Storage ============
+  \node[draw, fill=gray!8, rounded corners=3pt,
+        minimum width=9.8cm, minimum height=0.7cm,
+        below=0.5cm of cpu_rt]
+    (storage) {};
+  \node[font=\small\sffamily] at ([shift={(-3.2,0)}]storage.center)
+    {HBM};
+  \node[font=\small\sffamily] at ([shift={(-1.2,0)}]storage.center)
+    {Pinned RAM};
+  \node[font=\small\sffamily] at ([shift={(1.0,0)}]storage.center)
+    {NVMe SSD};
+  \node[font=\small\sffamily] at ([shift={(3.2,0)}]storage.center)
+    {Remote};
+
+  \draw[arrow] (cpu_rt.south) -- (storage.north);
+
+  %% ============ Warp detail inset ============
+  % Small callout showing 32 lanes in a warp
+  \node[draw, dashed, fill=white, rounded corners=2pt,
+        minimum width=2.2cm, minimum height=1.0cm,
+        right=0.3cm of gdots, anchor=west]
+    (warp_detail) {};
+  \node[above=0pt of warp_detail.north, font=\tiny\bfseries\sffamily]
+    {Warp Detail (32 lanes)};
+
+  % Lane boxes
+  \foreach \i in {0,...,5} {
+    \node[draw, fill=blue!20, minimum width=0.22cm, minimum height=0.22cm,
+          inner sep=0pt,
+          font=\fontsize{3}{4}\selectfont]
+      at ([shift={(-0.8+\i*0.28, 0.15)}]warp_detail.center)
+      (lane\i) {\i};
+  }
+  \node[font=\fontsize{4}{5}\selectfont]
+    at ([shift={(0.98, 0.15)}]warp_detail.center) {$\cdots$};
+  \node[draw, fill=blue!20, minimum width=0.22cm, minimum height=0.22cm,
+        inner sep=0pt, font=\fontsize{3}{4}\selectfont]
+    at ([shift={(1.25, 0.15)}]warp_detail.center) {31};
+
+  % Coroutine stack
+  \node[draw, fill=blue!8, minimum width=1.8cm, minimum height=0.25cm,
+        font=\fontsize{4}{5}\selectfont\sffamily]
+    at ([shift={(0, -0.25)}]warp_detail.center)
+    {Coroutine stack (bump alloc)};
+
+\end{tikzpicture}

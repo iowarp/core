@@ -822,6 +822,11 @@ class GpuLoadTaskArchive {
       : msg_type_(LocalMsgType::kSerializeIn), data_(buffer),
         deserializer_(buffer) {}
 
+  HSHM_CROSS_FUN void Reset(LocalMsgType msg_type) {
+    msg_type_ = msg_type;
+    deserializer_.cur_off_ = 0;
+  }
+
   HSHM_CROSS_FUN void SetMsgType(LocalMsgType msg_type) {
     msg_type_ = msg_type;
   }

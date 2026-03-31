@@ -1377,8 +1377,7 @@ void Runtime::PostGpuContainerCreate() {
   // service Write/Read tasks directly. Called after the GPU container is
   // registered with the GPU work orchestrator, so the task arrives when the
   // container is ready (avoids the race in Create()).
-  if (bdev_type_ == BdevType::kHbm || bdev_type_ == BdevType::kPinned ||
-      bdev_type_ == BdevType::kNoop) {
+  if (bdev_type_ == BdevType::kHbm || bdev_type_ == BdevType::kPinned) {
     auto *ipc = CHI_IPC;
     if (ipc) {
       chi::u64 hbm_ptr = reinterpret_cast<chi::u64>(hbm_buffer_);
@@ -1391,6 +1390,10 @@ void Runtime::PostGpuContainerCreate() {
           file_size_,
           static_cast<chi::u32>(bdev_type_),
           alignment_);
+      HLOG(kInfo, "PostGpuContainerCreate: sending UpdateTask pool={} type={} ipc={:x} cpu2gpu_backends={}",
+           pool_id_, (int)bdev_type_,
+           reinterpret_cast<uintptr_t>(ipc),
+           ipc->cpu2gpu_copy_backends_.size());
       // fire-and-forget: worker frees the task after executing it
       (void)ipc->Send(update_task);
     }

@@ -92,7 +92,6 @@ if(WRP_CORE_ENABLE_CUDA)
           ${CMAKE_SOURCE_DIR}/context-runtime/modules/admin/include
           ${CMAKE_SOURCE_DIR}/context-runtime/modules/bdev/include
           ${CMAKE_SOURCE_DIR}/context-transport-primitives/include
-          ${CMAKE_SOURCE_DIR}/context-runtime/compiler/include
           ${_TIERED_EXTRA_INCLUDES}
       LINK_LIBS
           wrp_cte::core_client
@@ -318,6 +317,7 @@ target_link_libraries(test_cte_gpu_coroutine
     ${CMAKE_THREAD_LIBS_INIT}
 )
 if(WRP_CORE_ENABLE_CUDA AND CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES)
+  find_package(CUDAToolkit QUIET)
   set_property(TARGET test_cte_gpu_coroutine APPEND PROPERTY
     LINK_LIBRARIES "CUDA::cudart")
 endif()

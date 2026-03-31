@@ -34,7 +34,6 @@
 #ifndef CHIMAERA_INCLUDE_CHIMAERA_GPU_CONTAINER_H_
 #define CHIMAERA_INCLUDE_CHIMAERA_GPU_CONTAINER_H_
 
-#include "chimaera/gpu_coroutine.h"
 #include "chimaera/types.h"
 #include "chimaera/pool_query.h"
 #include "chimaera/task.h"
@@ -42,6 +41,34 @@
 
 namespace chi {
 namespace gpu {
+
+/** Unsigned 32-bit integer */
+using u32 = uint32_t;
+
+static constexpr u32 kWarpSize = 32;
+
+// Forward declaration
+class Container;
+
+/**
+ * GPU-side execution context for task methods dispatched via CDP.
+ *
+ * One RunContext is created per child kernel launch, typically as a
+ * stack-local variable.  Contains the dispatch metadata needed by
+ * container methods: which container, which method, and the task pointer.
+ */
+struct RunContext {
+  /** GPU container that owns the method being executed */
+  Container *container_;
+  /** Method ID to dispatch */
+  u32 method_id_;
+  /** Full pointer to the task being executed */
+  hipc::FullPtr<chi::Task> task_ptr_;
+  /** FutureShm associated with this task (for completion signaling) */
+  chi::FutureShm *task_fshm_;
+  /** Total thread parallelism for this task (gridDim.x * blockDim.x) */
+  u32 parallelism_;
+};
 
 /**
  * GPU-side container base class.

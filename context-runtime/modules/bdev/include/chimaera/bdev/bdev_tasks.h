@@ -313,6 +313,11 @@ struct AllocateBlocksTask : public chi::Task {
       : chi::Task(task_node, pool_id, pool_query, Method::kAllocateBlocks), size_(size), blocks_(CHI_PRIV_ALLOC) {
   }
 
+  /** Fix up priv::vector SVO pointer after cudaMemcpy D→H */
+  HSHM_CROSS_FUN void FixupAfterCopy() {
+    blocks_.FixupSvoPtr();
+  }
+
   /** Serialize IN and INOUT parameters */
   template <typename Archive>
   HSHM_CROSS_FUN void SerializeIn(Archive &ar) {

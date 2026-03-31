@@ -120,13 +120,13 @@ struct CustomTask : public chi::Task {
    * This includes: data_, operation_id_
    */
   template<typename Archive>
-  void SerializeIn(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(data_, operation_id_);
   }
 
   template<typename Archive>
-  void SerializeOut(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(data_);
   }
@@ -376,12 +376,12 @@ struct TestLargeOutputTask : public chi::Task {
   }
 
   template<typename Archive>
-  void SerializeIn(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
   }
 
   template<typename Archive>
-  void SerializeOut(Archive& ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(data_);
   }

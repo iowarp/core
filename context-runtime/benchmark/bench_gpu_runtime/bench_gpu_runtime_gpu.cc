@@ -241,7 +241,7 @@ __global__ void gpu_bench_client_kernel(
  * GPU client benchmark kernel for coroutine subtask throughput.
  *
  * Same structure as gpu_bench_client_kernel but dispatches SubtaskTest
- * instead of GpuSubmit. SubtaskTest's GPU Run() co_awaits GpuSubmit
+ * instead of GpuSubmit. SubtaskTest's GPU Run() dispatches GpuSubmit as subtask
  * via SendGpuDirect (no serialization), testing the full coroutine
  * suspend/resume path inside the GPU worker.
  */
@@ -1354,7 +1354,7 @@ extern "C" int run_gpu_bench_latency(
  * Run the GPU runtime coroutine benchmark.
  *
  * Same structure as run_gpu_bench_latency but launches gpu_bench_coroutine_kernel
- * which uses SubtaskTest (coroutine with co_await) instead of leaf GpuSubmit.
+ * which uses SubtaskTest (dispatches subtask) instead of leaf GpuSubmit.
  */
 extern "C" int run_gpu_bench_coroutine(
     chi::PoolId pool_id,

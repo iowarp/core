@@ -25,7 +25,6 @@ if(HSHM_ENABLE_CUDA OR HSHM_ENABLE_ROCM)
     ${BENCH_MODULE_GPU_SOURCES}
     INCLUDE_DIRS
       ${CHIMAERA_ROOT}/include
-      ${CHIMAERA_ROOT}/compiler/include
       ${CHIMAERA_ROOT}/modules/admin/include
       ${CHIMAERA_ROOT}/modules/bdev/include
       ${CHIMAERA_ROOT}/modules/MOD_NAME/include

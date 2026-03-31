@@ -145,6 +145,7 @@ class Task {
       return_code_; /**< Task return code (0=success, non-zero=error) */
   OUT hipc::atomic<ContainerId>
       completer_; /**< Container ID that completed this task */
+  IN u32 pod_size_; /**< sizeof(TaskT) for POD copy transport */
 #if HSHM_IS_HOST
   TEMP std::unique_ptr<RunContext>
       run_ctx_; /**< Runtime context owned by task (RAII) - Host only */
@@ -159,7 +160,7 @@ class Task {
   /**
    * Default constructor
    */
-  HSHM_CROSS_FUN Task() { SetNull(); }
+  HSHM_CROSS_FUN Task() { pod_size_ = 0; SetNull(); }
 
   /**
    * Emplace constructor with task initialization
@@ -174,6 +175,7 @@ class Task {
     task_flags_.SetBits(0);
     pool_query_ = pool_query;
     period_ns_ = 0.0;
+    pod_size_ = 0;
 #if HSHM_IS_HOST
     // run_ctx_ is initialized by its default constructor
 #endif
@@ -413,6 +415,14 @@ class Task {
   HSHM_CROSS_FUN size_t GetCopySpaceSize() const {
     return 4096;  // Default 4KB for most tasks
   }
+
+  /**
+   * Fix up internal pointers after a cudaMemcpy/memcpy (POD copy path).
+   * Override in tasks that contain priv::vector or other pointer-bearing
+   * fields to re-seat inline (SVO) pointers to the new host address.
+   * Default is a no-op for pure POD tasks.
+   */
+  HSHM_CROSS_FUN void FixupAfterCopy() {}
 };
 
 // ============================================================================
@@ -452,6 +462,8 @@ struct FutureShm {
       8; /**< Task was already copied from client (don't re-copy) */
   static constexpr u32 FUTURE_DEVICE_SCOPE =
       16; /**< GPU→GPU path: use device-scope atomics (no system fence) */
+  static constexpr u32 FUTURE_POD_COPY =
+      32; /**< POD cudaMemcpy path: no serialization, task is raw memcpy'd */
 
   // Origin constants: how the client submitted this task
   static constexpr u32 FUTURE_CLIENT_SHM = 0; /**< Client used shared memory */
@@ -498,7 +510,7 @@ struct FutureShm {
    * Set by Future::await_suspend on GPU so that the worker completing
    * this sub-task can directly resume the parent coroutine (same thread,
    * no event queue needed). Null for top-level (client-originated) tasks.
-   * Typed as void* to avoid circular dependency with gpu_coroutine.h.
+   * Typed as void* to avoid circular dependency with gpu_container.h.
    */
   void *parent_gpu_rctx_;
 
@@ -506,6 +518,11 @@ struct FutureShm {
   hipc::atomic<u32> completion_counter_;
   /** Number of warps sharing this FutureShm */
   u32 total_warps_;
+
+  /** Device pointer to POD task for cudaMemcpy (POD copy paths) */
+  uintptr_t task_device_ptr_;
+  /** sizeof(TaskT) for POD copy sizing */
+  u32 task_size_;
 
   /** Copy space for serialized task data (flexible array member).
    *  Must be 4-byte aligned for WarpMemCpy uint32_t strided access. */
@@ -527,6 +544,8 @@ struct FutureShm {
     parent_gpu_rctx_ = nullptr;
     completion_counter_.store(0);
     total_warps_ = 1;
+    task_device_ptr_ = 0;
+    task_size_ = 0;
     flags_.Clear();
   }
 
@@ -543,6 +562,8 @@ struct FutureShm {
     method_id_ = method_id;
     client_task_vaddr_ = 0;
     parent_gpu_rctx_ = nullptr;
+    task_device_ptr_ = 0;
+    task_size_ = 0;
     flags_.Clear();
     input_.total_written_.store(0);
     input_.total_read_.store(0);

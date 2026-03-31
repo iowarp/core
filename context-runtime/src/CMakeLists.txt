@@ -55,7 +55,6 @@ if(CHIMAERA_GPU_SOURCES)
         ${CMAKE_CURRENT_SOURCE_DIR}/../modules/bdev/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../../context-transport-primitives/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../../context-transfer-engine/core/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/../compiler/include
         ${CMAKE_CURRENT_SOURCE_DIR}
     )
     target_include_directories(${CHIMAERA_LIB_NAME}_gpu PUBLIC
@@ -65,7 +64,6 @@ if(CHIMAERA_GPU_SOURCES)
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../modules/bdev/include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../context-transport-primitives/include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../context-transfer-engine/core/include>
-      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../compiler/include>
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     )
     target_link_libraries(${CHIMAERA_LIB_NAME}_gpu PUBLIC hshm::cuda_cxx)

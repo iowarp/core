@@ -146,7 +146,7 @@ extern "C" int run_gpu_leaf_task_test(chi::PoolId pool_id) {
 /**
  * Test 2: Coroutine subtask spawning.
  * GPU kernel sends MOD_NAME::SubtaskTest via gpu2gpu queue.
- * SubtaskTest's GPU Run() co_awaits GpuSubmit, testing
+ * SubtaskTest's GPU Run() dispatches GpuSubmit as subtask, testing
  * the full coroutine suspend/resume path inside the GPU worker.
  */
 __global__ void gpu_subtask_kernel(

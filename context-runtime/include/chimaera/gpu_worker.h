@@ -59,7 +59,6 @@
 #endif
 
 #include "chimaera/gpu_container.h"
-#include "chimaera/gpu_coroutine.h"
 #include "chimaera/gpu_pool_manager.h"
 #include "chimaera/gpu_work_orchestrator.h"
 #include "chimaera/local_task_archives.h"
