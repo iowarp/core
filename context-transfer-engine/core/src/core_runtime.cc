@@ -311,10 +311,11 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
   }
 
 #ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
-  // Initialize pluggable KG backend (default: BM25)
-  // TODO: read backend type from compose YAML config
-  kg_backend_ = CreateKGBackend("bm25");
-  kg_backend_->Init("");
+  // Initialize pluggable KG backend from compose config (default: BM25)
+  kg_backend_ = CreateKGBackend(config_.kg_backend_);
+  kg_backend_->Init(config_.kg_config_);
+  HLOG(kInfo, "KG backend: {} (config: {})",
+       kg_backend_->Name(), config_.kg_config_.empty() ? "default" : config_.kg_config_);
 #endif
 
   co_return;

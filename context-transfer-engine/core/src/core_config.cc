@@ -287,6 +287,18 @@ bool Config::ParseYamlNode(const YAML::Node &node) {
     }
   }
 
+  // Parse knowledge graph backend configuration
+  if (node["knowledge_graph"]) {
+    auto kg_node = node["knowledge_graph"];
+    if (kg_node["backend"]) {
+      kg_backend_ = kg_node["backend"].as<std::string>();
+    }
+    if (kg_node["config"]) {
+      kg_config_ = kg_node["config"].as<std::string>();
+    }
+    HLOG(kInfo, "Parsed KG config: backend={}, config={}", kg_backend_, kg_config_);
+  }
+
   // Parse environment variable configuration
   if (node["config_env_var"]) {
     config_env_var_ = node["config_env_var"].as<std::string>();

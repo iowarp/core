@@ -163,6 +163,12 @@ class Config {
   DpeConfig dpe_;
 
   /**
+   * Knowledge graph backend configuration
+   */
+  std::string kg_backend_ = "bm25";   // "bm25", "elasticsearch", "neo4j", etc.
+  std::string kg_config_;              // Backend-specific config (e.g., "host:port/index")
+
+  /**
    * Default constructor
    */
   Config() = default;
