@@ -146,9 +146,16 @@ class Task {
   OUT hipc::atomic<ContainerId>
       completer_; /**< Container ID that completed this task */
   IN u32 pod_size_; /**< sizeof(TaskT) for POD copy transport */
+  /**
+   * Runtime context owned by task (RAII).
+   * Always reserve 8 bytes so derived task fields have the same offset
+   * on both CPU (where run_ctx_ is a unique_ptr) and GPU (where it's unused).
+   * This is critical for CPU→GPU POD copy transport.
+   */
 #if HSHM_IS_HOST
-  TEMP std::unique_ptr<RunContext>
-      run_ctx_; /**< Runtime context owned by task (RAII) - Host only */
+  TEMP std::unique_ptr<RunContext> run_ctx_;
+#else
+  TEMP char run_ctx_pad_[sizeof(void *)];  /**< Padding to match host layout */
 #endif
 
   /**

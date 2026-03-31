@@ -1700,6 +1700,263 @@ extern "C" int run_gpu_bench_bdev(
   return completed ? 0 : -4;
 }
 
+// ============================================================================
+// Full bdev GPU→GPU test: AllocateBlocks → Write → Read → Verify
+// ============================================================================
+
+namespace chi_bench {
+
+/**
+ * Full bdev round-trip: allocate blocks, write data, read it back, verify.
+ * All from GPU kernel → gpu2gpu queue → orchestrator → bdev GpuRuntime.
+ */
+__global__ void gpu_bench_bdev_full_kernel(
+    chi::IpcManagerGpu gpu_info,
+    chi::PoolId bdev_pool_id,
+    chi::u32 num_blocks,
+    chi::u64 io_size,
+    int *d_result) {
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
+
+  chimaera::bdev::Client bdev_client(bdev_pool_id);
+  int rc = 0;
+
+  // Step 1: AllocateBlocks
+  if (threadIdx.x == 0) {
+    printf("[BDEV-FULL] Step 1: AllocateBlocks(%llu bytes)\n",
+           (unsigned long long)io_size);
+  }
+  auto alloc_future = bdev_client.AsyncAllocateBlocks(
+      chi::PoolQuery::Local(), io_size);
+  alloc_future.Wait();
+
+  if (chi::IpcManager::IsWarpScheduler()) {
+    if (alloc_future.IsNull() || alloc_future->return_code_ != 0) {
+      printf("[BDEV-FULL] FAIL: AllocateBlocks rc=%d null=%d\n",
+             alloc_future.IsNull() ? -999 : (int)alloc_future->return_code_,
+             (int)alloc_future.IsNull());
+      rc = -1;
+    } else if (alloc_future->blocks_.size() == 0) {
+      printf("[BDEV-FULL] FAIL: AllocateBlocks returned 0 blocks (rc=%d)\n",
+             (int)alloc_future->return_code_);
+      rc = -1;
+    } else {
+      printf("[BDEV-FULL] AllocateBlocks OK, %u blocks, offset=%llu size=%llu\n",
+             (unsigned)alloc_future->blocks_.size(),
+             (unsigned long long)alloc_future->blocks_[0].offset_,
+             (unsigned long long)alloc_future->blocks_[0].size_);
+    }
+  }
+  // Broadcast rc to all lanes
+  rc = __shfl_sync(0xFFFFFFFF, rc, 0);
+  if (rc != 0) { if (threadIdx.x == 0) *d_result = rc; return; }
+
+  // Get the allocated blocks (lane 0 only has the valid future)
+  // We need to copy blocks to a local variable accessible by all lanes
+  chi::priv::vector<chimaera::bdev::Block> blocks;
+  if (chi::IpcManager::IsWarpScheduler()) {
+    blocks = alloc_future->blocks_;
+  }
+
+  // Step 2: Write — fill a buffer with known pattern and write it
+  if (threadIdx.x == 0) {
+    printf("[BDEV-FULL] Step 2: Write %llu bytes\n",
+           (unsigned long long)io_size);
+  }
+
+  // Allocate write buffer from GPU allocator
+  auto write_buf = CHI_IPC->AllocateBuffer(io_size);
+  if (write_buf.IsNull()) {
+    if (threadIdx.x == 0) {
+      printf("[BDEV-FULL] FAIL: Could not allocate write buffer\n");
+      *d_result = -2;
+    }
+    return;
+  }
+
+  // Fill with pattern: byte[i] = (i & 0xFF)
+  if (chi::IpcManager::IsWarpScheduler()) {
+    char *wbuf = write_buf.ptr_;
+    for (chi::u64 i = 0; i < io_size; ++i) {
+      wbuf[i] = static_cast<char>(i & 0xFF);
+    }
+  }
+  __syncwarp();
+
+  hipc::ShmPtr<> write_data_shm;
+  write_data_shm.off_ = write_buf.shm_.off_.load();
+  write_data_shm.alloc_id_ = write_buf.shm_.alloc_id_;
+  auto write_future = bdev_client.AsyncWrite(
+      chi::PoolQuery::Local(), blocks, write_data_shm, io_size);
+  write_future.Wait();
+
+  if (chi::IpcManager::IsWarpScheduler()) {
+    if (write_future.IsNull() || write_future->return_code_ != 0) {
+      printf("[BDEV-FULL] FAIL: Write rc=%d\n",
+             write_future.IsNull() ? -999 : (int)write_future->return_code_);
+      rc = -3;
+    } else {
+      printf("[BDEV-FULL] Write OK\n");
+    }
+  }
+  rc = __shfl_sync(0xFFFFFFFF, rc, 0);
+  if (rc != 0) { if (threadIdx.x == 0) *d_result = rc; return; }
+
+  // Step 3: Read into a fresh buffer
+  if (threadIdx.x == 0) {
+    printf("[BDEV-FULL] Step 3: Read %llu bytes\n",
+           (unsigned long long)io_size);
+  }
+
+  auto read_buf = CHI_IPC->AllocateBuffer(io_size);
+  if (read_buf.IsNull()) {
+    if (threadIdx.x == 0) {
+      printf("[BDEV-FULL] FAIL: Could not allocate read buffer\n");
+      *d_result = -4;
+    }
+    return;
+  }
+
+  // Zero the read buffer
+  if (chi::IpcManager::IsWarpScheduler()) {
+    memset(read_buf.ptr_, 0, io_size);
+  }
+  __syncwarp();
+
+  hipc::ShmPtr<> read_data_shm;
+  read_data_shm.off_ = read_buf.shm_.off_.load();
+  read_data_shm.alloc_id_ = read_buf.shm_.alloc_id_;
+  auto read_future = bdev_client.AsyncRead(
+      chi::PoolQuery::Local(), blocks, read_data_shm, io_size);
+  read_future.Wait();
+
+  if (chi::IpcManager::IsWarpScheduler()) {
+    if (read_future.IsNull() || read_future->return_code_ != 0) {
+      printf("[BDEV-FULL] FAIL: Read rc=%d\n",
+             read_future.IsNull() ? -999 : (int)read_future->return_code_);
+      rc = -5;
+    } else {
+      printf("[BDEV-FULL] Read OK\n");
+    }
+  }
+  rc = __shfl_sync(0xFFFFFFFF, rc, 0);
+  if (rc != 0) { if (threadIdx.x == 0) *d_result = rc; return; }
+
+  // Step 4: Verify data
+  if (chi::IpcManager::IsWarpScheduler()) {
+    char *rbuf = read_buf.ptr_;
+    char *wbuf = write_buf.ptr_;
+    chi::u32 mismatches = 0;
+    for (chi::u64 i = 0; i < io_size; ++i) {
+      if (rbuf[i] != wbuf[i]) {
+        if (mismatches == 0) {
+          printf("[BDEV-FULL] MISMATCH at byte %llu: wrote 0x%02x read 0x%02x\n",
+                 (unsigned long long)i, (unsigned char)wbuf[i],
+                 (unsigned char)rbuf[i]);
+        }
+        ++mismatches;
+      }
+    }
+    if (mismatches > 0) {
+      printf("[BDEV-FULL] FAIL: %u / %llu bytes mismatched\n",
+             mismatches, (unsigned long long)io_size);
+      rc = -6;
+    } else {
+      printf("[BDEV-FULL] PASS: All %llu bytes verified\n",
+             (unsigned long long)io_size);
+      rc = 1;  // Success
+    }
+  }
+
+  // Cleanup
+  CHI_IPC->FreeBuffer(write_buf.shm_);
+  CHI_IPC->FreeBuffer(read_buf.shm_);
+
+  __syncwarp();
+  if (chi::IpcManager::IsWarpScheduler()) {
+    __threadfence_system();
+    *d_result = rc;
+  }
+}
+
+}  // namespace chi_bench
+
+extern "C" int run_gpu_bench_bdev_full(
+    chi::PoolId bdev_pool_id,
+    chi::u32 rt_blocks,
+    chi::u32 rt_threads,
+    chi::u64 io_size,
+    float *out_elapsed_ms) {
+  CHI_IPC->SetGpuOrchestratorBlocks(rt_blocks, rt_threads);
+
+  constexpr size_t kPerBlockBytes = 10 * 1024 * 1024;
+  size_t backend_size = kPerBlockBytes;
+
+  hipc::MemoryBackendId backend_id(109, 0);
+  hipc::GpuMalloc gpu_backend;
+  if (!gpu_backend.shm_init(backend_id, backend_size, "", 0)) {
+    return -1;
+  }
+
+  CHI_IPC->RegisterGpuAllocator(backend_id, gpu_backend.data_,
+                                 gpu_backend.data_capacity_);
+
+  chi::IpcManagerGpu gpu_info = CHI_IPC->GetClientGpuInfo(0);
+  gpu_info.backend = gpu_backend;
+
+  int *d_result;
+  cudaMallocHost(&d_result, sizeof(int));
+  *d_result = 0;
+
+  void *stream = hshm::GpuApi::CreateStream();
+
+  CHI_IPC->PauseGpuOrchestrator();
+  cudaGetLastError();
+
+  gpu_info = CHI_IPC->GetClientGpuInfo(0);
+  gpu_info.backend = gpu_backend;
+
+  chi_bench::gpu_bench_bdev_full_kernel<<<1, 32, 0,
+      static_cast<cudaStream_t>(stream)>>>(
+      gpu_info, bdev_pool_id, 1, io_size, d_result);
+
+  cudaError_t launch_err = cudaGetLastError();
+  if (launch_err != cudaSuccess) {
+    printf("bdev_full kernel launch failed: %s\n",
+           cudaGetErrorString(launch_err));
+    CHI_IPC->ResumeGpuOrchestrator();
+    cudaFreeHost(d_result);
+    hshm::GpuApi::DestroyStream(stream);
+    return -3;
+  }
+
+  CHI_IPC->ResumeGpuOrchestrator();
+  auto t_start = std::chrono::high_resolution_clock::now();
+
+  // Poll for completion (result != 0 means done)
+  constexpr int kTimeoutUs = 30000000;  // 30s
+  int elapsed_us = 0;
+  while (*d_result == 0 && elapsed_us < kTimeoutUs) {
+    usleep(1000);
+    elapsed_us += 1000;
+  }
+
+  auto t_end = std::chrono::high_resolution_clock::now();
+  double elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          t_end - t_start).count();
+  *out_elapsed_ms = static_cast<float>(elapsed_ns / 1e6);
+
+  int result = *d_result;
+
+  hshm::GpuApi::Synchronize(stream);
+  CHI_IPC->PauseGpuOrchestrator();
+
+  cudaFreeHost(d_result);
+  hshm::GpuApi::DestroyStream(stream);
+
+  return result;
+}
+
 /**
  * Run the GPU alloc/free benchmark.
  *

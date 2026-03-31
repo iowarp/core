@@ -25,6 +25,9 @@ HSHM_GPU_FUN void GpuRuntime::Update(hipc::FullPtr<UpdateTask> task,
   bdev_type_   = task->bdev_type_;
   alignment_   = (task->alignment_ > 0) ? task->alignment_ : 4096;
   gpu_heap_ = 0;
+  printf("[BDEV-GPU Update] total_size=%llu bdev_type=%u hbm=%p pinned=%p this=%p\n",
+         (unsigned long long)total_size_, (unsigned)bdev_type_,
+         (void*)hbm_ptr_, (void*)pinned_ptr_, (void*)this);
   num_warps_ = chi::IpcManager::GetNumWarps();
   if (num_warps_ == 0) num_warps_ = 1;
   warp_caches_.clear();

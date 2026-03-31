@@ -133,6 +133,11 @@ extern "C" int run_gpu_bench_bdev(chi::PoolId bdev_pool_id,
                                    chi::u32 total_tasks,
                                    chi::u64 alloc_size,
                                    float *out_elapsed_ms);
+extern "C" int run_gpu_bench_bdev_full(chi::PoolId bdev_pool_id,
+                                        chi::u32 rt_blocks,
+                                        chi::u32 rt_threads,
+                                        chi::u64 io_size,
+                                        float *out_elapsed_ms);
 extern "C" int run_gpu_bench_parallel(chi::PoolId pool_id,
                                        chi::u32 rt_blocks,
                                        chi::u32 rt_threads,
@@ -206,6 +211,10 @@ extern "C" __attribute__((weak)) int run_gpu_bench_bdev(
     chi::u32, chi::u64, float *) {
   return -200;  // No GPU support compiled
 }
+extern "C" __attribute__((weak)) int run_gpu_bench_bdev_full(
+    chi::PoolId, chi::u32, chi::u32, chi::u64, float *) {
+  return -200;
+}
 extern "C" __attribute__((weak)) int run_gpu_bench_parallel(
     chi::PoolId, chi::u32, chi::u32, chi::u32, chi::u32,
     chi::u32, chi::u32, float *) {
@@ -222,7 +231,7 @@ extern "C" __attribute__((weak)) int run_gpu_bench_queue_contention(
 #endif
 
 /** Supported benchmark test cases */
-enum class TestCase { kLatency, kCoroutine, kAlloc, kAllocSerde, kSerde, kStringAlloc, kPutBlob, kPutBlobGpu, kParallelDispatch, kBuddy, kGrayScott, kWarpXfer, kMemcpy, kZeroCopy, kCdp, kQueueContention, kParallel, kBdev };
+enum class TestCase { kLatency, kCoroutine, kAlloc, kAllocSerde, kSerde, kStringAlloc, kPutBlob, kPutBlobGpu, kParallelDispatch, kBuddy, kGrayScott, kWarpXfer, kMemcpy, kZeroCopy, kCdp, kQueueContention, kParallel, kBdev, kBdevFull };
 
 /**
  * Configuration for the GPU runtime benchmark.
@@ -314,6 +323,8 @@ static bool ParseArgs(int argc, char **argv, BenchmarkConfig &cfg) {
         cfg.test_case = TestCase::kParallel;
       } else if (tc == "bdev") {
         cfg.test_case = TestCase::kBdev;
+      } else if (tc == "bdev_full") {
+        cfg.test_case = TestCase::kBdevFull;
       } else {
         HLOG(kError, "Unknown test case '{}'; use 'latency', 'coroutine', 'alloc', 'alloc_serde', 'serde', 'string_alloc', 'putblob', 'putblob_gpu', 'parallel_dispatch', 'cdp', or 'queue_contention'", tc);
         return false;
@@ -557,6 +568,32 @@ static int RunBenchmark(const BenchmarkConfig &cfg) {
                              cfg.total_tasks,
                              /*alloc_size=*/4096,
                              &elapsed_ms);
+  } else if (cfg.test_case == TestCase::kBdevFull) {
+    // Full bdev GPU→GPU: AllocateBlocks → Write → Read → Verify
+    std::this_thread::sleep_for(500ms);
+    const chi::PoolId bdev_pool_id(9002, 0);
+    chimaera::bdev::Client bdev_client(bdev_pool_id);
+    auto create_f = bdev_client.AsyncCreate(
+        chi::PoolQuery::Dynamic(), "gpu_bench_bdev_full",
+        bdev_pool_id, chimaera::bdev::BdevType::kHbm,
+        /*total_size=*/64 * 1024 * 1024);
+    create_f.Wait();
+    if (create_f->return_code_ != 0) {
+      HLOG(kError, "Failed to create bdev pool (rc={})", create_f->return_code_);
+      chi::CHIMAERA_FINALIZE();
+      return 1;
+    }
+    std::this_thread::sleep_for(200ms);
+    rc = run_gpu_bench_bdev_full(bdev_pool_id,
+                                  cfg.rt_blocks, cfg.rt_threads,
+                                  /*io_size=*/4096,
+                                  &elapsed_ms);
+    if (rc == 1) {
+      printf("BDEV FULL TEST PASSED\n");
+      rc = 0;
+    } else {
+      printf("BDEV FULL TEST FAILED (rc=%d)\n", rc);
+    }
   } else if (cfg.test_case == TestCase::kParallelDispatch) {
     // CPU→GPU parallel dispatch: submit GpuSubmit tasks from CPU with
     // varying parallelism to benchmark single-warp vs cross-warp dispatch.
