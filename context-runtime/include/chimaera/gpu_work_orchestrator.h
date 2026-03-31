@@ -111,6 +111,11 @@ struct WorkOrchestratorControl {
   volatile long long prof_ctx_alloc[kMaxDebugWorkers];
   volatile long long prof_ctx_copy[kMaxDebugWorkers];
   volatile long long prof_ctx_zero[kMaxDebugWorkers];
+
+  /** AllocTask sub-breakdown */
+  volatile long long prof_alloc_task_buddy[kMaxDebugWorkers];   /**< BuddyAlloc */
+  volatile long long prof_alloc_task_ctor[kMaxDebugWorkers];    /**< placement new RunContext */
+  volatile long long prof_alloc_task_deser[kMaxDebugWorkers];   /**< LoadTaskTmpl (deser) */
 };
 
 /**

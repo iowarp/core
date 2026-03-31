@@ -111,7 +111,7 @@ option(WRP_CORE_ENABLE_HDF5 "Enable HDF5 support in CAE" ON)
 option(WRP_CORE_ENABLE_ELF "Enable ELF support (required for CTE adapters)" OFF)
 option(WRP_CORE_ENABLE_OPENMP "Enable the use of OpenMP" OFF)
 option(WRP_CORE_ENABLE_CUDA "Enable CUDA support" OFF)
-option(WRP_CORE_ENABLE_GPU_RUNTIME "Enable GPU runtime [experimental] (C++20 coroutines on GPU, requires Clang)" OFF)
+option(WRP_CORE_ENABLE_GPU_RUNTIME "Enable GPU runtime (CDP-based parallelism)" OFF)
 option(WRP_CORE_ENABLE_ROCM "Enable ROCm support" OFF)
 option(WRP_CORE_ENABLE_NIXL "Enable NIXL (NVIDIA Inference Xfer Library) transport" OFF)
 option(WRP_CORE_ENABLE_NVSHMEM "Enable NVSHMEM GPU-to-GPU communication library" OFF)
@@ -774,9 +774,13 @@ if(NOT MSVC)
     endif()
 
     # Code Coverage configuration
+    # Exclude CUDA: NVCC passes --coverage through to device code, generating
+    # __gcov_* symbols in device stubs that the host linker can't resolve.
     if(WRP_CORE_ENABLE_COVERAGE)
         message(STATUS "Code coverage instrumentation enabled for iowarp-core")
-        add_compile_options(--coverage -fprofile-arcs -ftest-coverage)
+        add_compile_options($<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:--coverage>
+                            $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-fprofile-arcs>
+                            $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-ftest-coverage>)
         add_link_options(--coverage)
     endif()
 else()

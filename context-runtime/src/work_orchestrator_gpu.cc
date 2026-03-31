@@ -38,9 +38,9 @@
  * dispatches them to GPU-side containers via gpu::Worker / gpu::PoolManager,
  * and communicates results back through FutureShm completion flags.
  *
- * Execution model: warp-level dispatch. Each warp gets one Worker instance.
- * Lane 0 of each warp acts as the scheduler (queue polling, deserialization,
- * serialization), while all 32 threads synchronize via __syncwarp().
+ * Execution model: single-threaded polling with CUDA Dynamic Parallelism (CDP)
+ * child kernel launches. Thread 0 polls queues and launches child kernels as needed.
+ * Container tasks run in those child kernels rather than in the persistent kernel itself.
  *
  * All GPU containers are allocated within this CUDA module's context, so
  * virtual function dispatch (vtables) works correctly. No companion .so
@@ -48,10 +48,6 @@
  */
 
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
-
-// Must be included first — blocks libstdc++ <coroutine> and provides
-// GPU-compatible std::coroutine_handle for Clang CUDA compilation.
-#include "chimaera/gpu_coroutine_handle.h"
 
 #include "chimaera/ipc_manager.h"
 #include "chimaera/gpu_work_orchestrator.h"
@@ -65,68 +61,46 @@
 
 namespace chi {
 
-// Verify kDirectPathExtra is large enough for RunContext + stack
-static_assert(
-    IpcManager::WarpIpcManager::kDirectPathExtra >=
-        sizeof(gpu::RunContext) + IpcManager::WarpIpcManager::kStackSize,
-    "kDirectPathExtra too small for RunContext + kStackSize");
-
 /**
  * GPU Work Orchestrator - persistent kernel for GPU task execution.
- * Uses warp-level dispatch: one Worker per warp, lane 0 schedules.
+ * Thread 0 polls queues and launches GPU tasks via CUDA Dynamic Parallelism.
+ * Runs with 1 block, 1 thread.
  */
 __global__ void chimaera_gpu_orchestrator(gpu::PoolManager *pool_mgr,
                                            gpu::WorkOrchestratorControl *control,
                                            IpcManagerGpuInfo gpu_info,
                                            u32 num_blocks) {
-  if (threadIdx.x == 0) {
-    printf("[ORCH-PRE] blk=%u gpu2gpu=%p num_lanes=%u\n",
-           blockIdx.x, (void*)gpu_info.gpu2gpu_queue, gpu_info.gpu2gpu_num_lanes);
-  }
-
-  // All threads: initialize per-block IpcManager (ArenaAllocators).
+  // Initialize IpcManager for this block
   // num_blocks is used to partition the backend memory among blocks.
   CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks);
 
+  // Thread 0 signals that the orchestrator is running
   if (threadIdx.x == 0) {
-    printf("[ORCH-POST] blk=%u kDataOffset=%llu\n", blockIdx.x,
-           (unsigned long long)IpcManager::WarpIpcManager::kDataOffset);
-  }
-
-  u32 warp_id = IpcManager::GetWarpId();
-  u32 lane_id = IpcManager::GetLaneId();
-
-  // Thread 0 of block 0 signals that the orchestrator is running
-  if (blockIdx.x == 0 && threadIdx.x == 0) {
     control->running_flag = 1;
     __threadfence_system();  // Flush to CPU-visible memory
   }
   __syncthreads();
 
-  // Each warp polls its own lane from the gpu2gpu queue
-  gpu::Worker worker;
-  worker.Init(warp_id,
-              warp_id,
-              gpu_info.cpu2gpu_queue,
-              gpu_info.gpu2gpu_queue,
-              gpu_info.internal_queue,
-              pool_mgr,
-              gpu_info.cpu2gpu_queue_base,
-              control,
-              gpu_info.warp_group_queue,
-              gpu_info.warp_group_queue_base);
+  // Only thread 0 polls
+  if (threadIdx.x == 0) {
+    gpu::Worker worker;
+    worker.Init(0,           // worker_id
+                gpu_info.cpu2gpu_queue,
+                gpu_info.gpu2gpu_queue,
+                gpu_info.internal_queue,
+                pool_mgr,
+                gpu_info.cpu2gpu_queue_base,
+                control);
 
-  // Poll until exit signal
-  while (!control->exit_flag) {
-    worker.PollOnce(lane_id);
-  }
+    // Poll until exit signal
+    while (worker.is_running_ && !control->exit_flag) {
+      worker.PollOnce();
+    }
 
-  // Flush orchestrator profile to pinned host memory before shutdown
-  if (lane_id == 0) {
+    // Flush orchestrator profile to pinned host memory before shutdown
     worker.FlushProfile();
+    worker.Finalize();
   }
-
-  worker.Finalize();
 }
 
 //==============================================================================
@@ -135,6 +109,7 @@ __global__ void chimaera_gpu_orchestrator(gpu::PoolManager *pool_mgr,
 
 /**
  * Launch the persistent GPU work orchestrator.
+ * Runs with 1 block, 1 thread (CDP child kernels will handle actual task execution).
  */
 bool gpu::WorkOrchestrator::Launch(const IpcManagerGpuInfo &gpu_info, u32 blocks,
                                     u32 threads_per_block) {
@@ -167,63 +142,33 @@ bool gpu::WorkOrchestrator::Launch(const IpcManagerGpuInfo &gpu_info, u32 blocks
   gpu::PoolManager host_pm;
   hshm::GpuApi::Memcpy(d_pm, &host_pm, sizeof(gpu::PoolManager));
 
-  // Set GPU stack size. 32KB per thread for deep dispatch + serialization.
+  // Set GPU limits for CDP
   cudaDeviceSetLimit(cudaLimitStackSize, 32768);
   cudaDeviceSetLimit(cudaLimitPrintfFifoSize, 8 * 1024 * 1024);
+  cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, 8192);
 
   // Create dedicated stream
   stream_ = hshm::GpuApi::CreateStream();
 
-  // Save launch parameters for Pause/Resume
+  // Save launch parameters (for Pause/Resume, though we run 1 block x 1 thread)
   blocks_ = blocks;
   threads_per_block_ = threads_per_block;
 
-  // Update lane counts to match actual warp count
+  // Prepare launch_info for single-threaded persistent kernel
   IpcManagerGpuInfo launch_info = gpu_info;
-  u32 num_warps = (blocks * threads_per_block) / 32;
-  if (num_warps == 0) num_warps = 1;
-  launch_info.gpu2gpu_num_lanes = num_warps;
-  launch_info.internal_num_lanes = num_warps;
 
-  // Warp group topology: one lane per warp for single-consumer safety
-  launch_info.num_warps = num_warps;
-  u32 W2 = num_warps;
-  launch_info.num_warp_groups = W2;
-  launch_info.warp_group_num_lanes = W2;
+  // Set gpu2gpu queue depth to 8192 for CDP task launches
+  // (This is typically configured elsewhere, but ensure it's large enough)
+  launch_info.gpu2gpu_num_lanes = 1;
+  launch_info.internal_num_lanes = 1;
 
-  // Allocate per-warp-group and per-warp load counters
-  {
-    size_t grp_sz = W2 * sizeof(hipc::atomic<u32>);
-    size_t warp_sz = num_warps * sizeof(hipc::atomic<u32>);
-    cudaMalloc(&launch_info.warp_group_load, grp_sz);
-    cudaMemset(launch_info.warp_group_load, 0, grp_sz);
-    cudaMalloc(&launch_info.warp_load, warp_sz);
-    cudaMemset(launch_info.warp_load, 0, warp_sz);
-    warp_group_load_ = launch_info.warp_group_load;
-    warp_load_ = launch_info.warp_load;
-  }
-
-  // Allocate cross-warp task queue (warp group queue)
-  {
-    size_t wgq_cap = 512 * 1024;  // 512KB for warp group queue
-    char *wgq_data = nullptr;
-    cudaMalloc(&wgq_data, wgq_cap);
-    cudaMemset(wgq_data, 0, wgq_cap);
-    auto wgq_fp = gpu::InitQueueOnDevice(wgq_data, wgq_cap, W2, 128);
-    launch_info.warp_group_queue = wgq_fp.ptr_;
-    launch_info.warp_group_queue_base = wgq_data;
-    warp_group_queue_data_ = wgq_data;
-    warp_group_queue_ptr_ = wgq_fp.ptr_;
-  }
-
-  // Launch persistent GPU work orchestrator.
-  HLOG(kInfo, "Launching GPU work orchestrator with {} blocks, {} threads/block ({} warps)",
-       blocks, threads_per_block, launch_info.gpu2gpu_num_lanes);
-  chimaera_gpu_orchestrator<<<blocks, threads_per_block, 0,
+  // Launch persistent GPU work orchestrator with 1 block, 1 thread
+  HLOG(kInfo, "Launching GPU work orchestrator with 1 block, 1 thread (CDP-based)");
+  chimaera_gpu_orchestrator<<<1, 1, 0,
       static_cast<cudaStream_t>(stream_)>>>(
-      d_pm, control_, launch_info, blocks);
+      d_pm, control_, launch_info, 1);
 
-  launched_num_warps_ = num_warps;
+  launched_num_warps_ = 1;
   is_launched_ = true;
   HLOG(kInfo, "GPU work orchestrator launched successfully");
   return true;
@@ -247,18 +192,6 @@ void gpu::WorkOrchestrator::Finalize() {
     hshm::GpuApi::Synchronize();
   }
 
-  if (warp_group_load_) {
-    cudaFree(warp_group_load_);
-    warp_group_load_ = nullptr;
-  }
-  if (warp_load_) {
-    cudaFree(warp_load_);
-    warp_load_ = nullptr;
-  }
-  if (warp_group_queue_data_) {
-    cudaFree(warp_group_queue_data_);
-    warp_group_queue_data_ = nullptr;
-  }
   if (d_pool_mgr_) {
     hshm::GpuApi::Free(d_pool_mgr_);
     d_pool_mgr_ = nullptr;
@@ -289,54 +222,15 @@ void gpu::WorkOrchestrator::Pause() {
   hshm::GpuApi::Synchronize(stream_);
   HLOG(kInfo, "GPU work orchestrator: kernel synchronized");
   is_launched_ = false;
-  HLOG(kInfo, "GPU work orchestrator paused");
 }
 
 /**
- * Pre-allocate cross-warp resources for the next Resume.
- * Must be called while NO persistent GPU kernels are running (e.g., after Pause),
- * because cudaMalloc/cudaFree/cudaMemset/InitQueueOnDevice may synchronize
- * with the default stream and deadlock if a persistent kernel is active.
+ * Pre-allocate resources for the next Resume (if needed).
+ * No cross-warp resources in CDP model; this is mostly a no-op.
  */
 void gpu::WorkOrchestrator::PrepareResume() {
-  u32 num_warps = (blocks_ * threads_per_block_) / 32;
-  if (num_warps == 0) num_warps = 1;
-
-  if (num_warps != launched_num_warps_) {
-    u32 W2 = num_warps;
-
-    HLOG(kInfo, "GPU orchestrator PrepareResume: warp count changed {} -> {}, "
-         "reallocating cross-warp resources",
-         launched_num_warps_, num_warps);
-
-    // Free old load tracking arrays
-    if (warp_group_load_) { cudaFree(warp_group_load_); warp_group_load_ = nullptr; }
-    if (warp_load_) { cudaFree(warp_load_); warp_load_ = nullptr; }
-
-    // Allocate new load tracking arrays
-    size_t grp_sz = W2 * sizeof(hipc::atomic<u32>);
-    size_t warp_sz = num_warps * sizeof(hipc::atomic<u32>);
-    cudaMalloc(&warp_group_load_, grp_sz);
-    cudaMemset(warp_group_load_, 0, grp_sz);
-    cudaMalloc(&warp_load_, warp_sz);
-    cudaMemset(warp_load_, 0, warp_sz);
-
-    // Free and reallocate warp group queue
-    if (warp_group_queue_data_) {
-      cudaFree(warp_group_queue_data_);
-      warp_group_queue_data_ = nullptr;
-      warp_group_queue_ptr_ = nullptr;
-    }
-    size_t wgq_cap = 512 * 1024;
-    char *wgq_data = nullptr;
-    cudaMalloc(&wgq_data, wgq_cap);
-    cudaMemset(wgq_data, 0, wgq_cap);
-    auto wgq_fp = gpu::InitQueueOnDevice(wgq_data, wgq_cap, W2, 128);
-    warp_group_queue_data_ = wgq_data;
-    warp_group_queue_ptr_ = wgq_fp.ptr_;
-
-    launched_num_warps_ = num_warps;
-  }
+  // No special preparation needed for CDP single-thread model
+  // The orchestrator always runs as 1 block x 1 thread
 }
 
 /** Resume a paused GPU work orchestrator. */
@@ -359,40 +253,19 @@ void gpu::WorkOrchestrator::Resume(const IpcManagerGpuInfo &gpu_info) {
 
   IpcManagerGpuInfo resume_info = gpu_info;
   resume_info.skip_scratch_init = true;  // preserve scratch allocator state
-  u32 num_warps = (blocks_ * threads_per_block_) / 32;
-  if (num_warps == 0) num_warps = 1;
-  resume_info.gpu2gpu_num_lanes = num_warps;
-  resume_info.internal_num_lanes = num_warps;
-
-  // Recompute warp group topology
-  resume_info.num_warps = num_warps;
-  u32 W2 = num_warps;
-  resume_info.num_warp_groups = W2;
-  resume_info.warp_group_num_lanes = W2;
-
-  resume_info.warp_group_load =
-      static_cast<hipc::atomic<u32> *>(warp_group_load_);
-  resume_info.warp_load =
-      static_cast<hipc::atomic<u32> *>(warp_load_);
-  if (warp_group_queue_data_) {
-    resume_info.warp_group_queue =
-        static_cast<TaskQueue *>(warp_group_queue_ptr_);
-    resume_info.warp_group_queue_base =
-        static_cast<char *>(warp_group_queue_data_);
-  }
+  resume_info.gpu2gpu_num_lanes = 1;
+  resume_info.internal_num_lanes = 1;
 
   // Skip heap re-init — per-block allocators persist across pause/resume.
   resume_info.skip_heap_init = true;
   resume_info.scratch_gen = control_->scratch_gen;
 
-  // Do NOT zero scratch allocator headers — scratch state persists
-  // across pause/resume to preserve GPU container metadata.
-
   auto *d_pm = static_cast<gpu::PoolManager *>(d_pool_mgr_);
 
-  chimaera_gpu_orchestrator<<<blocks_, threads_per_block_, 0,
+  // Resume with 1 block, 1 thread (CDP model)
+  chimaera_gpu_orchestrator<<<1, 1, 0,
       static_cast<cudaStream_t>(stream_)>>>(
-      d_pm, control_, resume_info, blocks_);
+      d_pm, control_, resume_info, 1);
 
   cudaError_t launch_err = cudaGetLastError();
   if (launch_err != cudaSuccess) {
@@ -403,9 +276,7 @@ void gpu::WorkOrchestrator::Resume(const IpcManagerGpuInfo &gpu_info) {
   }
 
   is_launched_ = true;
-
-  HLOG(kInfo, "GPU work orchestrator resumed with {} blocks, {} threads/block ({} warps)",
-       blocks_, threads_per_block_, resume_info.gpu2gpu_num_lanes);
+  HLOG(kInfo, "GPU work orchestrator resumed (1 block, 1 thread CDP model)");
 }
 
 /**

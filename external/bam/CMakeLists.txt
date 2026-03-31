@@ -1,6 +1,32 @@
 cmake_minimum_required(VERSION 3.20)
 project(bam LANGUAGES C CXX)
 
+# Strip code coverage flags — gcov's hidden symbol visibility is incompatible
+# with CUDA separable compilation shared library linking.
+if(WRP_CORE_ENABLE_COVERAGE)
+  string(REPLACE "--coverage" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+  string(REPLACE "--coverage" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+  string(REPLACE "-fprofile-arcs" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+  string(REPLACE "-fprofile-arcs" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+  string(REPLACE "-ftest-coverage" "" CMAKE_C_FLAGS "${CMAKE_C_FLAGS}")
+  string(REPLACE "-ftest-coverage" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+  string(REPLACE "--coverage" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
+  string(REPLACE "--coverage" "" CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
+  # Remove --coverage from directory properties (set by parent add_*_options)
+  get_directory_property(_dir_link_opts LINK_OPTIONS)
+  if(_dir_link_opts)
+    list(REMOVE_ITEM _dir_link_opts "--coverage")
+    set_directory_properties(PROPERTIES LINK_OPTIONS "${_dir_link_opts}")
+  endif()
+  get_directory_property(_dir_compile_opts COMPILE_OPTIONS)
+  if(_dir_compile_opts)
+    list(REMOVE_ITEM _dir_compile_opts "--coverage" "-fprofile-arcs" "-ftest-coverage")
+    # Also remove generator expressions that wrap these flags
+    list(FILTER _dir_compile_opts EXCLUDE REGEX "coverage|fprofile-arcs|ftest-coverage")
+    set_directory_properties(PROPERTIES COMPILE_OPTIONS "${_dir_compile_opts}")
+  endif()
+endif()
+
 #------------------------------------------------------------------------------
 # Options
 #------------------------------------------------------------------------------

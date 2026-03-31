@@ -71,6 +71,7 @@
 
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 #include "chimaera/gpu_work_orchestrator.h"
+#include <hermes_shm/util/gpu_api.h>
 #endif
 
 // Global pointer variable definition for IPC manager singleton
@@ -937,6 +938,41 @@ hipc::FullPtr<char> IpcManager::AllocateGpuBuffer(size_t size, u32 gpu_id) {
   return hipc::FullPtr<char>::GetNull();
 }
 
+void *IpcManager::CudaMallocAndCopy(const void *host_src, size_t copy_size,
+                                     size_t alloc_size) {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  void *device_ptr = hshm::GpuApi::Malloc<char>(alloc_size);
+  if (device_ptr) {
+    hshm::GpuApi::Memcpy(static_cast<char *>(device_ptr),
+                          static_cast<const char *>(host_src), copy_size);
+  }
+  return device_ptr;
+#else
+  (void)host_src; (void)copy_size; (void)alloc_size;
+  return nullptr;
+#endif
+}
+
+void IpcManager::CudaMemcpyToHost(void *host_dst, const void *device_src,
+                                    size_t size) {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  hshm::GpuApi::Memcpy(static_cast<char *>(host_dst),
+                        static_cast<const char *>(device_src), size);
+#else
+  (void)host_dst; (void)device_src; (void)size;
+#endif
+}
+
+void IpcManager::CudaFreeDevice(void *device_ptr) {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  if (device_ptr) {
+    hshm::GpuApi::Free(static_cast<char *>(device_ptr));
+  }
+#else
+  (void)device_ptr;
+#endif
+}
+
 void IpcManager::RegisterGpuOrchestratorContainer(const PoolId &pool_id,
                                                     void *gpu_container_ptr) {
   if (!gpu_orchestrator_) {
@@ -995,6 +1031,14 @@ void IpcManager::PrintGpuOrchestratorProfile() {
     printf("    alloc/cache:           %lld  (%lld/task)\n", ac_alloc, ac_alloc/n);
     printf("    struct copy:           %lld  (%lld/task)\n", ac_copy, ac_copy/n);
     printf("    zero coro handles:     %lld  (%lld/task)\n", ac_zero, ac_zero/n);
+    // AllocTask sub-breakdown
+    long long at_buddy = (long long)ctrl->prof_alloc_task_buddy[w];
+    long long at_ctor = (long long)ctrl->prof_alloc_task_ctor[w];
+    long long at_deser = (long long)ctrl->prof_alloc_task_deser[w];
+    printf("  AllocTask sub-breakdown:\n");
+    printf("    buddy alloc:           %lld  (%lld/task)\n", at_buddy, at_buddy/n);
+    printf("    placement new:         %lld  (%lld/task)\n", at_ctor, at_ctor/n);
+    printf("    deserialize:           %lld  (%lld/task)\n", at_deser, at_deser/n);
   }
 #endif
 }
@@ -2881,40 +2925,64 @@ RouteResult IpcManager::RouteGlobal(Future<Task> &future,
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 void IpcManager::RouteToGpu(const FullPtr<Task> &task_ptr,
                              Container *container, u32 gpu_id) {
+  (void)container;  // No longer needed — POD copy, no serialization
   if (task_ptr.IsNull() || gpu_id >= cpu2gpu_queues_.size()) return;
 
-  // 1. Allocate FutureShm in CPU→GPU backend (pinned host memory)
-  size_t copy_space_size = task_ptr->GetCopySpaceSize();
-  if (copy_space_size == 0) copy_space_size = 4096;
-  size_t alloc_size = sizeof(FutureShm) + copy_space_size;
-  FullPtr<char> buffer = AllocateGpuBuffer(alloc_size, gpu_id);
-  if (buffer.IsNull()) return;
+  u32 task_size = task_ptr->pod_size_;
+  if (task_size == 0) {
+    HLOG(kError, "RouteToGpu: pod_size_=0 for pool={} method={}",
+         task_ptr->pool_id_, task_ptr->method_);
+    return;
+  }
 
-  // 2. Construct FutureShm
-  FutureShm *fshm = new (buffer.ptr_) FutureShm();
+  // 1. cudaMalloc device buffer: [TaskT | FutureShm]
+  size_t device_buf_size = task_size + sizeof(FutureShm);
+  void *device_buf = CudaMallocAndCopy(
+      static_cast<const void *>(task_ptr.ptr_), task_size, device_buf_size);
+  if (!device_buf) return;
+
+  // 2. Allocate pinned host FutureShm
+  FullPtr<char> fshm_buf = AllocateGpuBuffer(sizeof(FutureShm), gpu_id);
+  if (fshm_buf.IsNull()) {
+    CudaFreeDevice(device_buf);
+    return;
+  }
+
+  // 3. Construct FutureShm in pinned host
+  FutureShm *fshm = new (fshm_buf.ptr_) FutureShm();
   fshm->pool_id_ = task_ptr->pool_id_;
   fshm->method_id_ = task_ptr->method_;
   fshm->origin_ = FutureShm::FUTURE_CLIENT_SHM;
-  fshm->client_task_vaddr_ = 0;
-  fshm->input_.copy_space_size_ = copy_space_size;
-  fshm->output_.copy_space_size_ = copy_space_size;
-  fshm->flags_.SetBits(FutureShm::FUTURE_COPY_FROM_CLIENT);
+  fshm->client_task_vaddr_ = reinterpret_cast<uintptr_t>(device_buf);
+  fshm->task_device_ptr_ = reinterpret_cast<uintptr_t>(device_buf);
+  fshm->task_size_ = task_size;
+  fshm->flags_.SetBits(FutureShm::FUTURE_POD_COPY);
 
-  // 3. Serialize task input via Container::LocalSaveTask (type-erased)
-  hshm::lbm::LbmContext ctx;
-  ctx.copy_space = fshm->copy_space;
-  ctx.shm_info_ = &fshm->input_;
-  chi::priv::vector<char> save_buf;
-  save_buf.reserve(256);
-  DefaultSaveArchive save_ar(LocalMsgType::kSerializeIn, save_buf);
-  container->LocalSaveTask(task_ptr->method_, save_ar, task_ptr);
-  hshm::lbm::ShmTransport::Send(save_ar, ctx);
+  // 4. Flush and push to CPU→GPU queue
+#if defined(__x86_64__) || defined(__i386__)
+  {
+    const char *base = reinterpret_cast<const char *>(fshm);
+    for (const char *cl = base; cl < base + sizeof(FutureShm); cl += 64) {
+      _mm_clflush(cl);
+    }
+    _mm_sfence();
+  }
+#endif
 
-  // 4. Push to CPU→GPU queue (orchestrator polls this)
   auto &lane = cpu2gpu_queues_[gpu_id].ptr_->GetLane(0, 0);
-  hipc::ShmPtr<FutureShm> fshmptr = buffer.shm_.template Cast<FutureShm>();
+  hipc::ShmPtr<FutureShm> fshmptr = fshm_buf.shm_.template Cast<FutureShm>();
   Future<Task> future(fshmptr);
   lane.Push(future);
+
+#if defined(__x86_64__) || defined(__i386__)
+  {
+    const char *q_base = reinterpret_cast<const char *>(&lane);
+    for (const char *cl = q_base; cl < q_base + sizeof(lane); cl += 64) {
+      _mm_clflush(cl);
+    }
+    _mm_sfence();
+  }
+#endif
 }
 #endif
 

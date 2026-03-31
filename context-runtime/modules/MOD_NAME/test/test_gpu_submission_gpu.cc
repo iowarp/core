@@ -260,7 +260,7 @@ extern "C" int run_cpu_to_gpu_test(chi::PoolId pool_id,
   }
 
   // Send to GPU orchestrator via to_gpu_queue
-  auto future = ipc->SendToGpu(task, 0);
+  auto future = ipc->SendGpuCpuCopy(task, 0);
   if (future.GetFutureShmPtr().IsNull()) {
     return -2;  // SendToGpu failed
   }
@@ -396,7 +396,7 @@ extern "C" int run_gpu_to_cpu_test(chi::PoolId pool_id,
 /**
  * CPU→GPU test via client API: CPU calls AsyncGpuSubmit with LocalGpuBcast routing.
  * Must be compiled in the GPU compilation unit where HSHM_ENABLE_CUDA=1 so
- * that Send() detects LocalGpuBcast and redirects to SendToGpu().
+ * that Send() detects LocalGpuBcast and redirects to SendGpuCpuCopy().
  */
 extern "C" int run_async_gpu_submit_local_gpu_bcast_test(
     chi::PoolId pool_id,

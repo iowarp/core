@@ -20,3 +20,6 @@ install(TARGETS wrp_run_thrpt_benchmark
 
 # GPU runtime latency benchmark
 add_subdirectory(bench_gpu_runtime)
+
+# CDP (CUDA Dynamic Parallelism) overhead benchmark — NVCC only
+add_subdirectory(bench_cdp)

@@ -44,10 +44,10 @@
 
 namespace chimaera::MOD_NAME {
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::SubtaskTest(
+HSHM_GPU_FUN void GpuRuntime::SubtaskTest(
     hipc::FullPtr<SubtaskTestTask> task,
     chi::gpu::RunContext &rctx) {
-  if (!chi::IpcManager::IsWarpScheduler()) { (void)rctx; co_return; }
+  if (!chi::IpcManager::IsWarpScheduler()) { (void)rctx; return; }
   auto *ipc = CHI_IPC;
   chi::u32 num_subtasks = task->num_subtasks_;
   chi::u32 last_result = 0;
@@ -58,22 +58,25 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::SubtaskTest(
         /*gpu_id=*/chi::u32(0), task->test_value_);
     auto future = ipc->SendGpuDirect(sub);
 
-    co_await future;
-
-    auto *result = future.get();
-    if (result && result->return_code_ == 0) {
-      last_result = result->result_value_;
-    } else {
-      task->result_value_ = 0;
-      task->return_code_ = 1;
-      co_return;
+    // Spin-poll for future completion
+    while (!future.get()->return_code_ || future.get()->return_code_ == 0) {
+      // Check if future is complete by examining the FutureShm flags
+      auto *result = future.get();
+      if (result && result->return_code_ == 0) {
+        last_result = result->result_value_;
+        break;
+      }
+      if (result && result->return_code_ != 0) {
+        task->result_value_ = 0;
+        task->return_code_ = 1;
+        return;
+      }
     }
   }
 
   task->result_value_ = last_result + 1;
   task->return_code_ = 0;
   (void)rctx;
-  co_return;
 }
 
 }  // namespace chimaera::MOD_NAME

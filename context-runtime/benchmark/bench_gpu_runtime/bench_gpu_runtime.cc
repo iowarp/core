@@ -51,6 +51,8 @@
 #include <chimaera/chimaera.h>
 #include <chimaera/ipc_manager.h>
 #include <chimaera/MOD_NAME/MOD_NAME_client.h>
+#include <chimaera/bdev/bdev_client.h>
+#include <chimaera/bdev/bdev_tasks.h>
 #include <wrp_cte/core/core_client.h>
 #include <hermes_shm/util/logging.h>
 #include <cuda_runtime.h>
@@ -94,6 +96,15 @@ extern "C" int run_gpu_bench_serde(chi::PoolId pool_id,
                                     chi::u32 client_threads,
                                     chi::u32 total_tasks,
                                     float *out_elapsed_ms);
+extern "C" int run_gpu_bench_grayscott(float *out_elapsed_ms);
+extern "C" int run_gpu_bench_warp_xfer(float *out_elapsed_ms);
+extern "C" int run_gpu_bench_memcpy(float *out_elapsed_ms);
+extern "C" int run_gpu_bench_zerocopy(chi::u32 total_tasks, float *out_elapsed_ms);
+extern "C" int run_gpu_bench_buddy(chi::PoolId pool_id,
+                                    chi::u32 client_blocks,
+                                    chi::u32 client_threads,
+                                    chi::u32 total_tasks,
+                                    float *out_elapsed_ms);
 extern "C" int run_gpu_bench_alloc_serde(chi::PoolId pool_id,
                                           chi::u32 client_blocks,
                                           chi::u32 client_threads,
@@ -114,6 +125,29 @@ extern "C" int run_gpu_bench_parallel_dispatch(chi::PoolId pool_id,
                                                 chi::u32 parallelism,
                                                 chi::u32 total_tasks,
                                                 float *out_elapsed_ms);
+extern "C" int run_gpu_bench_bdev(chi::PoolId bdev_pool_id,
+                                   chi::u32 rt_blocks,
+                                   chi::u32 rt_threads,
+                                   chi::u32 client_blocks,
+                                   chi::u32 client_threads,
+                                   chi::u32 total_tasks,
+                                   chi::u64 alloc_size,
+                                   float *out_elapsed_ms);
+extern "C" int run_gpu_bench_parallel(chi::PoolId pool_id,
+                                       chi::u32 rt_blocks,
+                                       chi::u32 rt_threads,
+                                       chi::u32 client_blocks,
+                                       chi::u32 client_threads,
+                                       chi::u32 total_tasks,
+                                       chi::u32 parallelism,
+                                       float *out_elapsed_ms);
+extern "C" int run_gpu_bench_cdp(chi::u32 rt_blocks,
+                                  chi::u32 rt_threads,
+                                  chi::u32 total_tasks,
+                                  float *out_elapsed_ms);
+extern "C" int run_gpu_bench_queue_contention(chi::u32 num_clients,
+                                               chi::u32 total_tasks,
+                                               float *out_elapsed_ms);
 #else
 extern "C" __attribute__((weak)) int run_gpu_bench_latency(
     chi::PoolId, chi::u32, chi::u32, chi::u32, chi::u32, chi::u32,
@@ -131,6 +165,20 @@ extern "C" __attribute__((weak)) int run_gpu_bench_alloc(
   return -200;  // No GPU support compiled
 }
 extern "C" __attribute__((weak)) int run_gpu_bench_serde(
+    chi::PoolId, chi::u32, chi::u32,
+    chi::u32, float *) {
+  return -200;  // No GPU support compiled
+}
+extern "C" __attribute__((weak)) int run_gpu_bench_grayscott(float *) {
+  return -200;
+}
+extern "C" __attribute__((weak)) int run_gpu_bench_warp_xfer(float *) {
+  return -200;
+}
+extern "C" __attribute__((weak)) int run_gpu_bench_memcpy(float *) {
+  return -200;
+}
+extern "C" __attribute__((weak)) int run_gpu_bench_buddy(
     chi::PoolId, chi::u32, chi::u32,
     chi::u32, float *) {
   return -200;  // No GPU support compiled
@@ -153,10 +201,28 @@ extern "C" __attribute__((weak)) int run_gpu_bench_parallel_dispatch(
     chi::PoolId, chi::u32, chi::u32, float *) {
   return -200;  // No GPU support compiled
 }
+extern "C" __attribute__((weak)) int run_gpu_bench_bdev(
+    chi::PoolId, chi::u32, chi::u32, chi::u32, chi::u32,
+    chi::u32, chi::u64, float *) {
+  return -200;  // No GPU support compiled
+}
+extern "C" __attribute__((weak)) int run_gpu_bench_parallel(
+    chi::PoolId, chi::u32, chi::u32, chi::u32, chi::u32,
+    chi::u32, chi::u32, float *) {
+  return -200;  // No GPU support compiled
+}
+extern "C" __attribute__((weak)) int run_gpu_bench_cdp(
+    chi::u32, chi::u32, chi::u32, float *) {
+  return -200;  // No GPU support compiled
+}
+extern "C" __attribute__((weak)) int run_gpu_bench_queue_contention(
+    chi::u32, chi::u32, float *) {
+  return -200;  // No GPU support compiled
+}
 #endif
 
 /** Supported benchmark test cases */
-enum class TestCase { kLatency, kCoroutine, kAlloc, kAllocSerde, kSerde, kStringAlloc, kPutBlob, kPutBlobGpu, kParallelDispatch };
+enum class TestCase { kLatency, kCoroutine, kAlloc, kAllocSerde, kSerde, kStringAlloc, kPutBlob, kPutBlobGpu, kParallelDispatch, kBuddy, kGrayScott, kWarpXfer, kMemcpy, kZeroCopy, kCdp, kQueueContention, kParallel, kBdev };
 
 /**
  * Configuration for the GPU runtime benchmark.
@@ -185,7 +251,7 @@ static void PrintHelp(const char *prog) {
   HIPRINT("Options:");
   HIPRINT("  --test-case <case>     Test case: 'latency', 'coroutine', 'alloc', 'alloc_serde',");
   HIPRINT("                         'serde', 'string_alloc', 'putblob', 'putblob_gpu',");
-  HIPRINT("                         'parallel_dispatch' (default: latency)");
+  HIPRINT("                         'parallel_dispatch', 'cdp', 'queue_contention'");
   HIPRINT("  --rt-blocks <N>        GPU runtime orchestrator blocks (default: 1)");
   HIPRINT("  --rt-threads <N>       GPU runtime orchestrator threads/block (default: 32)");
   HIPRINT("  --client-blocks <N>    GPU client kernel blocks (default: 1)");
@@ -232,8 +298,24 @@ static bool ParseArgs(int argc, char **argv, BenchmarkConfig &cfg) {
         cfg.test_case = TestCase::kPutBlobGpu;
       } else if (tc == "parallel_dispatch") {
         cfg.test_case = TestCase::kParallelDispatch;
+      } else if (tc == "buddy") {
+        cfg.test_case = TestCase::kBuddy;
+      } else if (tc == "grayscott") {
+        cfg.test_case = TestCase::kGrayScott;
+      } else if (tc == "warp_xfer") {
+        cfg.test_case = TestCase::kWarpXfer;
+      } else if (tc == "memcpy") {
+        cfg.test_case = TestCase::kMemcpy;
+      } else if (tc == "cdp") {
+        cfg.test_case = TestCase::kCdp;
+      } else if (tc == "queue_contention") {
+        cfg.test_case = TestCase::kQueueContention;
+      } else if (tc == "parallel") {
+        cfg.test_case = TestCase::kParallel;
+      } else if (tc == "bdev") {
+        cfg.test_case = TestCase::kBdev;
       } else {
-        HLOG(kError, "Unknown test case '{}'; use 'latency', 'coroutine', 'alloc', 'alloc_serde', 'serde', 'string_alloc', 'putblob', 'putblob_gpu', or 'parallel_dispatch'", tc);
+        HLOG(kError, "Unknown test case '{}'; use 'latency', 'coroutine', 'alloc', 'alloc_serde', 'serde', 'string_alloc', 'putblob', 'putblob_gpu', 'parallel_dispatch', 'cdp', or 'queue_contention'", tc);
         return false;
       }
     } else if (arg == "--rt-blocks" && i + 1 < argc) {
@@ -372,13 +454,33 @@ static int RunBenchmark(const BenchmarkConfig &cfg) {
   float elapsed_ms = 0.0f;
   int rc = 0;
 
-  if (cfg.test_case == TestCase::kStringAlloc) {
+  if (cfg.test_case == TestCase::kGrayScott) {
+    CHI_IPC->PauseGpuOrchestrator();
+    rc = run_gpu_bench_grayscott(&elapsed_ms);
+  } else if (cfg.test_case == TestCase::kWarpXfer) {
+    CHI_IPC->PauseGpuOrchestrator();
+    rc = run_gpu_bench_warp_xfer(&elapsed_ms);
+  } else if (cfg.test_case == TestCase::kMemcpy) {
+    CHI_IPC->PauseGpuOrchestrator();
+    rc = run_gpu_bench_memcpy(&elapsed_ms);
+  } else if (cfg.test_case == TestCase::kQueueContention) {
+    CHI_IPC->PauseGpuOrchestrator();
+    chi::u32 num_clients = (cfg.client_blocks * cfg.client_threads) / 32;
+    if (num_clients == 0) num_clients = 1;
+    rc = run_gpu_bench_queue_contention(num_clients, cfg.total_tasks,
+                                         &elapsed_ms);
+  } else if (cfg.test_case == TestCase::kCdp) {
+    CHI_IPC->PauseGpuOrchestrator();
+    rc = run_gpu_bench_cdp(cfg.rt_blocks, cfg.rt_threads,
+                            cfg.total_tasks, &elapsed_ms);
+  } else if (cfg.test_case == TestCase::kStringAlloc) {
     // String alloc test doesn't need Chimaera runtime at all
     CHI_IPC->PauseGpuOrchestrator();
     rc = run_gpu_bench_string_alloc(cfg.total_tasks, &elapsed_ms);
   } else if (cfg.test_case == TestCase::kSerde ||
              cfg.test_case == TestCase::kAllocSerde ||
-             cfg.test_case == TestCase::kAlloc) {
+             cfg.test_case == TestCase::kAlloc ||
+             cfg.test_case == TestCase::kBuddy) {
     // Client-only tests: kill the orchestrator immediately, no pool needed
     CHI_IPC->PauseGpuOrchestrator();
     if (cfg.test_case == TestCase::kSerde) {
@@ -389,6 +491,10 @@ static int RunBenchmark(const BenchmarkConfig &cfg) {
       rc = run_gpu_bench_alloc_serde(pool_id,
                                       cfg.client_blocks, cfg.client_threads,
                                       cfg.total_tasks, &elapsed_ms);
+    } else if (cfg.test_case == TestCase::kBuddy) {
+      rc = run_gpu_bench_buddy(pool_id,
+                                cfg.client_blocks, cfg.client_threads,
+                                cfg.total_tasks, &elapsed_ms);
     } else {
       rc = run_gpu_bench_alloc(pool_id,
                                 cfg.client_blocks, cfg.client_threads,
@@ -396,13 +502,23 @@ static int RunBenchmark(const BenchmarkConfig &cfg) {
     }
   } else if (cfg.test_case == TestCase::kPutBlob ||
              cfg.test_case == TestCase::kPutBlobGpu) {
-    // Use the cte_main pool from compose config (PoolId 512,0)
     std::this_thread::sleep_for(500ms);
 
+    // Create CTE pool explicitly (compose config is empty for benchmarks)
     const chi::PoolId cte_pool_id(512, 0);
     wrp_cte::core::Client cte_client(cte_pool_id);
+    auto create_f = cte_client.AsyncCreate(
+        chi::PoolQuery::Dynamic(), "gpu_bench_cte",
+        cte_pool_id);
+    create_f.Wait();
+    if (create_f->return_code_ != 0) {
+      HLOG(kError, "Failed to create CTE pool (rc={})", create_f->return_code_);
+      chi::CHIMAERA_FINALIZE();
+      return 1;
+    }
+    std::this_thread::sleep_for(200ms);
 
-    // Create tag using the compose pool
+    // Create tag
     auto tag_task = cte_client.AsyncGetOrCreateTag("gpu_bench_tag");
     tag_task.Wait();
     if (tag_task->GetReturnCode() != 0) {
@@ -418,6 +534,29 @@ static int RunBenchmark(const BenchmarkConfig &cfg) {
                                 cfg.rt_blocks, cfg.rt_threads,
                                 cfg.client_blocks, cfg.client_threads,
                                 cfg.total_bytes, to_cpu, &elapsed_ms);
+  } else if (cfg.test_case == TestCase::kBdev) {
+    // GPU→bdev roundtrip: create a kNoop bdev from CPU, then GPU kernel
+    // calls AsyncAllocateBlocks through the orchestrator.
+    std::this_thread::sleep_for(500ms);
+    const chi::PoolId bdev_pool_id(9001, 0);
+    chimaera::bdev::Client bdev_client(bdev_pool_id);
+    auto create_f = bdev_client.AsyncCreate(
+        chi::PoolQuery::Dynamic(), "gpu_bench_bdev",
+        bdev_pool_id, chimaera::bdev::BdevType::kNoop,
+        /*total_size=*/256 * 1024 * 1024);
+    create_f.Wait();
+    if (create_f->return_code_ != 0) {
+      HLOG(kError, "Failed to create bdev pool (rc={})", create_f->return_code_);
+      chi::CHIMAERA_FINALIZE();
+      return 1;
+    }
+    std::this_thread::sleep_for(200ms);
+    rc = run_gpu_bench_bdev(bdev_pool_id,
+                             cfg.rt_blocks, cfg.rt_threads,
+                             cfg.client_blocks, cfg.client_threads,
+                             cfg.total_tasks,
+                             /*alloc_size=*/4096,
+                             &elapsed_ms);
   } else if (cfg.test_case == TestCase::kParallelDispatch) {
     // CPU→GPU parallel dispatch: submit GpuSubmit tasks from CPU with
     // varying parallelism to benchmark single-warp vs cross-warp dispatch.
@@ -444,6 +583,12 @@ static int RunBenchmark(const BenchmarkConfig &cfg) {
                                     cfg.client_blocks, cfg.client_threads,
                                     cfg.total_tasks, cfg.subtasks,
                                     &elapsed_ms);
+    } else if (cfg.test_case == TestCase::kParallel) {
+      rc = run_gpu_bench_parallel(pool_id,
+                                   cfg.rt_blocks, cfg.rt_threads,
+                                   cfg.client_blocks, cfg.client_threads,
+                                   cfg.total_tasks, cfg.parallelism,
+                                   &elapsed_ms);
     } else {
       const chi::u32 method_id = chimaera::MOD_NAME::Method::kGpuSubmit;
       rc = run_gpu_bench_latency(pool_id, method_id,

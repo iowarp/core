@@ -573,9 +573,9 @@ target_link_libraries(${GPU_CLIENT_PROCESS_TEST_TARGET}
   hshm::cxx                       # HermesShm library
   ${CMAKE_THREAD_LIBS_INIT}       # Threading support
 )
-if(WRP_CORE_ENABLE_CUDA AND WRP_CORE_CLANG_CUDA_PATH)
-  set_property(TARGET ${GPU_CLIENT_PROCESS_TEST_TARGET} APPEND PROPERTY
-    LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart")
+if(WRP_CORE_ENABLE_CUDA)
+  find_package(CUDAToolkit QUIET)
+  target_link_libraries(${GPU_CLIENT_PROCESS_TEST_TARGET} CUDA::cudart)
 endif()
 
 set_target_properties(${GPU_CLIENT_PROCESS_TEST_TARGET} PROPERTIES
@@ -615,8 +615,8 @@ if(HSHM_ENABLE_CUDA OR HSHM_ENABLE_ROCM)
   )
 
   # CPU sources need CUDA disabled to avoid __device__ errors from CXX compiler.
-  # -U first removes the target-level HSHM_ENABLE_CUDA=1 from hshm::cuda_cxx
-  # to avoid a redefinition warning.
+  # Also strip --coverage: these targets link with CUDA linker (g++) which can't
+  # resolve llvm_gc* coverage symbols from clang-compiled objects.
   set_source_files_properties(${GPU_SUBMISSION_TEST_CPU_SOURCES} PROPERTIES
     COMPILE_OPTIONS "-UHSHM_ENABLE_CUDA;-DHSHM_ENABLE_CUDA=0"
   )
@@ -652,6 +652,10 @@ if(HSHM_ENABLE_CUDA OR HSHM_ENABLE_ROCM)
   set_target_properties(${GPU_SUBMISSION_TEST_TARGET} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
+  if(WRP_CORE_ENABLE_COVERAGE)
+    set_property(TARGET ${GPU_SUBMISSION_TEST_TARGET} PROPERTY COMPILE_OPTIONS "")
+    set_property(TARGET ${GPU_SUBMISSION_TEST_TARGET} PROPERTY LINK_OPTIONS "")
+  endif()
 
   message(STATUS "Building GPU submission tests with CUDA support")
 else()
@@ -754,6 +758,10 @@ if(HSHM_ENABLE_CUDA OR HSHM_ENABLE_ROCM)
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
 
+  if(WRP_CORE_ENABLE_COVERAGE)
+    set_property(TARGET ${GPU_QUEUE_STRESS_TEST_TARGET} PROPERTY COMPILE_OPTIONS "")
+    set_property(TARGET ${GPU_QUEUE_STRESS_TEST_TARGET} PROPERTY LINK_OPTIONS "")
+  endif()
   message(STATUS "Building GPU queue stress tests with CUDA support")
 else()
   add_executable(${GPU_QUEUE_STRESS_TEST_TARGET} ${GPU_QUEUE_STRESS_TEST_CPU_SOURCES})
@@ -865,6 +873,10 @@ if(HSHM_ENABLE_CUDA OR HSHM_ENABLE_ROCM)
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
 
+  if(WRP_CORE_ENABLE_COVERAGE)
+    set_property(TARGET ${GPU_PARALLELISM_TEST_TARGET} PROPERTY COMPILE_OPTIONS "")
+    set_property(TARGET ${GPU_PARALLELISM_TEST_TARGET} PROPERTY LINK_OPTIONS "")
+  endif()
   message(STATUS "Building GPU parallelism tests with CUDA support")
 else()
   add_executable(${GPU_PARALLELISM_TEST_TARGET} ${GPU_PARALLELISM_TEST_CPU_SOURCES})

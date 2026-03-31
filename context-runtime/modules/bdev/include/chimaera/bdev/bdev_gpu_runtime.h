@@ -24,7 +24,7 @@ enum class GpuBlockSizeCategory : chi::u32 {
 };
 
 /** Block sizes in bytes for each GPU category */
-static constexpr chi::u64 kGpuBlockSizes[] = {
+__device__ static constexpr chi::u64 kGpuBlockSizes[] = {
     4096,       // 4KB
     65536,      // 64KB
     131072,     // 128KB
@@ -94,19 +94,19 @@ class GpuRuntime : public chi::gpu::Container {
     return -1;  // larger than any cached size
   }
 
-  HSHM_GPU_FUN chi::gpu::TaskResume Update(hipc::FullPtr<UpdateTask> task,
+  HSHM_GPU_FUN void Update(hipc::FullPtr<UpdateTask> task,
                             chi::gpu::RunContext &rctx);
 
-  HSHM_GPU_FUN chi::gpu::TaskResume AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task,
+  HSHM_GPU_FUN void AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task,
                                     chi::gpu::RunContext &rctx);
 
-  HSHM_GPU_FUN chi::gpu::TaskResume FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
+  HSHM_GPU_FUN void FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
                                 chi::gpu::RunContext &rctx);
 
-  HSHM_GPU_FUN chi::gpu::TaskResume Write(hipc::FullPtr<WriteTask> task,
+  HSHM_GPU_FUN void Write(hipc::FullPtr<WriteTask> task,
                            chi::gpu::RunContext &rctx);
 
-  HSHM_GPU_FUN chi::gpu::TaskResume Read(hipc::FullPtr<ReadTask> task,
+  HSHM_GPU_FUN void Read(hipc::FullPtr<ReadTask> task,
                           chi::gpu::RunContext &rctx);
 
   HSHM_GPU_FUN chi::TaskStat GetTaskStats(chi::u32 method_id) const {

@@ -14,9 +14,9 @@ namespace chimaera::bdev {
 // Update
 // ---------------------------------------------------------------------------
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Update(hipc::FullPtr<UpdateTask> task,
+HSHM_GPU_FUN void GpuRuntime::Update(hipc::FullPtr<UpdateTask> task,
                                       chi::gpu::RunContext &rctx) {
-  if (!chi::IpcManager::IsWarpScheduler()) { (void)rctx; co_return; }
+  if (!chi::IpcManager::IsWarpScheduler()) { (void)rctx; return; }
   hbm_ptr_    = task->hbm_ptr_;
   pinned_ptr_ = task->pinned_ptr_;
   hbm_size_   = task->hbm_size_;
@@ -36,22 +36,21 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Update(hipc::FullPtr<UpdateTask> t
   }
   task->return_code_ = 0;
   (void)rctx;
-  co_return;
 }
 
 // ---------------------------------------------------------------------------
 // AllocateBlocks
 // ---------------------------------------------------------------------------
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::AllocateBlocks(
+HSHM_GPU_FUN void GpuRuntime::AllocateBlocks(
     hipc::FullPtr<AllocateBlocksTask> task,
     chi::gpu::RunContext &rctx) {
-  if (!chi::IpcManager::IsWarpScheduler()) { (void)rctx; co_return; }
+  if (!chi::IpcManager::IsWarpScheduler()) { (void)rctx; return; }
   chi::u64 req = task->size_;
   if (req == 0 || total_size_ == 0) {
     task->return_code_ = 0;
     (void)rctx;
-    co_return;
+    return;
   }
 
   int cat = FindSizeCategory(req);
@@ -85,7 +84,7 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::AllocateBlocks(
                 (unsigned long long)(-(long long)alloc_size));
       task->return_code_ = 1;
       (void)rctx;
-      co_return;
+      return;
     }
 
     blk.offset_ = old_pos;
@@ -96,16 +95,15 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::AllocateBlocks(
   task->blocks_.push_back(blk);
   task->return_code_ = 0;
   (void)rctx;
-  co_return;
 }
 
 // ---------------------------------------------------------------------------
 // FreeBlocks
 // ---------------------------------------------------------------------------
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
+HSHM_GPU_FUN void GpuRuntime::FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
                                            chi::gpu::RunContext &rctx) {
-  if (!chi::IpcManager::IsWarpScheduler()) { (void)task; (void)rctx; co_return; }
+  if (!chi::IpcManager::IsWarpScheduler()) { (void)task; (void)rctx; return; }
 
   chi::u32 warp_id = chi::IpcManager::GetWarpId();
   if (warp_id >= num_warps_) warp_id = 0;
@@ -120,15 +118,15 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::FreeBlocks(hipc::FullPtr<FreeBlock
 
   task->return_code_ = 0;
   (void)rctx;
-  co_return;
 }
 
 // ---------------------------------------------------------------------------
 // Write — per-lane stripe copy
 // ---------------------------------------------------------------------------
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
+HSHM_GPU_FUN void GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
                                      chi::gpu::RunContext &rctx) {
+  (void)rctx;
   chi::u32 lane = threadIdx.x % 32;
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
@@ -139,11 +137,11 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
       task->bytes_written_ = task->length_;
       task->return_code_ = 0;
     }
-    co_return;
+    return;
   }
   if (bdev_type_ != kHbm && bdev_type_ != kPinned) {
     if (lane == 0) task->return_code_ = 1;
-    co_return;
+    return;
   }
 
   char *dst_base = reinterpret_cast<char *>(
@@ -194,25 +192,21 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Write(hipc::FullPtr<WriteTask> tas
     }
     __threadfence_system();
     data_off += copy_size;
-
-    if (i + 1 < num_blocks) {
-      co_await chi::gpu::yield(2);
-    }
   }
 
   if (lane == 0) {
     task->bytes_written_ = data_off;
     task->return_code_ = 0;
   }
-  co_return;
 }
 
 // ---------------------------------------------------------------------------
 // Read — per-lane stripe copy
 // ---------------------------------------------------------------------------
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
+HSHM_GPU_FUN void GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
                                     chi::gpu::RunContext &rctx) {
+  (void)rctx;
   chi::u32 lane = threadIdx.x % 32;
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
@@ -223,11 +217,11 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
       task->bytes_read_ = task->length_;
       task->return_code_ = 0;
     }
-    co_return;
+    return;
   }
   if (bdev_type_ != kHbm && bdev_type_ != kPinned) {
     if (lane == 0) task->return_code_ = 1;
-    co_return;
+    return;
   }
 
   char *src_base = reinterpret_cast<char *>(
@@ -278,10 +272,6 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
     }
     __threadfence_system();
     data_off += copy_size;
-
-    if (i + 1 < num_blocks) {
-      co_await chi::gpu::yield(2);
-    }
   }
 
   __threadfence_system();
@@ -290,7 +280,6 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
     task->bytes_read_ = data_off;
     task->return_code_ = 0;
   }
-  co_return;
 }
 
 }  // namespace chimaera::bdev

@@ -47,17 +47,6 @@ add_library(${CHIMAERA_LIB_NAME} SHARED ${CHIMAERA_CPU_SOURCES})
 # Build GPU work orchestrator library if CUDA/ROCm enabled and GPU sources exist
 if(CHIMAERA_GPU_SOURCES)
   if(WRP_CORE_ENABLE_CUDA)
-    # Collect transitive include dirs from dependencies that Clang CUDA
-    # custom commands cannot resolve via generator expressions.
-    set(_CHIMAERA_GPU_EXTRA_INCLUDES "")
-    foreach(_dep yaml-cpp::yaml-cpp ZeroMQ::libzmq)
-      if(TARGET "${_dep}")
-        get_target_property(_dep_incs "${_dep}" INTERFACE_INCLUDE_DIRECTORIES)
-        if(_dep_incs)
-          list(APPEND _CHIMAERA_GPU_EXTRA_INCLUDES ${_dep_incs})
-        endif()
-      endif()
-    endforeach()
     add_cuda_library(${CHIMAERA_LIB_NAME}_gpu SHARED TRUE ${CHIMAERA_GPU_SOURCES}
       INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -68,7 +57,6 @@ if(CHIMAERA_GPU_SOURCES)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../context-transfer-engine/core/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../compiler/include
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${_CHIMAERA_GPU_EXTRA_INCLUDES}
     )
     target_include_directories(${CHIMAERA_LIB_NAME}_gpu PUBLIC
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
@@ -111,12 +99,12 @@ target_include_directories(${CHIMAERA_LIB_NAME} PUBLIC
 # the GPU library link. They need the CUDA toolkit include directory so that
 # cuda_runtime_api.h (host-callable CUDA runtime functions) can be found.
 if(WRP_CORE_ENABLE_CUDA AND CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES)
+  find_package(CUDAToolkit QUIET)
   target_include_directories(${CHIMAERA_LIB_NAME} PUBLIC
     ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
   )
   # Link cudart for host-callable CUDA runtime functions used in ipc_manager.cc etc.
-  set_property(TARGET ${CHIMAERA_LIB_NAME} APPEND PROPERTY
-    LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart")
+  target_link_libraries(${CHIMAERA_LIB_NAME} PUBLIC CUDA::cudart)
 endif()
 
 # Add runtime definition

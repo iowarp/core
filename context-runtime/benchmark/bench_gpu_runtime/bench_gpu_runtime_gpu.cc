@@ -51,7 +51,10 @@
 #include <chimaera/task.h>
 #include <chimaera/MOD_NAME/MOD_NAME_client.h>
 #include <chimaera/MOD_NAME/MOD_NAME_tasks.h>
+#include <chimaera/MOD_NAME/MOD_NAME_gpu_runtime.h>
 #include <chimaera/MOD_NAME/autogen/MOD_NAME_methods.h>
+#include <chimaera/bdev/bdev_client.h>
+#include <chimaera/bdev/bdev_tasks.h>
 #include <chimaera/local_task_archives.h>
 #include <wrp_cte/core/core_tasks.h>
 #include <wrp_cte/core/core_client.h>
@@ -68,6 +71,94 @@
 #include <thread>
 
 namespace chi_bench {
+
+/**
+ * Zero-copy direct dispatch benchmark.
+ *
+ * Two warps in one block share a pre-allocated task + FutureShm.
+ * Warp 0 (client): writes task fields, signals ready via atomic.
+ * Warp 1 (orchestrator): reads task in-place, writes result, signals done.
+ * No serialization, no allocation, no queues.
+ */
+struct alignas(128) ZeroCopySlot {
+  chimaera::MOD_NAME::GpuSubmitTask task;
+  volatile unsigned int ready;   // client → orch: iteration number
+  volatile unsigned int done;    // orch → client: iteration number
+};
+
+__global__ void gpu_bench_zerocopy_kernel(
+    ZeroCopySlot *slot, chi::u32 total_tasks, int *d_done) {
+  int warp_id = threadIdx.x / 32;
+  int lane = threadIdx.x % 32;
+
+  // Init
+  if (threadIdx.x == 0) {
+    slot->ready = 0;
+    slot->done = 0;
+    slot->task.test_value_ = 7;
+    slot->task.gpu_id_ = 0;
+    slot->task.result_value_ = 0;
+  }
+  __syncthreads();
+
+  chi::u32 errors = 0;
+
+  for (chi::u32 i = 0; i < total_tasks; ++i) {
+    if (warp_id == 0) {
+      // === CLIENT WARP ===
+      if (lane == 0) {
+        // Write input fields (reuse task, just reset result)
+        slot->task.result_value_ = 0;
+        __threadfence();
+        // Signal ready
+        atomicExch(const_cast<unsigned int *>(&slot->ready), i + 1);
+      }
+      __syncwarp();
+
+      // Spin-wait for done
+      if (lane == 0) {
+        while (atomicAdd(const_cast<unsigned int *>(&slot->done), 0) != (unsigned)(i + 1)) {}
+        __threadfence();
+        // Check result
+        if (slot->task.result_value_ != 21) ++errors;
+      }
+      __syncwarp();
+
+    } else if (warp_id == 1) {
+      // === ORCHESTRATOR WARP ===
+      // Spin-wait for ready
+      if (lane == 0) {
+        while (atomicAdd(const_cast<unsigned int *>(&slot->ready), 0) != (unsigned)(i + 1)) {}
+        __threadfence();
+      }
+      __syncwarp();
+
+      // Execute task in-place (read fields, compute, write result)
+      if (lane == 0) {
+        slot->task.result_value_ =
+            (slot->task.test_value_ * 3) + slot->task.gpu_id_;
+        __threadfence();
+        // Signal done
+        atomicExch(const_cast<unsigned int *>(&slot->done), i + 1);
+      }
+      __syncwarp();
+    }
+  }
+
+  if (warp_id == 0 && lane == 0) {
+    if (errors > 0) {
+      printf("[ZEROCOPY FAIL] %u/%u errors\n", errors, total_tasks);
+    } else {
+      printf("[ZEROCOPY OK] %u/%u passed\n", total_tasks, total_tasks);
+    }
+  }
+
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    *d_done = 1;
+    __threadfence_system();
+  }
+}
 
 /**
  * GPU client benchmark kernel.
@@ -104,26 +195,11 @@ __global__ void gpu_bench_client_kernel(
       (chi::u32)0, (chi::u32)7);
 
   if (chi::IpcManager::IsWarpScheduler() && task.IsNull()) {
-    printf("[BENCH FATAL] NewTask returned null — priv alloc too small\n");
+    printf("[BENCH FATAL] blk=%u NewTask returned null — priv alloc too small\n",
+           blockIdx.x);
     atomicAdd(d_done, static_cast<int>(total_warps));
     return;
   }
-
-  // Verify warp convergence works before Send
-  {
-    chi::u32 test_val = chi::IpcManager::GetLaneId();
-    chi::u32 sum = __shfl_sync(0xFFFFFFFF, test_val, 0);
-    if (chi::IpcManager::IsWarpScheduler()) {
-      printf("[BENCH] kDataOffset=%llu kCopySpaceSize=%llu bufcap=%lld\n",
-             (unsigned long long)chi::IpcManager::WarpIpcManager::kDataOffset,
-             (unsigned long long)chi::IpcManager::WarpIpcManager::kCopySpaceSize,
-             (long long)(chi::IpcManager::WarpIpcManager::kCopySpaceSize -
-                         chi::IpcManager::WarpIpcManager::kDataOffset));
-      *d_done = (sum == 0) ? -1 : -99;
-      __threadfence_system();
-    }
-  }
-  __syncwarp();
 
   chi::u32 errors = 0;
   for (chi::u32 i = 0; i < total_tasks; ++i) {
@@ -131,21 +207,13 @@ __global__ void gpu_bench_client_kernel(
       task->result_value_ = 0;  // Reset before each send
     }
     auto future = ipc->Send(task);
-    if (chi::IpcManager::IsWarpScheduler() && i == 0) {
-      *d_done = -2;  // milestone: Send returned
-      __threadfence_system();
-    }
     future.Wait(0, /*reuse_task=*/true);
-    if (chi::IpcManager::IsWarpScheduler() && i == 0) {
-      *d_done = -3;  // milestone: Wait returned
-      __threadfence_system();
-    }
     // Verify: GpuSubmit computes test_value*3 + gpu_id = 7*3+0 = 21
     if (chi::IpcManager::IsWarpScheduler()) {
       if (task->result_value_ != 21) {
         if (errors == 0) {
-          printf("[BENCH ERROR] task %u: expected result=21, got %u (rc=%d)\n",
-                 i, (unsigned)task->result_value_,
+          printf("[BENCH ERROR] blk=%u task %u: expected result=21, got %u (rc=%d)\n",
+                 blockIdx.x, i, (unsigned)task->result_value_,
                  (int)task->return_code_);
         }
         ++errors;
@@ -154,22 +222,18 @@ __global__ void gpu_bench_client_kernel(
   }
 
   if (chi::IpcManager::IsWarpScheduler() && errors > 0) {
-    printf("[BENCH FAIL] %u/%u tasks returned wrong result\n",
-           errors, total_tasks);
+    printf("[BENCH FAIL] blk=%u %u/%u tasks returned wrong result\n",
+           blockIdx.x, errors, total_tasks);
   }
 
   // Free the reused task after the loop
   ipc->DelTask(task);
 
-  // All warps signal completion via lane 0
+  // All warps signal completion via atomicAdd — no reset race
   __syncwarp();
   if (chi::IpcManager::IsWarpScheduler()) {
-    *d_done = 0;  // Reset from milestone values before signaling
     __threadfence_system();
-    int prev = atomicAdd(d_done, 1);
-    if (prev == static_cast<int>(total_warps) - 1) {
-      __threadfence_system();
-    }
+    atomicAdd(d_done, 1);
   }
 }
 
@@ -490,10 +554,8 @@ __global__ void gpu_bench_alloc_serde_kernel(
  *   8. SerializeOut (warp-parallel)    — deserialize output fields
  *   9. DelTask + cleanup               — free task memory
  *
- * NOTE: This kernel is currently disabled — it uses the old SendDevice/RecvDevice
- * transport which has been removed. Needs rewrite for the new direct copy_space path.
+ * Standalone serde pipeline test using the actual GpuRuntime container.
  */
-#if 0
 __global__ void gpu_bench_serde_kernel(
     chi::IpcManagerGpu gpu_info,
     chi::PoolId pool_id,
@@ -503,400 +565,127 @@ __global__ void gpu_bench_serde_kernel(
     chi::u32 total_threads) {
   CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
 
+  using GpuSubmitTask = chimaera::MOD_NAME::GpuSubmitTask;
+  using WarpMgr = chi::IpcManager::WarpIpcManager;
   auto *ipc = CHI_IPC;
   chi::u32 lane = chi::IpcManager::GetLaneId();
+  constexpr size_t kCopySpaceSize = WarpMgr::kCopySpaceSize;
 
-  // Accumulators (lane 0 only records times)
-  long long t_new_task = 0, t_warp_setup = 0, t_serialize_in = 0;
-  long long t_shm_send = 0, t_fence_push = 0;
-  long long t_shm_recv = 0, t_serialize_out = 0;
-  long long t_del_task = 0;
-  // SendDevice sub-breakdown
-  long long t_send_alloc = 0, t_send_frame = 0, t_send_write = 0;
-  // RecvDevice sub-breakdown
-  long long t_recv_alloc = 0, t_recv_read = 0, t_recv_deser = 0;
-  long long tc;
+  // Construct the GpuRuntime container (sets function pointer table)
+  chimaera::MOD_NAME::GpuRuntime container;
+  container.pool_id_ = pool_id;
 
-  // Allocate task + WarpIpcManager once before the loop (reused every iteration)
-  unsigned long long mgr_ull = 0, task_ull = 0, fshm_ull = 0;
+  // Allocate client task (with co-located FutureShm + copy_space)
+  hipc::FullPtr<GpuSubmitTask> client_task;
   chi::FutureShm *fshm = nullptr;
-  hipc::FullPtr<chimaera::MOD_NAME::GpuSubmitTask> task_fp;
+  WarpMgr *mgr = nullptr;
   if (lane == 0) {
-    task_fp = ipc->NewTask<chimaera::MOD_NAME::GpuSubmitTask>(
+    client_task = ipc->NewTask<GpuSubmitTask>(
         chi::CreateTaskId(), pool_id, chi::PoolQuery::Local(),
-        (chi::u32)0, (chi::u32)0);
-    auto *mgr = ipc->GetWarpManager();
-    fshm = chi::IpcManager::GetTaskFutureShm(task_fp.ptr_);
-    mgr_ull = reinterpret_cast<unsigned long long>(mgr);
-    task_ull = reinterpret_cast<unsigned long long>(task_fp.ptr_);
-    fshm_ull = reinterpret_cast<unsigned long long>(fshm);
+        (chi::u32)0, (chi::u32)7);
+    fshm = chi::IpcManager::GetTaskFutureShm(client_task.ptr_);
+    mgr = ipc->GetWarpManager();
   }
+  unsigned long long mgr_ull = reinterpret_cast<unsigned long long>(mgr);
+  unsigned long long task_ull = reinterpret_cast<unsigned long long>(client_task.ptr_);
   mgr_ull = hipc::shfl_sync_u64(0xFFFFFFFF, mgr_ull, 0);
   task_ull = hipc::shfl_sync_u64(0xFFFFFFFF, task_ull, 0);
-  fshm_ull = hipc::shfl_sync_u64(0xFFFFFFFF, fshm_ull, 0);
 
+  int errors = 0;
   for (chi::u32 i = 0; i < total_tasks; ++i) {
-    // ============================================================
-    // SEND side (mirrors SendGpu with task reuse)
-    // ============================================================
+    auto *m = reinterpret_cast<WarpMgr *>(mgr_ull);
+    auto *t = reinterpret_cast<GpuSubmitTask *>(task_ull);
 
-    // Step 2: WarpMgr + FutureShm reset (no NewTask — task is reused)
+    // === CLIENT: Serialize input into copy_space (mirrors SendGpu) ===
     if (lane == 0) {
-      tc = clock64();
-      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull);
-      mgr->save_ar_.Reset(chi::LocalMsgType::kSerializeIn);
-      mgr->save_ar_.SetWarpConverged(true);
-
-      fshm->Reset(task_fp->pool_id_, task_fp->method_);
-      fshm->flags_.SetBits(chi::FutureShm::FUTURE_COPY_FROM_CLIENT);
-      fshm->flags_.SetBits(chi::FutureShm::FUTURE_DEVICE_SCOPE);
-      fshm->input_.copy_space_size_.store(
-          chi::IpcManager::WarpIpcManager::kCopySpaceSize);
-      fshm->output_.copy_space_size_.store(
-          chi::IpcManager::WarpIpcManager::kCopySpaceSize);
-      t_warp_setup += clock64() - tc;
-    }
-
-    // Step 3: Warp-parallel SerializeIn
-    mgr_ull = hipc::shfl_sync_u64(0xFFFFFFFF, mgr_ull, 0);
-    task_ull = hipc::shfl_sync_u64(0xFFFFFFFF, task_ull, 0);
-    fshm_ull = hipc::shfl_sync_u64(0xFFFFFFFF, fshm_ull, 0);
-
-    tc = clock64();
-    if (mgr_ull && task_ull) {
-      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull);
-      auto *task = reinterpret_cast<chimaera::MOD_NAME::GpuSubmitTask *>(task_ull);
-      task->SerializeIn(mgr->save_ar_);
+      fshm->Reset(client_task->pool_id_, client_task->method_);
+      fshm->flags_.SetBits(chi::FutureShm::FUTURE_COPY_FROM_CLIENT |
+                            chi::FutureShm::FUTURE_DEVICE_SCOPE);
+      fshm->input_.copy_space_size_.store(kCopySpaceSize);
+      fshm->output_.copy_space_size_.store(kCopySpaceSize);
+      client_task->test_value_ = 7;
+      client_task->gpu_id_ = 0;
+      client_task->result_value_ = 0;
+      m->BindSave(fshm->copy_space, chi::LocalMsgType::kSerializeIn);
     }
     __syncwarp();
-    if (lane == 0) t_serialize_in += clock64() - tc;
-
-    // Step 4: ShmTransport::SendDevice (warp-parallel via prealloc path)
-    if (lane == 0 && mgr_ull && fshm_ull) {
-      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull);
-      fshm = reinterpret_cast<chi::FutureShm *>(fshm_ull);
-      mgr->save_ar_.SetWarpConverged(false);
-      fshm->input_.copy_space_size_.store(
-          chi::IpcManager::WarpIpcManager::kCopySpaceSize);
-    }
-    // All lanes participate in SendDevice (warp-parallel copy)
-    tc = clock64();
-    if (mgr_ull && fshm_ull) {
-      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull);
-      fshm = reinterpret_cast<chi::FutureShm *>(fshm_ull);
-      hshm::lbm::LbmContext ctx;
-      ctx.copy_space = fshm->copy_space;
-      ctx.shm_info_ = &fshm->input_;
-      { static __shared__ char s_meta[256]; ctx.meta_buf_ = s_meta; }
-      ctx.meta_buf_size_ = 256;
-      ctx.warp_parallel_ = true;
-      hshm::lbm::ShmTransport::SendDevice(mgr->save_ar_, ctx);
+    if (m && t) {
+      m->save_ar_.SetWarpConverged(true);
+      t->SerializeIn(m->save_ar_);
+      __syncwarp();
+      if (lane == 0) m->save_ar_.SetWarpConverged(false);
     }
     __syncwarp();
     if (lane == 0) {
-      t_shm_send += clock64() - tc;
-      // Step 5: threadfence
-      tc = clock64();
       hipc::threadfence();
-      t_fence_push += clock64() - tc;
+      fshm->input_.total_written_.store(m->save_ar_.GetSerializedSize());
     }
     __syncwarp();
 
-    // ============================================================
-    // RECV side (mirrors RecvGpu)
-    // ============================================================
-
-    // Step 6: Simulate FUTURE_COMPLETE + write mock output to copy_space
-    // In the real path the orchestrator does this. Here we just mark complete
-    // and write a small output (result_value_) so RecvDevice has data.
+    // === ORCHESTRATOR: AllocLoadDeser + Run + SaveTask (mirrors runtime) ===
+    size_t data_size = 0;
+    int valid = 0;
     if (lane == 0) {
-      // Write mock output: SerializeOut produces return_code_ + completer_ +
-      // result_value_ Simulate by doing a SendDevice with output data
-      chi::priv::vector<char> out_buf;
-      out_buf.reserve(256);
-      chi::DefaultSaveArchive out_save(chi::LocalMsgType::kSerializeOut, out_buf);
-      task_fp->SerializeOut(out_save);
-      hshm::lbm::LbmContext out_ctx;
-      out_ctx.copy_space = fshm->copy_space;
-      out_ctx.shm_info_ = &fshm->output_;
-      { static __shared__ char s_meta_out[256]; out_ctx.meta_buf_ = s_meta_out; }
-      out_ctx.meta_buf_size_ = 256;
-      hshm::lbm::ShmTransport::SendDevice(out_save, out_ctx);
+      size_t tw = fshm->input_.total_written_.load_device();
+      size_t cs = fshm->input_.copy_space_size_.load_device();
+      if (tw > 0 && tw <= cs) { data_size = tw; valid = 1; }
+    }
+    valid = __shfl_sync(0xFFFFFFFF, valid, 0);
+    hipc::threadfence();
+
+    hipc::FullPtr<chi::Task> task_ptr = hipc::FullPtr<chi::Task>::GetNull();
+    if (lane == 0 && valid) {
+      m->BindLoad(fshm->copy_space, data_size);
+      task_ptr = container.LocalAllocLoadDeser(
+          fshm->method_id_, m->load_ar_);
+    }
+    __syncwarp();
+
+    // Run
+    if (lane == 0 && !task_ptr.IsNull()) {
+      auto *ot = task_ptr.template Cast<GpuSubmitTask>().ptr_;
+      ot->result_value_ = (ot->test_value_ * 3) + ot->gpu_id_;
+    }
+    __syncwarp();
+
+    // SaveTask + set total_written
+    if (lane == 0 && !task_ptr.IsNull()) {
+      chi::u32 method = fshm->method_id_;
+      m->BindSave(fshm->copy_space, chi::LocalMsgType::kSerializeOut);
+      container.LocalSaveTask(method, m->save_ar_, task_ptr);
       hipc::threadfence();
-      fshm->flags_.SetBits(chi::FutureShm::FUTURE_COMPLETE);
+      fshm->output_.total_written_.store(m->save_ar_.GetSerializedSize());
+      container.LocalDestroyTask(method, task_ptr);
+      ipc->DelTask(task_ptr);
     }
     __syncwarp();
 
-    // Step 7: ShmTransport::RecvDevice (warp-parallel via prealloc path)
-    unsigned long long mgr_ull2 = 0;
-    int has_output = 0;
+    // === CLIENT: Read output (mirrors RecvGpu) ===
     if (lane == 0) {
-      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull);
-      size_t output_written = fshm->output_.total_written_.load_device();
-      if (output_written > 0) {
-        mgr_ull2 = mgr_ull;
-        has_output = 1;
+      size_t output_tw = fshm->output_.total_written_.load_device();
+      hipc::threadfence();
+      m->BindLoad(fshm->copy_space, output_tw);
+      m->load_ar_.SetMsgType(chi::LocalMsgType::kSerializeOut);
+      client_task->SerializeOut(m->load_ar_);
+      chi::u32 expected = 7 * 3 + 0;
+      if (client_task->result_value_ != expected) {
+        printf("[SERDE FAIL] task %u: expected=%u got=%u rc=%d\n",
+               i, expected, (unsigned)client_task->result_value_,
+               (int)client_task->return_code_);
+        ++errors;
       }
     }
-    // All lanes participate in RecvDevice (warp-parallel copy)
-    mgr_ull2 = hipc::shfl_sync_u64(0xFFFFFFFF, mgr_ull2, 0);
-    has_output = __shfl_sync(0xFFFFFFFF, has_output, 0);
-    fshm_ull = hipc::shfl_sync_u64(0xFFFFFFFF, fshm_ull, 0);
-    tc = clock64();
-    if (has_output && mgr_ull2) {
-      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull2);
-      fshm = reinterpret_cast<chi::FutureShm *>(fshm_ull);
-      hshm::lbm::LbmContext ctx;
-      ctx.copy_space = fshm->copy_space;
-      ctx.shm_info_ = &fshm->output_;
-      { static __shared__ char s_meta[256]; ctx.meta_buf_ = s_meta; }
-      ctx.meta_buf_size_ = 256;
-      ctx.warp_parallel_ = true;
-      hshm::lbm::ShmTransport::RecvDevice(mgr->load_ar_, ctx);
-    }
-    __syncwarp();
-    if (lane == 0) {
-      t_shm_recv += clock64() - tc;
-      if (has_output) {
-        auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull2);
-        mgr->load_ar_.SetMsgType(chi::LocalMsgType::kSerializeOut);
-        mgr->load_ar_.SetWarpConverged(true);
-      }
-    }
-
-    // Step 8: Warp-parallel SerializeOut
-    mgr_ull2 = hipc::shfl_sync_u64(0xFFFFFFFF, mgr_ull2, 0);
-    task_ull = hipc::shfl_sync_u64(0xFFFFFFFF, task_ull, 0);
-    has_output = __shfl_sync(0xFFFFFFFF, has_output, 0);
-
-    tc = clock64();
-    if (has_output) {
-      auto *mgr = reinterpret_cast<chi::IpcManager::WarpIpcManager *>(mgr_ull2);
-      auto *task = reinterpret_cast<chimaera::MOD_NAME::GpuSubmitTask *>(task_ull);
-      task->SerializeOut(mgr->load_ar_);
-    }
-    __syncwarp();
-    if (lane == 0) t_serialize_out += clock64() - tc;
-
     __syncwarp();
   }
 
-  // Free the reused task after the loop
-  if (lane == 0) {
-    ipc->DelTask(task_fp);
-  }
+  if (lane == 0) { ipc->DelTask(client_task); }
   __syncwarp();
 
-  // === Sub-benchmarks: isolate SendDevice/RecvDevice internals ===
-  // Run only on lane 0 after main loop to avoid interfering with main timings.
-  if (lane == 0) {
-    auto *mgr = ipc->GetWarpManager();
-    auto *fshm_sub = chi::IpcManager::GetTaskFutureShm(task_fp.ptr_);
-
-    // Sub-benchmark: meta_buf alloc+reserve (the vector inside SendDevice)
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      tc = clock64();
-      chi::priv::vector<char> meta_buf(mgr->save_ar_.alloc_);
-      meta_buf.reserve(chi::IpcManager::WarpIpcManager::kCopySpaceSize);
-      t_send_alloc += clock64() - tc;
-    }
-
-    // Sub-benchmark: LocalSerialize framing (ar(save_ar) + Finalize)
-    // Re-serialize the last save_ar state (still valid from main loop)
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      chi::priv::vector<char> meta_buf(mgr->save_ar_.alloc_);
-      meta_buf.reserve(chi::IpcManager::WarpIpcManager::kCopySpaceSize);
-      tc = clock64();
-      hshm::ipc::LocalSerialize<chi::priv::vector<char>> ar(meta_buf);
-      ar(mgr->save_ar_);
-      ar.Finalize();
-      t_send_frame += clock64() - tc;
-    }
-
-    // Sub-benchmark: WriteTransferDevice (memcpy to copy_space + atomics)
-    // Prepare a fixed-size source buffer and fresh copy_space
-    {
-      chi::priv::vector<char> meta_buf(mgr->save_ar_.alloc_);
-      meta_buf.reserve(chi::IpcManager::WarpIpcManager::kCopySpaceSize);
-      hshm::ipc::LocalSerialize<chi::priv::vector<char>> ar(meta_buf);
-      ar(mgr->save_ar_);
-      ar.Finalize();
-      uint32_t meta_len = static_cast<uint32_t>(meta_buf.size());
-
-      for (chi::u32 i = 0; i < total_tasks; ++i) {
-        // Reset copy_space ring buffer state for each iteration
-        new (fshm_sub) chi::FutureShm();
-        fshm_sub->input_.copy_space_size_.store(
-            chi::IpcManager::WarpIpcManager::kCopySpaceSize);
-        hshm::lbm::LbmContext ctx;
-        ctx.copy_space = fshm_sub->copy_space;
-        ctx.shm_info_ = &fshm_sub->input_;
-
-        tc = clock64();
-        // This is what WriteTransferDevice does: memcpy + threadfence + atomic store
-        size_t ring_size = ctx.shm_info_->copy_space_size_.load();
-        memcpy(ctx.copy_space, &meta_len, sizeof(meta_len));
-        memcpy(ctx.copy_space + sizeof(meta_len), meta_buf.data(), meta_len);
-        hipc::threadfence();
-        ctx.shm_info_->total_written_.store(sizeof(meta_len) + meta_len);
-        t_send_write += clock64() - tc;
-      }
-    }
-
-    // Sub-benchmark: ReadTransferDevice (memcpy from copy_space + atomics)
-    // similar to above but reading
-    {
-      // Prepare copy_space with valid data once
-      mgr->save_ar_.Reset(chi::LocalMsgType::kSerializeIn);
-      auto task_sub = ipc->NewTask<chimaera::MOD_NAME::GpuSubmitTask>(
-          chi::CreateTaskId(), pool_id, chi::PoolQuery::Local(),
-          (chi::u32)0, (chi::u32)999);
-      task_sub->SerializeIn(mgr->save_ar_);
-      new (fshm_sub) chi::FutureShm();
-      fshm_sub->input_.copy_space_size_.store(
-          chi::IpcManager::WarpIpcManager::kCopySpaceSize);
-      hshm::lbm::LbmContext prep_ctx;
-      prep_ctx.copy_space = fshm_sub->copy_space;
-      prep_ctx.shm_info_ = &fshm_sub->input_;
-      { static __shared__ char s_meta_prep[256]; prep_ctx.meta_buf_ = s_meta_prep; }
-      prep_ctx.meta_buf_size_ = 256;
-      hshm::lbm::ShmTransport::SendDevice(mgr->save_ar_, prep_ctx);
-      size_t written = fshm_sub->input_.total_written_.load();
-
-      for (chi::u32 i = 0; i < total_tasks; ++i) {
-        // Reset read position but keep written data
-        fshm_sub->input_.total_read_.store(0);
-        hshm::lbm::LbmContext ctx;
-        ctx.copy_space = fshm_sub->copy_space;
-        ctx.shm_info_ = &fshm_sub->input_;
-
-        tc = clock64();
-        // Simulate ReadTransferDevice: memcpy from copy_space
-        size_t ring_size = ctx.shm_info_->copy_space_size_.load();
-        char local_buf[512];
-        memcpy(local_buf, ctx.copy_space, written);
-        ctx.shm_info_->total_read_.store(written);
-        t_recv_read += clock64() - tc;
-      }
-
-      // Sub-benchmark: LocalDeserialize framing (from meta_buf back to load_ar)
-      for (chi::u32 i = 0; i < total_tasks; ++i) {
-        fshm_sub->input_.total_read_.store(0);
-        hshm::lbm::LbmContext ctx;
-        ctx.copy_space = fshm_sub->copy_space;
-        ctx.shm_info_ = &fshm_sub->input_;
-        { static __shared__ char s_meta[256]; ctx.meta_buf_ = s_meta; }
-        ctx.meta_buf_size_ = 256;
-
-        tc = clock64();
-        hshm::lbm::ShmTransport::RecvDevice(mgr->load_ar_, ctx);
-        t_recv_deser += clock64() - tc;
-      }
-
-      ipc->DelTask(task_sub);
-    }
-  }
-  __syncwarp();
-
-  // === RunContext sub-benchmarks (mirrors orchestrator AllocContext/FreeContext) ===
-  // RunContext is ~612 bytes. We measure alloc+memset+free at that size.
-  static constexpr size_t kRunContextSize = 640;  // rounded up
-  long long t_rctx_alloc = 0, t_rctx_memset = 0;
-  long long t_rctx_free = 0, t_rctx_total = 0;
-  if (lane == 0) {
-    for (chi::u32 i = 0; i < total_tasks; ++i) {
-      // Allocate
-      tc = clock64();
-      auto alloc_result = ipc->gpu_alloc_->AllocateObjs<char>(kRunContextSize);
-      t_rctx_alloc += clock64() - tc;
-
-      char *ctx = alloc_result.ptr_;
-      if (!ctx) continue;
-
-      // Memset (simulates struct copy + zero of 64 coro handles)
-      tc = clock64();
-      memset(ctx, 0, kRunContextSize);
-      t_rctx_memset += clock64() - tc;
-
-      // Free
-      tc = clock64();
-      ipc->gpu_alloc_->Free(alloc_result);
-      t_rctx_free += clock64() - tc;
-    }
-    t_rctx_total = t_rctx_alloc + t_rctx_memset + t_rctx_free;
-  }
-  __syncwarp();
-
-  // Print breakdown (block 0, lane 0 only)
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    printf("--- SendGpu + RecvGpu Client-Side Breakdown (GpuSubmitTask) ---\n");
-    printf("  SEND:\n");
-    printf("    1. NewTask<GpuSubmit>:    %llu  (%llu/task)\n",
-           (unsigned long long)t_new_task,
-           (unsigned long long)(t_new_task / total_tasks));
-    printf("    2. WarpMgr+FutureShm:    %llu  (%llu/task)\n",
-           (unsigned long long)t_warp_setup,
-           (unsigned long long)(t_warp_setup / total_tasks));
-    printf("    3. SerializeIn (warp):   %llu  (%llu/task)\n",
-           (unsigned long long)t_serialize_in,
-           (unsigned long long)(t_serialize_in / total_tasks));
-    printf("    4. ShmTransport::Send:   %llu  (%llu/task)\n",
-           (unsigned long long)t_shm_send,
-           (unsigned long long)(t_shm_send / total_tasks));
-    printf("    5. threadfence:          %llu  (%llu/task)\n",
-           (unsigned long long)t_fence_push,
-           (unsigned long long)(t_fence_push / total_tasks));
-    long long t_send = t_new_task + t_warp_setup + t_serialize_in +
-                       t_shm_send + t_fence_push;
-    printf("    SEND TOTAL:              %llu  (%llu/task)\n",
-           (unsigned long long)t_send,
-           (unsigned long long)(t_send / total_tasks));
-    printf("  RECV:\n");
-    printf("    7. ShmTransport::Recv:   %llu  (%llu/task)\n",
-           (unsigned long long)t_shm_recv,
-           (unsigned long long)(t_shm_recv / total_tasks));
-    printf("    8. SerializeOut (warp):  %llu  (%llu/task)\n",
-           (unsigned long long)t_serialize_out,
-           (unsigned long long)(t_serialize_out / total_tasks));
-    long long t_recv = t_shm_recv + t_serialize_out;
-    printf("    RECV TOTAL:              %llu  (%llu/task)\n",
-           (unsigned long long)t_recv,
-           (unsigned long long)(t_recv / total_tasks));
-    long long total = t_send + t_recv;
-    printf("  CLIENT TOTAL:              %llu  (%llu/task)\n",
-           (unsigned long long)total,
-           (unsigned long long)(total / total_tasks));
-    printf("\n--- ShmTransport Sub-Breakdown (isolated micro-benchmarks) ---\n");
-    printf("  SendDevice internals:\n");
-    printf("    meta_buf alloc+reserve:  %llu  (%llu/task)\n",
-           (unsigned long long)t_send_alloc,
-           (unsigned long long)(t_send_alloc / total_tasks));
-    printf("    LocalSerialize framing:  %llu  (%llu/task)\n",
-           (unsigned long long)t_send_frame,
-           (unsigned long long)(t_send_frame / total_tasks));
-    printf("    memcpy to copy_space:    %llu  (%llu/task)\n",
-           (unsigned long long)t_send_write,
-           (unsigned long long)(t_send_write / total_tasks));
-    printf("  RecvDevice internals:\n");
-    printf("    memcpy from copy_space:  %llu  (%llu/task)\n",
-           (unsigned long long)t_recv_read,
-           (unsigned long long)(t_recv_read / total_tasks));
-    printf("    RecvDevice full:         %llu  (%llu/task)\n",
-           (unsigned long long)t_recv_deser,
-           (unsigned long long)(t_recv_deser / total_tasks));
-    printf("\n--- RunContext Sub-Breakdown (640B alloc, mirrors orchestrator) ---\n");
-    printf("  Allocate 640B:             %llu  (%llu/task)\n",
-           (unsigned long long)t_rctx_alloc,
-           (unsigned long long)(t_rctx_alloc / total_tasks));
-    printf("  Memset 640B:               %llu  (%llu/task)\n",
-           (unsigned long long)t_rctx_memset,
-           (unsigned long long)(t_rctx_memset / total_tasks));
-    printf("  Free 640B:                 %llu  (%llu/task)\n",
-           (unsigned long long)t_rctx_free,
-           (unsigned long long)(t_rctx_free / total_tasks));
-    printf("  TOTAL:                     %llu  (%llu/task)\n",
-           (unsigned long long)t_rctx_total,
-           (unsigned long long)(t_rctx_total / total_tasks));
+    if (errors == 0)
+      printf("[SERDE OK] %u/%u tasks passed\n", total_tasks, total_tasks);
+    else
+      printf("[SERDE FAIL] %d/%u tasks failed\n", errors, total_tasks);
   }
 
   __threadfence();
@@ -905,36 +694,525 @@ __global__ void gpu_bench_serde_kernel(
     __threadfence_system();
   }
 }
-#endif  // disabled gpu_bench_serde_kernel (uses removed SendDevice/RecvDevice)
+
+}  // namespace chi_bench
+
+/**
+ * Single Gray-Scott stencil iteration kernel.
+ * 5-point Laplacian, feed/kill reaction on NxN grid.
+ * Launched once per iteration from host for accurate timing.
+ */
+__global__ void gpu_bench_grayscott_kernel(
+    float *U, float *V, float *U2, float *V2,
+    int N) {
+  const float Du = 0.16f, Dv = 0.08f;
+  const float F = 0.06f, k = 0.062f;
+  const float dt = 1.0f;
+
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  int total_threads = gridDim.x * blockDim.x;
+  int cells = N * N;
+
+  for (int idx = tid; idx < cells; idx += total_threads) {
+    int x = idx % N;
+    int y = idx / N;
+
+    int xp = (x + 1) % N, xm = (x - 1 + N) % N;
+    int yp = (y + 1) % N, ym = (y - 1 + N) % N;
+
+    float u = U[idx];
+    float v = V[idx];
+    float lap_u = U[ym * N + x] + U[yp * N + x] +
+                  U[y * N + xm] + U[y * N + xp] - 4.0f * u;
+    float lap_v = V[ym * N + x] + V[yp * N + x] +
+                  V[y * N + xm] + V[y * N + xp] - 4.0f * v;
+
+    float uvv = u * v * v;
+    U2[idx] = u + dt * (Du * lap_u - uvv + F * (1.0f - u));
+    V2[idx] = v + dt * (Dv * lap_v + uvv - (F + k) * v);
+  }
+}
+
+/**
+ * Warp-to-warp transfer benchmark.
+ *
+ * Two warps in one block. Warp 0 (sender) writes data to a shared
+ * global buffer, does threadfence, sets a flag. Warp 1 (receiver)
+ * spins on the flag, reads the data. Measures raw round-trip: send +
+ * signal + poll + receive + signal back.
+ *
+ * Layout: [256B payload] [flag_ready] [flag_done] [results]
+ */
+__global__ void gpu_bench_warp_xfer_kernel(
+    char *buffer, int total_iters, int payload_bytes) {
+  int warp_id = threadIdx.x / 32;
+  int lane = threadIdx.x % 32;
+
+  // Shared flag in global memory (after payload)
+  volatile unsigned int *flag_ready =
+      reinterpret_cast<volatile unsigned int *>(buffer + payload_bytes);
+  volatile unsigned int *flag_done = flag_ready + 1;
+  // Result storage
+  long long *results = reinterpret_cast<long long *>(
+      const_cast<unsigned int *>(flag_done) + 1);
+
+  // Init flags
+  if (threadIdx.x == 0) {
+    *flag_ready = 0;
+    *flag_done = 0;
+  }
+  __syncthreads();
+
+  long long t_send = 0, t_recv = 0, t_roundtrip = 0;
+  long long tc;
+
+  for (int i = 0; i < total_iters; ++i) {
+    if (warp_id == 0) {
+      // === SENDER (warp 0) ===
+      tc = clock64();
+
+      // Write payload (warp-cooperative: each lane writes 4/8 bytes)
+      int bytes_per_lane = payload_bytes / 32;
+      if (bytes_per_lane >= 4 && lane < payload_bytes / bytes_per_lane) {
+        for (int b = 0; b < bytes_per_lane; b += 4) {
+          int off = lane * bytes_per_lane + b;
+          *reinterpret_cast<unsigned int *>(buffer + off) = (unsigned int)(i + off);
+        }
+      }
+      __threadfence();
+
+      // Signal ready
+      if (lane == 0) {
+        atomicExch(const_cast<unsigned int *>(flag_ready), i + 1);
+      }
+
+      if (lane == 0) t_send += clock64() - tc;
+
+      // Wait for receiver to ack
+      if (lane == 0) {
+        tc = clock64();
+        while (atomicAdd(const_cast<unsigned int *>(flag_done), 0) != (unsigned)(i + 1)) {}
+        t_roundtrip += clock64() - tc;
+      }
+      __syncwarp();
+
+    } else if (warp_id == 1) {
+      // === RECEIVER (warp 1) ===
+
+      // Spin on flag
+      if (lane == 0) {
+        while (atomicAdd(const_cast<unsigned int *>(flag_ready), 0) != (unsigned)(i + 1)) {}
+      }
+      __syncwarp();
+      __threadfence();
+
+      tc = clock64();
+      // Read payload
+      int bytes_per_lane = payload_bytes / 32;
+      unsigned int checksum = 0;
+      if (bytes_per_lane >= 4 && lane < payload_bytes / bytes_per_lane) {
+        for (int b = 0; b < bytes_per_lane; b += 4) {
+          int off = lane * bytes_per_lane + b;
+          checksum += *reinterpret_cast<volatile unsigned int *>(buffer + off);
+        }
+      }
+      // Prevent dead-code elimination
+      if (checksum == 0xDEADBEEF && lane == 0) printf("x");
+
+      if (lane == 0) t_recv += clock64() - tc;
+
+      // Ack done
+      __threadfence();
+      if (lane == 0) {
+        atomicExch(const_cast<unsigned int *>(flag_done), i + 1);
+      }
+      __syncwarp();
+    }
+  }
+
+  // Store results
+  if (warp_id == 0 && lane == 0) {
+    results[0] = t_send;
+    results[1] = t_roundtrip;
+  }
+  if (warp_id == 1 && lane == 0) {
+    results[2] = t_recv;
+  }
+  __syncthreads();
+
+  if (threadIdx.x == 0) {
+    printf("  %4d bytes:  send=%lld (%lld/iter)  wait_ack=%lld (%lld/iter)  "
+           "recv=%lld (%lld/iter)  total=%lld (%lld/iter)\n",
+           payload_bytes,
+           results[0], results[0] / total_iters,
+           results[1], results[1] / total_iters,
+           results[2], results[2] / total_iters,
+           results[0] + results[1] + results[2],
+           (results[0] + results[1] + results[2]) / total_iters);
+  }
+}
+
+/**
+ * Run warp-to-warp transfer benchmark at various payload sizes.
+ */
+extern "C" int run_gpu_bench_warp_xfer(float *out_elapsed_ms) {
+  const int payload_sizes[] = {32, 64, 128, 256, 512, 1024, 4096};
+  const int num_sizes = sizeof(payload_sizes) / sizeof(payload_sizes[0]);
+  const int iters = 10000;
+
+  // Allocate buffer large enough for biggest payload + flags + results
+  size_t buf_size = 4096 + 64 + 3 * sizeof(long long);
+  char *d_buf;
+  cudaMalloc(&d_buf, buf_size);
+  cudaMemset(d_buf, 0, buf_size);
+
+  printf("\n=== Warp-to-Warp Transfer Latency (device-scope atomics) ===\n");
+  printf("  2 warps in 1 block, %d iterations\n", iters);
+
+  for (int s = 0; s < num_sizes; ++s) {
+    cudaMemset(d_buf, 0, buf_size);
+    // Launch 2 warps = 64 threads in 1 block
+    gpu_bench_warp_xfer_kernel<<<1, 64>>>(d_buf, iters, payload_sizes[s]);
+    cudaDeviceSynchronize();
+  }
+
+  *out_elapsed_ms = 0;
+  cudaFree(d_buf);
+  return 0;
+}
+
+/**
+ * Global memory copy microbenchmark.
+ * Compares single-thread vs 32-thread (warp) memcpy at various sizes.
+ * src and dst are in global memory, separated to avoid aliasing.
+ */
+__global__ void gpu_bench_memcpy_kernel(
+    char *src, char *dst, int total_iters, long long *results) {
+  int lane = threadIdx.x % 32;
+  const int sizes[] = {32, 64, 128, 256, 512, 1024, 4096};
+  constexpr int kNumSizes = 7;
+
+  for (int s = 0; s < kNumSizes; ++s) {
+    int sz = sizes[s];
+    long long t_single = 0, t_warp = 0;
+    long long tc;
+
+    // --- Single-thread copy (lane 0 only, byte-by-byte) ---
+    if (lane == 0) {
+      for (int i = 0; i < total_iters; ++i) {
+        tc = clock64();
+        for (int b = 0; b < sz; b += 4) {
+          *reinterpret_cast<unsigned int *>(dst + b) =
+              *reinterpret_cast<unsigned int *>(src + b);
+        }
+        __threadfence();
+        t_single += clock64() - tc;
+      }
+    }
+    __syncwarp();
+
+    // --- Warp-cooperative copy (32 lanes, 4B each) ---
+    for (int i = 0; i < total_iters; ++i) {
+      tc = clock64();
+      int bytes_per_lane = sz / 32;
+      if (bytes_per_lane >= 4) {
+        for (int b = 0; b < bytes_per_lane; b += 4) {
+          int off = lane * bytes_per_lane + b;
+          *reinterpret_cast<unsigned int *>(dst + off) =
+              *reinterpret_cast<unsigned int *>(src + off);
+        }
+      } else if (lane < sz / 4) {
+        // Fewer than 1 byte per lane — only first sz/4 lanes write 4B each
+        int off = lane * 4;
+        *reinterpret_cast<unsigned int *>(dst + off) =
+            *reinterpret_cast<unsigned int *>(src + off);
+      }
+      __threadfence();
+      if (lane == 0) t_warp += clock64() - tc;
+    }
+    __syncwarp();
+
+    if (lane == 0) {
+      results[s * 2] = t_single;
+      results[s * 2 + 1] = t_warp;
+    }
+  }
+
+  if (lane == 0) {
+    printf("\n=== Global Memory Copy Latency ===\n");
+    printf("  %6s  %14s  %14s  %10s\n",
+           "Bytes", "1-thread(cyc)", "32-thread(cyc)", "Speedup");
+    for (int s = 0; s < kNumSizes; ++s) {
+      long long ts = results[s * 2] / total_iters;
+      long long tw = results[s * 2 + 1] / total_iters;
+      printf("  %6d  %14lld  %14lld  %9.1fx\n",
+             sizes[s], ts, tw, (double)ts / (double)(tw > 0 ? tw : 1));
+    }
+  }
+}
+
+extern "C" int run_gpu_bench_memcpy(float *out_elapsed_ms) {
+  const int iters = 10000;
+  size_t buf_size = 8192;  // src + dst side by side
+  char *d_buf;
+  cudaMalloc(&d_buf, buf_size * 2);
+
+  // Init src with pattern
+  std::vector<char> h_src(buf_size, 0x42);
+  cudaMemcpy(d_buf, h_src.data(), buf_size, cudaMemcpyHostToDevice);
+  cudaMemset(d_buf + buf_size, 0, buf_size);
+
+  long long *d_results;
+  cudaMalloc(&d_results, 7 * 2 * sizeof(long long));
+  cudaMemset(d_results, 0, 7 * 2 * sizeof(long long));
+
+  // 1 warp = 32 threads
+  gpu_bench_memcpy_kernel<<<1, 32>>>(d_buf, d_buf + buf_size, iters, d_results);
+  cudaDeviceSynchronize();
+
+  *out_elapsed_ms = 0;
+  cudaFree(d_buf);
+  cudaFree(d_results);
+  return 0;
+}
+
+/**
+ * Run zero-copy direct dispatch benchmark.
+ */
+extern "C" int run_gpu_bench_zerocopy(chi::u32 total_tasks,
+                                       float *out_elapsed_ms) {
+  chi_bench::ZeroCopySlot *d_slot;
+  cudaMalloc(&d_slot, sizeof(chi_bench::ZeroCopySlot));
+  cudaMemset(d_slot, 0, sizeof(chi_bench::ZeroCopySlot));
+
+  int *d_done;
+  cudaMallocHost(&d_done, sizeof(int));
+  *d_done = 0;
+
+  // 2 warps = 64 threads, 1 block
+  cudaEvent_t start, stop;
+  cudaEventCreate(&start);
+  cudaEventCreate(&stop);
+
+  // Warmup
+  chi_bench::gpu_bench_zerocopy_kernel<<<1, 64>>>(d_slot, 1, d_done);
+  cudaDeviceSynchronize();
+  *d_done = 0;
+  cudaMemset(d_slot, 0, sizeof(chi_bench::ZeroCopySlot));
+
+  cudaEventRecord(start);
+  chi_bench::gpu_bench_zerocopy_kernel<<<1, 64>>>(d_slot, total_tasks, d_done);
+  cudaEventRecord(stop);
+  cudaEventSynchronize(stop);
+
+  float ms = 0;
+  cudaEventElapsedTime(&ms, start, stop);
+  *out_elapsed_ms = ms;
+
+  printf("  Throughput:          %.0f tasks/sec\n", total_tasks / (ms / 1000.0f));
+  printf("  Avg latency:         %.3f us/task\n", (ms * 1000.0f) / total_tasks);
+
+  cudaEventDestroy(start);
+  cudaEventDestroy(stop);
+  cudaFree(d_slot);
+  cudaFreeHost(d_done);
+  return 0;
+}
+
+/**
+ * Run Gray-Scott stencil benchmark for various grid sizes.
+ */
+extern "C" int run_gpu_bench_grayscott(float *out_elapsed_ms) {
+  const int grid_sizes[] = {32, 64, 128, 256, 512, 1024};
+  const int num_sizes = sizeof(grid_sizes) / sizeof(grid_sizes[0]);
+  const int iters = 100;
+
+  printf("\n=== Gray-Scott Single Iteration Latency ===\n");
+  printf("  %8s  %12s  %12s  %12s\n", "Grid", "Total(us)", "Per-iter(us)", "Cells");
+
+  for (int s = 0; s < num_sizes; ++s) {
+    int N = grid_sizes[s];
+    int cells = N * N;
+    size_t bytes = cells * sizeof(float);
+
+    float *d_U, *d_V, *d_U2, *d_V2;
+    cudaMalloc(&d_U, bytes);
+    cudaMalloc(&d_V, bytes);
+    cudaMalloc(&d_U2, bytes);
+    cudaMalloc(&d_V2, bytes);
+
+    // Init: U=1 everywhere, V=0 with small seed in center
+    std::vector<float> h_U(cells, 1.0f), h_V(cells, 0.0f);
+    int cx = N / 2, cy = N / 2, r = N / 10;
+    for (int y = cy - r; y <= cy + r; ++y)
+      for (int x = cx - r; x <= cx + r; ++x)
+        if (x >= 0 && x < N && y >= 0 && y < N) {
+          h_U[y * N + x] = 0.5f;
+          h_V[y * N + x] = 0.25f;
+        }
+    cudaMemcpy(d_U, h_U.data(), bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_V, h_V.data(), bytes, cudaMemcpyHostToDevice);
+    cudaMemset(d_U2, 0, bytes);
+    cudaMemset(d_V2, 0, bytes);
+
+    int threads = 256;
+    int blocks = (cells + threads - 1) / threads;
+    if (blocks > 256) blocks = 256;
+
+    // Warmup
+    gpu_bench_grayscott_kernel<<<blocks, threads>>>(
+        d_U, d_V, d_U2, d_V2, N);
+    cudaDeviceSynchronize();
+
+    // Timed: launch one kernel per iteration, swap buffers on host
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    float *pU = d_U, *pV = d_V, *pU2 = d_U2, *pV2 = d_V2;
+    cudaEventRecord(start);
+    for (int i = 0; i < iters; ++i) {
+      gpu_bench_grayscott_kernel<<<blocks, threads>>>(
+          pU, pV, pU2, pV2, N);
+      // Swap for next iteration
+      float *tmp;
+      tmp = pU; pU = pU2; pU2 = tmp;
+      tmp = pV; pV = pV2; pV2 = tmp;
+    }
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    float ms = 0;
+    cudaEventElapsedTime(&ms, start, stop);
+    float per_iter_us = (ms * 1000.0f) / iters;
+
+    printf("  %5dx%-3d  %12.3f  %12.3f  %12d\n",
+           N, N, ms * 1000.0f, per_iter_us, cells);
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    cudaFree(d_U); cudaFree(d_V); cudaFree(d_U2); cudaFree(d_V2);
+  }
+
+  *out_elapsed_ms = 0;
+  return 0;
+}
+
+namespace chi_bench {
+
+/**
+ * Isolated BuddyAllocator microbenchmark.
+ *
+ * Measures alloc+free cycles for the exact same allocation size
+ * that the orchestrator uses: sizeof(GpuSubmitTask) + kRunContextExtra.
+ * Single thread (lane 0 only), no orchestrator, no queues.
+ */
+__global__ void gpu_bench_buddy_kernel(
+    chi::IpcManagerGpu gpu_info,
+    chi::PoolId pool_id,
+    chi::u32 num_blocks,
+    chi::u32 total_tasks,
+    int *d_done,
+    chi::u32 total_threads) {
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
+  using GpuSubmitTask = chimaera::MOD_NAME::GpuSubmitTask;
+  using WarpMgr = chi::IpcManager::WarpIpcManager;
+
+  if (threadIdx.x != 0 || blockIdx.x != 0) {
+    __threadfence();
+    atomicAdd(d_done, 1);
+    return;
+  }
+
+  auto *priv = CHI_IPC->GetPrivAlloc();
+  if (!priv) {
+    printf("[BUDDY] priv alloc null\n");
+    atomicAdd(d_done, 1);
+    return;
+  }
+
+  // Exact sizes used by the orchestrator: Task + FutureShm
+  constexpr size_t kTaskExecSize =
+      sizeof(GpuSubmitTask) + sizeof(chi::FutureShm);
+  constexpr size_t kSmallSize = 64;   // small alloc for comparison
+
+  // Warm up
+  {
+    auto w = priv->template AllocateObjs<char>(kTaskExecSize);
+    if (!w.IsNull()) priv->Free(w);
+  }
+
+  long long t_alloc_large = 0, t_free_large = 0;
+  long long t_alloc_small = 0, t_free_small = 0;
+  long long t_alloc_arena = 0;
+  long long tc;
+
+  // --- Test 1: alloc+free kTaskExecSize (16.5KB, hits AllocateLarge) ---
+  for (chi::u32 i = 0; i < total_tasks; ++i) {
+    tc = clock64();
+    auto fp = priv->template AllocateObjs<char>(kTaskExecSize);
+    t_alloc_large += clock64() - tc;
+
+    tc = clock64();
+    if (!fp.IsNull()) priv->Free(fp);
+    t_free_large += clock64() - tc;
+  }
+
+  // --- Test 2: alloc+free kSmallSize (64B, hits AllocateSmall) ---
+  for (chi::u32 i = 0; i < total_tasks; ++i) {
+    tc = clock64();
+    auto fp = priv->template AllocateObjs<char>(kSmallSize);
+    t_alloc_small += clock64() - tc;
+
+    tc = clock64();
+    if (!fp.IsNull()) priv->Free(fp);
+    t_free_small += clock64() - tc;
+  }
+
+  // --- Test 3: arena bump only (no free, fresh arena) ---
+  {
+    const size_t arena_bytes = static_cast<size_t>(kTaskExecSize + 256) *
+                               static_cast<size_t>(total_tasks + 4);
+    auto arena = CHI_IPC->PushPrivArena(arena_bytes);
+    for (chi::u32 i = 0; i < total_tasks; ++i) {
+      tc = clock64();
+      auto fp = priv->template AllocateObjs<char>(kTaskExecSize);
+      t_alloc_arena += clock64() - tc;
+      // No free — pure bump
+    }
+    arena.Release();
+  }
+
+  printf("=== BuddyAllocator Microbenchmark (%u iters) ===\n", total_tasks);
+  printf("  Alloc size (large):  %llu bytes (kTaskExecSize)\n",
+         (unsigned long long)kTaskExecSize);
+  printf("  Alloc size (small):  %llu bytes\n",
+         (unsigned long long)kSmallSize);
+  printf("  Large alloc:         %lld  (%lld/iter)\n",
+         t_alloc_large, t_alloc_large / total_tasks);
+  printf("  Large free:          %lld  (%lld/iter)\n",
+         t_free_large, t_free_large / total_tasks);
+  printf("  Small alloc:         %lld  (%lld/iter)\n",
+         t_alloc_small, t_alloc_small / total_tasks);
+  printf("  Small free:          %lld  (%lld/iter)\n",
+         t_free_small, t_free_small / total_tasks);
+  printf("  Arena bump (large):  %lld  (%lld/iter)\n",
+         t_alloc_arena, t_alloc_arena / total_tasks);
+
+  __threadfence();
+  atomicAdd(d_done, 1);
+}
 
 }  // namespace chi_bench
 
 /**
  * Poll the pinned done flag until set or timeout.
- * Every 500ms, dump orchestrator debug state for diagnosis.
  */
 static bool PollDone(volatile int *d_done, int total_threads, int timeout_us) {
   int elapsed_us = 0;
-  int last_print = 0;
   while (*d_done < total_threads && elapsed_us < timeout_us) {
     std::this_thread::sleep_for(std::chrono::microseconds(100));
     elapsed_us += 100;
-    if (elapsed_us - last_print >= 2000000) {  // every 2s
-      fprintf(stderr, "[PollDone] %ds: d_done=%d (need %d)",
-              elapsed_us / 1000000, *d_done, total_threads);
-    // Dump orchestrator worker 0 state if available
-    auto *orch = static_cast<chi::gpu::WorkOrchestrator *>(
-        CHI_IPC->gpu_orchestrator_);
-    if (orch && orch->control_) {
-      auto *c = orch->control_;
-      fprintf(stderr, " | W0: popped=%u completed=%u qpops=%u nocont=%u allocfail=%u step=%u",
-              c->dbg_tasks_popped[0], c->dbg_tasks_completed[0],
-              c->dbg_queue_pops[0], c->dbg_no_container[0],
-              c->dbg_alloc_failures[0], c->dbg_dispatch_step[0]);
-    }
-    fprintf(stderr, "\n");
-      last_print = elapsed_us;
-    }
   }
   return *d_done >= total_threads;
 }
@@ -1063,17 +1341,6 @@ extern "C" int run_gpu_bench_latency(
   // exit hangs waiting for the GPU kernel to terminate.
   hshm::GpuApi::Synchronize(stream);
 
-  // Print orchestrator debug state before pausing
-  {
-    auto *orch = static_cast<chi::gpu::WorkOrchestrator *>(CHI_IPC->gpu_orchestrator_);
-    if (orch && orch->control_) {
-      auto *c = orch->control_;
-      printf("[POST] W0: popped=%u completed=%u qpops=%u nocont=%u allocfail=%u step=%u\n",
-             c->dbg_tasks_popped[0], c->dbg_tasks_completed[0],
-             c->dbg_queue_pops[0], c->dbg_no_container[0],
-             c->dbg_alloc_failures[0], c->dbg_dispatch_step[0]);
-    }
-  }
   // All client blocks have now finished — safe to stop the orchestrator.
   CHI_IPC->PauseGpuOrchestrator();
 
@@ -1164,6 +1431,275 @@ extern "C" int run_gpu_bench_coroutine(
   return completed ? 0 : -4;
 }
 
+namespace chi_bench {
+
+/**
+ * Multi-warp parallelism benchmark kernel.
+ *
+ * Uses the Client API with PoolQuery::Local(parallelism) to submit
+ * GpuSubmit tasks that span multiple warps (parallelism > 32).
+ * Measures round-trip latency when the orchestrator must coordinate
+ * across warps to execute a single task.
+ */
+__global__ void gpu_bench_parallel_kernel(
+    chi::IpcManagerGpu gpu_info,
+    chi::PoolId pool_id,
+    chi::u32 num_blocks,
+    chi::u32 total_tasks,
+    chi::u32 parallelism,
+    int *d_done,
+    chi::u32 total_warps) {
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
+
+  chimaera::MOD_NAME::Client client(pool_id);
+  chi::u32 errors = 0;
+
+  for (chi::u32 i = 0; i < total_tasks; ++i) {
+    auto future = client.AsyncGpuSubmit(
+        chi::PoolQuery::Local(parallelism), (chi::u32)0, (chi::u32)7);
+    future.Wait();
+
+    if (chi::IpcManager::IsWarpScheduler()) {
+      if (!future.IsNull() && future->result_value_ != 21) {
+        if (errors == 0) {
+          printf("[PARALLEL ERROR] blk=%u task %u: expected=21, got=%u\n",
+                 blockIdx.x, i, (unsigned)future->result_value_);
+        }
+        ++errors;
+      }
+    }
+  }
+
+  if (chi::IpcManager::IsWarpScheduler() && errors > 0) {
+    printf("[PARALLEL FAIL] blk=%u %u/%u wrong results\n",
+           blockIdx.x, errors, total_tasks);
+  }
+
+  __syncwarp();
+  if (chi::IpcManager::IsWarpScheduler()) {
+    __threadfence_system();
+    atomicAdd(d_done, 1);
+  }
+}
+
+}  // namespace chi_bench (close temporarily to define extern "C")
+
+/**
+ * Run the multi-warp parallelism benchmark.
+ *
+ * Same setup as run_gpu_bench_latency but the client kernel uses
+ * PoolQuery::Local(parallelism) with parallelism > 32.
+ */
+extern "C" int run_gpu_bench_parallel(
+    chi::PoolId pool_id,
+    chi::u32 rt_blocks,
+    chi::u32 rt_threads,
+    chi::u32 client_blocks,
+    chi::u32 client_threads,
+    chi::u32 total_tasks,
+    chi::u32 parallelism,
+    float *out_elapsed_ms) {
+  CHI_IPC->SetGpuOrchestratorBlocks(rt_blocks, rt_threads);
+
+  constexpr size_t kPerBlockBytes = 10 * 1024 * 1024;
+  size_t backend_size = static_cast<size_t>(client_blocks) * kPerBlockBytes;
+
+  hipc::MemoryBackendId backend_id(103, 0);
+  hipc::GpuMalloc gpu_backend;
+  if (!gpu_backend.shm_init(backend_id, backend_size, "", 0)) {
+    return -1;
+  }
+
+  CHI_IPC->RegisterGpuAllocator(backend_id, gpu_backend.data_,
+                                 gpu_backend.data_capacity_);
+
+  chi::IpcManagerGpu gpu_info = CHI_IPC->GetClientGpuInfo(0);
+  gpu_info.backend = gpu_backend;
+
+  int *d_done;
+  cudaMallocHost(&d_done, sizeof(int));
+  *d_done = 0;
+
+  chi::u32 total_warps = (client_blocks * client_threads) / 32;
+  if (total_warps == 0) total_warps = 1;
+
+  void *stream = hshm::GpuApi::CreateStream();
+
+  CHI_IPC->PauseGpuOrchestrator();
+  cudaGetLastError();
+
+  gpu_info = CHI_IPC->GetClientGpuInfo(0);
+  gpu_info.backend = gpu_backend;
+
+  PrintKernelInfo("gpu_bench_parallel_kernel",
+                  (const void *)chi_bench::gpu_bench_parallel_kernel,
+                  client_blocks, client_threads);
+  chi_bench::gpu_bench_parallel_kernel<<<
+      client_blocks, client_threads, 0,
+      static_cast<cudaStream_t>(stream)>>>(
+      gpu_info, pool_id, client_blocks, total_tasks, parallelism,
+      d_done, total_warps);
+
+  cudaError_t launch_err = cudaGetLastError();
+  if (launch_err != cudaSuccess) {
+    CHI_IPC->ResumeGpuOrchestrator();
+    cudaFreeHost(d_done);
+    hshm::GpuApi::DestroyStream(stream);
+    return -3;
+  }
+
+  CHI_IPC->ResumeGpuOrchestrator();
+  auto t_start = std::chrono::high_resolution_clock::now();
+
+  constexpr int kTimeoutUs = 60000000;
+  bool completed = PollDone(d_done, static_cast<int>(total_warps), kTimeoutUs);
+
+  auto t_end = std::chrono::high_resolution_clock::now();
+  double elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          t_end - t_start).count();
+  *out_elapsed_ms = static_cast<float>(elapsed_ns / 1e6);
+
+  hshm::GpuApi::Synchronize(stream);
+  CHI_IPC->PauseGpuOrchestrator();
+
+  cudaFreeHost(d_done);
+  hshm::GpuApi::DestroyStream(stream);
+
+  return completed ? 0 : -4;
+}
+
+/**
+ * GPU→bdev roundtrip benchmark kernel.
+ *
+ * Each warp's lane 0 calls bdev::Client::AsyncAllocateBlocks to request
+ * a block allocation from the bdev container via the GPU orchestrator.
+ * This exercises the full GPU client → IPC queue → orchestrator → bdev
+ * runtime pipeline.
+ */
+namespace chi_bench {
+
+__global__ void gpu_bench_bdev_kernel(
+    chi::IpcManagerGpu gpu_info,
+    chi::PoolId bdev_pool_id,
+    chi::u32 num_blocks,
+    chi::u32 total_tasks,
+    chi::u64 alloc_size,
+    int *d_done,
+    chi::u32 total_warps) {
+  CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks);
+
+  chimaera::bdev::Client bdev_client(bdev_pool_id);
+  chi::u32 errors = 0;
+
+  for (chi::u32 i = 0; i < total_tasks; ++i) {
+    auto future = bdev_client.AsyncAllocateBlocks(
+        chi::PoolQuery::Local(), alloc_size);
+    future.Wait();
+
+    if (chi::IpcManager::IsWarpScheduler()) {
+      if (future.IsNull() || future->return_code_ != 0) {
+        if (errors == 0) {
+          printf("[BDEV ERROR] blk=%u task %u: alloc failed (rc=%d)\n",
+                 blockIdx.x, i,
+                 future.IsNull() ? -999 : (int)future->return_code_);
+        }
+        ++errors;
+      }
+    }
+  }
+
+  if (chi::IpcManager::IsWarpScheduler() && errors > 0) {
+    printf("[BDEV FAIL] blk=%u %u/%u allocations failed\n",
+           blockIdx.x, errors, total_tasks);
+  }
+
+  __syncwarp();
+  if (chi::IpcManager::IsWarpScheduler()) {
+    __threadfence_system();
+    atomicAdd(d_done, 1);
+  }
+}
+
+}  // namespace chi_bench
+
+extern "C" int run_gpu_bench_bdev(
+    chi::PoolId bdev_pool_id,
+    chi::u32 rt_blocks,
+    chi::u32 rt_threads,
+    chi::u32 client_blocks,
+    chi::u32 client_threads,
+    chi::u32 total_tasks,
+    chi::u64 alloc_size,
+    float *out_elapsed_ms) {
+  CHI_IPC->SetGpuOrchestratorBlocks(rt_blocks, rt_threads);
+
+  constexpr size_t kPerBlockBytes = 10 * 1024 * 1024;
+  size_t backend_size = static_cast<size_t>(client_blocks) * kPerBlockBytes;
+
+  hipc::MemoryBackendId backend_id(108, 0);
+  hipc::GpuMalloc gpu_backend;
+  if (!gpu_backend.shm_init(backend_id, backend_size, "", 0)) {
+    return -1;
+  }
+
+  CHI_IPC->RegisterGpuAllocator(backend_id, gpu_backend.data_,
+                                 gpu_backend.data_capacity_);
+
+  chi::IpcManagerGpu gpu_info = CHI_IPC->GetClientGpuInfo(0);
+  gpu_info.backend = gpu_backend;
+
+  int *d_done;
+  cudaMallocHost(&d_done, sizeof(int));
+  *d_done = 0;
+
+  chi::u32 total_warps = (client_blocks * client_threads) / 32;
+  if (total_warps == 0) total_warps = 1;
+
+  void *stream = hshm::GpuApi::CreateStream();
+
+  CHI_IPC->PauseGpuOrchestrator();
+  cudaGetLastError();
+
+  gpu_info = CHI_IPC->GetClientGpuInfo(0);
+  gpu_info.backend = gpu_backend;
+
+  PrintKernelInfo("gpu_bench_bdev_kernel",
+                  (const void *)chi_bench::gpu_bench_bdev_kernel,
+                  client_blocks, client_threads);
+  chi_bench::gpu_bench_bdev_kernel<<<
+      client_blocks, client_threads, 0,
+      static_cast<cudaStream_t>(stream)>>>(
+      gpu_info, bdev_pool_id, client_blocks, total_tasks, alloc_size,
+      d_done, total_warps);
+
+  cudaError_t launch_err = cudaGetLastError();
+  if (launch_err != cudaSuccess) {
+    CHI_IPC->ResumeGpuOrchestrator();
+    cudaFreeHost(d_done);
+    hshm::GpuApi::DestroyStream(stream);
+    return -3;
+  }
+
+  CHI_IPC->ResumeGpuOrchestrator();
+  auto t_start = std::chrono::high_resolution_clock::now();
+
+  constexpr int kTimeoutUs = 60000000;
+  bool completed = PollDone(d_done, static_cast<int>(total_warps), kTimeoutUs);
+
+  auto t_end = std::chrono::high_resolution_clock::now();
+  double elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          t_end - t_start).count();
+  *out_elapsed_ms = static_cast<float>(elapsed_ns / 1e6);
+
+  hshm::GpuApi::Synchronize(stream);
+  CHI_IPC->PauseGpuOrchestrator();
+
+  cudaFreeHost(d_done);
+  hshm::GpuApi::DestroyStream(stream);
+
+  return completed ? 0 : -4;
+}
+
 /**
  * Run the GPU alloc/free benchmark.
  *
@@ -1233,20 +1769,72 @@ extern "C" int run_gpu_bench_alloc(
 }
 
 /**
+ * Run the isolated BuddyAllocator microbenchmark.
+ */
+extern "C" int run_gpu_bench_buddy(
+    chi::PoolId pool_id,
+    chi::u32 client_blocks,
+    chi::u32 client_threads,
+    chi::u32 total_tasks,
+    float *out_elapsed_ms) {
+  constexpr size_t kPerBlockBytes = 10 * 1024 * 1024;
+  size_t backend_size = static_cast<size_t>(client_blocks) * kPerBlockBytes;
+
+  hipc::MemoryBackendId backend_id(107, 0);
+  hipc::GpuMalloc gpu_backend;
+  if (!gpu_backend.shm_init(backend_id, backend_size, "", 0)) {
+    return -1;
+  }
+
+  chi::IpcManagerGpu gpu_info{};
+  gpu_info.backend = gpu_backend;
+
+  int *d_done;
+  cudaMallocHost(&d_done, sizeof(int));
+  *d_done = 0;
+
+  chi::u32 total_threads = client_blocks * client_threads;
+  void *stream = hshm::GpuApi::CreateStream();
+  cudaGetLastError();
+
+  chi_bench::gpu_bench_buddy_kernel<<<
+      client_blocks, client_threads, 0,
+      static_cast<cudaStream_t>(stream)>>>(
+      gpu_info, pool_id, client_blocks, total_tasks, d_done, total_threads);
+
+  cudaError_t launch_err = cudaGetLastError();
+  if (launch_err != cudaSuccess) {
+    cudaFreeHost(d_done);
+    hshm::GpuApi::DestroyStream(stream);
+    return -3;
+  }
+
+  auto t_start = std::chrono::high_resolution_clock::now();
+  constexpr int kTimeoutUs = 60000000;
+  bool completed = PollDone(d_done, static_cast<int>(total_threads), kTimeoutUs);
+  auto t_end = std::chrono::high_resolution_clock::now();
+  double elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          t_end - t_start).count();
+  *out_elapsed_ms = static_cast<float>(elapsed_ns / 1e6);
+
+  hshm::GpuApi::Synchronize(stream);
+  cudaFreeHost(d_done);
+  hshm::GpuApi::DestroyStream(stream);
+  return completed ? 0 : -4;
+}
+
+/**
  * Run the GPU serialize/deserialize benchmark.
  *
  * Allocates both a primary backend (for NewTask) and a heap backend
  * (for serialization scratch via CHI_PRIV_ALLOC / CHI_PRIV_ALLOC).
  */
-#if 0  // disabled (uses removed SendDevice/RecvDevice)
 extern "C" int run_gpu_bench_serde(
     chi::PoolId pool_id,
     chi::u32 client_blocks,
     chi::u32 client_threads,
     chi::u32 total_tasks,
     float *out_elapsed_ms) {
-  // Primary backend: sized to hold arena allocations for all threads.
-  // Each thread bump-allocates ~4KB * total_tasks in the serde loop.
   constexpr size_t kPerBlockBytes = 32 * 1024 * 1024;
   size_t backend_size = static_cast<size_t>(client_blocks) * kPerBlockBytes;
 
@@ -1293,7 +1881,7 @@ extern "C" int run_gpu_bench_serde(
 
   auto t_start = std::chrono::high_resolution_clock::now();
 
-  constexpr int kTimeoutUs = 10000000;  // 10s for debugging
+  constexpr int kTimeoutUs = 60000000;
   bool completed = PollDone(d_done, static_cast<int>(total_threads), kTimeoutUs);
 
   auto t_end = std::chrono::high_resolution_clock::now();
@@ -1312,13 +1900,6 @@ extern "C" int run_gpu_bench_serde(
   hshm::GpuApi::DestroyStream(stream);
 
   return completed ? 0 : -4;
-}
-#endif  // disabled run_gpu_bench_serde
-
-// Stub: serde benchmark disabled (uses removed SendDevice/RecvDevice)
-extern "C" int run_gpu_bench_serde(
-    chi::PoolId, chi::u32, chi::u32, chi::u32, float *) {
-  return -200;
 }
 
 /**
@@ -1893,6 +2474,79 @@ extern "C" int run_gpu_bench_putblob(
  * Must be compiled with HSHM_ENABLE_CUDA so that Send() routes ToLocalGpu
  * tasks to SendToGpu() instead of falling through to the CPU path.
  */
+/**
+ * CUDA kernel launch latency benchmark.
+ *
+ * Measures the host-side cost of launching a trivial kernel with
+ * rt_blocks x rt_threads and waiting for it to complete. Each iteration
+ * does one launch + cudaEventSynchronize, timed with CUDA events.
+ * This tells you the real overhead of a kernel launch round-trip.
+ */
+__global__ void gpu_bench_cdp_kernel() {
+  // Trivial kernel — just exists to be launched and completed
+}
+
+extern "C" int run_gpu_bench_cdp(
+    chi::u32 rt_blocks,
+    chi::u32 rt_threads,
+    chi::u32 total_tasks,
+    float *out_elapsed_ms) {
+  // Warmup
+  for (int i = 0; i < 10; ++i) {
+    gpu_bench_cdp_kernel<<<rt_blocks, rt_threads>>>();
+    cudaDeviceSynchronize();
+  }
+
+  cudaEvent_t start, stop;
+  cudaEventCreate(&start);
+  cudaEventCreate(&stop);
+
+  // Measure total wall time for all launches
+  cudaEventRecord(start);
+  for (chi::u32 i = 0; i < total_tasks; ++i) {
+    gpu_bench_cdp_kernel<<<rt_blocks, rt_threads>>>();
+    cudaDeviceSynchronize();
+  }
+  cudaEventRecord(stop);
+  cudaEventSynchronize(stop);
+
+  float total_ms = 0;
+  cudaEventElapsedTime(&total_ms, start, stop);
+
+  // Also measure per-launch with individual events
+  float min_us = 1e9f, max_us = 0, sum_us = 0;
+  for (chi::u32 i = 0; i < total_tasks; ++i) {
+    cudaEvent_t s, e;
+    cudaEventCreate(&s);
+    cudaEventCreate(&e);
+    cudaEventRecord(s);
+    gpu_bench_cdp_kernel<<<rt_blocks, rt_threads>>>();
+    cudaEventRecord(e);
+    cudaEventSynchronize(e);
+    float ms = 0;
+    cudaEventElapsedTime(&ms, s, e);
+    float us = ms * 1000.0f;
+    sum_us += us;
+    if (us < min_us) min_us = us;
+    if (us > max_us) max_us = us;
+    cudaEventDestroy(s);
+    cudaEventDestroy(e);
+  }
+
+  *out_elapsed_ms = total_ms;
+
+  printf("\n=== Kernel Launch Latency (%u launches, %u blocks x %u threads) ===\n",
+         total_tasks, rt_blocks, rt_threads);
+  printf("  Batch wall:   %.3f ms (%.3f us/launch)\n",
+         total_ms, (total_ms * 1000.0f) / total_tasks);
+  printf("  Per-launch:   avg=%.3f us  min=%.3f us  max=%.3f us\n",
+         sum_us / total_tasks, min_us, max_us);
+
+  cudaEventDestroy(start);
+  cudaEventDestroy(stop);
+  return 0;
+}
+
 extern "C" int run_gpu_bench_parallel_dispatch(
     chi::PoolId pool_id,
     chi::u32 parallelism,
@@ -1924,6 +2578,228 @@ extern "C" int run_gpu_bench_parallel_dispatch(
   *out_elapsed_ms = static_cast<float>(
       std::chrono::duration_cast<std::chrono::nanoseconds>(
           t_end - t_start).count() / 1e6);
+  return 0;
+}
+
+/**
+ * Atomic queue contention benchmark using chi::ipc::mpsc_ring_buffer.
+ *
+ * Exercises the real MPSC ring buffer Push path used by SendGpu:
+ *   1. atomic fetch_add on shared tail (claim slot)
+ *   2. write entry data
+ *   3. threadfence + atomic set ready flag
+ *
+ * A setup kernel constructs a BuddyAllocator + mpsc_ring_buffer in device
+ * memory. Then the contention kernel launches N client warps that all Push
+ * to the same queue. Queue depth = total_tasks * num_clients so it never
+ * fills. Each warp times its pushes with clock64().
+ */
+
+__global__ void gpu_bench_queue_setup_kernel(
+    hipc::MemoryBackend backend,
+    chi::u32 queue_depth,
+    hipc::BuddyAllocator **d_alloc_out,
+    chi::ipc::mpsc_ring_buffer<chi::u32> **d_queue_out) {
+  if (threadIdx.x != 0 || blockIdx.x != 0) return;
+
+  auto *alloc = backend.MakeAlloc<hipc::BuddyAllocator>(0);
+  if (!alloc) {
+    printf("[QUEUE SETUP] BuddyAllocator init failed\n");
+    *d_alloc_out = nullptr;
+    *d_queue_out = nullptr;
+    return;
+  }
+
+  auto fp = alloc->template AllocateObjs<
+      chi::ipc::mpsc_ring_buffer<chi::u32>>(1);
+  if (fp.IsNull()) {
+    printf("[QUEUE SETUP] ring_buffer alloc failed\n");
+    *d_alloc_out = alloc;
+    *d_queue_out = nullptr;
+    return;
+  }
+  new (fp.ptr_) chi::ipc::mpsc_ring_buffer<chi::u32>(alloc, queue_depth);
+
+  *d_alloc_out = alloc;
+  *d_queue_out = fp.ptr_;
+}
+
+__global__ void gpu_bench_queue_contention_kernel(
+    chi::ipc::mpsc_ring_buffer<chi::u32> *queue,
+    chi::u32 total_tasks,
+    chi::u32 num_clients,
+    long long *d_results,
+    int *d_done) {
+  chi::u32 warp_id = (blockIdx.x * blockDim.x + threadIdx.x) / 32;
+  chi::u32 lane = threadIdx.x % 32;
+
+  // Only warp schedulers (lane 0) are producers
+  if (warp_id >= num_clients) {
+    __syncwarp();
+    return;
+  }
+
+  long long t_push = 0;
+  long long tc;
+
+  for (chi::u32 i = 0; i < total_tasks; ++i) {
+    if (lane == 0) {
+      chi::u32 val = warp_id * 1000000 + i;
+      tc = clock64();
+      queue->Push(val);
+      t_push += clock64() - tc;
+    }
+    __syncwarp();
+  }
+
+  // Store per-warp result
+  if (lane == 0) {
+    d_results[warp_id] = t_push;
+  }
+
+  __syncwarp();
+  if (lane == 0) {
+    __threadfence_system();
+    atomicAdd(d_done, 1);
+  }
+}
+
+extern "C" int run_gpu_bench_queue_contention(
+    chi::u32 num_clients,
+    chi::u32 total_tasks,
+    float *out_elapsed_ms) {
+  // Queue depth must hold warmup (10/client) + main run (total_tasks/client).
+  // Nobody pops, so every Push occupies a slot permanently.
+  constexpr chi::u32 kWarmupTasks = 10;
+  chi::u32 queue_depth =
+      static_cast<chi::u32>(
+          (static_cast<chi::u64>(total_tasks) + kWarmupTasks) * num_clients);
+
+  // Backend sizing: BuddyAllocator rounds to power-of-2 internally.
+  // Each RingBufferEntry<u32> is 8 bytes; vector needs (depth+1) entries.
+  // Budget 3x raw entry size for buddy fragmentation + allocator headers.
+  size_t entry_bytes = static_cast<size_t>(queue_depth + 2) * sizeof(chi::u32) * 4;
+  size_t backend_size = entry_bytes * 3 + 4 * 1024 * 1024;
+  hipc::GpuMalloc gpu_backend;
+  if (!gpu_backend.shm_init(hipc::MemoryBackendId(210, 0),
+                             backend_size, "", 0)) {
+    printf("Backend alloc failed (requested %zu bytes)\n", backend_size);
+    return -1;
+  }
+
+  // Setup kernel: construct allocator + ring_buffer on device
+  hipc::BuddyAllocator **d_alloc_ptr;
+  chi::ipc::mpsc_ring_buffer<chi::u32> **d_queue_ptr;
+  cudaMallocHost(&d_alloc_ptr, sizeof(void *));
+  cudaMallocHost(&d_queue_ptr, sizeof(void *));
+  *d_alloc_ptr = nullptr;
+  *d_queue_ptr = nullptr;
+
+  gpu_bench_queue_setup_kernel<<<1, 1>>>(
+      static_cast<hipc::MemoryBackend &>(gpu_backend),
+      queue_depth, d_alloc_ptr, d_queue_ptr);
+  cudaDeviceSynchronize();
+
+  cudaError_t setup_err = cudaGetLastError();
+  if (setup_err != cudaSuccess) {
+    printf("Setup kernel error: %s\n", cudaGetErrorString(setup_err));
+    cudaFreeHost(d_alloc_ptr);
+    cudaFreeHost(d_queue_ptr);
+    return -2;
+  }
+
+  auto *d_queue = *d_queue_ptr;
+  if (!d_queue) {
+    printf("Queue construction failed on device (depth=%u, backend=%zu bytes)\n",
+           queue_depth, backend_size);
+    cudaFreeHost(d_alloc_ptr);
+    cudaFreeHost(d_queue_ptr);
+    return -2;
+  }
+
+  // Per-warp results
+  long long *d_results;
+  cudaMalloc(&d_results, static_cast<size_t>(num_clients) * sizeof(long long));
+  cudaMemset(d_results, 0, static_cast<size_t>(num_clients) * sizeof(long long));
+
+  int *d_done;
+  cudaMallocHost(&d_done, sizeof(int));
+  *d_done = 0;
+
+  // Launch config: 1 warp = 32 threads per client
+  chi::u32 total_threads = num_clients * 32;
+  chi::u32 threads_per_block = 256;
+  if (total_threads < threads_per_block) threads_per_block = total_threads;
+  chi::u32 blocks = (total_threads + threads_per_block - 1) / threads_per_block;
+
+  // Warmup — pushes kWarmupTasks per client into the same queue
+  gpu_bench_queue_contention_kernel<<<blocks, threads_per_block>>>(
+      d_queue, kWarmupTasks, num_clients, d_results, d_done);
+  cudaDeviceSynchronize();
+  *d_done = 0;
+  cudaMemset(d_results, 0, static_cast<size_t>(num_clients) * sizeof(long long));
+
+  cudaEvent_t start, stop;
+  cudaEventCreate(&start);
+  cudaEventCreate(&stop);
+
+  cudaEventRecord(start);
+  gpu_bench_queue_contention_kernel<<<blocks, threads_per_block>>>(
+      d_queue, total_tasks, num_clients, d_results, d_done);
+  cudaEventRecord(stop);
+  cudaEventSynchronize(stop);
+
+  float ms = 0;
+  cudaEventElapsedTime(&ms, start, stop);
+  *out_elapsed_ms = ms;
+
+  // Read results back
+  std::vector<long long> results(num_clients);
+  cudaMemcpy(results.data(), d_results,
+             num_clients * sizeof(long long),
+             cudaMemcpyDeviceToHost);
+
+  // Aggregate stats
+  long long sum = 0, min_t = LLONG_MAX, max_t = 0;
+  for (chi::u32 w = 0; w < num_clients; ++w) {
+    sum += results[w];
+    if (results[w] < min_t) min_t = results[w];
+    if (results[w] > max_t) max_t = results[w];
+  }
+
+  chi::u64 total_pushes = static_cast<chi::u64>(num_clients) * total_tasks;
+  printf("\n=== Queue Contention: mpsc_ring_buffer::Push ===\n");
+  printf("  %u clients x %u tasks (depth=%u)\n",
+         num_clients, total_tasks, queue_depth);
+  printf("  Launch:        %u blocks x %u threads\n", blocks, threads_per_block);
+  printf("  Wall time:     %.3f ms\n", ms);
+  printf("\n  Push latency (clk/push, averaged across all clients): %lld\n",
+         (long long)(sum / total_pushes));
+  printf("  Push across warps:  min=%lld/push  max=%lld/push\n",
+         (long long)(min_t / total_tasks),
+         (long long)(max_t / total_tasks));
+
+  // Per-warp detail if small enough
+  if (num_clients <= 32) {
+    printf("\n  Per-warp breakdown (clk/push):\n");
+    printf("  %6s  %10s\n", "Warp", "push");
+    for (chi::u32 w = 0; w < num_clients; ++w) {
+      printf("  %6u  %10lld\n", w,
+             (long long)(results[w] / total_tasks));
+    }
+  }
+
+  printf("\n  Throughput:    %.0f pushes/sec\n",
+         total_pushes / (ms / 1000.0));
+  printf("  Avg latency:   %.3f us/push\n",
+         (ms * 1000.0) / total_pushes);
+
+  cudaEventDestroy(start);
+  cudaEventDestroy(stop);
+  cudaFree(d_results);
+  cudaFreeHost(d_done);
+  cudaFreeHost(d_alloc_ptr);
+  cudaFreeHost(d_queue_ptr);
   return 0;
 }
 

@@ -167,10 +167,10 @@ HSHM_GPU_FUN static chi::priv::string MakeCompoundKey(
 // Stub methods (no-ops on GPU)
 //==============================================================================
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::RegisterTarget(
+HSHM_GPU_FUN void GpuRuntime::RegisterTarget(
     hipc::FullPtr<RegisterTargetTask> task, chi::gpu::RunContext &rctx) {
   (void)rctx;
-  if (!chi::IpcManager::IsWarpScheduler()) co_return;
+  if (!chi::IpcManager::IsWarpScheduler()) return;
   EnsureMetaInit();
 
   // Extract task fields
@@ -188,25 +188,21 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::RegisterTarget(
   // Push to targets vector
   meta_->targets_.push_back(info);
   task->return_code_ = 0;
-  co_return;
 }
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::UnregisterTarget(
+HSHM_GPU_FUN void GpuRuntime::UnregisterTarget(
     hipc::FullPtr<UnregisterTargetTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::ListTargets(
+HSHM_GPU_FUN void GpuRuntime::ListTargets(
     hipc::FullPtr<ListTargetsTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::StatTargets(
+HSHM_GPU_FUN void GpuRuntime::StatTargets(
     hipc::FullPtr<StatTargetsTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
 //==============================================================================
@@ -272,11 +268,11 @@ HSHM_GPU_FUN chi::priv::string GpuRuntime::MakeBlobKey(const TagId &tag_id,
 // GetOrCreateTag
 //==============================================================================
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetOrCreateTag(
+HSHM_GPU_FUN void GpuRuntime::GetOrCreateTag(
     hipc::FullPtr<GetOrCreateTagTask<CreateParams>> task,
     chi::gpu::RunContext &rctx) {
   (void)rctx;
-  if (!chi::IpcManager::IsWarpScheduler()) co_return;
+  if (!chi::IpcManager::IsWarpScheduler()) return;
   EnsureMetaInit();
 
   chi::priv::string name(CHI_PRIV_ALLOC, task->tag_name_.data());
@@ -287,7 +283,7 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetOrCreateTag(
   if (existing != nullptr) {
     task->tag_id_ = TagId::FromU64(*existing);
     task->return_code_ = 0;
-    co_return;
+    return;
   }
 
   // Assign new ID
@@ -304,27 +300,25 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetOrCreateTag(
 
   task->tag_id_ = tag_id;
   task->return_code_ = 0;
-  co_return;
 }
 
 //==============================================================================
 // GetTagSize
 //==============================================================================
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetTagSize(
+HSHM_GPU_FUN void GpuRuntime::GetTagSize(
     hipc::FullPtr<GetTagSizeTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
 //==============================================================================
 // DelTag
 //==============================================================================
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::DelTag(
+HSHM_GPU_FUN void GpuRuntime::DelTag(
     hipc::FullPtr<DelTagTask> task, chi::gpu::RunContext &rctx) {
   (void)rctx;
-  if (!chi::IpcManager::IsWarpScheduler()) co_return;
+  if (!chi::IpcManager::IsWarpScheduler()) return;
   EnsureMetaInit();
 
   TagId tag_id = task->tag_id_;
@@ -334,12 +328,12 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::DelTag(
     chi::priv::string name(CHI_PRIV_ALLOC, task->tag_name_.data());
     if (name.size() == 0) {
       task->return_code_ = 1;
-      co_return;
+      return;
     }
     chi::u64 *found = FindTagIdByName(name);
     if (found == nullptr) {
       task->return_code_ = 1;
-      co_return;
+      return;
     }
     tag_id = TagId::FromU64(*found);
     task->tag_id_ = tag_id;
@@ -374,27 +368,25 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::DelTag(
   }
 
   task->return_code_ = 0;
-  co_return;
 }
 
 //==============================================================================
 // GetContainedBlobs
 //==============================================================================
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetContainedBlobs(
+HSHM_GPU_FUN void GpuRuntime::GetContainedBlobs(
     hipc::FullPtr<GetContainedBlobsTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
 //==============================================================================
 // PutBlob
 //==============================================================================
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::PutBlob(
+HSHM_GPU_FUN void GpuRuntime::PutBlob(
     hipc::FullPtr<PutBlobTask> task, chi::gpu::RunContext &rctx) {
   (void)rctx;
-  if (!chi::IpcManager::IsWarpScheduler()) co_return;
+  if (!chi::IpcManager::IsWarpScheduler()) return;
   EnsureMetaInit();
   TagId tag_id = task->tag_id_;
   const char *blob_name = task->blob_name_.data();
@@ -403,15 +395,15 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::PutBlob(
   float blob_score = task->score_;
 
   // Validate inputs
-  if (size == 0) { task->return_code_ = 2; co_return; }
-  if (task->blob_data_.IsNull()) { task->return_code_ = 3; co_return; }
-  if (blob_name_len == 0) { task->return_code_ = 4; co_return; }
+  if (size == 0) { task->return_code_ = 2; return; }
+  if (task->blob_data_.IsNull()) { task->return_code_ = 3; return; }
+  if (blob_name_len == 0) { task->return_code_ = 4; return; }
   if (blob_score < 0.0f) blob_score = 1.0f;
-  if (blob_score > 1.0f) { task->return_code_ = 5; co_return; }
+  if (blob_score > 1.0f) { task->return_code_ = 5; return; }
 
   // Resolve blob data pointer
   auto data_ptr = CHI_IPC->ToFullPtr(task->blob_data_);
-  if (data_ptr.IsNull()) { task->return_code_ = 6; co_return; }
+  if (data_ptr.IsNull()) { task->return_code_ = 6; return; }
 
   // Build compound key and lock the blob map bucket
   chi::priv::string ck = MakeCompoundKey(tag_id, blob_name, blob_name_len);
@@ -427,7 +419,7 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::PutBlob(
       if (result.value == nullptr) {
         meta_->blob_map_.unlock_key(ck);
         task->return_code_ = 10;
-        co_return;
+        return;
       }
       entry = result.value;
       is_new_blob = true;
@@ -452,18 +444,21 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::PutBlob(
     }
     if (!found) {
       task->return_code_ = 7;  // No space available
-      co_return;
+      return;
     }
   }
 
   // Allocate blocks via bdev (outside locks)
   auto alloc_task = target_info.bdev_client_.AsyncAllocateBlocks(
       target_info.target_query_, size);
-  co_await alloc_task;
+  // Spin-poll for allocation completion
+  while (alloc_task->return_code_ == -1) {
+    // Task not yet complete, continue spinning
+  }
 
   if (alloc_task->blocks_.empty()) {
     task->return_code_ = 8;  // Allocation failed
-    co_return;
+    return;
   }
 
   // Copy data to allocated blocks via bdev (full-warp parallelism)
@@ -471,23 +466,26 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::PutBlob(
   warp_query.SetParallelism(32);
   auto write_task = target_info.bdev_client_.AsyncWrite(
       warp_query, alloc_task->blocks_, task->blob_data_, size);
-  co_await write_task;
+  // Spin-poll for write completion
+  while (write_task->return_code_ == -1) {
+    // Task not yet complete, continue spinning
+  }
 
   if (write_task->return_code_ != 0) {
     task->return_code_ = 9;  // Write failed
-    co_return;
+    return;
   }
 
   // Re-lock blob key and update entry with blocks
   {
     meta_->blob_map_.lock_key(ck);
 
-    // Re-find entry after co_await (pointer may be stale after rehash)
+    // Re-find entry after completion (pointer may be stale after rehash)
     entry = meta_->blob_map_.find_locked(ck);
     if (entry == nullptr) {
       meta_->blob_map_.unlock_key(ck);
       task->return_code_ = 11;
-      co_return;
+      return;
     }
 
     // Create BlobBlock structs from allocated blocks
@@ -537,17 +535,16 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::PutBlob(
   }
 
   task->return_code_ = 0;
-  co_return;
 }
 
 //==============================================================================
 // GetBlob
 //==============================================================================
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetBlob(
+HSHM_GPU_FUN void GpuRuntime::GetBlob(
     hipc::FullPtr<GetBlobTask> task, chi::gpu::RunContext &rctx) {
   (void)rctx;
-  if (!chi::IpcManager::IsWarpScheduler()) co_return;
+  if (!chi::IpcManager::IsWarpScheduler()) return;
   EnsureMetaInit();
   TagId tag_id = task->tag_id_;
   const char *blob_name = task->blob_name_.data();
@@ -555,13 +552,13 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetBlob(
   chi::u64 offset = task->offset_;
   chi::u64 size = task->size_;
 
-  if (size == 0 || blob_name_len == 0) { task->return_code_ = 1; co_return; }
+  if (size == 0 || blob_name_len == 0) { task->return_code_ = 1; return; }
 
   chi::priv::string ck = MakeCompoundKey(tag_id, blob_name, blob_name_len);
 
   // Resolve output buffer
   auto out_ptr = CHI_IPC->ToFullPtr(task->blob_data_);
-  if (out_ptr.IsNull()) { task->return_code_ = 1; co_return; }
+  if (out_ptr.IsNull()) { task->return_code_ = 1; return; }
 
   // Get blob entry and blocks (copy blocks locally)
   chi::priv::shared_vector<BlobBlock> blocks(CHI_PRIV_SHARED_ALLOC);
@@ -572,7 +569,7 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetBlob(
     if (entry == nullptr) {
       meta_->blob_map_.unlock_key(ck);
       task->return_code_ = 1;
-      co_return;
+      return;
     }
 
     blocks = entry->blocks_;
@@ -584,13 +581,13 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetBlob(
   // For GPU simplicity, assume single-block blobs (typical case)
   if (blocks.empty()) {
     task->return_code_ = 2;  // No blocks allocated
-    co_return;
+    return;
   }
 
   if (blocks.size() != 1) {
     // Multi-block read not yet implemented on GPU
     task->return_code_ = 3;
-    co_return;
+    return;
   }
 
   // Build a vector of blocks for the read operation
@@ -603,11 +600,14 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetBlob(
   warp_query.SetParallelism(32);
   auto read_task = blocks[0].bdev_client_.AsyncRead(
       warp_query, read_blocks, task->blob_data_, size);
-  co_await read_task;
+  // Spin-poll for read completion
+  while (read_task->return_code_ == -1) {
+    // Task not yet complete, continue spinning
+  }
 
   if (read_task->return_code_ != 0) {
     task->return_code_ = 4;  // Read failed
-    co_return;
+    return;
   }
 
   // Validate we read the expected amount
@@ -615,17 +615,16 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetBlob(
   chi::u64 expected_read = (can_read < size) ? can_read : size;
 
   task->return_code_ = (read_task->bytes_read_ == expected_read) ? 0 : 1;
-  co_return;
 }
 
 //==============================================================================
 // ReorganizeBlob
 //==============================================================================
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::ReorganizeBlob(
+HSHM_GPU_FUN void GpuRuntime::ReorganizeBlob(
     hipc::FullPtr<ReorganizeBlobTask> task, chi::gpu::RunContext &rctx) {
   (void)rctx;
-  if (!chi::IpcManager::IsWarpScheduler()) co_return;
+  if (!chi::IpcManager::IsWarpScheduler()) return;
   EnsureMetaInit();
   TagId tag_id = task->tag_id_;
   const char *blob_name = task->blob_name_.data();
@@ -634,7 +633,7 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::ReorganizeBlob(
 
   if (blob_name_len == 0 || new_score < 0.0f || new_score > 1.0f) {
     task->return_code_ = 1;
-    co_return;
+    return;
   }
 
   chi::priv::string ck = MakeCompoundKey(tag_id, blob_name, blob_name_len);
@@ -644,29 +643,28 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::ReorganizeBlob(
   if (entry == nullptr) {
     meta_->blob_map_.unlock_key(ck);
     task->return_code_ = 3;
-    co_return;
+    return;
   }
 
   entry->score_ = new_score;
   meta_->blob_map_.unlock_key(ck);
   task->return_code_ = 0;
-  co_return;
 }
 
 //==============================================================================
 // DelBlob
 //==============================================================================
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::DelBlob(
+HSHM_GPU_FUN void GpuRuntime::DelBlob(
     hipc::FullPtr<DelBlobTask> task, chi::gpu::RunContext &rctx) {
   (void)rctx;
-  if (!chi::IpcManager::IsWarpScheduler()) co_return;
+  if (!chi::IpcManager::IsWarpScheduler()) return;
   EnsureMetaInit();
   TagId tag_id = task->tag_id_;
   const char *blob_name = task->blob_name_.data();
   int blob_name_len = static_cast<int>(task->blob_name_.size());
 
-  if (blob_name_len == 0) { task->return_code_ = 1; co_return; }
+  if (blob_name_len == 0) { task->return_code_ = 1; return; }
 
   chi::priv::string ck = MakeCompoundKey(tag_id, blob_name, blob_name_len);
 
@@ -677,7 +675,7 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::DelBlob(
     if (entry == nullptr) {
       meta_->blob_map_.unlock_key(ck);
       task->return_code_ = 1;
-      co_return;
+      return;
     }
 
     blob_size = entry->size_;
@@ -698,65 +696,55 @@ HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::DelBlob(
   }
 
   task->return_code_ = 0;
-  co_return;
 }
 
 //==============================================================================
 // Remaining stubs
 //==============================================================================
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetBlobScore(
+HSHM_GPU_FUN void GpuRuntime::GetBlobScore(
     hipc::FullPtr<GetBlobScoreTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetBlobSize(
+HSHM_GPU_FUN void GpuRuntime::GetBlobSize(
     hipc::FullPtr<GetBlobSizeTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetBlobInfo(
+HSHM_GPU_FUN void GpuRuntime::GetBlobInfo(
     hipc::FullPtr<GetBlobInfoTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::PollTelemetryLog(
+HSHM_GPU_FUN void GpuRuntime::PollTelemetryLog(
     hipc::FullPtr<PollTelemetryLogTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::TagQuery(
+HSHM_GPU_FUN void GpuRuntime::TagQuery(
     hipc::FullPtr<TagQueryTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::BlobQuery(
+HSHM_GPU_FUN void GpuRuntime::BlobQuery(
     hipc::FullPtr<BlobQueryTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::GetTargetInfo(
+HSHM_GPU_FUN void GpuRuntime::GetTargetInfo(
     hipc::FullPtr<GetTargetInfoTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::FlushMetadata(
+HSHM_GPU_FUN void GpuRuntime::FlushMetadata(
     hipc::FullPtr<FlushMetadataTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
-HSHM_GPU_FUN chi::gpu::TaskResume GpuRuntime::FlushData(
+HSHM_GPU_FUN void GpuRuntime::FlushData(
     hipc::FullPtr<FlushDataTask> task, chi::gpu::RunContext &rctx) {
   (void)task; (void)rctx;
-  co_return;
 }
 
 // LocalAllocLoadTask / LocalSaveTask / etc. are now generated by the autogen

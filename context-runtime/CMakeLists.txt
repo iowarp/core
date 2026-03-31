@@ -7,9 +7,6 @@ set(CHIMAERA_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 # Enable CUDA if requested
 if(WRP_CORE_ENABLE_CUDA)
     wrp_core_enable_cuda(20)
-    if(WRP_CORE_ENABLE_GPU_RUNTIME)
-        wrp_core_find_clang_cuda()
-    endif()
 endif()
 
 # Enable ROCm if requested

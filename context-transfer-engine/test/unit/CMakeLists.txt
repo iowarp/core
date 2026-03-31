@@ -319,7 +319,7 @@ target_link_libraries(test_cte_gpu_coroutine
 )
 if(WRP_CORE_ENABLE_CUDA AND CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES)
   set_property(TARGET test_cte_gpu_coroutine APPEND PROPERTY
-    LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart")
+    LINK_LIBRARIES "CUDA::cudart")
 endif()
 
 # Link test_gpu_core - using simple_test.h framework (NOT Catch2)
@@ -337,7 +337,7 @@ target_link_libraries(test_gpu_core
 )
 if(WRP_CORE_ENABLE_CUDA AND CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES)
   set_property(TARGET test_gpu_core APPEND PROPERTY
-    LINK_LIBRARIES "-L${WRP_CORE_CLANG_CUDA_PATH}/lib64;-lcudart")
+    LINK_LIBRARIES "CUDA::cudart")
 endif()
 
 # Link test_gpu_create - using simple_test.h framework (NOT Catch2)

@@ -42,100 +42,64 @@ HSHM_GPU_FUN void SaveTaskTmpl(
   }
 }
 
-static HSHM_GPU_FUN chi::gpu::TaskResume RunImpl(
+static HSHM_GPU_FUN void RunImpl(
     chi::gpu::Container *self_, chi::u32 method,
     hipc::FullPtr<chi::Task> task_ptr, chi::gpu::RunContext &rctx) {
   auto *self = static_cast<GpuRuntime *>(self_);
   switch (method) {
     case Method::kGpuSubmit:
-      co_await self->GpuSubmit(task_ptr.template Cast<GpuSubmitTask>(), rctx);
+      self->GpuSubmit(task_ptr.template Cast<GpuSubmitTask>(), rctx);
       break;
     case Method::kSubtaskTest:
-      co_await self->SubtaskTest(task_ptr.template Cast<SubtaskTestTask>(), rctx);
+      self->SubtaskTest(task_ptr.template Cast<SubtaskTestTask>(), rctx);
       break;
     default: break;
   }
-  co_return;
 }
 
-static HSHM_GPU_FUN chi::gpu::TaskContextBlock AllocTaskImpl(
-    chi::gpu::Container *self_, chi::u32 method, size_t stack_size) {
-  auto *ipc = CHI_IPC;
+static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocTaskImpl(
+    chi::gpu::Container *self_, chi::u32 method) {
   switch (method) {
     case Method::kGpuSubmit: {
-      auto fp = ipc->template NewTaskExec<GpuSubmitTask>(stack_size);
-      if (fp.IsNull()) return {hipc::FullPtr<chi::Task>::GetNull(), nullptr};
-      auto *rctx = reinterpret_cast<chi::gpu::RunContext *>(
-          reinterpret_cast<char *>(fp.ptr_) + sizeof(GpuSubmitTask));
-      new (rctx) chi::gpu::RunContext();
-      rctx->InitStack(reinterpret_cast<char *>(rctx) + sizeof(chi::gpu::RunContext), stack_size);
-      return {fp.template Cast<chi::Task>(), rctx};
+      auto _tp = CHI_IPC->NewTaskBase<GpuSubmitTask>(0); return _tp.template Cast<chi::Task>();
     }
     case Method::kSubtaskTest: {
-      auto fp = ipc->template NewTaskExec<SubtaskTestTask>(stack_size);
-      if (fp.IsNull()) return {hipc::FullPtr<chi::Task>::GetNull(), nullptr};
-      auto *rctx = reinterpret_cast<chi::gpu::RunContext *>(
-          reinterpret_cast<char *>(fp.ptr_) + sizeof(SubtaskTestTask));
-      new (rctx) chi::gpu::RunContext();
-      rctx->InitStack(reinterpret_cast<char *>(rctx) + sizeof(chi::gpu::RunContext), stack_size);
-      return {fp.template Cast<chi::Task>(), rctx};
+      auto _tp = CHI_IPC->NewTaskBase<SubtaskTestTask>(0); return _tp.template Cast<chi::Task>();
     }
-    default: return {hipc::FullPtr<chi::Task>::GetNull(), nullptr};
+    default: return hipc::FullPtr<chi::Task>::GetNull();
   }
 }
 
 static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocLoadTaskDefaultImpl(
-    chi::gpu::Container *self_, chi::u32 method, chi::DefaultLoadArchive &ar) {
-  auto *self = static_cast<GpuRuntime *>(self_);
-  auto block = self->alloc_task_(self_, method, 0);
-  if (block.task_ptr.IsNull()) return block.task_ptr;
-  ar.SetMsgType(chi::LocalMsgType::kSerializeIn);
-  self->LoadTaskTmpl(method, ar, block.task_ptr);
-  return block.task_ptr;
-}
-
-static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocLoadTaskWrapImpl(
     chi::gpu::Container *self_, chi::u32 method, chi::GpuLoadTaskArchive &ar) {
   auto *self = static_cast<GpuRuntime *>(self_);
-  auto block = self->alloc_task_(self_, method, 0);
-  if (block.task_ptr.IsNull()) return block.task_ptr;
+  auto task_ptr = self->alloc_task_(self_, method);
+  if (task_ptr.IsNull()) return task_ptr;
   ar.SetMsgType(chi::LocalMsgType::kSerializeIn);
-  self->LoadTaskTmpl(method, ar, block.task_ptr);
-  return block.task_ptr;
+  self->LoadTaskTmpl(method, ar, task_ptr);
+  return task_ptr;
 }
 
-static HSHM_GPU_FUN chi::gpu::TaskContextBlock AllocLoadDeserImpl(
+static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocLoadDeserImpl(
     chi::gpu::Container *self_, chi::u32 method,
-    size_t stack_size, chi::GpuLoadTaskArchive &ar) {
+    chi::GpuLoadTaskArchive &ar) {
   auto *self = static_cast<GpuRuntime *>(self_);
-  auto block = AllocTaskImpl(self_, method, stack_size);
-  if (!block.task_ptr.IsNull()) {
+  auto task_ptr = AllocTaskImpl(self_, method);
+  if (!task_ptr.IsNull()) {
     ar.SetMsgType(chi::LocalMsgType::kSerializeIn);
-    self->LoadTaskTmpl(method, ar, block.task_ptr);
+    self->LoadTaskTmpl(method, ar, task_ptr);
   }
-  return block;
+  return task_ptr;
 }
 
 static HSHM_GPU_FUN void LoadTaskDefaultImpl(
     chi::gpu::Container *self_, chi::u32 method,
-    chi::DefaultLoadArchive &ar, const hipc::FullPtr<chi::Task> &task) {
+    chi::GpuLoadTaskArchive &ar, const hipc::FullPtr<chi::Task> &task) {
   ar.SetMsgType(chi::LocalMsgType::kSerializeIn);
   static_cast<GpuRuntime *>(self_)->LoadTaskTmpl(method, ar, task);
 }
 
-static HSHM_GPU_FUN void LoadTaskWrapImpl(
-    chi::gpu::Container *self_, chi::u32 method,
-    chi::GpuLoadTaskArchive &ar, const hipc::FullPtr<chi::Task> &task) {
-  static_cast<GpuRuntime *>(self_)->LoadTaskTmpl(method, ar, task);
-}
-
 static HSHM_GPU_FUN void SaveTaskDefaultImpl(
-    chi::gpu::Container *self_, chi::u32 method,
-    chi::DefaultSaveArchive &ar, const hipc::FullPtr<chi::Task> &task) {
-  static_cast<GpuRuntime *>(self_)->SaveTaskTmpl(method, ar, task);
-}
-
-static HSHM_GPU_FUN void SaveTaskWrapImpl(
     chi::gpu::Container *self_, chi::u32 method,
     chi::GpuSaveTaskArchive &ar, const hipc::FullPtr<chi::Task> &task) {
   static_cast<GpuRuntime *>(self_)->SaveTaskTmpl(method, ar, task);
@@ -143,7 +107,7 @@ static HSHM_GPU_FUN void SaveTaskWrapImpl(
 
 static HSHM_GPU_FUN void LoadTaskOutputImpl(
     chi::gpu::Container *self_, chi::u32 method,
-    chi::DefaultLoadArchive &ar, const hipc::FullPtr<chi::Task> &task) {
+    chi::GpuLoadTaskArchive &ar, const hipc::FullPtr<chi::Task> &task) {
   ar.SetMsgType(chi::LocalMsgType::kSerializeOut);
   static_cast<GpuRuntime *>(self_)->LoadTaskTmpl(method, ar, task);
 }
@@ -167,12 +131,9 @@ HSHM_GPU_FUN GpuRuntime() {
   run_ = &RunImpl;
   alloc_task_ = &AllocTaskImpl;
   alloc_load_deser_ = &AllocLoadDeserImpl;
-  alloc_load_task_default_ = &AllocLoadTaskDefaultImpl;
-  alloc_load_task_wrap_ = &AllocLoadTaskWrapImpl;
-  load_task_default_ = &LoadTaskDefaultImpl;
-  load_task_wrap_ = &LoadTaskWrapImpl;
-  save_task_default_ = &SaveTaskDefaultImpl;
-  save_task_wrap_ = &SaveTaskWrapImpl;
+  alloc_load_task_ = &AllocLoadTaskDefaultImpl;
+  load_task_ = &LoadTaskDefaultImpl;
+  save_task_ = &SaveTaskDefaultImpl;
   load_task_output_ = &LoadTaskOutputImpl;
   destroy_task_ = &DestroyTaskImpl;
 }

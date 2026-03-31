@@ -496,8 +496,8 @@ if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
   )
 endif()
 
-# GPU Coroutine test executable
-if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
+# GPU Coroutine test removed (coroutines removed from GPU path in CDP migration)
+if(FALSE AND (WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM))
   set(GPU_COROUTINE_TEST_TARGET test_gpu_coroutine)
   add_cuda_executable(${GPU_COROUTINE_TEST_TARGET} FALSE test_gpu_coroutine.cu
     INCLUDE_DIRS
