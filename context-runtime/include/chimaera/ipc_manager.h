@@ -3169,9 +3169,16 @@ HSHM_CROSS_FUN bool Future<TaskT, AllocT>::Wait(float max_sec,
         // via system-scope atomics). CPU reads directly — no cudaMemcpy needed.
         FutureShm *fshm = reinterpret_cast<FutureShm *>(future_shm_.off_.load());
         auto start = std::chrono::steady_clock::now();
+        int poll_count = 0;
 
         // Poll pinned-host FutureShm flags directly
         while (!fshm->flags_.AnySystem(FutureShm::FUTURE_COMPLETE)) {
+          if (poll_count % 100 == 0) {
+            HLOG(kInfo, "GPU-POD Wait: poll#{} fshm={:x} flags_raw={}",
+                 poll_count, reinterpret_cast<uintptr_t>(fshm),
+                 (u32)fshm->flags_.bits_.load());
+          }
+          ++poll_count;
           HSHM_THREAD_MODEL->Yield();
           if (max_sec > 0) {
             float elapsed = std::chrono::duration<float>(
