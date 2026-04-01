@@ -541,7 +541,9 @@ int main(int argc, char **argv) {
           target_size,
           chi::PoolQuery::Local(), bdev_pool_id);
       auto reg_future = ipc->Send(reg_task);
-      bool ok = reg_future.Wait(10.0f);
+      printf("[BENCH] Sent RegisterTarget, waiting...\n"); fflush(stdout);
+      bool ok = reg_future.Wait(5.0f);
+      printf("[BENCH] Wait returned: ok=%d rc=%d\n", ok, (int)reg_task->return_code_); fflush(stdout);
       if (!ok || reg_task->return_code_ != 0) {
         HLOG(kError, "GPU RegisterTarget failed: ok={} rc={}",
              ok, (int)reg_task->return_code_);
