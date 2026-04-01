@@ -72,6 +72,22 @@ if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
   )
   add_test(NAME test_thread_alloc_gpu COMMAND test_thread_alloc_gpu)
 
+  # RoundRobinAllocator CDP test
+  find_package(CUDAToolkit QUIET)
+  add_cuda_executable(test_round_robin_alloc_gpu TRUE test_round_robin_alloc_gpu.cc
+    INCLUDE_DIRS ${HSHM_GPU_INCLUDE_DIRS}
+    DEFS CUDA_FORCE_CDP1_IF_SUPPORTED __CDPRT_SUPPRESS_SYNC_DEPRECATION_WARNING)
+  target_link_libraries(test_round_robin_alloc_gpu
+    hshm::cuda_cxx
+    Catch2::Catch2WithMain
+    cudadevrt
+  )
+  target_compile_options(test_round_robin_alloc_gpu PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda -rdc=true>)
+  add_test(NAME test_round_robin_alloc_gpu COMMAND test_round_robin_alloc_gpu)
+  set_tests_properties(test_round_robin_alloc_gpu PROPERTIES
+    TIMEOUT 60 LABELS "gpu;allocator")
+
   add_subdirectory(runtime)
 
 else()
