@@ -1158,31 +1158,10 @@ void gpu::IpcManager::RegisterGpuAllocator(const hipc::MemoryBackendId &id,
 
 IpcManagerGpuInfo gpu::IpcManager::CreateGpuAllocator(size_t gpu_memory_size,
                                                        u32 gpu_id) {
-  // Create a GpuMalloc backend on the device
-  auto backend = std::make_unique<hipc::GpuMalloc>();
-  hipc::MemoryBackendId backend_id(
-      static_cast<u32>(100 + client_alloc_backends_.size()), 0);
-  if (!backend->shm_init(backend_id, gpu_memory_size, "", 0)) {
-    HLOG(kError, "CreateGpuAllocator: Failed to allocate {} bytes of GPU memory",
-         gpu_memory_size);
-    return IpcManagerGpuInfo();
-  }
-
-  // Register for host-side ShmPtr resolution
-  u64 key = (static_cast<u64>(backend_id.major_) << 32) |
-            static_cast<u64>(backend_id.minor_);
-  gpu_alloc_map_[key] = GpuAllocInfo{
-      hipc::AllocatorId{backend_id.major_, backend_id.minor_},
-      backend->data_, backend->data_capacity_};
-
-  // Build IpcManagerGpuInfo with queue pointers
-  IpcManagerGpuInfo info = GetGpuInfo(gpu_id);
-  info.backend = static_cast<hipc::MemoryBackend &>(*backend);
-
-  // Keep backend alive
-  client_alloc_backends_.push_back(std::move(backend));
-
-  return info;
+  (void)gpu_memory_size;
+  // Share the orchestrator's scratch backend with client kernels.
+  // Both the client and orchestrator use the same RoundRobinAllocator.
+  return GetGpuInfo(gpu_id);
 }
 
 bool IpcManager::ClientInitQueues() {

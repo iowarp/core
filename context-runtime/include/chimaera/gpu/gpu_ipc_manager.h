@@ -118,7 +118,15 @@ class IpcManager {
     u32 num_warps = num_threads / 32;
     if (num_warps < 1) num_warps = 1;
     if (gpu_info_.backend.data_ != nullptr) {
-      InitHeapAllocator(gpu_info_.backend, num_warps, &gpu_alloc_);
+      auto *alloc = reinterpret_cast<hipc::RoundRobinAllocator *>(
+          gpu_info_.backend.data_);
+      if (alloc->heap_ready_.load() == 1) {
+        // Reattach to existing allocator
+        gpu_alloc_ = alloc;
+      } else {
+        // First-time initialization
+        InitHeapAllocator(gpu_info_.backend, num_warps, &gpu_alloc_);
+      }
     }
   }
 
