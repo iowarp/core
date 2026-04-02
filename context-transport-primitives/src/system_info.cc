@@ -52,6 +52,7 @@
 #define HSHM_MSAN_UNPOISON(ptr, size) ((void)0)
 #endif
 #if HSHM_ENABLE_PROCFS_SYSINFO
+#include <limits.h>
 #include <dlfcn.h>
 #include <signal.h>
 // LINUX

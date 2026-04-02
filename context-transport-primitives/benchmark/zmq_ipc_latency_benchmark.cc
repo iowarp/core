@@ -52,6 +52,7 @@
  */
 
 #include <zmq.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <chrono>

@@ -34,7 +34,7 @@
 #ifndef HSHM_INCLUDE_MEMORY_BACKEND_GPU_SHM_MMAP_H
 #define HSHM_INCLUDE_MEMORY_BACKEND_GPU_SHM_MMAP_H
 
-#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM || HSHM_ENABLE_SYCL
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -285,6 +285,6 @@ class GpuShmMmap : public MemoryBackend, public UrlMemoryBackend {
 
 }  // namespace hshm::ipc
 
-#endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+#endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM || HSHM_ENABLE_SYCL
 
 #endif  // HSHM_INCLUDE_MEMORY_BACKEND_GPU_SHM_MMAP_H

@@ -119,6 +119,10 @@ if(WRP_CORE_ENABLE_ROCM)
     wrp_core_enable_rocm("HIP" 17)
 endif()
 
+if(WRP_CORE_ENABLE_SYCL)
+    wrp_core_enable_sycl(17)
+endif()
+
 # ------------------------------------------------------------------------------
 # Modular dependency targets
 # ------------------------------------------------------------------------------

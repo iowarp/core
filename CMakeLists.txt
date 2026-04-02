@@ -112,6 +112,7 @@ option(WRP_CORE_ENABLE_ELF "Enable ELF support (required for CTE adapters)" OFF)
 option(WRP_CORE_ENABLE_OPENMP "Enable the use of OpenMP" OFF)
 option(WRP_CORE_ENABLE_CUDA "Enable CUDA support" OFF)
 option(WRP_CORE_ENABLE_ROCM "Enable ROCm support" OFF)
+option(WRP_CORE_ENABLE_SYCL "Enable Intel GPU support via SYCL/oneAPI (icpx -fsycl)" OFF)
 option(WRP_CORE_ENABLE_JARVIS "Enable Jarvis CI infrastructure installation" OFF)
 
 #------------------------------------------------------------------------------
@@ -180,6 +181,7 @@ set(HSHM_ENABLE_ENCRYPT ${WRP_CORE_ENABLE_ENCRYPT} CACHE BOOL "Enable Encrypt (c
 set(HSHM_ENABLE_ELF ${WRP_CORE_ENABLE_ELF} CACHE BOOL "Enable ELF (controlled by WRP_CORE_ENABLE_ELF)" FORCE)
 set(HSHM_ENABLE_CUDA ${WRP_CORE_ENABLE_CUDA} CACHE BOOL "Enable CUDA (controlled by WRP_CORE_ENABLE_CUDA)" FORCE)
 set(HSHM_ENABLE_ROCM ${WRP_CORE_ENABLE_ROCM} CACHE BOOL "Enable ROCm (controlled by WRP_CORE_ENABLE_ROCM)" FORCE)
+set(HSHM_ENABLE_SYCL ${WRP_CORE_ENABLE_SYCL} CACHE BOOL "Enable SYCL (controlled by WRP_CORE_ENABLE_SYCL)" FORCE)
 set(HSHM_ENABLE_IO_URING ${WRP_CORE_ENABLE_IO_URING} CACHE BOOL "Enable io_uring (controlled by WRP_CORE_ENABLE_IO_URING)" FORCE)
 # Note: Coverage is handled globally via add_compile_options when WRP_CORE_ENABLE_COVERAGE=ON
 # No need for component-level HSHM_ENABLE_COVERAGE
@@ -960,11 +962,14 @@ if(WRP_CORE_ENABLE_TESTS)
         endforeach()
     endfunction()
 
-    foreach(_component_dir
-            context-runtime
-            context-transfer-engine
-            context-assimilation-engine
-            context-exploration-engine)
+    set(_lock_dirs context-runtime context-transfer-engine)
+    if(WRP_CORE_ENABLE_CAE)
+        list(APPEND _lock_dirs context-assimilation-engine)
+    endif()
+    if(WRP_CORE_ENABLE_CEE)
+        list(APPEND _lock_dirs context-exploration-engine)
+    endif()
+    foreach(_component_dir ${_lock_dirs})
         if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${_component_dir}")
             _chimaera_lock_tests_recursive(
                 "${CMAKE_CURRENT_SOURCE_DIR}/${_component_dir}"

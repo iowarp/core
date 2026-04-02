@@ -39,6 +39,20 @@ if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
 
   add_subdirectory(runtime)
 
-else()
-  message(STATUS "GPU tests disabled (WRP_CORE_ENABLE_CUDA and WRP_CORE_ENABLE_ROCM are both OFF)")
+endif()
+
+if(WRP_CORE_ENABLE_SYCL)
+  message(STATUS "Building SYCL GPU unit tests (Intel oneAPI)")
+  add_executable(test_gpu_sycl test_gpu_sycl.cc)
+  target_compile_definitions(test_gpu_sycl PRIVATE HSHM_ENABLE_SYCL=1)
+  wrp_core_apply_sycl_flags(test_gpu_sycl)
+  target_link_libraries(test_gpu_sycl
+    Catch2::Catch2WithMain
+  )
+  add_test(NAME test_gpu_sycl COMMAND test_gpu_sycl)
+  set_tests_properties(test_gpu_sycl PROPERTIES LABELS "gpu;sycl")
+endif()
+
+if(NOT WRP_CORE_ENABLE_CUDA AND NOT WRP_CORE_ENABLE_ROCM AND NOT WRP_CORE_ENABLE_SYCL)
+  message(STATUS "GPU tests disabled (WRP_CORE_ENABLE_CUDA, WRP_CORE_ENABLE_ROCM, and WRP_CORE_ENABLE_SYCL are all OFF)")
 endif()

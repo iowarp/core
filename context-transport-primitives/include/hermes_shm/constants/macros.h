@@ -99,6 +99,10 @@
 #define HSHM_ENABLE_CUDA_OR_ROCM 1
 #endif
 
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM || HSHM_ENABLE_SYCL
+#define HSHM_ENABLE_GPU 1
+#endif
+
 /** Detect GPU compilers.
  * These combine the CMake build flag (HSHM_ENABLE_CUDA / HSHM_ENABLE_ROCM)
  * with the actual compiler detection (__CUDACC__ / __HIPCC__) so that GPU
@@ -117,6 +121,13 @@
 #define HSHM_IS_ROCM_COMPILER 0
 #endif
 
+/** Detect SYCL compiler (Intel oneAPI icpx -fsycl) */
+#if HSHM_ENABLE_SYCL && defined(SYCL_LANGUAGE_VERSION)
+#define HSHM_IS_SYCL_COMPILER 1
+#else
+#define HSHM_IS_SYCL_COMPILER 0
+#endif
+
 #if HSHM_IS_CUDA_COMPILER || HSHM_IS_ROCM_COMPILER
 #define HSHM_IS_GPU_COMPILER 1
 #else
@@ -130,6 +141,10 @@
 
 #if HSHM_IS_ROCM_COMPILER
 #include <hip/hip_runtime.h>
+#endif
+
+#if HSHM_IS_SYCL_COMPILER
+#include <sycl/sycl.hpp>
 #endif
 
 /** Macros for CUDA functions.

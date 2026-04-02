@@ -107,6 +107,36 @@ macro(wrp_core_enable_rocm GPU_RUNTIME CXX_STANDARD)
     endif()
 endmacro()
 
+# Enable Intel GPU / SYCL (oneAPI icpx -fsycl)
+# Note: SYCL flags are NOT applied globally to avoid breaking PCH and non-SYCL
+# targets. Use target_compile_options / target_link_options on SYCL targets,
+# or call wrp_core_apply_sycl_flags(<target>) defined below.
+macro(wrp_core_enable_sycl CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD ${CXX_STANDARD})
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+    # Intel GPU target for Aurora (Ponte Vecchio / PVC)
+    set(SYCL_TARGET "spir64_gen" CACHE STRING "SYCL AOT target (default: spir64_gen for Intel GPU)")
+    set(SYCL_DEVICE "pvc" CACHE STRING "SYCL AOT device (default: pvc for Aurora Ponte Vecchio)")
+
+    message(STATUS "SYCL enabled: target=${SYCL_TARGET} device=${SYCL_DEVICE}")
+endmacro()
+
+# Apply SYCL compile and link flags to a specific target.
+# Call this for each executable or library that contains SYCL device code.
+function(wrp_core_apply_sycl_flags target)
+    target_compile_options(${target} PRIVATE
+        -fsycl
+        -fsycl-targets=${SYCL_TARGET}
+        "SHELL:-Xsycl-target-backend \"-device ${SYCL_DEVICE}\""
+    )
+    target_link_options(${target} PRIVATE
+        -fsycl
+        -fsycl-targets=${SYCL_TARGET}
+        "SHELL:-Xsycl-target-backend \"-device ${SYCL_DEVICE}\""
+    )
+endfunction()
+
 # Function for setting source files for rocm
 function(set_rocm_sources MODE DO_COPY SRC_FILES ROCM_SOURCE_FILES_VAR)
     set(ROCM_SOURCE_FILES ${${ROCM_SOURCE_FILES_VAR}} PARENT_SCOPE)
