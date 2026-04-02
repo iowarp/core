@@ -153,6 +153,14 @@ u32 LocalScheduler::RuntimeMapTask(Worker *worker, const Future<Task> &task,
     selected = scheduler_workers_[idx];
   }
 
+  // Net worker tasks → delegate to a scheduler worker to keep IPC responsive
+  if (selected == nullptr && net_worker_ != nullptr && worker == net_worker_ &&
+      !scheduler_workers_.empty()) {
+    u32 idx = next_sched_idx_.fetch_add(1, std::memory_order_relaxed) %
+              scheduler_workers_.size();
+    selected = scheduler_workers_[idx];
+  }
+
   // Fallback: stay on current worker
   if (selected == nullptr) {
     selected = worker;

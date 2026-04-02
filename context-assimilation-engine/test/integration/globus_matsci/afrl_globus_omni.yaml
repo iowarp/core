@@ -1,0 +1,18 @@
+# OMNI Configuration File for AFRL Challenge Data (MDF)
+#
+# Dataset: AFRL AM Challenge Data (musinski_afrl_am_package_v2.1)
+# Endpoint: globuspublish#mdf-publications (GCSv5 guest collection, public)
+# Endpoint ID: 82f1b5c6-6e9b-11e5-ba47-22000b92c6ec
+# HTTPS server: https://data.materialsdatafacility.org
+#
+# Prerequisites:
+# - Valid GLOBUS_ACCESS_TOKEN and GLOBUS_HTTPS_ACCESS_TOKEN environment variables
+#   (generate with: python3 get_oauth_token.py --client-id <id> 82f1b5c6-6e9b-11e5-ba47-22000b92c6ec)
+
+version: "1.0"
+
+transfers:
+  - src: "globus://82f1b5c6-6e9b-11e5-ba47-22000b92c6ec/afrl-challenge-data/musinski_afrl_am_package_v2.1/Calibration Data/Strain Data/A46_xx.csv"
+    dst: "file::/tmp/globus_afrl/A46_xx.csv"
+    format: "binary"
+    src_token: "${GLOBUS_ACCESS_TOKEN}"
