@@ -3193,7 +3193,7 @@ void IpcManager::SendRuntime(
       break;
     case FutureShm::FUTURE_CLIENT_TCP:
     case FutureShm::FUTURE_CLIENT_IPC:
-      IpcCpu2CpuZmq::RuntimeSend(this, run_ctx, origin);
+      IpcCpu2CpuZmq::EnqueueRuntimeSend(this, run_ctx, origin);
       break;
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
     case FutureShm::FUTURE_CLIENT_GPU2CPU:

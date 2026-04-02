@@ -1057,105 +1057,13 @@ chi::TaskResume Runtime::ClientConnect(hipc::FullPtr<ClientConnectTask> task,
 
 /**
  * Handle ClientRecv - Receive tasks from lightbeam client servers
- * Polls TCP and IPC PULL servers for incoming client task submissions
+ * Delegates to IpcCpu2CpuZmq::RuntimeRecv for the actual transport logic.
  */
 chi::TaskResume Runtime::ClientRecv(hipc::FullPtr<ClientRecvTask> task,
                                     chi::RunContext &rctx) {
-  auto *ipc_manager = CHI_IPC;
-  auto *pool_manager = CHI_POOL_MANAGER;
-  bool did_work = false;
-  task->tasks_received_ = 0;
-
-  // Process both TCP and IPC servers
-  for (int mode_idx = 0; mode_idx < 2; ++mode_idx) {
-    chi::IpcMode mode =
-        (mode_idx == 0) ? chi::IpcMode::kTcp : chi::IpcMode::kIpc;
-    hshm::lbm::Transport *transport = ipc_manager->GetClientTransport(mode);
-    if (!transport) continue;
-
-    // Drain all pending messages from this transport
-    // (Recv handles accept internally for socket transports)
-    while (true) {
-      chi::LoadTaskArchive archive;
-      auto recv_info = transport->Recv(archive);
-      int rc = recv_info.rc;
-      if (rc == EAGAIN) break;
-      if (rc != 0) {
-        HLOG(kError, "ClientRecv: Recv failed: {}", rc);
-        break;
-      }
-
-      const auto &task_infos = archive.GetTaskInfos();
-      if (task_infos.empty()) {
-        HLOG(kError, "ClientRecv: No task_infos in received message");
-        continue;
-      }
-
-      const auto &info = task_infos[0];
-      chi::PoolId pool_id = info.pool_id_;
-      chi::u32 method_id = info.method_id_;
-
-      // Get container for deserialization
-      chi::Container *container = pool_manager->GetStaticContainer(pool_id);
-      if (!container) {
-        HLOG(kError, "ClientRecv: Container not found for pool_id {}", pool_id);
-        continue;
-      }
-
-      // Allocate and deserialize the task
-      hipc::FullPtr<chi::Task> task_ptr =
-          container->AllocLoadTask(method_id, archive);
-
-      if (task_ptr.IsNull()) {
-        HLOG(kError, "ClientRecv: Failed to deserialize task");
-        continue;
-      }
-      // Create FutureShm for the task (server-side)
-      hipc::FullPtr<chi::FutureShm> future_shm =
-          ipc_manager->NewObj<chi::FutureShm>();
-      future_shm->pool_id_ = pool_id;
-      future_shm->method_id_ = method_id;
-      future_shm->origin_ = (mode == chi::IpcMode::kTcp)
-                                ? chi::FutureShm::FUTURE_CLIENT_TCP
-                                : chi::FutureShm::FUTURE_CLIENT_IPC;
-      future_shm->client_task_vaddr_ = info.task_id_.net_key_;
-      future_shm->client_pid_ = info.task_id_.pid_;
-      // Store transport and routing info for response
-      future_shm->response_transport_ = transport;
-      future_shm->response_fd_ = recv_info.fd_;
-      // Store ZMQ identity from recv frame for response routing
-      if (!recv_info.identity_.empty() &&
-          recv_info.identity_.size() <=
-              sizeof(future_shm->response_identity_)) {
-        std::memcpy(future_shm->response_identity_, recv_info.identity_.data(),
-                    recv_info.identity_.size());
-        future_shm->response_identity_len_ =
-            static_cast<chi::u32>(recv_info.identity_.size());
-      }
-      // No copy_space for ZMQ path — ShmTransferInfo defaults are fine
-      // Mark as copied so the worker routes the completed task back via
-      // lightbeam rather than treating it as a runtime-internal task
-      future_shm->flags_.SetBits(chi::FutureShm::FUTURE_WAS_COPIED);
-
-      // Create Future and enqueue to worker
-      chi::Future<chi::Task> future(future_shm.shm_, task_ptr);
-
-      // Map task to lane using scheduler
-      chi::LaneId lane_id =
-          ipc_manager->GetScheduler()->ClientMapTask(ipc_manager, future);
-      auto *worker_queues = ipc_manager->GetTaskQueue();
-      auto &lane_ref = worker_queues->GetLane(lane_id, 0);
-      bool was_empty = lane_ref.Empty();
-      lane_ref.Push(future);
-      if (was_empty) {
-        ipc_manager->AwakenWorker(&lane_ref);
-      }
-
-      did_work = true;
-      task->tasks_received_++;
-    }
-  }
-
+  chi::u32 tasks_received = 0;
+  bool did_work = chi::IpcCpu2CpuZmq::RuntimeRecv(CHI_IPC, tasks_received);
+  task->tasks_received_ = tasks_received;
   rctx.did_work_ = did_work;
   task->SetReturnCode(0);
   co_return;
@@ -1163,107 +1071,15 @@ chi::TaskResume Runtime::ClientRecv(hipc::FullPtr<ClientRecvTask> task,
 
 /**
  * Handle ClientSend - Send completed task outputs to clients via lightbeam
- * Polls net_queue_ kClientSendTcp and kClientSendIpc priorities
+ * Delegates to IpcCpu2CpuZmq::RuntimeSend for the actual transport logic.
  */
 chi::TaskResume Runtime::ClientSend(hipc::FullPtr<ClientSendTask> task,
                                     chi::RunContext &rctx) {
-  auto *ipc_manager = CHI_IPC;
-  auto *pool_manager = CHI_POOL_MANAGER;
-  bool did_work = false;
-  task->tasks_sent_ = 0;
-
-  // Flush deferred deletes from previous invocation.
-  // Zero-copy send (zmq_msg_init_data) lets ZMQ's IO thread read from the
-  // task buffer after zmq_msg_send returns. Deferring DelTask by one
-  // invocation guarantees the IO thread has flushed the message.
   static std::vector<hipc::FullPtr<chi::Task>> deferred_deletes;
-  for (auto &t : deferred_deletes) {
-    auto *del_container = pool_manager->GetStaticContainer(t->pool_id_);
-    if (del_container) {
-      del_container->DelTask(t->method_, t);
-    }
-  }
-  deferred_deletes.clear();
-
-  // Process both TCP and IPC queues
-  for (int mode_idx = 0; mode_idx < 2; ++mode_idx) {
-    chi::NetQueuePriority priority =
-        (mode_idx == 0) ? chi::NetQueuePriority::kClientSendTcp
-                        : chi::NetQueuePriority::kClientSendIpc;
-    chi::IpcMode mode =
-        (mode_idx == 0) ? chi::IpcMode::kTcp : chi::IpcMode::kIpc;
-
-    chi::Future<chi::Task> queued_future;
-    while (ipc_manager->TryPopNetTask(priority, queued_future)) {
-      auto origin_task = queued_future.GetTaskPtr();
-      if (origin_task.IsNull()) continue;
-
-      // Get the FutureShm to find client's net_key
-      auto future_shm = queued_future.GetFutureShm();
-      if (future_shm.IsNull()) continue;
-
-      // Get container to serialize outputs
-      chi::Container *container =
-          pool_manager->GetStaticContainer(origin_task->pool_id_);
-      if (!container) {
-        HLOG(kError, "ClientSend: Container not found for pool_id {}",
-             origin_task->pool_id_);
-        continue;
-      }
-
-      // Get response transport and routing info from FutureShm
-      hshm::lbm::Transport *response_transport =
-          future_shm->response_transport_;
-      if (!response_transport) {
-        HLOG(kError, "ClientSend: No response transport for mode {} pid {}",
-             mode_idx, future_shm->client_pid_);
-        continue;
-      }
-
-      // Preserve client's net_key for response routing
-      origin_task->task_id_.net_key_ = future_shm->client_task_vaddr_;
-
-      // Serialize task outputs using network archive
-      chi::SaveTaskArchive archive(chi::MsgType::kSerializeOut,
-                                   response_transport);
-      container->SaveTask(origin_task->method_, archive, origin_task);
-
-      // Set routing info for the response
-      if (mode == chi::IpcMode::kTcp) {
-        // TCP (ZMQ ROUTER): identity-based routing
-        // Use the actual ZMQ identity from the recv frame
-        if (future_shm->response_identity_len_ > 0) {
-          archive.client_info_.identity_ =
-              std::string(future_shm->response_identity_,
-                          future_shm->response_identity_len_);
-        } else {
-          // Fallback: construct from PID (legacy 4-byte identity)
-          chi::u32 client_pid = future_shm->client_pid_;
-          archive.client_info_.identity_ = std::string(
-              reinterpret_cast<const char *>(&client_pid), sizeof(client_pid));
-        }
-      } else if (mode == chi::IpcMode::kIpc) {
-        // IPC (Socket): fd-based routing on accepted connection
-        archive.client_info_.fd_ = future_shm->response_fd_;
-      }
-
-      // Send via lightbeam
-      int rc = response_transport->Send(archive, hshm::lbm::LbmContext());
-      if (rc != 0) {
-        HLOG(kError, "ClientSend: lightbeam Send failed: {}", rc);
-      }
-
-      // Clear TASK_DATA_OWNER before deferred deletion so the destructor
-      // doesn't try to FreeBuffer on transport-allocated data
-      origin_task->ClearFlags(TASK_DATA_OWNER);
-
-      // Defer task deletion to next invocation for zero-copy send safety
-      deferred_deletes.push_back(origin_task);
-
-      did_work = true;
-      task->tasks_sent_++;
-    }
-  }
+  chi::u32 tasks_sent = 0;
+  bool did_work = chi::IpcCpu2CpuZmq::RuntimeSend(
+      CHI_IPC, tasks_sent, deferred_deletes);
+  task->tasks_sent_ = tasks_sent;
 
   rctx.did_work_ = did_work;
   task->SetReturnCode(0);
