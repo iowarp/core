@@ -50,7 +50,7 @@
                 "WRP_CORE_ENABLE_BENCHMARKS": "ON",
                 "WRP_CORE_ENABLE_ELF": "OFF",
                 "WRP_CORE_ENABLE_CUDA": "ON",
-                "CMAKE_CUDA_ARCHITECTURES": "86",
+                "CMAKE_CUDA_ARCHITECTURES": "80-real",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "WRP_CORE_ENABLE_ASAN": "OFF",
                 "WRP_CORE_ENABLE_IO_URING": "ON"

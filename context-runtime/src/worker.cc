@@ -45,7 +45,9 @@
 #include <unistd.h>
 #endif
 
+#ifndef __NVCOMPILER
 #include <coroutine>
+#endif
 #include <cstdlib>
 #include <iostream>
 #include <unordered_set>
@@ -582,12 +584,13 @@ void Worker::StartCoroutine(const FullPtr<Task> &task_ptr,
     return;
   }
 
-  // Call the container's Run function which returns a TaskResume coroutine
+  // Call the container's Run function which returns a TaskResume coroutine/fiber
   try {
     TaskResume task_resume =
         container->Run(task_ptr->method_, task_ptr, *run_ctx);
 
-    // Store the coroutine handle in RunContext for later resumption
+#ifndef __NVCOMPILER
+    // Standard C++20 coroutine path
     auto handle = task_resume.release();
     run_ctx->coro_handle_ = handle;
 
@@ -609,19 +612,42 @@ void Worker::StartCoroutine(const FullPtr<Task> &task_ptr,
         run_ctx->coro_handle_ = nullptr;
       }
     }
+#else // __NVCOMPILER - ucontext_t fiber path
+    auto fhandle = task_resume.release();
+    run_ctx->coro_handle_ = fhandle;
+
+    if (fhandle) {
+      // Resume the fiber to run until first suspension point or completion
+      run_ctx->coro_handle_.resume();
+
+      // Check if fiber completed
+      if (run_ctx->coro_handle_.done()) {
+        run_ctx->coro_handle_.destroy();
+        run_ctx->coro_handle_ = chi::detail::FiberHandle{};
+      }
+    }
+#endif // __NVCOMPILER
   } catch (const std::exception &e) {
     HLOG(kError, "Task execution failed: {}", e.what());
-    // Clean up coroutine handle on exception
+    // Clean up handle on exception
     if (run_ctx->coro_handle_) {
       run_ctx->coro_handle_.destroy();
+#ifndef __NVCOMPILER
       run_ctx->coro_handle_ = nullptr;
+#else
+      run_ctx->coro_handle_ = chi::detail::FiberHandle{};
+#endif
     }
   } catch (...) {
     HLOG(kError, "Task execution failed with unknown exception");
-    // Clean up coroutine handle on exception
+    // Clean up handle on exception
     if (run_ctx->coro_handle_) {
       run_ctx->coro_handle_.destroy();
+#ifndef __NVCOMPILER
       run_ctx->coro_handle_ = nullptr;
+#else
+      run_ctx->coro_handle_ = chi::detail::FiberHandle{};
+#endif
     }
   }
 }
@@ -643,29 +669,41 @@ void Worker::ResumeCoroutine(const FullPtr<Task> &task_ptr,
     return;
   }
 
-  // Resume the coroutine - it will run until next co_await or co_return
+  // Resume the coroutine/fiber - it will run until next suspension or completion
   try {
     run_ctx->coro_handle_.resume();
 
-    // Check if coroutine completed after resumption
+    // Check if coroutine/fiber completed after resumption
     if (run_ctx->coro_handle_.done()) {
-      // Coroutine completed - clean up
+      // Completed - clean up
       run_ctx->coro_handle_.destroy();
+#ifndef __NVCOMPILER
       run_ctx->coro_handle_ = nullptr;
+#else
+      run_ctx->coro_handle_ = chi::detail::FiberHandle{};
+#endif
     }
   } catch (const std::exception &e) {
     HLOG(kError, "Task resume failed: {}", e.what());
-    // Clean up coroutine handle on exception
+    // Clean up handle on exception
     if (run_ctx->coro_handle_) {
       run_ctx->coro_handle_.destroy();
+#ifndef __NVCOMPILER
       run_ctx->coro_handle_ = nullptr;
+#else
+      run_ctx->coro_handle_ = chi::detail::FiberHandle{};
+#endif
     }
   } catch (...) {
     HLOG(kError, "Task resume failed with unknown exception");
-    // Clean up coroutine handle on exception
+    // Clean up handle on exception
     if (run_ctx->coro_handle_) {
       run_ctx->coro_handle_.destroy();
+#ifndef __NVCOMPILER
       run_ctx->coro_handle_ = nullptr;
+#else
+      run_ctx->coro_handle_ = chi::detail::FiberHandle{};
+#endif
     }
   }
 }

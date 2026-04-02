@@ -32,60 +32,27 @@
  */
 
 #include <cuda_runtime.h>
-#ifndef _WIN32
-#include <dlfcn.h>
-#endif
 #include <cstdio>
 #include <cstdlib>
 #include "container.h"
 
-__global__ void RunKernel(Container *c, int *ret) {
-  *ret = c->Run();
-}
+// Allocate() and RunAndGetResult() are defined in lib.cc, compiled into this
+// executable. RunKernel (which calls c->Run() virtually) lives in lib.cc
+// alongside Sum's vtable, so device-side virtual dispatch resolves correctly.
+// CUDA does not reliably resolve cross-TU device vtable calls via separate
+// compilation, so both the vtable definition and the call site must be in the
+// same translation unit (lib.cc).
+extern "C" Container* Allocate();
+extern "C" int RunAndGetResult(Container *d_obj);
 
 int main() {
-  // Load the shared library
-  void *lib = dlopen(GPU_RUNTIME_LIB_PATH, RTLD_NOW);
-  if (!lib) {
-    fprintf(stderr, "FAIL: dlopen: %s\n", dlerror());
-    return 1;
-  }
-
-  // Get the factory function
-  using AllocateFn = Container* (*)();
-  auto Allocate = reinterpret_cast<AllocateFn>(dlsym(lib, "Allocate"));
-  if (!Allocate) {
-    fprintf(stderr, "FAIL: dlsym: %s\n", dlerror());
-    dlclose(lib);
-    return 1;
-  }
-
-  // Allocate the object on the device
   Container *d_obj = Allocate();
   if (!d_obj) {
     fprintf(stderr, "FAIL: Allocate returned nullptr\n");
-    dlclose(lib);
     return 1;
   }
 
-  // Allocate device memory for the result
-  int *d_ret = nullptr;
-  cudaMalloc(&d_ret, sizeof(int));
-
-  // Launch kernel that calls virtual method
-  RunKernel<<<1, 1>>>(d_obj, d_ret);
-  cudaError_t err = cudaDeviceSynchronize();
-  if (err != cudaSuccess) {
-    fprintf(stderr, "FAIL: RunKernel: %s\n", cudaGetErrorString(err));
-    cudaFree(d_ret);
-    cudaFree(d_obj);
-    dlclose(lib);
-    return 1;
-  }
-
-  // Copy result back and check
-  int result = 0;
-  cudaMemcpy(&result, d_ret, sizeof(int), cudaMemcpyDeviceToHost);
+  int result = RunAndGetResult(d_obj);
 
   if (result == 60) {
     printf("PASS: result = %d\n", result);
@@ -93,10 +60,6 @@ int main() {
     printf("FAIL: expected 60, got %d\n", result);
   }
 
-  // Cleanup
-  cudaFree(d_ret);
   cudaFree(d_obj);
-  dlclose(lib);
-
   return (result == 60) ? 0 : 1;
 }

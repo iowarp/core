@@ -57,12 +57,20 @@ namespace wrp_cae::core {
 
 chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
                                  chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   task->SetReturnCode(0);
   (void)rctx;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext& ctx) {
+#ifdef __NVCOMPILER
+  chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   // Container is already initialized via Init() before Create is called
   // Do NOT call Init() here
 
@@ -73,7 +81,8 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task, chi::RunContext&
   // Additional container-specific initialization logic here
   HLOG(kInfo, "Core container created and initialized for pool: {} (ID: {})",
        pool_name_, pool_id_);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::u64 Runtime::GetWorkRemaining() const {
@@ -84,6 +93,12 @@ chi::u64 Runtime::GetWorkRemaining() const {
 
 chi::TaskResume Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task,
                                    chi::RunContext& ctx) {
+#ifdef __NVCOMPILER
+  chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   HLOG(kInfo, "ParseOmni called with {} bytes of serialized data",
        task->serialized_ctx_.size());
 
@@ -99,7 +114,7 @@ chi::TaskResume Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task,
     task->result_code_ = -1;
     task->error_message_ = e.what();
     task->num_tasks_scheduled_ = 0;
-    co_return;
+    CHI_CO_RETURN;
   }
 
   HLOG(kInfo, "ParseOmni: Processing {} assimilation contexts",
@@ -127,12 +142,12 @@ chi::TaskResume Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task,
       task->error_message_ =
           "No assimilator found for source: " + assimilation_ctx.src;
       task->num_tasks_scheduled_ = tasks_scheduled;
-      co_return;
+      CHI_CO_RETURN;
     }
 
     // Schedule the assimilation using co_await
     int result = 0;
-    co_await assimilator->Schedule(assimilation_ctx, result);
+    CHI_CO_AWAIT(assimilator->Schedule(assimilation_ctx, result));
     if (result != 0) {
       HLOG(
           kError,
@@ -141,7 +156,7 @@ chi::TaskResume Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task,
       task->result_code_ = result;
       task->error_message_ = std::string("Assimilator failed");
       task->num_tasks_scheduled_ = tasks_scheduled;
-      co_return;
+      CHI_CO_RETURN;
     }
 
     tasks_scheduled++;
@@ -154,11 +169,18 @@ chi::TaskResume Runtime::ParseOmni(hipc::FullPtr<ParseOmniTask> task,
 
   HLOG(kInfo, "ParseOmni: Successfully scheduled {} assimilations",
        tasks_scheduled);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::ProcessHdf5Dataset(
     hipc::FullPtr<ProcessHdf5DatasetTask> task, chi::RunContext& ctx) {
+#ifdef __NVCOMPILER
+  chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
+#endif
+  CHI_TASK_BODY_BEGIN
 #ifdef WRP_CAE_ENABLE_HDF5
   HLOG(kInfo, "ProcessHdf5Dataset: file='{}', dataset='{}', tag_prefix='{}'",
        task->file_path_.str(), task->dataset_path_.str(),
@@ -173,14 +195,14 @@ chi::TaskResume Runtime::ProcessHdf5Dataset(
     task->result_code_ = -1;
     task->error_message_ =
         chi::priv::string("Failed to open HDF5 file", HSHM_MALLOC);
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Create assimilator and process the dataset
   wrp_cae::core::Hdf5FileAssimilator assimilator(cte_client_);
   int result = 0;
-  co_await assimilator.ProcessDataset(file_id, task->dataset_path_.str(),
-                                      task->tag_prefix_.str(), result);
+  CHI_CO_AWAIT(assimilator.ProcessDataset(file_id, task->dataset_path_.str(),
+                                      task->tag_prefix_.str(), result));
 
   // Close the HDF5 file
   H5Fclose(file_id);
@@ -202,11 +224,18 @@ chi::TaskResume Runtime::ProcessHdf5Dataset(
   task->error_message_ =
       chi::priv::string("HDF5 support not compiled in", HSHM_MALLOC);
 #endif
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::ExportData(hipc::FullPtr<ExportDataTask> task,
                                     chi::RunContext& ctx) {
+#ifdef __NVCOMPILER
+  chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   task->result_code_ = 0;
   task->bytes_exported_ = 0;
 
@@ -219,23 +248,23 @@ chi::TaskResume Runtime::ExportData(hipc::FullPtr<ExportDataTask> task,
 
   // Step 1: resolve the tag ID
   auto tag_future = cte_client_->AsyncGetOrCreateTag(tag_name);
-  co_await tag_future;
+  CHI_CO_AWAIT(tag_future);
   const auto &tag_id = tag_future->tag_id_;
   if (tag_id.IsNull()) {
     HLOG(kError, "ExportData: tag '{}' not found", tag_name);
     task->result_code_ = -1;
     task->error_message_ = chi::priv::string("Tag not found", HSHM_MALLOC);
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Step 2: list all blobs in the tag
   auto blobs_future = cte_client_->AsyncGetContainedBlobs(tag_id);
-  co_await blobs_future;
+  CHI_CO_AWAIT(blobs_future);
   const auto &blob_names = blobs_future->blob_names_;
 
   if (blob_names.empty()) {
     HLOG(kInfo, "ExportData: tag '{}' has no blobs", tag_name);
-    co_return;
+    CHI_CO_RETURN;
   }
 
   if (format == "hdf5") {
@@ -247,13 +276,13 @@ chi::TaskResume Runtime::ExportData(hipc::FullPtr<ExportDataTask> task,
       task->result_code_ = -2;
       task->error_message_ =
           chi::priv::string("Failed to create HDF5 file", HSHM_MALLOC);
-      co_return;
+      CHI_CO_RETURN;
     }
 
     for (const auto &blob_name : blob_names) {
       // Get blob size
       auto size_future = cte_client_->AsyncGetBlobSize(tag_id, blob_name);
-      co_await size_future;
+      CHI_CO_AWAIT(size_future);
       chi::u64 blob_size = size_future->size_;
       if (blob_size == 0) continue;
 
@@ -267,7 +296,7 @@ chi::TaskResume Runtime::ExportData(hipc::FullPtr<ExportDataTask> task,
       hipc::ShmPtr<> shm_ptr(buf.shm_);
       auto get_future = cte_client_->AsyncGetBlob(tag_id, blob_name, 0,
                                                    blob_size, 0, shm_ptr);
-      co_await get_future;
+      CHI_CO_AWAIT(get_future);
 
       if (get_future->GetReturnCode() == 0) {
         hsize_t dims[1] = {static_cast<hsize_t>(blob_size)};
@@ -301,12 +330,12 @@ chi::TaskResume Runtime::ExportData(hipc::FullPtr<ExportDataTask> task,
       task->result_code_ = -2;
       task->error_message_ =
           chi::priv::string("Failed to open output file", HSHM_MALLOC);
-      co_return;
+      CHI_CO_RETURN;
     }
 
     for (const auto &blob_name : blob_names) {
       auto size_future = cte_client_->AsyncGetBlobSize(tag_id, blob_name);
-      co_await size_future;
+      CHI_CO_AWAIT(size_future);
       chi::u64 blob_size = size_future->size_;
       if (blob_size == 0) continue;
 
@@ -319,7 +348,7 @@ chi::TaskResume Runtime::ExportData(hipc::FullPtr<ExportDataTask> task,
       hipc::ShmPtr<> shm_ptr(buf.shm_);
       auto get_future = cte_client_->AsyncGetBlob(tag_id, blob_name, 0,
                                                    blob_size, 0, shm_ptr);
-      co_await get_future;
+      CHI_CO_AWAIT(get_future);
 
       if (get_future->GetReturnCode() == 0) {
         // Header: name length (u32) + name + data length (u64) + data
@@ -337,8 +366,8 @@ chi::TaskResume Runtime::ExportData(hipc::FullPtr<ExportDataTask> task,
          task->bytes_exported_, output_path);
   }
 
-  (void)ctx;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 }  // namespace wrp_cae::core

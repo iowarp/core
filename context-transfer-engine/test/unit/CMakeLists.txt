@@ -257,28 +257,28 @@ add_test(NAME cte_dpe_tests
 
 # Add test_core_functionality tests
 add_test(NAME cte_functional_pool_creation
-    COMMAND test_core_functionality)
+    COMMAND test_core_functionality "FUNCTIONAL - Create CTE Core Pool")
 
 add_test(NAME cte_functional_target_registration
-    COMMAND test_core_functionality)
+    COMMAND test_core_functionality "FUNCTIONAL - Register Target")
 
 add_test(NAME cte_functional_putblob
-    COMMAND test_core_functionality)
+    COMMAND test_core_functionality "FUNCTIONAL - PutBlob Operations")
 
 add_test(NAME cte_functional_getblob
-    COMMAND test_core_functionality)
+    COMMAND test_core_functionality "FUNCTIONAL - GetBlob Operations")
 
 add_test(NAME cte_functional_putget_integration
-    COMMAND test_core_functionality)
+    COMMAND test_core_functionality "FUNCTIONAL - PutBlob-GetBlob Integration Cycles")
 
 add_test(NAME cte_functional_putget_comprehensive
-    COMMAND test_core_functionality)
+    COMMAND test_core_functionality "FUNCTIONAL - PutBlob-GetBlob Comprehensive Integration")
 
 add_test(NAME cte_functional_reorganize
-    COMMAND test_core_functionality)
+    COMMAND test_core_functionality "FUNCTIONAL - ReorganizeBlob Operations")
 
 add_test(NAME cte_functional_e2e_workflow
-    COMMAND test_core_functionality)
+    COMMAND test_core_functionality "End-to-End CTE Core Workflow")
 
 # Add test_query tests - use test names for filtering (simple_test.h filters by name, not tags)
 add_test(NAME cte_query_tag_exact

@@ -96,7 +96,12 @@ class Runtime : public chi::Container {
   chi::TaskResume Destroy(hipc::FullPtr<DestroyTask> task, chi::RunContext& ctx) {
     HLOG(kInfo, "Core container destroyed for pool: {} (ID: {})",
           pool_name_, pool_id_);
-    co_return;
+#ifdef __NVCOMPILER
+    chi::RunContext& rctx = ctx;
+#endif
+    CHI_TASK_BODY_BEGIN
+    CHI_CO_RETURN;
+    CHI_TASK_BODY_END
   }
 
   /**

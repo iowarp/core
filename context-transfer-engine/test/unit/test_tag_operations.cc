@@ -78,8 +78,11 @@ class TagTestFixture {
     REQUIRE(!home_dir.empty());
     test_storage_path_ = home_dir + "/cte_tag_test.dat";
 
-    // Clean up existing test file
-    if (fs::exists(test_storage_path_)) {
+    // Clean up existing test file only on first initialization.
+    // Once g_cte_initialized=true the bdev pool (800,0) persists in the
+    // runtime, so deleting the file would leave the pool pointing to a
+    // now-deleted inode and subsequent reads would return 0 bytes.
+    if (!g_cte_initialized && fs::exists(test_storage_path_)) {
       fs::remove(test_storage_path_);
     }
 
@@ -126,9 +129,10 @@ class TagTestFixture {
 
   ~TagTestFixture() {
     INFO("=== Cleaning up Tag Test Environment ===");
-    if (fs::exists(test_storage_path_)) {
-      fs::remove(test_storage_path_);
-    }
+    // Do NOT delete test_storage_path_ here: bdev pool (800,0) persists in the
+    // runtime across test cases (g_cte_initialized=true), so the next test case
+    // would reuse the same pool pointing to a now-deleted file, causing reads to
+    // return 0 bytes (test 191 failure).
   }
 
   /**

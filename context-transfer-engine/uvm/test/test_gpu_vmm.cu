@@ -84,16 +84,27 @@ static bool verifyPage(CUdeviceptr page_ptr, size_t page_size,
   // Allocate device buffer for readback
   int *d_out = nullptr;
   cudaMalloc(&d_out, page_size);
+  cudaMemset(d_out, 0, page_size);
 
   int threads = 256;
   int blocks = (int)((num_ints + threads - 1) / threads);
   readKernel<<<blocks, threads>>>((const int *)page_ptr, d_out, num_ints);
-  cudaDeviceSynchronize();
+  cudaError_t sync_err = cudaDeviceSynchronize();
+  if (sync_err != cudaSuccess) {
+    fprintf(stderr, "  verifyPage: readKernel sync error: %s (page_ptr=0x%llx)\n",
+            cudaGetErrorString(sync_err), (unsigned long long)page_ptr);
+    cudaFree(d_out);
+    return false;
+  }
 
   // Copy to host and check
   std::vector<int> host_buf(num_ints);
-  cudaMemcpy(host_buf.data(), d_out, page_size, cudaMemcpyDeviceToHost);
+  cudaError_t cp_err = cudaMemcpy(host_buf.data(), d_out, page_size, cudaMemcpyDeviceToHost);
   cudaFree(d_out);
+  if (cp_err != cudaSuccess) {
+    fprintf(stderr, "  verifyPage: cudaMemcpy error: %s\n", cudaGetErrorString(cp_err));
+    return false;
+  }
 
   for (size_t i = 0; i < num_ints; ++i) {
     if (host_buf[i] != expected_value) {
