@@ -39,6 +39,7 @@
 #include "chimaera/gpu/gpu_info.h"
 #include "chimaera/local_task_archives.h"
 #include "chimaera/ipc/ipc_gpu2gpu.h"
+#include "chimaera/ipc/ipc_gpu2cpu.h"
 #include "chimaera/ipc/ipc_cpu2gpu.h"
 
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
@@ -367,12 +368,16 @@ class IpcManager {
   }
 #endif  // HSHM_IS_GPU_COMPILER
 
-  /** GPU-side Send: dispatches to IpcGpu2Self or IpcGpu2Gpu. */
+  /** GPU-side Send: dispatches based on routing mode and runtime flag. */
   template <typename TaskT>
   HSHM_CROSS_FUN Future<TaskT> Send(const hipc::FullPtr<TaskT> &task_ptr) {
 #if HSHM_IS_GPU
     if (is_gpu_runtime_) {
       return IpcGpu2Self::ClientSend(this, task_ptr);
+    }
+    RoutingMode mode = task_ptr->pool_query_.GetRoutingMode();
+    if (mode == RoutingMode::ToLocalCpu) {
+      return IpcGpu2Cpu::ClientSend(this, task_ptr);
     }
     return IpcGpu2Gpu::ClientSend(this, task_ptr);
 #else
@@ -512,6 +517,7 @@ class IpcManager {
 
 // Transport class template implementations (need full IpcManager definition)
 #include "chimaera/ipc/ipc_gpu2gpu_impl.h"
+#include "chimaera/ipc/ipc_gpu2cpu_impl.h"
 #include "chimaera/ipc/ipc_cpu2gpu_impl.h"
 
 // ================================================================

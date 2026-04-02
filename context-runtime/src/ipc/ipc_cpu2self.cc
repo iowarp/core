@@ -94,9 +94,10 @@ void IpcCpu2Self::RuntimeSend(const FullPtr<Task> &task_ptr,
     return;
   }
   bool was_copied = future_shm->flags_.Any(FutureShm::FUTURE_WAS_COPIED);
+  u32 origin = future_shm->origin_;
 
-  if (was_copied) {
-    // Task was serialized — delegate to full SendRuntime for SHM response
+  // Delegate to origin-based SendRuntime for non-self origins
+  if (was_copied || origin != FutureShm::FUTURE_CLIENT_SHM) {
     CHI_IPC->SendRuntime(task_ptr, run_ctx, container, send_transport);
     return;
   }

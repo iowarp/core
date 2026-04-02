@@ -16,6 +16,7 @@
 namespace chi {
 
 class IpcManager;
+namespace gpu { class IpcManager; }
 
 /**
  * IPC transport for GPU client → CPU runtime.
@@ -26,6 +27,11 @@ class IpcManager;
  * GPU kernel polls FUTURE_COMPLETE via system-scope atomics.
  */
 struct IpcGpu2Cpu {
+  /** GPU-side: enqueue task to gpu2cpu_queue for CPU worker pickup. */
+  template <typename TaskT>
+  static HSHM_GPU_FUN gpu::Future<TaskT> ClientSend(
+      gpu::IpcManager *ipc, const hipc::FullPtr<TaskT> &task_ptr);
+
   /** Deserialize GPU-originated task on CPU runtime. */
   static hipc::FullPtr<Task> RuntimeRecv(
       IpcManager *ipc, Future<Task> &future, Container *container,
@@ -35,9 +41,6 @@ struct IpcGpu2Cpu {
   static void RuntimeSend(
       IpcManager *ipc, const FullPtr<Task> &task_ptr,
       RunContext *run_ctx, Container *container);
-
-  /** Client wait: polls system-scope FUTURE_COMPLETE on SHM FutureShm. */
-  // Implemented as Future::WaitGpu2Cpu (template, stays in ipc_manager.h)
 };
 
 }  // namespace chi

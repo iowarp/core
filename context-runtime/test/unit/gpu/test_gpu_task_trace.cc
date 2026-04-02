@@ -231,12 +231,38 @@ __global__ void gpu2cpu_kernel(chi::IpcManagerGpu gpu_info,
                                int *d_result,
                                chi::u32 *d_result_value) {
   *d_result = 0;
+  __threadfence_system();
   CHIMAERA_GPU_INIT(gpu_info);
 
-  chimaera::MOD_NAME::Client client(pool_id);
-  auto future = client.AsyncGpuSubmit(
-      chi::PoolQuery::ToLocalCpu(), chi::u32(0), test_value);
+  printf("[GPU2CPU-K] gpu2cpu_queue=%p gpu_alloc=%p\n",
+         (void*)g_ipc_manager.gpu_info_.gpu2cpu_queue,
+         (void*)g_ipc_manager.gpu_alloc_);
+
+  // Manual NewTask + Send for debug
+  auto task = CHI_IPC->NewTask<chimaera::MOD_NAME::GpuSubmitTask>(
+      chi::CreateTaskId(), pool_id, chi::PoolQuery::ToLocalCpu(),
+      chi::u32(0), test_value);
+  printf("[GPU2CPU-K] NewTask: ptr=%p null=%d routing=%u\n",
+         (void*)task.ptr_, (int)task.IsNull(),
+         (unsigned)task->pool_query_.GetRoutingMode());
+  if (task.IsNull()) {
+    *d_result = -2;
+    __threadfence_system();
+    return;
+  }
+  auto future = CHI_IPC->Send(task);
+  printf("[GPU2CPU-K] Send done, fshm_null=%d\n",
+         (int)future.GetFutureShmPtr().IsNull());
+
+  if (future.GetFutureShmPtr().IsNull()) {
+    *d_result = -1;
+    __threadfence_system();
+    return;
+  }
+
+  printf("[GPU2CPU-K] Calling Wait...\n");
   future.Wait();
+  printf("[GPU2CPU-K] Wait done\n");
 
   *d_result_value = future->result_value_;
   __threadfence_system();
@@ -366,17 +392,21 @@ TEST_CASE("gpu2cpu_trace", "[gpu][gpu2cpu][trace]") {
   chi::IpcManagerGpuInfo gpu_info =
       ipc->GetGpuIpcManager()->CreateGpuAllocator(10 * 1024 * 1024, 0);
 
-  // Allocate device-memory result slots
-  int *d_result = hshm::GpuApi::Malloc<int>(sizeof(int));
-  chi::u32 *d_rv = hshm::GpuApi::Malloc<chi::u32>(sizeof(chi::u32));
-  int h_result = 0;
-  chi::u32 h_rv = 0;
-  hshm::GpuApi::Memcpy(d_result, &h_result, sizeof(int));
-  hshm::GpuApi::Memcpy(d_rv, &h_rv, sizeof(chi::u32));
-
   const chi::u32 test_value = 88;
-  fprintf(stderr, "[TRACE] Launching gpu2cpu_kernel(val=%u)\n", test_value);
 
+  // Pause orchestrator FIRST — cudaMallocHost is device-synchronizing
+  // and would deadlock with the persistent GPU orchestrator kernel.
+  ipc->GetGpuIpcManager()->PauseGpuOrchestrator();
+
+  // Allocate pinned-host result slots (GPU writes, CPU polls)
+  int *d_result;
+  chi::u32 *d_rv;
+  cudaMallocHost(&d_result, sizeof(int));
+  cudaMallocHost(&d_rv, sizeof(chi::u32));
+  *d_result = 0;
+  *d_rv = 0;
+
+  fprintf(stderr, "[TRACE] Launching gpu2cpu_kernel(val=%u)\n", test_value);
   cudaGetLastError();  // Clear sticky errors
   void *stream = hshm::GpuApi::CreateStream();
   gpu2cpu_kernel<<<1, 1, 0, static_cast<cudaStream_t>(stream)>>>(
@@ -384,33 +414,41 @@ TEST_CASE("gpu2cpu_trace", "[gpu][gpu2cpu][trace]") {
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     fprintf(stderr, "[TRACE] FAIL: kernel launch error %d\n", (int)err);
+    ipc->GetGpuIpcManager()->ResumeGpuOrchestrator();
   }
   REQUIRE(err == cudaSuccess);
 
-  // GPU->CPU: kernel submits to gpu2cpu_queue, CPU worker picks up.
-  // Don't pause orchestrator — we don't need it for GPU->CPU,
-  // but the kernel itself needs SMs. Use stream sync.
-  fprintf(stderr, "[TRACE] Waiting for kernel (stream sync)...\n");
-  hshm::GpuApi::Synchronize(stream);
-  err = cudaGetLastError();
-  if (err != cudaSuccess) {
-    fprintf(stderr, "[TRACE] FAIL: stream sync error %d\n", (int)err);
-  }
-  REQUIRE(err == cudaSuccess);
+  // Resume orchestrator — it's not needed for GPU→CPU processing
+  // (CPU worker handles gpu2cpu_queue), but the test kernel needs it
+  // not to block SM resources.
+  ipc->GetGpuIpcManager()->ResumeGpuOrchestrator();
 
-  hshm::GpuApi::Memcpy(&h_result, d_result, sizeof(int));
-  hshm::GpuApi::Memcpy(&h_rv, d_rv, sizeof(chi::u32));
+  // Poll pinned-host for kernel completion (10s timeout)
+  fprintf(stderr, "[TRACE] Polling kernel result (10s timeout)...\n");
+  auto t0 = std::chrono::steady_clock::now();
+  while (*d_result == 0) {
+    std::this_thread::sleep_for(std::chrono::microseconds(100));
+    float elapsed = std::chrono::duration<float>(
+        std::chrono::steady_clock::now() - t0).count();
+    if (elapsed >= 10.0f) {
+      fprintf(stderr, "[TRACE] FAIL: Timeout d_result=%d d_rv=%u\n",
+              *d_result, *d_rv);
+      REQUIRE(false);
+    }
+  }
+  float ms = std::chrono::duration<float, std::milli>(
+      std::chrono::steady_clock::now() - t0).count();
 
   chi::u32 expected = (test_value * 2) + 0;
-  fprintf(stderr, "[TRACE] result=%u expected=%u kernel_rc=%d\n",
-          h_rv, expected, h_result);
-  REQUIRE(h_result == 1);
-  REQUIRE(h_rv == expected);
+  fprintf(stderr, "[TRACE] COMPLETE in %.2f ms result=%u expected=%u rc=%d\n",
+          ms, *d_rv, expected, *d_result);
+  REQUIRE(*d_result == 1);
+  REQUIRE(*d_rv == expected);
 
   // Cleanup
   ipc->GetGpuIpcManager()->PauseGpuOrchestrator();
-  hshm::GpuApi::Free(d_result);
-  hshm::GpuApi::Free(d_rv);
+  cudaFreeHost(d_result);
+  cudaFreeHost(d_rv);
   hshm::GpuApi::DestroyStream(stream);
   ipc->GetGpuIpcManager()->ResumeGpuOrchestrator();
 
