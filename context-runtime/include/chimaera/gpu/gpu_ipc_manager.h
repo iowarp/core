@@ -517,6 +517,7 @@ class IpcManager {
 
 // Transport class template implementations (need full IpcManager definition)
 #include "chimaera/ipc/ipc_gpu2gpu_impl.h"
+#include "chimaera/ipc/ipc_gpu2cpu_impl.h"
 
 // ================================================================
 // GPU kernel initialization macros

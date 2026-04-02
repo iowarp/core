@@ -37,9 +37,12 @@ struct IpcGpu2Cpu {
       IpcManager *ipc, const FullPtr<Task> &task_ptr,
       RunContext *run_ctx, Container *container);
 
-  /** Client-side wait: polls system-scope FUTURE_COMPLETE on SHM FutureShm. */
-  template <typename TaskT, typename AllocT>
-  static bool ClientRecv(Future<TaskT, AllocT> &future, float max_sec);
+  /** GPU-side wait: polls gpu::FutureShm FUTURE_COMPLETE (device-scope).
+   *  Same mechanism as IpcGpu2Gpu::ClientRecv — the CPU worker signals
+   *  completion on the gpu::FutureShm via system-scope atomics. */
+  template <typename TaskT>
+  static HSHM_GPU_FUN void ClientRecv(
+      gpu::IpcManager *ipc, gpu::Future<TaskT> &future, TaskT *task_ptr);
 };
 
 }  // namespace chi

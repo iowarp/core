@@ -1793,10 +1793,46 @@ template <typename TaskT, typename AllocT>
 HSHM_HOST_FUN bool Future<TaskT, AllocT>::WaitGpu2Cpu(float max_sec,
                                                        bool reuse_task) {
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
-  bool ok = IpcGpu2Cpu::ClientRecv(*this, max_sec);
+  // Host-side polling path (test harness): polls chi::FutureShm with
+  // system-scope atomics. The GPU kernel uses IpcGpu2Cpu::ClientRecv
+  // (device-side) which polls gpu::FutureShm instead.
+  hipc::FullPtr<FutureShm> future_full =
+      CHI_CPU_IPC->ToFullPtr(future_shm_);
+  if (future_full.IsNull()) {
+    HLOG(kError, "Future::WaitGpu2Cpu: ToFullPtr returned null");
+    return false;
+  }
+  hshm::abitfield32_t &flags = future_full->flags_;
+  auto start = std::chrono::steady_clock::now();
+  while (!flags.AnySystem(FutureShm::FUTURE_COMPLETE)) {
+    HSHM_THREAD_MODEL->Yield();
+    if (max_sec > 0) {
+      float elapsed = std::chrono::duration<float>(
+                          std::chrono::steady_clock::now() - start)
+                          .count();
+      if (elapsed >= max_sec) {
+        task_ptr_->SetReturnCode(static_cast<u32>(-3));
+        return false;
+      }
+    }
+  }
+
+  // Deserialize output from ring buffer if present
+  if (future_full->output_.total_written_.load() > 0) {
+    hshm::lbm::LbmContext ctx;
+    ctx.copy_space = future_full->copy_space;
+    ctx.shm_info_ = &future_full->output_;
+    chi::priv::vector<char> load_buf;
+    load_buf.reserve(256);
+    DefaultLoadArchive load_ar(load_buf);
+    load_ar.SetMsgType(LocalMsgType::kSerializeOut);
+    hshm::lbm::ShmTransport::Recv(load_ar, ctx);
+    task_ptr_->SerializeOut(load_ar);
+  }
+
   if (reuse_task) task_ptr_.SetNull();
   Destroy(true);
-  return ok;
+  return true;
 #else
   (void)max_sec; (void)reuse_task;
   return true;
@@ -2057,7 +2093,6 @@ HSHM_CROSS_FUN void Future<TaskT, AllocT>::DelTask() {
 // Template implementations for transport classes (need full IpcManager definition)
 #include "chimaera/ipc/ipc_cpu2cpu_impl.h"
 #include "chimaera/ipc/ipc_cpu2cpu_zmq_impl.h"
-#include "chimaera/ipc/ipc_gpu2cpu_impl.h"
 #include "chimaera/ipc/ipc_cpu2gpu_impl.h"
 
 #endif  // CHIMAERA_INCLUDE_CHIMAERA_MANAGERS_IPC_MANAGER_H_

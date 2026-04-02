@@ -50,47 +50,19 @@ HSHM_GPU_FUN gpu::Future<TaskT> IpcGpu2Cpu::ClientSend(
 }
 #endif  // HSHM_IS_GPU_COMPILER
 
-#if HSHM_IS_HOST
-template <typename TaskT, typename AllocT>
-bool IpcGpu2Cpu::ClientRecv(Future<TaskT, AllocT> &future, float max_sec) {
-  hipc::FullPtr<FutureShm> future_full =
-      CHI_CPU_IPC->ToFullPtr(future.future_shm_);
-  if (future_full.IsNull()) {
-    HLOG(kError, "IpcGpu2Cpu::ClientRecv: ToFullPtr returned null");
-    return false;
-  }
-
-  // Poll FUTURE_COMPLETE (set by GPU with system-scope atomics)
-  hshm::abitfield32_t &flags = future_full->flags_;
-  auto start = std::chrono::steady_clock::now();
-  while (!flags.AnySystem(FutureShm::FUTURE_COMPLETE)) {
-    HSHM_THREAD_MODEL->Yield();
-    if (max_sec > 0) {
-      float elapsed = std::chrono::duration<float>(
-                          std::chrono::steady_clock::now() - start)
-                          .count();
-      if (elapsed >= max_sec) {
-        future.task_ptr_->SetReturnCode(static_cast<u32>(-3));
-        return false;
-      }
-    }
-  }
-
-  // Deserialize output from GPU FutureShm ring buffer if present
-  if (future_full->output_.total_written_.load() > 0) {
-    hshm::lbm::LbmContext ctx;
-    ctx.copy_space = future_full->copy_space;
-    ctx.shm_info_ = &future_full->output_;
-    chi::priv::vector<char> load_buf;
-    load_buf.reserve(256);
-    DefaultLoadArchive load_ar(load_buf);
-    load_ar.SetMsgType(LocalMsgType::kSerializeOut);
-    hshm::lbm::ShmTransport::Recv(load_ar, ctx);
-    future.task_ptr_->SerializeOut(load_ar);
-  }
-  return true;
+#if HSHM_IS_GPU_COMPILER
+/**
+ * GPU-side ClientRecv: poll gpu::FutureShm FUTURE_COMPLETE.
+ * Same mechanism as IpcGpu2Gpu::ClientRecv — the CPU runtime signals
+ * completion on the gpu::FutureShm via system-scope atomics.
+ */
+template <typename TaskT>
+HSHM_GPU_FUN void IpcGpu2Cpu::ClientRecv(
+    gpu::IpcManager *ipc, gpu::Future<TaskT> &future, TaskT *task_ptr) {
+  // Reuse IpcGpu2Gpu::ClientRecv — the polling mechanism is identical
+  gpu::IpcGpu2Gpu::ClientRecv(ipc, future, task_ptr);
 }
-#endif  // HSHM_IS_HOST
+#endif  // HSHM_IS_GPU_COMPILER
 
 }  // namespace chi
 
