@@ -33,6 +33,7 @@ using namespace std::chrono_literals;
 
 static bool g_initialized = false;
 static int g_pool_counter = 100;  // Offset from CPU-side test counters
+static chimaera::bdev::Block g_block;  // Block allocated by CPU for GPU→CPU test
 
 static void EnsureInit() {
   if (g_initialized) return;
@@ -163,12 +164,20 @@ TEST_CASE("bdev_gpu2gpu_write_read", "[gpu_bdev][gpu2gpu]") {
   constexpr size_t kBufSize = 256 * 1024;
   constexpr size_t kDataSize = 4096;
 
-  // Create HBM bdev
-  auto create_f = client.AsyncCreate(
-      chi::PoolQuery::Dynamic(), "gpu2gpu_bdev",
-      pool_id, chimaera::bdev::BdevType::kHbm, kBufSize);
-  create_f.Wait();
-  REQUIRE(create_f->return_code_ == 0);
+  // Create HBM bdev (use CHI_CPU_IPC — CHI_IPC is nullptr on nvcc host)
+  {
+    auto *cpu_ipc = CHI_CPU_IPC;
+    auto task = cpu_ipc->NewTask<chimaera::bdev::CreateTask>(
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Dynamic(),
+        chimaera::bdev::CreateParams::chimod_lib_name,
+        std::string("gpu2gpu_bdev"), pool_id, &client,
+        chimaera::bdev::BdevType::kHbm, (chi::u64)kBufSize,
+        (chi::u32)32, (chi::u32)4096,
+        (const chimaera::bdev::PerfMetrics*)nullptr);
+    auto f = cpu_ipc->Send(task);
+    f.Wait();
+    REQUIRE(f->return_code_ == 0);
+  }
   std::this_thread::sleep_for(200ms);
 
   // Get GPU info (shared orchestrator allocator)
@@ -241,10 +250,17 @@ TEST_CASE("bdev_gpu2gpu_write_read", "[gpu_bdev][gpu2gpu]") {
 // (Same kernel structure but with ToLocalCpu routing)
 // ============================================================================
 
+/**
+ * GPU→CPU kernel: Write + Read via ToLocalCpu.
+ * Blocks are pre-allocated on the CPU and passed to the kernel.
+ * (AllocateBlocks returns priv::vector which uses CPU-only allocator,
+ * so GPU kernels can't read the result.)
+ */
 __global__ void bdev_gpu2cpu_kernel(
     chi::IpcManagerGpu gpu_info,
     chi::PoolId pool_id,
     chi::u64 data_size,
+    chimaera::bdev::Block block,   // Single block passed by value
     char *src_buf,
     char *dst_buf,
     int *d_result,
@@ -254,26 +270,11 @@ __global__ void bdev_gpu2cpu_kernel(
   __threadfence_system();
   CHIMAERA_GPU_INIT(gpu_info);
 
-  // Step 1: AllocateBlocks via CPU
-  d_dbg[0] = 10;
-  __threadfence_system();
-  auto alloc_task = CHI_IPC->NewTask<chimaera::bdev::AllocateBlocksTask>(
-      chi::CreateTaskId(), pool_id, chi::PoolQuery::ToLocalCpu(), data_size);
-  if (alloc_task.IsNull()) { *d_result = -1; __threadfence_system(); return; }
-  auto alloc_f = CHI_IPC->Send(alloc_task);
-  alloc_f.Wait();
-  d_dbg[1] = alloc_task->return_code_;
-  d_dbg[0] = 11;
-  __threadfence_system();
-  if (alloc_task->return_code_ != 0 || alloc_task->blocks_.size() == 0) {
-    *d_result = -2;
-    __threadfence_system();
-    return;
-  }
+  // Build a single-element blocks vector on the GPU
+  chi::priv::vector<chimaera::bdev::Block> blocks;
+  blocks.push_back(block);
 
-  chi::priv::vector<chimaera::bdev::Block> blocks = alloc_task->blocks_;
-
-  // Step 2: Write via CPU
+  // Step 1: Write via CPU
   d_dbg[0] = 20;
   __threadfence_system();
   hipc::ShmPtr<> write_data;
@@ -294,7 +295,7 @@ __global__ void bdev_gpu2cpu_kernel(
     return;
   }
 
-  // Step 3: Read via CPU
+  // Step 2: Read via CPU
   d_dbg[0] = 30;
   __threadfence_system();
   hipc::ShmPtr<> read_data;
@@ -315,7 +316,7 @@ __global__ void bdev_gpu2cpu_kernel(
     return;
   }
 
-  // Step 4: Verify
+  // Step 3: Verify
   d_dbg[0] = 40;
   __threadfence_system();
   bool match = true;
@@ -350,13 +351,39 @@ TEST_CASE("bdev_gpu2cpu_write_read", "[gpu_bdev][gpu2cpu]") {
   constexpr size_t kBufSize = 256 * 1024;
   constexpr size_t kDataSize = 4096;
 
-  // Create HBM bdev
-  auto create_f = client.AsyncCreate(
-      chi::PoolQuery::Dynamic(), "gpu2cpu_bdev",
-      pool_id, chimaera::bdev::BdevType::kHbm, kBufSize);
-  create_f.Wait();
-  REQUIRE(create_f->return_code_ == 0);
+  // Create HBM bdev (use CHI_CPU_IPC — CHI_IPC is nullptr on nvcc host)
+  {
+    auto *cpu_ipc = CHI_CPU_IPC;
+    auto task = cpu_ipc->NewTask<chimaera::bdev::CreateTask>(
+        chi::CreateTaskId(), chi::kAdminPoolId, chi::PoolQuery::Dynamic(),
+        chimaera::bdev::CreateParams::chimod_lib_name,
+        std::string("gpu2cpu_bdev"), pool_id, &client,
+        chimaera::bdev::BdevType::kHbm, (chi::u64)kBufSize,
+        (chi::u32)32, (chi::u32)4096,
+        (const chimaera::bdev::PerfMetrics*)nullptr);
+    auto f = cpu_ipc->Send(task);
+    f.Wait();
+    REQUIRE(f->return_code_ == 0);
+  }
   std::this_thread::sleep_for(200ms);
+
+  // Allocate blocks on the CPU side first
+  // (AllocateBlocks returns priv::vector which uses CPU allocator)
+  {
+    auto *cpu_ipc = CHI_CPU_IPC;
+    auto task = cpu_ipc->NewTask<chimaera::bdev::AllocateBlocksTask>(
+        chi::CreateTaskId(), pool_id, chi::PoolQuery::Dynamic(),
+        (chi::u64)kDataSize);
+    auto f = cpu_ipc->Send(task);
+    f.Wait();
+    REQUIRE(f->return_code_ == 0);
+    REQUIRE(f->blocks_.size() > 0);
+    // Save the first block to pass to the GPU kernel
+    g_block = f->blocks_[0];
+  }
+  fprintf(stderr, "[TRACE] CPU AllocateBlocks: offset=%llu size=%llu\n",
+          (unsigned long long)g_block.offset_,
+          (unsigned long long)g_block.size_);
 
   chi::IpcManagerGpuInfo gpu_info = gpu_ipc->CreateGpuAllocator(0, 0);
 
@@ -380,7 +407,8 @@ TEST_CASE("bdev_gpu2cpu_write_read", "[gpu_bdev][gpu2cpu]") {
 
   void *stream = hshm::GpuApi::CreateStream();
   bdev_gpu2cpu_kernel<<<1, 1, 0, static_cast<cudaStream_t>(stream)>>>(
-      gpu_info, pool_id, kDataSize, src_uvm, dst_uvm, d_result, d_dbg);
+      gpu_info, pool_id, kDataSize, g_block, src_uvm, dst_uvm,
+      d_result, d_dbg);
   cudaError_t err = cudaGetLastError();
   REQUIRE(err == cudaSuccess);
 
