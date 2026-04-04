@@ -418,7 +418,8 @@ pub mod ffi {
         // For tag_put_blob, the data is read-only (borrowed from Rust).
         // For tag_get_blob and tag_get_contained_blobs, C++ appends to the
         // output vectors which Rust then owns.
-        fn tag_put_blob(tag: &Tag, name: &str, data: &[u8], offset: u64, score: f32);
+        // Returns 0 on success, negative on error (-1 = size too large, -2 = offset overflow)
+        fn tag_put_blob(tag: &Tag, name: &str, data: &[u8], offset: u64, score: f32) -> i32;
         fn tag_get_blob(tag: &Tag, name: &str, size: u64, offset: u64, out: &mut Vec<u8>);
         fn tag_get_contained_blobs(tag: &Tag, out: &mut Vec<String>);
     }
@@ -499,8 +500,12 @@ impl Tag {
     }
 
     /// Put blob data
-    pub fn put_blob(&self, name: &str, data: &[u8], offset: u64, score: f32) {
-        ffi::tag_put_blob(&self.inner, name, data, offset, score);
+    /// Returns CteResult with error code from FFI:
+    /// - 0 = success
+    /// - -1 = data size exceeds limit
+    /// - -2 = offset overflow
+    pub fn put_blob(&self, name: &str, data: &[u8], offset: u64, score: f32) -> i32 {
+        ffi::tag_put_blob(&self.inner, name, data, offset, score)
     }
 
     /// Get blob data
@@ -552,6 +557,6 @@ mod tests {
         assert_eq!(entries[0].off, 100);
         assert_eq!(entries[0].size, 200);
         assert_eq!(entries[0].tag_id.major, 1);
-        assert_eq!(entries[2].op, CteOp::DelBlob);
+        assert_eq!(entries[1].op, CteOp::DelBlob);
     }
 }

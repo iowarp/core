@@ -39,6 +39,9 @@
 
 namespace cte_ffi {
 
+// Maximum blob size (16 GB) - must match Rust constant
+constexpr uint64_t MAX_BLOB_SIZE = 16ULL * 1024ULL * 1024ULL * 1024ULL;
+
 // Thread-safe initialization globals
 std::once_flag g_init_flag;
 bool g_init_done = false;
@@ -90,6 +93,8 @@ float tag_get_blob_score(const Tag& tag, rust::Str name) {
 int32_t tag_reorganize_blob(const Tag& tag, rust::Str name, float score) {
   std::string n(name.data(), name.size());
   tag.inner.ReorganizeBlob(n, score);
+  // Tag::ReorganizeBlob is synchronous and returns void
+  // Return 0 for success (no error detection available from sync API)
   return 0;
 }
 
@@ -118,12 +123,25 @@ int32_t client_del_blob(const Client& client, uint32_t major, uint32_t minor,
 }
 
 // Tag operations with buffers
-void tag_put_blob(const Tag& tag, rust::Str name,
-                  rust::Slice<const uint8_t> data, uint64_t offset,
-                  float score) {
+int32_t tag_put_blob(const Tag& tag, rust::Str name,
+                     rust::Slice<const uint8_t> data, uint64_t offset,
+                     float score) {
   std::string n(name.data(), name.size());
+
+  // Validate blob size
+  uint64_t data_size = data.size();
+  if (data_size > MAX_BLOB_SIZE) {
+    return -1;  // Error: data too large
+  }
+
+  // Check for offset overflow
+  if (offset > MAX_BLOB_SIZE - data_size) {
+    return -2;  // Error: offset + size overflow
+  }
+
   tag.inner.PutBlob(n, reinterpret_cast<const char*>(data.data()), data.size(),
                     static_cast<size_t>(offset), score);
+  return 0;  // Success
 }
 
 void tag_get_blob(const Tag& tag, rust::Str name, uint64_t size,

@@ -71,6 +71,7 @@
 //! See the `SendableTag` and `SendableClient` wrappers for SAFETY documentation.
 
 pub use crate::sync::init;
+pub use crate::sync::MAX_BLOB_SIZE;
 pub use crate::types::{BdevType, ChimaeraMode, CteOp, CteTagId, CteTelemetry, PoolQuery, SteadyTime};
 
 use crate::error::{CteError, CteResult};
@@ -290,7 +291,7 @@ impl Client {
                 message: "Blob name cannot be empty".to_string(),
             });
         }
-        if score < 0.0 || score > 1.0 {
+        if score < 0.0 || score > 1.0 || score.is_nan() {
             return Err(CteError::InvalidParameter {
                 message: format!("Score must be between 0.0 and 1.0, got {}", score),
             });
@@ -564,7 +565,7 @@ impl Tag {
                 message: "Blob name cannot be empty".to_string(),
             });
         }
-        if score < 0.0 || score > 1.0 {
+        if score < 0.0 || score > 1.0 || score.is_nan() {
             return Err(CteError::InvalidParameter {
                 message: format!("Score must be between 0.0 and 1.0, got {}", score),
             });
@@ -605,7 +606,8 @@ impl Tag {
     ///
     /// # Returns
     /// * `Ok(())` on success
-    /// * `Err(CteError::InvalidParameter)` if name is empty or score out of range
+    /// * `Err(CteError::InvalidParameter)` if name is empty, score out of range,
+    ///   data exceeds MAX_BLOB_SIZE, or offset overflows
     /// * `Err(CteError::FfiError)` on spawn_blocking failure
     ///
     /// # Example
@@ -625,9 +627,39 @@ impl Tag {
                 message: "Blob name cannot be empty".to_string(),
             });
         }
-        if score < 0.0 || score > 1.0 {
+        if score < 0.0 || score > 1.0 || score.is_nan() {
             return Err(CteError::InvalidParameter {
                 message: format!("Score must be between 0.0 and 1.0, got {}", score),
+            });
+        }
+
+        // Check blob size limit
+        let data_len = data.len() as u64;
+        if data_len > MAX_BLOB_SIZE {
+            return Err(CteError::InvalidParameter {
+                message: format!(
+                    "Data size {} exceeds maximum blob size {}",
+                    data_len, MAX_BLOB_SIZE
+                ),
+            });
+        }
+
+        // Check for offset overflow
+        let end_offset = offset.checked_add(data_len).ok_or_else(|| {
+            CteError::InvalidParameter {
+                message: format!(
+                    "Offset {} + size {} would overflow u64",
+                    offset, data_len
+                ),
+            }
+        })?;
+
+        if end_offset > MAX_BLOB_SIZE {
+            return Err(CteError::InvalidParameter {
+                message: format!(
+                    "Total blob size {} exceeds maximum {}",
+                    end_offset, MAX_BLOB_SIZE
+                ),
             });
         }
 

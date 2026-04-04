@@ -56,6 +56,9 @@ use crate::error::{CteError, CteResult};
 use crate::ffi::ffi;
 use std::sync::OnceLock;
 
+/// Maximum blob size (16 GB)
+pub const MAX_BLOB_SIZE: u64 = 16 * 1024 * 1024 * 1024;
+
 /// Cached initialization result
 static INIT_RESULT: OnceLock<CteResult<()>> = OnceLock::new();
 
@@ -177,7 +180,7 @@ impl Client {
                 message: "Blob name cannot be empty".to_string(),
             });
         }
-        if score < 0.0 || score > 1.0 {
+        if score < 0.0 || score > 1.0 || score.is_nan() {
             return Err(CteError::InvalidParameter {
                 message: format!("Score must be between 0.0 and 1.0, got {}", score),
             });
@@ -343,7 +346,7 @@ impl Tag {
                 message: "Blob name cannot be empty".to_string(),
             });
         }
-        if score < 0.0 || score > 1.0 {
+        if score < 0.0 || score > 1.0 || score.is_nan() {
             return Err(CteError::InvalidParameter {
                 message: format!("Score must be between 0.0 and 1.0, got {}", score),
             });
@@ -374,7 +377,9 @@ impl Tag {
     ///
     /// # Returns
     /// * `Ok(())` on success
-    /// * `Err(CteError::InvalidParameter)` if name is empty or score is out of range
+    /// * `Err(CteError::InvalidParameter)` if name is empty, score is out of range,
+    ///   data exceeds MAX_BLOB_SIZE, or offset + size overflows
+    /// * `Err(CteError::RuntimeError)` if FFI call fails
     ///
     /// # Example
     /// ```
@@ -396,43 +401,85 @@ impl Tag {
                 message: "Blob name cannot be empty".to_string(),
             });
         }
-        if score < 0.0 || score > 1.0 {
+        if score < 0.0 || score > 1.0 || score.is_nan() {
             return Err(CteError::InvalidParameter {
                 message: format!("Score must be between 0.0 and 1.0, got {}", score),
             });
         }
 
-        ffi::tag_put_blob(&self.inner, name, data, offset, score);
-        Ok(())
+        // Check blob size limit
+        let data_len = data.len() as u64;
+        if data_len > MAX_BLOB_SIZE {
+            return Err(CteError::InvalidParameter {
+                message: format!(
+                    "Data size {} exceeds maximum blob size {}",
+                    data_len, MAX_BLOB_SIZE
+                ),
+            });
+        }
+
+        // Check for offset overflow
+        let end_offset =
+            offset
+                .checked_add(data_len)
+                .ok_or_else(|| CteError::InvalidParameter {
+                    message: format!("Offset {} + size {} would overflow u64", offset, data_len),
+                })?;
+
+        if end_offset > MAX_BLOB_SIZE {
+            return Err(CteError::InvalidParameter {
+                message: format!(
+                    "Total blob size {} exceeds maximum {}",
+                    end_offset, MAX_BLOB_SIZE
+                ),
+            });
+        }
+
+        // Call FFI
+        let rc = ffi::tag_put_blob(&self.inner, name, data, offset, score);
+        if rc == 0 {
+            Ok(())
+        } else if rc == -1 {
+            Err(CteError::RuntimeError {
+                code: rc as u32,
+                message: "Data size exceeds maximum blob size".to_string(),
+            })
+        } else if rc == -2 {
+            Err(CteError::RuntimeError {
+                code: rc as u32,
+                message: "Offset + size overflow".to_string(),
+            })
+        } else {
+            Err(CteError::RuntimeError {
+                code: rc as u32,
+                message: format!("Put blob failed with error code {}", rc),
+            })
+        }
     }
 
     /// Write data into a blob with default offset (0) and score (1.0)
     ///
     /// Convenience method for simple blob storage.
-    /// Logs a warning and panics on validation errors.
+    /// Returns an error on validation failures instead of panicking.
     ///
     /// # Arguments
     /// * `name` - Blob name (must not be empty)
     /// * `data` - Data to write
     ///
-    /// # Panics
-    /// Panics if name is empty.
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err(CteError::InvalidParameter)` if name is empty, data is too large,
+    ///   or offset overflow
     ///
     /// # Example
     /// ```
     /// use wrp_cte::sync::Tag;
     ///
     /// let tag = Tag::new("my_dataset");
-    /// tag.put_blob("data.bin", b"hello");  // Uses default offset=0, score=1.0
+    /// tag.put_blob("data.bin", b"hello").expect("put failed");
     /// ```
-    pub fn put_blob(&self, name: &str, data: &[u8]) {
-        // Use the validated version with default parameters
-        match self.put_blob_with_options(name, data, 0, 1.0) {
-            Ok(()) => {}
-            Err(e) => {
-                panic!("put_blob validation failed: {}", e);
-            }
-        }
+    pub fn put_blob(&self, name: &str, data: &[u8]) -> CteResult<()> {
+        self.put_blob_with_options(name, data, 0, 1.0)
     }
 
     /// Read data from a blob

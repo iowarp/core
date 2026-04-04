@@ -115,33 +115,12 @@ pub use sync::{Client, Tag};
 // This provides C-ABI exports for calling from other languages
 mod ffi_c;
 
+// Unit tests module (no runtime required)
+#[cfg(test)]
+mod tests;
+
 /// Version of the wrp-cte-rs crate
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_version() {
-        assert!(!VERSION.is_empty());
-    }
-
-    #[test]
-    fn test_error_display() {
-        let err = CteError::InitFailed {
-            reason: "test".to_string(),
-        };
-        let msg = err.to_string();
-        assert!(msg.contains("initialization failed"));
-    }
-
-    #[test]
-    fn test_cte_tag_id_layout() {
-        // Verify the 8-byte layout (4 + 4 = 8)
-        assert_eq!(std::mem::size_of::<CteTagId>(), 8);
-    }
-}
 
 #[cfg(test)]
 mod async_tests {

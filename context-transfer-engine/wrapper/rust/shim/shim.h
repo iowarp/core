@@ -77,15 +77,17 @@ int32_t tag_reorganize_blob(const Tag& tag, rust::Str name, float score);
 uint64_t tag_get_blob_size(const Tag& tag, rust::Str name);
 
 // Operations with buffers - avoid shared struct returns
+// Returns 0 on success, negative on error
+// -1 = size limit exceeded, -2 = offset overflow
 int32_t client_reorganize_blob(const Client& client, uint32_t major,
                                uint32_t minor, rust::Str name, float score);
 
 int32_t client_del_blob(const Client& client, uint32_t major, uint32_t minor,
                         rust::Str name);
 
-void tag_put_blob(const Tag& tag, rust::Str name,
-                  rust::Slice<const uint8_t> data, uint64_t offset,
-                  float score);
+int32_t tag_put_blob(const Tag& tag, rust::Str name,
+                     rust::Slice<const uint8_t> data, uint64_t offset,
+                     float score);
 
 void tag_get_blob(const Tag& tag, rust::Str name, uint64_t size,
                   uint64_t offset, rust::Vec<uint8_t>& out);

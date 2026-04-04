@@ -108,6 +108,20 @@ Heterogeneous-aware, multi-tiered, dynamic I/O buffering system designed to acce
 
 **[Read more →](context-transfer-engine/README.md)**
 
+#### Rust Bindings
+**Location:** [`context-transfer-engine/wrapper/rust/`](context-transfer-engine/wrapper/rust/)
+
+Native Rust bindings for the CTE API, providing idiomatic Rust interfaces with async support.
+
+**Key Features:**
+- Full CTE API coverage with async (default) and sync APIs
+- Tiered storage management with blob scoring
+- Telemetry and monitoring support
+- Thread-safe with proper Rust idioms
+- CXX-based FFI for safe interop
+
+**[Read more →](context-transfer-engine/wrapper/rust/README.md)**
+
 ### 4. Context Assimilation Engine
 **Location:** [`context-assimilation-engine/`](context-assimilation-engine/)
 
@@ -329,6 +343,48 @@ int main() {
 }
 ```
 
+### Context Transfer Engine Rust Example
+
+```rust
+use wrp_cte::{Client, Tag, PoolQuery};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize (starts embedded runtime)
+    let client = Client::new().await?;
+
+    // Create a tag
+    let tag = Tag::new("my_dataset").await?;
+
+    // Store data with automatic scoring
+    tag.put_blob("data.bin".to_string(), vec![1, 2, 3], 0, 0.9).await?;
+
+    // Retrieve data
+    let data = tag.get_blob("data.bin".to_string(), 3, 0).await?;
+    println!("Read {} bytes", data.len());
+
+    // Get telemetry
+    let telemetry = client.poll_telemetry(0).await?;
+    for entry in telemetry {
+        println!("Op {:?}: {} bytes at offset {}", entry.op, entry.size, entry.off);
+    }
+
+    Ok(())
+}
+```
+
+**Build with Cargo:**
+```bash
+cd context-transfer-engine/wrapper/rust
+cargo run --features async
+```
+
+**CMake integration:**
+```cmake
+find_package(iowarp-core REQUIRED)
+# Rust bindings built automatically with -DWRP_CORE_ENABLE_RUST=ON
+```
+
 **Build and Link:**
 ```cmake
 # Unified package includes everything - HermesShm, Chimaera, and all ChiMods
@@ -370,6 +426,14 @@ ctest -R context_transport  # Transport primitives tests
 ctest -R chimaera           # Runtime tests
 ctest -R cte                # Context transfer engine tests
 ctest -R omni               # Context assimilation engine tests
+```
+
+**Rust tests:**
+```bash
+cd context-transfer-engine/wrapper/rust
+cargo test --features async    # Run async API tests
+cargo test --features sync     # Run sync API tests
+cargo test                     # Run all Rust tests
 ```
 
 ## Benchmarking
@@ -462,6 +526,7 @@ Comprehensive documentation is available for each component:
   - [MODULE_DEVELOPMENT_GUIDE.md](context-transport-primitives/docs/MODULE_DEVELOPMENT_GUIDE.md): Complete ChiMod development guide
 - **[Context Transfer Engine](context-transfer-engine/README.md)**: I/O buffering and acceleration
   - [CTE API Documentation](context-transfer-engine/docs/cte/cte.md): Complete API reference
+  - [Context Transfer Engine Rust Bindings](context-transfer-engine/wrapper/rust/README.md): Rust API reference and examples
 - **[Context Assimilation Engine](context-assimilation-engine/README.md)**: Data ingestion and processing
 - **[Context Exploration Engine](context-exploration-engine/README.md)**: Interactive data exploration
 
