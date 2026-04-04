@@ -296,10 +296,9 @@ __global__ void synthetic_cte_kernel(
     chi::PoolId cte_pool_id,
     wrp_cte::core::TagId tag_id,
     chi::u32 num_blocks,
-    // Data
-    hipc::FullPtr<char> array_ptr,
-    hipc::FullPtr<char> read_ptr,
-    hipc::AllocatorId data_alloc_id,
+    // Data — absolute device pointers
+    char *write_base,
+    char *read_base,
     uint64_t warp_bytes,
     uint32_t total_warps,
     uint32_t iterations,
@@ -315,8 +314,8 @@ __global__ void synthetic_cte_kernel(
 
   if (warp_id >= total_warps) return;
 
-  char *my_write = array_ptr.ptr_ + warp_id * warp_bytes;
-  char *my_read = read_ptr.ptr_ + warp_id * warp_bytes;
+  char *my_write = write_base + warp_id * warp_bytes;
+  char *my_read = read_base + warp_id * warp_bytes;
 
   uint64_t lcg_seed = warp_id + 1;  // LCG seed (non-zero)
   chi::PoolQuery pool_query = to_cpu ? chi::PoolQuery::ToLocalCpu() : chi::PoolQuery::Local();
@@ -336,12 +335,8 @@ __global__ void synthetic_cte_kernel(
     // Determine offset (sequential or random)
     uint64_t offset = 0;
     if (chi::gpu::IpcManager::GetLaneId() == 0) {
-      // For random pattern, use LCG to pick a random warp slice
-      // All lanes in this warp use same offset for coherency
       offset = (lcg_next(lcg_seed) % total_warps) * warp_bytes;
     }
-    // Broadcast offset to all lanes (using lane 0's value)
-    offset = __shfl_sync(0xffffffff, offset, 0);
 
     // === I/O: PutBlob — send data to CTE ===
     if (chi::gpu::IpcManager::IsWarpScheduler()) {
@@ -353,41 +348,32 @@ __global__ void synthetic_cte_kernel(
         }
       }
 
-      wrp_cte::core::Client cte_client(cte_pool_id);
+      // Use null alloc_id + absolute device address
       hipc::ShmPtr<> shm;
-      shm.alloc_id_ = data_alloc_id;
-      shm.off_.exchange(array_ptr.shm_.off_.load() + warp_id * warp_bytes);
+      shm.alloc_id_.SetNull();
+      shm.off_.exchange(reinterpret_cast<size_t>(my_write));
 
       auto put_task = CHI_IPC->NewTask<wrp_cte::core::PutBlobTask>(
-          chi::CreateTaskId(), cte_client.pool_id_, pool_query,
+          chi::CreateTaskId(), cte_pool_id, pool_query,
           tag_id, name_buf, offset, warp_bytes,
           shm, -1.0f, wrp_cte::core::Context(), (chi::u32)0);
       auto put_future = CHI_IPC->Send(put_task);
-      if (!put_future.GetFutureShmPtr().IsNull()) {
-        put_future.Wait();
-      } else {
-        alloc_failed = true;
-      }
+      put_future.WaitGpu();
     }
     __syncwarp();
 
     // === I/O: GetBlob — retrieve data from CTE ===
     if (chi::gpu::IpcManager::IsWarpScheduler() && !alloc_failed) {
-      wrp_cte::core::Client cte_client(cte_pool_id);
       hipc::ShmPtr<> shm;
-      shm.alloc_id_ = data_alloc_id;
-      shm.off_.exchange(read_ptr.shm_.off_.load() + warp_id * warp_bytes);
+      shm.alloc_id_.SetNull();
+      shm.off_.exchange(reinterpret_cast<size_t>(my_read));
 
       auto get_task = CHI_IPC->NewTask<wrp_cte::core::GetBlobTask>(
-          chi::CreateTaskId(), cte_client.pool_id_, pool_query,
+          chi::CreateTaskId(), cte_pool_id, pool_query,
           tag_id, name_buf, offset, warp_bytes,
           (chi::u32)0, shm);
       auto get_future = CHI_IPC->Send(get_task);
-      if (!get_future.GetFutureShmPtr().IsNull()) {
-        get_future.Wait();
-      } else {
-        alloc_failed = true;
-      }
+      get_future.WaitGpu();
     }
     __syncwarp();
 
@@ -489,7 +475,7 @@ int run_workload_synthetic(const WorkloadConfig &cfg, const char *mode,
         name_buf[pos] = '\0';
 
         hipc::ShmPtr<> shm;
-        shm.alloc_id_ = ctx.data_alloc_id;
+        shm.alloc_id_ = hipc::AllocatorId(ctx.data_id.major_, ctx.data_id.minor_);
         shm.off_.exchange(ctx.array_ptr.shm_.off_.load() + w * warp_bytes);
 
         cudaMemcpy(ctx.array_ptr.ptr_ + w * warp_bytes,
@@ -506,18 +492,8 @@ int run_workload_synthetic(const WorkloadConfig &cfg, const char *mode,
               total_warps, total_bytes / (1024.0 * 1024.0));
     }
 
-    // Build read_ptr as second half of the allocated region
-    hipc::FullPtr<char> read_ptr;
-    read_ptr.ptr_ = ctx.array_ptr.ptr_ + total_bytes;
-    read_ptr.shm_.off_ = ctx.array_ptr.shm_.off_.load() + total_bytes;
-    read_ptr.shm_.alloc_id_ = ctx.array_ptr.shm_.alloc_id_;
-
-    // Clear scratch/heap
-    if (ctx.scratch_backend.data_)
-      cudaMemset(ctx.scratch_backend.data_, 0, sizeof(hipc::PartitionedAllocator));
-    if (ctx.heap_backend.data_)
-      cudaMemset(ctx.heap_backend.data_, 0, sizeof(hipc::PartitionedAllocator));
-    cudaDeviceSynchronize();
+    // Read buffer is second half of the allocated region
+    char *read_base = ctx.array_ptr.ptr_ + total_bytes;
 
     int *d_errors;
     cudaMallocHost(&d_errors, sizeof(int));
@@ -533,7 +509,7 @@ int run_workload_synthetic(const WorkloadConfig &cfg, const char *mode,
     synthetic_cte_kernel<<<cfg.client_blocks, cfg.client_threads, 0,
                            static_cast<cudaStream_t>(stream)>>>(
         ctx.gpu_info, cfg.cte_pool_id, cfg.tag_id, cfg.client_blocks,
-        ctx.array_ptr, read_ptr, ctx.data_alloc_id,
+        ctx.array_ptr.ptr_, read_base,
         warp_bytes, total_warps, iters,
         cfg.routing == "to_cpu", cfg.validate, ctx.d_done, d_errors);
 
