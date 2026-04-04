@@ -10,14 +10,8 @@
 #ifdef WRP_CTE_KG_NEO4J
 #include <wrp_cte/core/kg_backend_neo4j.h>
 #endif
-#ifdef WRP_CTE_KG_REDIS
-#include <wrp_cte/core/kg_backend_redis.h>
-#endif
 #ifdef WRP_CTE_KG_QDRANT
 #include <wrp_cte/core/kg_backend_qdrant.h>
-#endif
-#ifdef WRP_CTE_KG_ZEP
-#include <wrp_cte/core/kg_backend_zep.h>
 #endif
 
 #include <memory>
@@ -39,14 +33,8 @@ inline std::unique_ptr<KGBackend> CreateKGBackend(const std::string &type) {
 #ifdef WRP_CTE_KG_NEO4J
   if (type == "neo4j") return std::make_unique<Neo4jBackend>();
 #endif
-#ifdef WRP_CTE_KG_REDIS
-  if (type == "redis") return std::make_unique<RedisBackend>();
-#endif
 #ifdef WRP_CTE_KG_QDRANT
   if (type == "qdrant") return std::make_unique<QdrantBackend>();
-#endif
-#ifdef WRP_CTE_KG_ZEP
-  if (type == "zep") return std::make_unique<ZepBackend>();
 #endif
 
   // Unknown type — fall back to BM25
