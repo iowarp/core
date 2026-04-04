@@ -1,0 +1,99 @@
+name: GPU Tests (CUDA)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'context-runtime/**'
+      - 'context-transfer-engine/**'
+      - 'context-transport-primitives/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - '.github/workflows/gpu-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'context-runtime/**'
+      - 'context-transfer-engine/**'
+      - 'context-transport-primitives/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - '.github/workflows/gpu-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  gpu-tests:
+    name: GPU Tests (CUDA ${{ matrix.cuda }})
+    runs-on: [self-hosted, gpu, cuda]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: ['12']
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v5
+      with:
+        submodules: recursive
+
+    - name: Verify GPU access
+      run: |
+        nvidia-smi
+        nvcc --version
+
+    - name: Configure with CUDA
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DWRP_CORE_ENABLE_CUDA=ON \
+          -DWRP_CORE_ENABLE_TESTS=ON \
+          -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -DCMAKE_CUDA_ARCHITECTURES=native
+
+    - name: Build
+      run: cmake --build build -j$(nproc)
+
+    - name: Install
+      run: |
+        sudo cmake --install build
+        sudo ldconfig
+
+    - name: Run GPU unit tests
+      working-directory: build
+      run: |
+        echo "=== GPU Unit Tests ==="
+        ctest -R "cte_gpu_tiered_test|cte_gpu_coroutine|cte_gpu_core_all|cte_gpu_create" \
+          --output-on-failure --timeout 120
+
+    - name: Run GPU runtime tests
+      working-directory: build
+      run: |
+        echo "=== GPU Runtime Tests ==="
+        ctest -R "test_gpu_runtime|cr_gpu_client_process|cr_gpu_parallelism|cr_gpu_runtime_tests|cr_gpu_task_trace|test_gpu_pod_transfer|chimaera_bdev_gpu_kernel|cr_bdev_gpu" \
+          --output-on-failure --timeout 120
+
+    - name: Run GPU allocator tests
+      working-directory: build
+      run: |
+        echo "=== GPU Allocator Tests ==="
+        ctest -R "test_gpu_shm_mmap|test_local_serialize_gpu|test_local_transfer_gpu|test_buddy_alloc_gpu|test_buddy_alloc_stack_gpu|test_thread_alloc_gpu|test_round_robin_alloc_gpu|test_ipc_allocate_buffer_gpu|test_buddy_benchmark_gpu" \
+          --output-on-failure --timeout 120
+
+    - name: Run GPU benchmarks (regression)
+      working-directory: build
+      run: |
+        echo "=== GPU Benchmark Regression Tests ==="
+        ctest -R "cte_gpu_bench|cte_gpu_synthetic" \
+          --output-on-failure --timeout 120
+
+    - name: Summary
+      if: always()
+      working-directory: build
+      run: |
+        echo ""
+        echo "========================================="
+        echo "  GPU Test Summary"
+        echo "========================================="
+        ctest -R "cte_gpu|cr_gpu|chimaera_bdev_gpu|test_gpu|test_ipc_allocate|test_buddy" \
+          --timeout 120 2>&1 | tail -5
