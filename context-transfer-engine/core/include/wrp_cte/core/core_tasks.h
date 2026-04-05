@@ -1070,21 +1070,23 @@ struct PutBlobTask : public chi::Task {
 
   /**
    * Serialize IN and INOUT parameters.
-   * Single range() spanning Task base through flags_ (contiguous in memory).
    */
   template <typename Archive>
   HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
-    ar.range(pool_id_, flags_);
+    ar.range(pool_id_, task_id_, pool_query_, method_, task_flags_,
+             period_ns_, task_group_, return_code_, completer_,
+             tag_id_, blob_name_, offset_, size_, blob_data_,
+             score_, context_, flags_);
     ar.bulk(blob_data_, size_, BULK_XFER);
   }
 
   /**
    * Serialize OUT and INOUT parameters.
-   * range() from return_code_ through context_ (contiguous OUT/INOUT fields).
    */
   template <typename Archive>
   HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
-    ar.range(return_code_, context_);
+    ar.range(return_code_, completer_, tag_id_, blob_name_,
+             offset_, size_, blob_data_, score_, context_, flags_);
   }
 
   /** Fix up priv::string SSO pointer after cudaMemcpy D→H */
@@ -1186,11 +1188,12 @@ struct GetBlobTask : public chi::Task {
 
   /**
    * Serialize IN and INOUT parameters.
-   * Single range() spanning Task base through flags_ (contiguous in memory).
    */
   template <typename Archive>
   HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
-    ar.range(pool_id_, flags_);
+    ar.range(pool_id_, task_id_, pool_query_, method_, task_flags_,
+             period_ns_, task_group_, return_code_, completer_,
+             tag_id_, blob_name_, offset_, size_, flags_, blob_data_);
     ar.bulk(blob_data_, size_, BULK_EXPOSE);
   }
 
