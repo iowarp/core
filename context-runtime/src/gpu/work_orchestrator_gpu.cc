@@ -167,9 +167,9 @@ bool gpu::WorkOrchestrator::Launch(const IpcManagerGpuInfo &gpu_info, u32 blocks
   // Set GPU limits for CDP
   cudaDeviceSetLimit(cudaLimitStackSize, 16384);
   cudaDeviceSetLimit(cudaLimitPrintfFifoSize, 4 * 1024 * 1024);
-  cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, 256);
-  cudaDeviceSetLimit(cudaLimitDevRuntimeSyncDepth, 4);
-  cudaDeviceSetLimit(cudaLimitMallocHeapSize, 8 * 1024 * 1024);
+  cudaDeviceSetLimit(cudaLimitDevRuntimePendingLaunchCount, 4096);
+  cudaDeviceSetLimit(cudaLimitDevRuntimeSyncDepth, 16);
+  cudaDeviceSetLimit(cudaLimitMallocHeapSize, 32 * 1024 * 1024);
 
   // Create dedicated stream
   stream_ = hshm::GpuApi::CreateStream();

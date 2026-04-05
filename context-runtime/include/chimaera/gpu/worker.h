@@ -115,12 +115,16 @@ __global__ void RunTask(Container *container, u32 method,
   // Execute the task method
   container->Run(method, task_ptr, rctx);
 
-  // Thread 0 marks task as complete (system-scope atomic for cross-kernel visibility)
+  // Thread 0 marks task as complete via device-scope atomic.
+  // The fshm is always in device memory (even for CPU→GPU tasks, where it
+  // sits right after the task copy in device space). The orchestrator parent
+  // kernel polls this flag and relays completion to the pinned-host FutureShm
+  // mirror via system-scope write (see RelayPendingCompletions).
   if (threadIdx.x == 0 && blockIdx.x == 0) {
-    __threadfence_system();
-    atomicOr_system(reinterpret_cast<unsigned int*>(&fshm->flags_.bits_.x),
-                    static_cast<unsigned int>(FutureShm::FUTURE_COMPLETE));
-    __threadfence_system();
+    __threadfence();
+    atomicOr(reinterpret_cast<unsigned int*>(&fshm->flags_.bits_.x),
+             static_cast<unsigned int>(FutureShm::FUTURE_COMPLETE));
+    __threadfence();
   }
 }
 
@@ -154,6 +158,7 @@ class Worker {
   FutureShm *pending_device_fshm_[kMaxPendingCpu2Gpu];
   FutureShm *pending_host_fshm_[kMaxPendingCpu2Gpu];  /**< Pinned host mirrors */
   u32 num_pending_;
+
 
   // Profiling counters
   long long prof_queue_pop_, prof_task_count_;
@@ -361,7 +366,6 @@ class Worker {
            pool_id.major_, pool_id.minor_, method_id, grid_dim,
            (int)is_gpu2gpu, (void*)task_ptr.ptr_, (void*)fshm);
 
-    // Launch CDP child kernel with fire-and-forget semantics
     // Launch CDP child on an explicit non-blocking stream so multiple
     // children can run concurrently (default stream serializes them).
     cudaStream_t child_stream;
@@ -372,7 +376,8 @@ class Worker {
         gpu_info_ptr_);
     cudaError_t cdp_err = cudaGetLastError();
     if (cdp_err != cudaSuccess) {
-      printf("[ORCH-CDP] RunTask launch FAILED: %d\n", (int)cdp_err);
+      printf("[ORCH-CDP] RunTask launch FAILED: %d (%s)\n",
+             (int)cdp_err, cudaGetErrorString(cdp_err));
     } else {
       printf("[POP] RunTask launched OK\n");
     }
