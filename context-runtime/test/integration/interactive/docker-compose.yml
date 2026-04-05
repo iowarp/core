@@ -16,7 +16,7 @@ x-common-env: &common-env
   LD_LIBRARY_PATH: /workspace/build/bin
 
 x-common-node: &common-node
-  image: iowarp/deps-cpu:latest
+  image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
   init: true
   stop_grace_period: 5s
   security_opt:

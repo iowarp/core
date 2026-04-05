@@ -253,13 +253,14 @@ class SocketTransport : public Transport {
       }
     }
 
-    // 1. Serialize metadata via cereal
-    std::ostringstream oss(std::ios::binary);
+    // 1. Serialize metadata via GlobalSerialize
+    std::vector<char> meta_buf;
     {
-      cereal::BinaryOutputArchive ar(oss);
+      hshm::ipc::GlobalSerialize<std::vector<char>> ar(meta_buf);
       ar(meta);
+      ar.Finalize();
     }
-    std::string meta_str = oss.str();
+    std::string meta_str(meta_buf.begin(), meta_buf.end());
 
     // 2. Build iovec: [4-byte BE length prefix][metadata][bulk0][bulk1]...
     uint32_t meta_len = htonl(static_cast<uint32_t>(meta_str.size()));
@@ -391,8 +392,8 @@ class SocketTransport : public Transport {
     if (rc != 0) return -1;
 
     try {
-      std::istringstream iss(meta_str, std::ios::binary);
-      cereal::BinaryInputArchive ar(iss);
+      std::vector<char> meta_buf(meta_str.begin(), meta_str.end());
+      hshm::ipc::GlobalDeserialize<std::vector<char>> ar(meta_buf);
       ar(meta);
     } catch (const std::exception& e) {
       HLOG(kFatal, "Socket RecvMetadata: Deserialization failed - {} (len={})",

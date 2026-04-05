@@ -1,0 +1,558 @@
+\section{Design}
+\label{sec:design}
+
+We now describe the design of \sysname{}, a GPU-native I/O runtime
+that executes storage operations directly on the GPU.
+\sysname{} comprises three layers: (1)~a \emph{task execution engine}
+that manages asynchronous, warp-level coroutine execution on the GPU
+(\S\ref{sec:exec-engine}); (2)~a \emph{dynamic work orchestrator} that
+maps tasks of varying parallelism to GPU warps and adapts resource
+allocation to load (\S\ref{sec:orchestrator}); and (3)~\emph{AggroFS},
+a GPU-resident blob-store filesystem that performs metadata management
+and storage tiering entirely on the GPU (\S\ref{sec:aggrofs}).
+
+Figure~\ref{fig:arch-overview} depicts the end-to-end architecture,
+illustrating the GPU$\rightarrow$GPU, GPU$\rightarrow$CPU, and
+CPU$\rightarrow$GPU communication paths.
+
+\begin{figure}[t]
+  \centering
+  \includesvg[width=\columnwidth]{fig_arch_overview}
+  \caption{%
+    Architecture overview of \sysname{}.  The GPU runtime hosts
+    warp-level workers that execute module tasks as coroutines.
+    Clients submit tasks through per-warp queues mapped in device
+    memory; the IPC manager routes responses back via shared memory,
+    IPC sockets, or TCP\@.  CPU-side modules (e.g., NVMe drivers) are
+    reached through pinned-host queues.}
+  \label{fig:arch-overview}
+\end{figure}
+
+%%%%============================================================
+\subsection{Asynchronous GPU Task Execution Engine}
+\label{sec:exec-engine}
+%%%%============================================================
+
+\paragraph{Runtime startup.}
+The CPU runtime is launched first as a privileged process.
+It initializes NVMe submission and completion queues and maps them
+into the GPU address space using BAR-mapped MMIO regions, enabling
+the GPU to issue storage commands without CPU involvement.
+The CPU runtime then spawns the GPU runtime as a persistent CUDA
+kernel.  During initialization, the \texttt{IpcManager} allocates a
+configurable number of \emph{per-warp task queues} in device memory---one
+set for CPU$\rightarrow$GPU traffic and one for GPU$\rightarrow$GPU
+traffic---along with a \emph{suspended-task queue} per warp for
+coroutines that are waiting on I/O\@.
+The number of warp queues determines the maximum concurrency of both
+runtimes: each warp constitutes an independent, lock-free scheduling
+domain.
+
+\paragraph{Client connection.}
+Once both runtimes are running, clients connect through the IPC
+manager.  A client first allocates a region of \emph{device memory}
+(for GPU-resident clients) or \emph{pinned host memory} (for CPU
+clients) to hold communication primitives: task descriptors and
+\texttt{FutureShm} completion tokens.
+The IPC manager supports three transport modes---shared memory, Unix
+domain sockets, and TCP---chosen at connection time via an environment
+variable.  Regardless of transport, the client receives a pool of
+pre-allocated \texttt{FutureShm} objects backed by shared or device
+memory.  These objects carry all the metadata needed to route a
+response back to the caller: the originating transport, a client
+process identifier, and a flexible-array \texttt{copy\_space} for
+small return values.
+
+\paragraph{An efficient communication protocol.}
+Task submission follows a zero-copy, poll-based protocol.
+A client constructs a task descriptor in its private memory region,
+populates a \texttt{PoolQuery} that specifies the target module,
+routing mode, and degree of parallelism, and pairs the task with a
+\texttt{FutureShm} token drawn from the pre-allocated pool.
+Input data is registered as \emph{bulk descriptors} referencing
+contiguous device- or host-memory regions; no copies occur at
+submission time.  The client then enqueues the task pointer into one
+of the per-warp queues using an atomic compare-and-swap, after which
+the submitting thread is free to continue.
+
+On the runtime side, lane~0 of each warp continuously polls its
+queues.  When a task arrives, the warp instantiates a coroutine (see
+below), executes the target module's entry point, and writes any
+return values into the \texttt{FutureShm}'s \texttt{copy\_space}.
+For shared-memory clients, the runtime sets the
+\texttt{FUTURE\_COMPLETE} flag in the token and the client observes
+completion by polling the flag.  For socket- and TCP-based clients,
+the runtime additionally pushes a notification through the
+corresponding transport.  Because the entire protocol is lock-free on
+the fast path---using only atomic flags and single-producer
+queues---it adds negligible overhead to the critical path of an I/O
+request.
+
+\paragraph{Warp-level coroutines.}
+After a task reaches a warp, the worker wraps the module's entry
+point in a \emph{warp-level coroutine}: a C++20 coroutine that
+executes collectively across all 32 lanes of a single warp.
+Standard NVCC does not support C++20 coroutines in device code;
+we augment the Clang/LLVM CUDA front-end to lower
+\texttt{co\_await} and \texttt{co\_yield} into device-compatible
+suspend and resume points.
+
+Each coroutine frame is bump-allocated from a per-warp stack
+region in device memory; only when the stack is exhausted does the
+allocator fall back to a shared \texttt{BuddyAllocator}.
+A \texttt{RunContext} object, allocated once per active coroutine,
+holds 32 \texttt{coroutine\_handle}s (one per lane), a yield flag,
+and a pointer to the \texttt{FutureShm} being awaited.
+When a coroutine issues a sub-task (e.g., an NVMe read), it
+\texttt{co\_await}s the sub-task's \texttt{Future}, which suspends
+all 32 lanes simultaneously and returns control to lane~0's
+scheduler loop.  The scheduler then picks the next runnable
+coroutine from the warp's suspended queue or polls for a new
+incoming task.  When the awaited I/O completes---signaled by the
+sub-task's \texttt{FutureShm} flag---the scheduler resumes the
+suspended coroutine.
+
+This design yields two key benefits.
+First, it hides I/O latency: while one coroutine waits on a
+device read, the warp executes another coroutine, keeping the
+SIMT lanes productive.
+Second, it preserves warp-coherent execution: because all 32
+lanes enter and exit suspend points together, there is no
+divergence penalty, and the programming model remains
+single-instruction.
+
+\paragraph{Module specification.}
+A \emph{module} (called a \emph{ChiMod} internally) is a dynamically
+loadable code object that implements a named service---for example,
+\texttt{EXT4} for a POSIX filesystem or \texttt{BDEV} for a block
+device.  Each module instance is identified by three attributes: a
+\emph{library name} (e.g., \texttt{bdev}), a \emph{semantic instance
+name} (e.g., a mount point or device path), and a
+\emph{numeric instance ID} used for fast routing.
+
+On the CPU, modules are represented as C++ objects with virtual
+dispatch.
+On the GPU, virtual function calls incur an indirection through
+global memory that serializes warp execution; we therefore replace
+the vtable with an \emph{inline function-pointer table} embedded
+directly in the container object.  This reduces each module
+invocation to a single global-memory load followed by a direct
+call, eliminating the pointer-chase overhead of virtual dispatch.
+
+Modules expose a small set of callbacks that the runtime invokes at
+well-defined points: \texttt{Create} (initialize a new instance),
+\texttt{Destroy} (tear down), \texttt{Run} (execute a task method),
+and \texttt{Update} (refresh GPU-side state after a code or
+configuration change).  The \texttt{Run} callback dispatches on a
+method identifier embedded in the task, enabling a single module to
+expose an arbitrarily rich interface while paying only one
+indirect-call overhead.
+
+\paragraph{Task specification.}
+A \emph{task} is the unit of work submitted to a module.
+Its base class carries the parameters needed to route and scale
+execution:
+a \texttt{pool\_id} identifying the target module instance,
+a \texttt{method} selector for the operation within that module,
+a \texttt{PoolQuery} encoding the routing mode and parallelism,
+a \texttt{task\_group} for affinity-based scheduling, and
+\texttt{task\_flags} that mark properties such as periodicity or
+data ownership.
+Derived task classes (e.g., \texttt{bdev::WriteTask}) add
+operation-specific parameters---buffer pointers, offsets,
+sizes---and implement \texttt{SerializeIn}/\texttt{SerializeOut}
+methods for portable cross-architecture transfer.
+
+The \texttt{PoolQuery} attached to each task controls three
+dimensions of execution.
+\emph{Routing mode} determines where the task executes: on a
+specific GPU (\texttt{ToLocalGpu}), on the CPU
+(\texttt{ToLocalCpu}), via hash-based load balancing
+(\texttt{DirectHash}), or broadcast to all instances.
+\emph{Parallelism} specifies the number of GPU threads the task
+requires (default~1; e.g., 32 for warp-level block I/O).
+The CPU runtime ignores this field; the GPU runtime uses it to
+determine cross-warp scheduling, as described in
+\S\ref{sec:orchestrator}.
+
+%%%%============================================================
+\subsection{Dynamic GPU Work Orchestration}
+\label{sec:orchestrator}
+%%%%============================================================
+
+In a shared GPU runtime, multiple clients may simultaneously submit
+tasks with widely varying parallelism requirements.  Furthermore,
+machines experience periods of high and low demand; a persistently
+executing GPU kernel can waste energy during idle periods.
+The work orchestrator addresses both challenges through hierarchical
+load tracking, a multi-level task dispersion algorithm, and an
+adaptive rescaling mechanism.
+
+\subsubsection{Hierarchical Load Tracking}
+\label{sec:load-tracking}
+
+Let $W$ denote the total number of warps allocated to the GPU
+runtime, and let $G = \lceil\sqrt{W}\rceil$ be the number of
+\emph{warp groups}.  Each warp group contains $G$ warps, forming
+a two-level hierarchy indexed by a \emph{group ID}
+$g = \lfloor\mathit{warp\_id} / G\rfloor$ and a \emph{minor ID}
+$m = \mathit{warp\_id} \bmod G$.
+
+Load is tracked in two shared-memory tables residing in GPU global
+memory:
+
+\begin{itemize}[nosep]
+  \item \texttt{warp\_group\_load\_[$G$]}:
+    an array of atomic 32-bit counters, one per group, recording
+    the aggregate number of active tasks in the group.
+  \item \texttt{warp\_load\_[$G$][$G$]}:
+    a two-dimensional array recording the number of active tasks
+    in each individual warp, indexed by
+    $[\mathit{group\_id}][\mathit{minor\_id}]$.
+\end{itemize}
+
+\noindent
+When a warp begins executing a task whose \texttt{Future} range
+fits within a single warp (i.e., range width $\leq 32$), it
+atomically increments both its group-level and warp-level counters.
+When the task completes, it decrements both.
+Because each warp updates only its own entry in the warp-level
+table, contention is limited to the group-level counters, which
+are updated at most once per task arrival and departure.
+The $\sqrt{W}$ grouping ensures that the number of groups remains
+small (e.g., 8~groups for 64~warps), keeping the cost of scanning
+group loads constant.
+
+\subsubsection{Multi-Level Work Assignment}
+\label{sec:work-assign}
+
+When a new task arrives at the runtime, it is first placed on a
+per-warp queue using round-robin selection from a random offset.
+The receiving warp then inspects the task's parallelism requirement
+$P$ (from \texttt{PoolQuery.parallelism}) and dispatches it through
+one of three levels of the scheduling hierarchy.
+Algorithm~\ref{alg:dispatch} summarizes the procedure.
+
+\begin{algorithm}[t]
+\caption{Multi-level task dispatch}
+\label{alg:dispatch}
+\begin{algorithmic}[1]
+\Require Task $t$ with parallelism $P$, arriving at warp group $g$
+\Ensure $t$ is assigned to the appropriate warps
+\State $G \gets \lceil\sqrt{W}\rceil$ \Comment{warps per group}
+\If{$P \leq 32$} \Comment{\textbf{Case 1: Warp-level}}
+    \State Allocate coroutine frame on local warp stack
+    \State Execute $t$ directly on this warp
+    \State \texttt{warp\_group\_load\_[$g$]}\texttt{++}
+    \State \texttt{warp\_load\_[$g$][$m$]}\texttt{++}
+\ElsIf{$P \leq 32 \cdot G$} \Comment{\textbf{Case 2: Group-level}}
+    \State $N_w \gets \lceil P / 32 \rceil$
+    \State Select $N_w$ least-loaded warps within group $g$
+    \For{each selected warp $w_i$ with rank $i$}
+        \State Create \texttt{Future} copy with range $[32i,\; 32(i+1))$
+        \State Enqueue copy on $w_i$'s task queue
+    \EndFor
+\Else \Comment{\textbf{Case 3: Multi-group}}
+    \State $N_g \gets \lceil P / (32 \cdot G) \rceil$
+    \State Select $N_g$ least-loaded groups, preferring groups
+           nearest to $g$
+    \For{each selected group $g_j$ with rank $j$}
+        \State Create \texttt{Future} copy with range
+               $[32 G j,\; 32 G (j+1))$
+        \State Enqueue copy on $g_j$'s group queue
+        \State Group $g_j$ recurses to \textbf{Case~2}
+    \EndFor
+\EndIf
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Case 1: Warp-level tasks ($P \leq 32$).}
+The common case for fine-grained I/O operations.  The warp allocates
+a coroutine frame from its stack and executes the task directly.
+No cross-warp coordination is needed.
+
+\paragraph{Case 2: Group-level tasks ($32 < P \leq 32G$).}
+The task requires multiple warps but fits within a single group.
+The scheduler computes $N_w = \lceil P/32 \rceil$ and selects the
+$N_w$ least-loaded warps within the local group by scanning
+\texttt{warp\_load\_[$g$][$\cdot$]}.
+It then creates $N_w$ shallow copies of the task's \texttt{Future},
+each annotated with a disjoint \emph{range} indicating which
+subset of the work the warp is responsible for (e.g., which
+output elements to compute).  All copies share the same
+underlying \texttt{FutureShm}, avoiding data duplication.
+The module accesses \texttt{GetTaskWarpOffset()} to determine its
+assigned partition of the computation.
+
+\paragraph{Case 3: Multi-group tasks ($P > 32G$).}
+The task exceeds the capacity of a single group.  The scheduler
+computes $N_g = \lceil P/(32G) \rceil$ and selects the $N_g$
+least-loaded groups by scanning \texttt{warp\_group\_load\_},
+starting from the local group and spiraling outward to preserve
+locality.  Each selected group receives a \texttt{Future} copy
+whose range spans $32G$ threads; the group then internally
+dispatches via Case~2.
+
+\paragraph{Cross-warp completion.}
+When a task is fragmented across multiple warps, each warp
+independently executes its partition and, upon finishing,
+atomically increments a \texttt{completion\_counter} stored in
+the shared \texttt{FutureShm}.  The warp whose increment reaches
+$P$ is designated the \emph{completer}: it copies any return
+values back to the client (for client-originated tasks) or signals
+the parent coroutine to resume (for runtime-internal sub-tasks).
+This mechanism avoids any barrier synchronization; warps complete
+asynchronously and the last one to finish performs cleanup.
+
+\subsubsection{Adaptive Runtime Rescaling}
+\label{sec:rescaling}
+
+To avoid wasting GPU resources during idle periods, the orchestrator
+periodically evaluates aggregate load and adjusts the number of
+active warps.  The rescaling algorithm operates on a configurable
+interval $\Delta t$ (default: 100\,ms) and proceeds as follows:
+
+\begin{enumerate}[nosep]
+  \item Compute $L = \sum_{g} \texttt{warp\_group\_load\_}[g]$,
+    the total number of active tasks across all groups.
+  \item If $L = 0$ for $k$ consecutive intervals (default $k=10$),
+    the runtime \emph{parks} idle warp groups by setting their
+    polling flags to a low-frequency spin, reducing energy
+    consumption.
+  \item If $L > \alpha \cdot W$ (high-watermark, default
+    $\alpha = 0.8$), all parked groups are reactivated.
+  \item If $L < \beta \cdot W_{\text{active}}$ (low-watermark,
+    default $\beta = 0.2$), excess groups are parked, down to a
+    minimum of one active group.
+\end{enumerate}
+
+\noindent
+The asymmetric thresholds prevent oscillation: groups are activated
+eagerly but deactivated conservatively.  Because parking only reduces
+polling frequency (rather than terminating warps), reactivation is
+instantaneous---no kernel relaunch is required.
+
+%%%%============================================================
+\subsection{AggroFS: A GPU-Resident Filesystem}
+\label{sec:aggrofs}
+%%%%============================================================
+
+To demonstrate the utility of \sysname{}'s execution engine, we
+build \emph{AggroFS}, a GPU-resident filesystem that manages metadata
+and storage tiering entirely on the GPU\@.
+The key insight is that storage tiering---placing data on the
+fastest available device with sufficient capacity---requires
+\emph{on-demand} knowledge of device occupancy and metadata state.
+Prior work pre-allocates metadata on the CPU and communicates
+placement decisions across the PCIe bus; in workloads where metadata
+changes rapidly (e.g., checkpoint/restart, shuffle phases), this
+communication becomes a bottleneck.  By co-locating metadata with the
+GPU compute that consumes it, AggroFS eliminates this round-trip
+entirely.
+
+\subsubsection{The Blob Store}
+\label{sec:blobstore}
+
+AggroFS adopts a \emph{blob store} API internally and layers a
+POSIX-like filesystem interface on top.  The store is built on two
+primitives: \emph{blobs} and \emph{tags}.
+
+A \textbf{blob} is an uninterpreted byte sequence of arbitrary
+size, divided into one or more fixed-size \emph{blocks} (default
+1\,MB) that may reside on different storage tiers.  Each blob
+carries a \emph{score} in $[0,1]$ that encodes its relative
+importance for tiering decisions (higher scores prefer faster
+tiers), along with timestamps for last modification and last read.
+
+A \textbf{tag} is a named handle that gives meaning to one or more
+blobs.  Tags can represent directories, filenames, or
+application-defined groupings.  Each tag is identified by a
+human-readable name and a system-assigned \texttt{TagId}.
+
+Metadata is stored in three GPU-resident hash maps with
+fine-grained, per-bucket cooperative locks:
+
+\begin{itemize}[nosep]
+  \item \texttt{tag\_name\_to\_id}: maps tag names to
+    \texttt{TagId}s.
+  \item \texttt{tag\_id\_to\_info}: maps \texttt{TagId}s to
+    \texttt{TagInfo} records (name, total size, timestamps).
+  \item \texttt{blob\_map}: maps composite keys
+    \texttt{(tag\_id, blob\_name)} to \texttt{BlobInfo} records
+    (block list, score, compression metadata).
+\end{itemize}
+
+\noindent
+The maps use a fixed number of buckets configured at startup (default:
+1\,M entries for blobs, 100\,K for tags).  Locks are acquired only
+during metadata \emph{creation}; lookups and score updates proceed
+lock-free using atomic compare-and-swap on the map's internal
+linked-list pointers.
+
+\subsubsection{Metadata Scalability and Eviction}
+\label{sec:meta-evict}
+
+GPU memory is a scarce resource; AggroFS must ensure that metadata
+does not overwhelm device memory as the dataset grows.  We address
+this through \emph{partitioned ownership} and \emph{LRU eviction}.
+
+Each warp in the GPU runtime owns a fixed partition of the blob and
+tag maps, determined by hashing the tag or blob key to a warp ID\@.
+Ownership means that only the owning warp may create, modify, or
+evict entries in its partition; other warps route metadata requests
+to the owner via the intra-GPU task queues.
+This partitioning eliminates global locks on the metadata maps:
+concurrent creates on different keys land on different warps and
+proceed without contention.
+
+When a warp's partition reaches its capacity limit, the warp triggers
+LRU eviction.  It scans its local partition for the entry with the
+oldest \texttt{last\_read} timestamp, flushes any dirty blocks to
+a lower storage tier (see \S\ref{sec:tiering}), and reclaims the
+metadata slot.  Because eviction is warp-local, it does not block
+other warps and can overlap with ongoing I/O on other partitions.
+
+\subsubsection{Storage Tiering and Data Placement}
+\label{sec:tiering}
+
+Users register one or more block devices with AggroFS, each
+annotated with a capacity limit, a persistence level
+(\emph{volatile}, \emph{temporary}, or \emph{long-term}), and an
+optional performance score.  Device types include GPU high-bandwidth
+memory (HBM), pinned host memory, RAM disks, and NVMe SSDs.
+
+\paragraph{Data placement.}
+When a blob is written, AggroFS selects a target device using a
+\emph{maximum-bandwidth, minimum-latency} policy.  For large
+requests ($\geq 32$\,KB), devices are ranked by write bandwidth;
+for small requests, by access latency.  Within each ranking, the
+algorithm filters to devices with sufficient free capacity and
+selects the highest-ranked device whose score does not exceed the
+blob's score.  If no such device exists, the algorithm falls back
+to lower-score tiers in decreasing-bandwidth order.
+
+\paragraph{Blob rescoring and reorganization.}
+Blob scores evolve over time.  AggroFS supports a
+\texttt{ReorganizeBlob} operation that updates a blob's score and,
+if the new score warrants a different tier, asynchronously migrates
+the blob's blocks.  Migration proceeds block-by-block: each block
+is read from its current device, written to the new target, and the
+blob's block list is updated atomically.  The blob remains readable
+throughout migration because the old blocks are freed only after
+the new blocks are committed.
+
+Because the GPU has direct, low-latency access to device occupancy
+counters and blob metadata, tiering decisions can be made
+\emph{inline} during the write path without a PCIe round-trip.
+This is the central advantage of GPU-resident metadata: placement is
+always computed against the most current view of storage state.
+
+\subsubsection{Block Allocation}
+\label{sec:block-alloc}
+
+Each registered block device maintains a \emph{block allocator}
+partitioned between GPU and CPU ownership.  The GPU partition serves
+GPU-initiated allocations; the CPU partition serves CPU-initiated
+ones.
+
+Within each partition, the allocator combines two mechanisms.
+A \emph{per-warp free-list cache} holds recently freed blocks,
+organized by size category (256\,B through 1\,MB in six classes).
+Allocations first consult the local cache; only on a miss do they
+fall through to a global \emph{bump allocator} backed by an atomic
+heap pointer.  The bump allocator returns a contiguous range from
+the device's address space, which is carved into blocks of the
+requested size category.
+
+When the GPU partition is exhausted, the allocator sends a
+\texttt{ToLocalCpu} task requesting a bulk transfer of free blocks
+from the CPU's pool.  Conversely, an exhausted CPU partition
+requests blocks from the GPU\@.  This cross-partition rebalancing
+is coarse-grained (transferring many blocks at once) to amortize
+the PCIe latency of the request.
+
+\subsubsection{A Filesystem on the Blob Store}
+\label{sec:fs-layer}
+
+AggroFS exposes a POSIX-like interface by mapping filesystem
+abstractions onto the blob store.  Tags represent absolute
+paths (directories and filenames); files are decomposed into
+a sequence of blobs, each of configurable size (default 1\,MB),
+keyed by \texttt{(tag\_id, chunk\_index)}.
+
+To amortize the cost of small writes, AggroFS supports
+\emph{blob preallocation}: when a file is opened for writing,
+a configurable number of blob slots are reserved in the metadata
+map and their blocks are pre-allocated on the target device.
+Subsequent writes fill pre-allocated blobs without acquiring any
+locks, falling back to on-demand allocation only when the
+preallocated pool is exhausted.
+
+Reads and writes are fully asynchronous.  A GPU application
+issues \texttt{PutBlob} or \texttt{GetBlob} tasks and
+receives a \texttt{Future} that can be \texttt{co\_await}ed
+in a warp-level coroutine.  This enables applications to
+overlap I/O with computation at fine granularity---for example,
+a training pipeline can prefetch the next mini-batch's data
+while the current batch is being processed.
+
+\subsubsection{Metadata Consistency and Persistence}
+\label{sec:consistency}
+
+AggroFS maintains metadata consistency through \emph{asynchronous
+background flushing}.  Each warp runs a low-priority periodic task
+that scans its metadata partition for dirty entries---blobs or tags
+whose in-GPU state has diverged from the CPU-side persistent copy.
+Dirty entries are serialized and sent to the CPU runtime via
+\texttt{ToLocalCpu} tasks, where they are written to durable
+storage.
+
+The flushing protocol proceeds in three steps:
+(1)~the warp snapshots the dirty entry's metadata and marks it
+as \emph{flush-pending};
+(2)~the CPU runtime writes the snapshot to the persistent store
+and acknowledges completion;
+(3)~the warp clears the dirty and flush-pending flags.
+If the entry is modified while flush-pending, it is re-marked
+dirty and will be flushed again in the next cycle.  This design
+ensures that the persistent copy is always a consistent (though
+possibly stale) prefix of the GPU's state.
+
+Flush frequency is configurable per-warp, allowing operators to
+trade durability for throughput.  For volatile tiers (e.g., HBM
+scratch space), flushing can be disabled entirely.
+
+\subsubsection{Live Module Upgrade}
+\label{sec:live-upgrade}
+
+\sysname{} supports upgrading module code (e.g., deploying a new
+version of the AggroFS filesystem logic) without losing in-flight
+data.  The upgrade protocol proceeds as follows:
+
+\begin{enumerate}[nosep]
+  \item \textbf{Quiesce.}  The orchestrator stops accepting new
+    tasks for the target module and drains all in-flight tasks to
+    completion.
+  \item \textbf{Flush.}  All dirty metadata and data in volatile
+    tiers are flushed to the CPU runtime and persisted to durable
+    storage, following the protocol of \S\ref{sec:consistency}.
+  \item \textbf{Reload.}  The runtime unloads the old module
+    shared library and loads the new version.  On the GPU, this
+    updates the inline function-pointer table in the container
+    object.  On the CPU, the virtual dispatch table is replaced by
+    the new library's symbols.
+  \item \textbf{Reinitialize.}  The new module's \texttt{Create}
+    callback is invoked with a flag indicating an upgrade rather
+    than a fresh start.  The module reloads its persistent
+    metadata from durable storage and reconstructs any in-memory
+    indices.
+  \item \textbf{Resume.}  The orchestrator re-enables task
+    acceptance for the module.
+\end{enumerate}
+
+\noindent
+The runtime is fully restarted during step~3 to ensure a clean GPU
+state; however, because all volatile data was flushed in step~2, no
+user data is lost.  The total upgrade latency is dominated by the
+flush phase, which is bounded by the volume of dirty metadata and
+the throughput of the durable storage tier.

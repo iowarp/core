@@ -1,0 +1,31 @@
+config:
+  name: chi_gpu_scaling_test
+  pkgs:
+    - pkg_type: jarvis_iowarp.wrp_chi_gpu_bench
+      pkg_name: bench
+      test_case: "latency"
+      rt_blocks: 1
+      rt_threads: 32
+      client_blocks: 1
+      client_threads: 32
+      batch_size: 1
+      total_tasks: 100
+
+vars:
+  # Warp counts: 1, 4, 8, 16 (blocks × threads / 32)
+  bench.client_blocks:  [1, 1,   1,   2  ]
+  bench.client_threads: [32, 128, 256, 256]
+
+  # Test cases
+  bench.test_case: ["latency", "coroutine", "alloc", "serde"]
+
+  # Total tasks sweep
+  bench.total_tasks: [100, 1000]
+
+loop:
+  - [bench.client_blocks, bench.client_threads]
+  - [bench.test_case]
+  - [bench.total_tasks]
+
+repeat: 3
+output: "${HOME}/chi_gpu_scaling_results"

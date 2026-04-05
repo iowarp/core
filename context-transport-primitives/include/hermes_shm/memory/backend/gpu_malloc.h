@@ -48,21 +48,13 @@
 namespace hshm::ipc {
 
 /**
- * Header extension for GpuMalloc backend
- * Stores IPC handle for GPU memory sharing
- */
-struct GpuMallocPrivateHeader {
-  GpuIpcMemHandle ipc_handle_;  // IPC handle for data_ buffer
-};
-
-/**
  * GPU-only memory backend using cudaMalloc/hipMalloc
  *
  * Memory layout (all in GPU memory):
- *   region_ -> [MemoryBackendHeader | GpuMallocPrivateHeader | Data]
+ *   region_ -> [4KB MemoryBackendHeader | Data]
  *
  * All memory is allocated with cudaMalloc/hipMalloc on GPU.
- * IPC handle stored in private header enables sharing across processes.
+ * IPC handle is obtained on-demand via GpuApi::GetIpcMemHandle.
  */
 class GpuMalloc : public MemoryBackend, public UrlMemoryBackend {
  protected:
@@ -103,46 +95,29 @@ class GpuMalloc : public MemoryBackend, public UrlMemoryBackend {
     flags_.Clear();
     url_ = url;
 
-    // Calculate total size: backend header + private header + data
-    size_t header_size = 2 * kBackendHeaderSize;
-    size_t total_size = header_size + data_size;
-
-    // Allocate entire region with GPU memory
-    region_ = GpuApi::Malloc<char>(total_size);
+    // Allocate GPU memory
+    region_ = GpuApi::Malloc<char>(data_size);
     if (!region_) {
       HLOG(kError, "Failed to allocate GPU memory");
       return false;
     }
 
-    // Layout in region_: [MemoryBackendHeader | GpuMallocPrivateHeader | Data]
     header_ = reinterpret_cast<MemoryBackendHeader *>(region_);
-    GpuMallocPrivateHeader *priv_header =
-        reinterpret_cast<GpuMallocPrivateHeader *>(region_ + kBackendHeaderSize);
-    data_ = region_ + header_size;
+    data_ = region_ + kBackendHeaderSize;
 
-    // Initialize headers on GPU
-    MemoryBackendHeader header_init;
-    header_init.id_ = backend_id;
-    header_init.backend_size_ = total_size;
-    header_init.data_capacity_ = data_size;
-    header_init.data_id_ = gpu_id;
-    header_init.priv_header_off_ = kBackendHeaderSize;
-    header_init.flags_.Clear();
-
-    // Copy header to GPU
-    GpuApi::Memcpy(header_, &header_init, sizeof(MemoryBackendHeader));
-
-    // Initialize private header with IPC handle
-    GpuMallocPrivateHeader priv_header_init;
-    GpuApi::GetIpcMemHandle(priv_header_init.ipc_handle_, (void *)region_);
-    GpuApi::Memcpy(priv_header, &priv_header_init, sizeof(GpuMallocPrivateHeader));
-
-    // Copy to local object
     id_ = backend_id;
-    backend_size_ = total_size;
-    data_capacity_ = data_size;
+    backend_size_ = data_size;
+    data_capacity_ = data_size - kBackendHeaderSize;
     data_id_ = gpu_id;
-    priv_header_off_ = kBackendHeaderSize;
+
+    // Write header into GPU memory
+    MemoryBackendHeader hdr;
+    hdr.id_ = id_;
+    hdr.flags_ = flags_;
+    hdr.backend_size_ = backend_size_;
+    hdr.data_capacity_ = data_capacity_;
+    hdr.data_id_ = data_id_;
+    GpuApi::Memcpy(header_, &hdr, sizeof(MemoryBackendHeader));
 
     // Mark this process as the owner of the backend
     SetOwner();
@@ -151,28 +126,49 @@ class GpuMalloc : public MemoryBackend, public UrlMemoryBackend {
   }
 
   /**
-   * Attach to existing GPU memory backend
+   * Attach to existing GPU memory backend via IPC handle
    *
-   * @param url Identifier for the backend (must match the IPC handle lookup mechanism)
+   * Opens a CUDA/HIP IPC memory handle from another process and
+   * reads the backend header to recover metadata.
+   *
+   * @param ipc_handle IPC handle obtained from the owning process
    * @return true on success, false on failure
-   *
-   * NOTE: This requires an external IPC handle registry mechanism to share handles between processes.
-   * For now, this is a placeholder that will need implementation.
+   */
+  bool shm_attach_ipc(const GpuIpcMemHandle &ipc_handle) {
+    flags_.Clear();
+
+    // Open IPC handle to get mapped pointer in this process
+    GpuApi::OpenIpcMemHandle(const_cast<GpuIpcMemHandle &>(ipc_handle),
+                             &region_);
+    if (!region_) {
+      HLOG(kError, "GpuMalloc::shm_attach_ipc: Failed to open IPC handle");
+      return false;
+    }
+
+    // Read header from GPU memory
+    header_ = reinterpret_cast<MemoryBackendHeader *>(region_);
+    data_ = region_ + kBackendHeaderSize;
+
+    MemoryBackendHeader hdr;
+    GpuApi::Memcpy(&hdr, header_, sizeof(MemoryBackendHeader));
+    id_ = hdr.id_;
+    backend_size_ = hdr.backend_size_;
+    data_capacity_ = hdr.data_capacity_;
+    data_id_ = hdr.data_id_;
+
+    UnsetOwner();
+    flags_.SetBits(MEMORY_BACKEND_INITIALIZED);
+    return true;
+  }
+
+  /**
+   * Attach to existing GPU memory backend (URL-based, not implemented)
    */
   bool shm_attach(const std::string &url) {
     flags_.Clear();
     url_ = url;
-
-    // TODO: Implement IPC handle registry lookup by URL
-    // For now, we can't attach without a shared mechanism to exchange IPC handles
-    HLOG(kError, "GpuMalloc::shm_attach requires IPC handle registry (not yet implemented)");
+    HLOG(kError, "GpuMalloc::shm_attach requires IPC handle (use shm_attach_ipc instead)");
     return false;
-
-    // Future implementation would:
-    // 1. Lookup IPC handle from registry using url
-    // 2. GpuApi::OpenIpcMemHandle(ipc_handle, &region_)
-    // 3. Copy header from GPU to host to read metadata
-    // 4. Set up local pointers and flags
   }
 
   /** Detach the mapped memory */
@@ -182,13 +178,17 @@ class GpuMalloc : public MemoryBackend, public UrlMemoryBackend {
   void shm_destroy() { _Destroy(); }
 
  protected:
-  /** Detach from memory */
+  /** Detach from memory (closes IPC handle for non-owner) */
   void _Detach() {
     if (!flags_.Any(MEMORY_BACKEND_INITIALIZED)) {
       return;
     }
 
-    // Clear GPU memory pointers (don't free, we're not the owner)
+    // Close IPC handle if we mapped via shm_attach_ipc
+    if (region_) {
+      GpuApi::CloseIpcMemHandle(region_);
+    }
+
     region_ = nullptr;
     header_ = nullptr;
     data_ = nullptr;

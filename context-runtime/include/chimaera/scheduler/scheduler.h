@@ -78,7 +78,7 @@ class Scheduler {
 
   /**
    * Determines which worker to initially map a task to from runtime.
-   * Called in RouteTask via IpcManager::SendRuntime.
+   * Called in RouteTask via IpcManager::EnqueueRuntime.
    *
    * @param worker The worker that called this method
    * @param task The task to be scheduled

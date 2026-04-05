@@ -55,6 +55,21 @@ start_docker_cluster() {
     export HOST_UID=$(id -u)
     export HOST_GID=$(id -g)
 
+    # Auto-detect Docker image: use nvidia image if binary requires CUDA
+    if [ -z "${IOWARP_DOCKER_IMAGE:-}" ]; then
+        # Try workspace path first (devcontainer), then IOWARP_CORE_ROOT (host)
+        CHIMAERA_BIN="/workspace/build/bin/chimaera"
+        [ ! -f "$CHIMAERA_BIN" ] && CHIMAERA_BIN="${IOWARP_CORE_ROOT}/build/bin/chimaera"
+        if [ -f "$CHIMAERA_BIN" ] && ldd "$CHIMAERA_BIN" 2>/dev/null | grep -q "libcudart"; then
+            export IOWARP_DOCKER_IMAGE="iowarp/deps-nvidia:latest"
+            log_info "CUDA-linked binary detected, using nvidia image"
+        else
+            export IOWARP_DOCKER_IMAGE="iowarp/deps-cpu:latest"
+            log_info "Using CPU image"
+        fi
+    fi
+    log_info "Docker image: $IOWARP_DOCKER_IMAGE"
+
     docker compose up -d
 
     log_info "Waiting for containers to initialize..."

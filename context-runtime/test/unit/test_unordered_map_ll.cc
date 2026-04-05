@@ -221,16 +221,18 @@ TEST_F(UnorderedMapLLTest, AtMethod) {
   map.insert(5, "five");
   map.insert(10, "ten");
 
-  // Access existing keys
-  EXPECT_EQ(map.at(5), "five");
-  EXPECT_EQ(map.at(10), "ten");
+  // Access existing keys via find()
+  EXPECT_NE(map.find(5), nullptr);
+  EXPECT_EQ(*map.find(5), "five");
+  EXPECT_NE(map.find(10), nullptr);
+  EXPECT_EQ(*map.find(10), "ten");
 
-  // Modify via at()
-  map.at(5) = "FIVE";
-  EXPECT_EQ(map.at(5), "FIVE");
+  // Modify via operator[]
+  map[5] = "FIVE";
+  EXPECT_EQ(*map.find(5), "FIVE");
 
-  // Access non-existent key should throw
-  EXPECT_THROW(map.at(999), std::out_of_range);
+  // Access non-existent key returns nullptr
+  EXPECT_EQ(map.find(999), nullptr);
   return 0;
 }
 
@@ -340,7 +342,7 @@ TEST_F(UnorderedMapLLTest, ForEach) {
  * NOTE: Uses external mutex for thread safety
  */
 TEST_F(UnorderedMapLLTest, ConcurrentInsertions) {
-  hshm::priv::unordered_map_ll<int, std::string> map(32);  // More buckets for better concurrency
+  hshm::priv::unordered_map_ll<int, std::string> map(2048);  // Need capacity > total insertions for open addressing
   const int num_threads = 8;
   const int insertions_per_thread = 100;
 
@@ -350,7 +352,7 @@ TEST_F(UnorderedMapLLTest, ConcurrentInsertions) {
 
   // Each thread inserts unique keys
   for (int t = 0; t < num_threads; ++t) {
-    threads.emplace_back([&map, &map_mutex, &successful_insertions, t, insertions_per_thread]() {
+    threads.emplace_back([&map, &map_mutex, &successful_insertions, t]() {
       for (int i = 0; i < insertions_per_thread; ++i) {
         int key = t * insertions_per_thread + i;
         std::string value = "thread_" + std::to_string(t) + "_value_" + std::to_string(i);
@@ -381,7 +383,7 @@ TEST_F(UnorderedMapLLTest, ConcurrentInsertions) {
  * NOTE: Uses external mutex for thread safety
  */
 TEST_F(UnorderedMapLLTest, ConcurrentInsertionsWithCollisions) {
-  hshm::priv::unordered_map_ll<int, int> map(16);
+  hshm::priv::unordered_map_ll<int, int> map(128);  // Need capacity > num_keys for open addressing
   const int num_threads = 10;
   const int num_keys = 50;
 
@@ -390,7 +392,7 @@ TEST_F(UnorderedMapLLTest, ConcurrentInsertionsWithCollisions) {
 
   // All threads try to insert the same set of keys
   for (int t = 0; t < num_threads; ++t) {
-    threads.emplace_back([&map, &map_mutex, num_keys, t]() {
+    threads.emplace_back([&map, &map_mutex, t]() {
       for (int key = 0; key < num_keys; ++key) {
         std::lock_guard<std::mutex> lock(map_mutex);
         map.insert(key, t);  // Value is thread ID
@@ -431,7 +433,7 @@ TEST_F(UnorderedMapLLTest, ConcurrentMixedOperations) {
   std::mutex map_mutex;  // External mutex for thread safety
 
   for (int t = 0; t < num_threads; ++t) {
-    threads.emplace_back([&map, &map_mutex, t, operations_per_thread]() {
+    threads.emplace_back([&map, &map_mutex, t]() {
       for (int i = 0; i < operations_per_thread; ++i) {
         int key = (t * operations_per_thread + i) % 200;
 
@@ -467,7 +469,7 @@ TEST_F(UnorderedMapLLTest, ConcurrentMixedOperations) {
  * Test bucket distribution
  */
 TEST_F(UnorderedMapLLTest, BucketDistribution) {
-  const size_t num_buckets = 16;
+  const size_t num_buckets = 2048;  // Need capacity > num elements for open addressing
   hshm::priv::unordered_map_ll<int, int> map(num_buckets);
 
   EXPECT_EQ(map.bucket_count(), num_buckets);

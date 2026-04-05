@@ -62,9 +62,8 @@
 #include <chimaera/bdev/bdev_client.h>
 #include <chimaera/bdev/bdev_tasks.h>
 
-#include <cereal/archives/binary.hpp>
+#include "hermes_shm/data_structures/serialization/global_serialize.h"
 #include <fstream>
-#include <sstream>
 #include <thread>
 #include <cstring>
 #include <vector>
@@ -249,16 +248,17 @@ TEST_CASE("ExportData - Task SerializeIn roundtrip", "[cae][export][task]") {
                                            "ser_tag", "/tmp/ser.bin", "binary");
 
   // Write IN fields (tag_name_, output_path_, format_)
-  std::stringstream ss;
+  std::vector<char> buf;
   {
-    cereal::BinaryOutputArchive oa(ss);
+    hshm::ipc::GlobalSerialize<std::vector<char>> oa(buf);
     task->SerializeIn(oa);
+    oa.Finalize();
   }
 
   // Read them back into a fresh task
   auto t2 = ipc->NewTask<ExportDataTask>();
   {
-    cereal::BinaryInputArchive ia(ss);
+    hshm::ipc::GlobalDeserialize<std::vector<char>> ia(buf);
     t2->SerializeIn(ia);
   }
 
@@ -281,15 +281,16 @@ TEST_CASE("ExportData - Task SerializeOut roundtrip", "[cae][export][task]") {
   task->error_message_ = chi::priv::string("err_msg", HSHM_MALLOC);
 
   // Write OUT fields (result_code_, error_message_, bytes_exported_)
-  std::stringstream ss;
+  std::vector<char> buf;
   {
-    cereal::BinaryOutputArchive oa(ss);
+    hshm::ipc::GlobalSerialize<std::vector<char>> oa(buf);
     task->SerializeOut(oa);
+    oa.Finalize();
   }
 
   auto t2 = ipc->NewTask<ExportDataTask>();
   {
-    cereal::BinaryInputArchive ia(ss);
+    hshm::ipc::GlobalDeserialize<std::vector<char>> ia(buf);
     t2->SerializeOut(ia);
   }
 
@@ -567,15 +568,16 @@ TEST_CASE("ParseOmni - Task SerializeIn roundtrip", "[cae][export][task]") {
                                           chi::PoolQuery::Local(), ctxs);
   const std::string ser_data = task->serialized_ctx_.str();
 
-  std::stringstream ss;
+  std::vector<char> buf;
   {
-    cereal::BinaryOutputArchive oa(ss);
+    hshm::ipc::GlobalSerialize<std::vector<char>> oa(buf);
     task->SerializeIn(oa);
+    oa.Finalize();
   }
 
   auto t2 = ipc->NewTask<ParseOmniTask>();
   {
-    cereal::BinaryInputArchive ia(ss);
+    hshm::ipc::GlobalDeserialize<std::vector<char>> ia(buf);
     t2->SerializeIn(ia);
   }
 
@@ -595,15 +597,16 @@ TEST_CASE("ParseOmni - Task SerializeOut roundtrip", "[cae][export][task]") {
   task->result_code_ = 4;
   task->error_message_ = chi::priv::string("out_err", HSHM_MALLOC);
 
-  std::stringstream ss;
+  std::vector<char> buf;
   {
-    cereal::BinaryOutputArchive oa(ss);
+    hshm::ipc::GlobalSerialize<std::vector<char>> oa(buf);
     task->SerializeOut(oa);
+    oa.Finalize();
   }
 
   auto t2 = ipc->NewTask<ParseOmniTask>();
   {
-    cereal::BinaryInputArchive ia(ss);
+    hshm::ipc::GlobalDeserialize<std::vector<char>> ia(buf);
     t2->SerializeOut(ia);
   }
 
@@ -754,15 +757,16 @@ TEST_CASE("ProcessHdf5Dataset - Task SerializeIn roundtrip",
                                                     "/ser/file.h5",
                                                     "/ser/dataset",
                                                     "ser_prefix");
-  std::stringstream ss;
+  std::vector<char> buf;
   {
-    cereal::BinaryOutputArchive oa(ss);
+    hshm::ipc::GlobalSerialize<std::vector<char>> oa(buf);
     task->SerializeIn(oa);
+    oa.Finalize();
   }
 
   auto t2 = ipc->NewTask<ProcessHdf5DatasetTask>();
   {
-    cereal::BinaryInputArchive ia(ss);
+    hshm::ipc::GlobalDeserialize<std::vector<char>> ia(buf);
     t2->SerializeIn(ia);
   }
 
@@ -784,15 +788,16 @@ TEST_CASE("ProcessHdf5Dataset - Task SerializeOut roundtrip",
   task->result_code_ = 8;
   task->error_message_ = chi::priv::string("ds_err", HSHM_MALLOC);
 
-  std::stringstream ss;
+  std::vector<char> buf;
   {
-    cereal::BinaryOutputArchive oa(ss);
+    hshm::ipc::GlobalSerialize<std::vector<char>> oa(buf);
     task->SerializeOut(oa);
+    oa.Finalize();
   }
 
   auto t2 = ipc->NewTask<ProcessHdf5DatasetTask>();
   {
-    cereal::BinaryInputArchive ia(ss);
+    hshm::ipc::GlobalDeserialize<std::vector<char>> ia(buf);
     t2->SerializeOut(ia);
   }
 

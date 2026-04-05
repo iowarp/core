@@ -36,9 +36,7 @@
 
 #include <chimaera/chimaera.h>
 
-#include <cereal/archives/binary.hpp>
-#include <cereal/types/vector.hpp>
-#include <sstream>
+#include "hermes_shm/data_structures/serialization/global_serialize.h"
 
 #include "admin_tasks.h"
 
@@ -350,7 +348,7 @@ class Client : public chi::ContainerClient {
     auto task = ipc_manager->NewTask<RegisterMemoryTask>(
         chi::CreateTaskId(), pool_id_, pool_query, alloc_id);
 
-    return ipc_manager->SendZmq(task, chi::IpcMode::kTcp);
+    return chi::IpcCpu2CpuZmq::ClientSend(ipc_manager, task, chi::IpcMode::kTcp);
   }
   /**
    * RestartContainers - Re-create pools from saved restart configs
@@ -463,14 +461,15 @@ class Client : public chi::ContainerClient {
       const chi::PoolQuery& pool_query,
       const std::vector<chi::MigrateInfo>& migrations) {
     auto* ipc_manager = CHI_IPC;
-    // Serialize migrations using cereal binary archive
-    std::ostringstream os;
+    // Serialize migrations using GlobalSerialize
+    std::vector<char> buf;
     {
-      cereal::BinaryOutputArchive ar(os);
+      hshm::ipc::GlobalSerialize<std::vector<char>> ar(buf);
       ar(migrations);
+      ar.Finalize();
     }
     auto task = ipc_manager->NewTask<MigrateContainersTask>(
-        chi::CreateTaskId(), pool_id_, pool_query, os.str());
+        chi::CreateTaskId(), pool_id_, pool_query, std::string(buf.begin(), buf.end()));
     return ipc_manager->Send(task);
   }
   /**
@@ -485,13 +484,14 @@ class Client : public chi::ContainerClient {
       const std::vector<chi::RecoveryAssignment>& assignments,
       chi::u64 dead_node_id) {
     auto* ipc_manager = CHI_IPC;
-    std::ostringstream os;
+    std::vector<char> buf;
     {
-      cereal::BinaryOutputArchive ar(os);
+      hshm::ipc::GlobalSerialize<std::vector<char>> ar(buf);
       ar(assignments);
+      ar.Finalize();
     }
     auto task = ipc_manager->NewTask<RecoverContainersTask>(
-        chi::CreateTaskId(), pool_id_, pool_query, os.str(), dead_node_id);
+        chi::CreateTaskId(), pool_id_, pool_query, std::string(buf.begin(), buf.end()), dead_node_id);
     return ipc_manager->Send(task);
   }
   /**

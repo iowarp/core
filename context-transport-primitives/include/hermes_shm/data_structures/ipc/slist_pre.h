@@ -421,6 +421,102 @@ class slist {
   }
 };
 
+/**
+ * Private-memory singly-linked list node (raw pointers, no offset math)
+ *
+ * Used when the allocator operates in MemMode::kPrivate and does not
+ * need shared-memory offset-based linkage.
+ */
+class priv_slist_node {
+ public:
+  priv_slist_node *next_;
+
+  HSHM_CROSS_FUN priv_slist_node() : next_(nullptr) {}
+};
+
+/**
+ * Private-memory singly-linked list (raw pointers, no allocator needed)
+ *
+ * @tparam NodeT Node type inheriting from priv_slist_node
+ */
+template <typename NodeT>
+class priv_slist {
+ public:
+  class Iterator {
+   private:
+    NodeT *current_;
+    NodeT *prev_;
+
+   public:
+    HSHM_CROSS_FUN Iterator() : current_(nullptr), prev_(nullptr) {}
+    HSHM_CROSS_FUN Iterator(NodeT *current, NodeT *prev)
+        : current_(current), prev_(prev) {}
+
+    HSHM_CROSS_FUN NodeT *Get() const { return current_; }
+    HSHM_CROSS_FUN NodeT *GetPrev() const { return prev_; }
+    HSHM_CROSS_FUN bool IsAtHead() const { return prev_ == nullptr; }
+    HSHM_CROSS_FUN bool IsNull() const { return current_ == nullptr; }
+
+    HSHM_CROSS_FUN bool operator==(const Iterator &o) const {
+      return current_ == o.current_;
+    }
+    HSHM_CROSS_FUN bool operator!=(const Iterator &o) const {
+      return current_ != o.current_;
+    }
+
+    HSHM_CROSS_FUN Iterator &operator++() {
+      if (!current_) return *this;
+      prev_ = current_;
+      current_ = static_cast<NodeT *>(current_->next_);
+      return *this;
+    }
+  };
+
+ private:
+  size_t size_;
+  NodeT *head_;
+
+ public:
+  HSHM_CROSS_FUN priv_slist() : size_(0), head_(nullptr) {}
+
+  HSHM_CROSS_FUN void Init() {
+    size_ = 0;
+    head_ = nullptr;
+  }
+
+  HSHM_CROSS_FUN bool empty() const { return size_ == 0; }
+  HSHM_CROSS_FUN size_t size() const { return size_; }
+
+  HSHM_CROSS_FUN void emplace(NodeT *node) {
+    node->next_ = head_;
+    head_ = node;
+    ++size_;
+  }
+
+  HSHM_CROSS_FUN NodeT *pop() {
+    if (size_ == 0 || !head_) return nullptr;
+    NodeT *h = head_;
+    head_ = static_cast<NodeT *>(h->next_);
+    --size_;
+    return h;
+  }
+
+  HSHM_CROSS_FUN Iterator begin() { return Iterator(head_, nullptr); }
+  HSHM_CROSS_FUN Iterator end() const { return Iterator(); }
+
+  HSHM_CROSS_FUN NodeT *PopAt(const Iterator &it) {
+    if (it.IsNull() || size_ == 0) return nullptr;
+    NodeT *cur = it.Get();
+    if (it.IsAtHead()) {
+      head_ = static_cast<NodeT *>(cur->next_);
+    } else {
+      it.GetPrev()->next_ = cur->next_;
+    }
+    --size_;
+    return cur;
+  }
+};
+
 }  // namespace hshm::ipc::pre
 
 #endif  // HSHM_DATA_STRUCTURES_IPC_SLIST_PRE_H_

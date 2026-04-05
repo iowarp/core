@@ -1,10 +1,10 @@
 # IOWarp Core - CUDA Variant
-# CUDA-enabled debug build using CMakePresets.json "cuda-debug" preset
+# CUDA-enabled release build using CMakePresets.json "cuda-release" preset
 #
-# Usage: rattler-build build --recipe recipe/ --variant-config variants/cuda.yaml
+# Usage: rattler-build build --recipe installers/conda/ --variant-config installers/conda/variants/cuda.yaml
 
 preset:
-  - cuda-debug
+  - cuda-release
 
 cuda_enabled:
   - "ON"

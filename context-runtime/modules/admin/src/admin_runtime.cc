@@ -48,12 +48,10 @@
 #include <hermes_shm/lightbeam/transport_factory_impl.h>
 #include <hermes_shm/serialize/msgpack_wrapper.h>
 
-#include <cereal/archives/binary.hpp>
-#include <cereal/types/vector.hpp>
+#include "hermes_shm/data_structures/serialization/global_serialize.h"
 #include <chrono>
 #include <filesystem>
 #include <memory>
-#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -388,11 +386,11 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
   send_map_[send_map_key] = origin_task;
 
   // Get pool_queries from task's RunContext
-  if (!origin_task->run_ctx_) {
+  if (!origin_task->GetRunCtx()) {
     HLOG(kError, "SendIn: origin_task has no RunContext");
     return;
   }
-  chi::RunContext *origin_task_rctx = origin_task->run_ctx_.get();
+  chi::RunContext *origin_task_rctx = origin_task->GetRunCtx();
 
   const std::vector<chi::PoolQuery> &pool_queries =
       origin_task_rctx->pool_queries_;
@@ -832,12 +830,12 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
       return;
     }
     hipc::FullPtr<chi::Task> origin_task = *send_it;
-    if (!origin_task->run_ctx_) {
+    if (!origin_task->GetRunCtx()) {
       HLOG(kError, "Admin: origin_task has no RunContext");
       task->SetReturnCode(6);
       return;
     }
-    chi::RunContext *origin_rctx = origin_task->run_ctx_.get();
+    chi::RunContext *origin_rctx = origin_task->GetRunCtx();
 
     // Locate replica in origin's run_ctx using replica_id
     chi::u32 replica_id = task_info.task_id_.replica_id_;
@@ -879,11 +877,11 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
       continue;
     }
     hipc::FullPtr<chi::Task> origin_task = *send_it;
-    if (!origin_task->run_ctx_) {
+    if (!origin_task->GetRunCtx()) {
       HLOG(kError, "Admin: origin_task has no RunContext");
       continue;
     }
-    chi::RunContext *origin_rctx = origin_task->run_ctx_.get();
+    chi::RunContext *origin_rctx = origin_task->GetRunCtx();
 
     // Locate replica in origin's run_ctx using replica_id
     chi::u32 replica_id = task_info.task_id_.replica_id_;
@@ -1025,6 +1023,33 @@ chi::TaskResume Runtime::ClientConnect(hipc::FullPtr<ClientConnectTask> task,
                                        chi::RunContext &rctx) {
   task->response_ = 0;
   task->server_generation_ = CHI_IPC->GetServerGeneration();
+  task->server_pid_ = static_cast<int32_t>(getpid());
+  task->worker_queues_off_ = CHI_IPC->GetWorkerQueuesOffset();
+
+  // Populate GPU queue info for client attachment
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  auto *gpu_ipc = CHI_IPC->GetGpuIpcManager();
+  chi::u32 num_gpus = gpu_ipc ? static_cast<chi::u32>(gpu_ipc->gpu_devices_.size()) : 0;
+  if (num_gpus > kMaxGpuDevices) num_gpus = kMaxGpuDevices;
+  task->num_gpus_ = num_gpus;
+  task->gpu_queue_depth_ = CHI_CONFIG_MANAGER->GetQueueDepth();
+
+  for (chi::u32 i = 0; i < num_gpus; ++i) {
+    // Queue offsets within their respective backends
+    task->cpu2gpu_queue_off_[i] = gpu_ipc->GetCpu2GpuQueueOffset(i);
+    task->gpu2cpu_queue_off_[i] = gpu_ipc->GetGpu2CpuQueueOffset(i);
+    task->gpu2gpu_queue_off_[i] = gpu_ipc->GetGpu2GpuQueueOffset(i);
+    task->cpu2gpu_backend_size_[i] = gpu_ipc->GetCpu2GpuBackendSize(i);
+    task->gpu2cpu_backend_size_[i] = gpu_ipc->GetGpu2CpuBackendSize(i);
+
+    // IPC handle for gpu2gpu GpuMalloc backend (device memory)
+    gpu_ipc->GetGpu2GpuIpcHandle(i, task->gpu2gpu_ipc_handle_bytes_[i]);
+  }
+#else
+  task->num_gpus_ = 0;
+  task->gpu_queue_depth_ = 0;
+#endif
+
   task->SetReturnCode(0);
   rctx.did_work_ = true;
   co_return;
@@ -1032,108 +1057,13 @@ chi::TaskResume Runtime::ClientConnect(hipc::FullPtr<ClientConnectTask> task,
 
 /**
  * Handle ClientRecv - Receive tasks from lightbeam client servers
- * Polls TCP and IPC PULL servers for incoming client task submissions
+ * Delegates to IpcCpu2CpuZmq::RuntimeRecv for the actual transport logic.
  */
 chi::TaskResume Runtime::ClientRecv(hipc::FullPtr<ClientRecvTask> task,
                                     chi::RunContext &rctx) {
-  auto *ipc_manager = CHI_IPC;
-  auto *pool_manager = CHI_POOL_MANAGER;
-  bool did_work = false;
-  task->tasks_received_ = 0;
-
-  // Process both TCP and IPC servers
-  for (int mode_idx = 0; mode_idx < 2; ++mode_idx) {
-    chi::IpcMode mode =
-        (mode_idx == 0) ? chi::IpcMode::kTcp : chi::IpcMode::kIpc;
-    hshm::lbm::Transport *transport = ipc_manager->GetClientTransport(mode);
-    if (!transport) continue;
-
-    // Drain all pending messages from this transport
-    // (Recv handles accept internally for socket transports)
-    while (true) {
-      chi::LoadTaskArchive archive;
-      auto recv_info = transport->Recv(archive);
-      int rc = recv_info.rc;
-      if (rc == EAGAIN) break;
-      if (rc != 0) {
-        HLOG(kError, "ClientRecv: Recv failed: {}", rc);
-        break;
-      }
-
-      const auto &task_infos = archive.GetTaskInfos();
-      if (task_infos.empty()) {
-        HLOG(kError, "ClientRecv: No task_infos in received message");
-        continue;
-      }
-
-      const auto &info = task_infos[0];
-      chi::PoolId pool_id = info.pool_id_;
-      chi::u32 method_id = info.method_id_;
-
-      // Get container for deserialization
-      chi::Container *container = pool_manager->GetStaticContainer(pool_id);
-      if (!container) {
-        HLOG(kError, "ClientRecv: Container not found for pool_id {}", pool_id);
-        continue;
-      }
-
-      // Allocate and deserialize the task
-      hipc::FullPtr<chi::Task> task_ptr =
-          container->AllocLoadTask(method_id, archive);
-
-      if (task_ptr.IsNull()) {
-        HLOG(kError, "ClientRecv: Failed to deserialize task");
-        continue;
-      }
-
-      // Create FutureShm for the task (server-side)
-      hipc::FullPtr<chi::FutureShm> future_shm =
-          ipc_manager->NewObj<chi::FutureShm>();
-      future_shm->pool_id_ = pool_id;
-      future_shm->method_id_ = method_id;
-      future_shm->origin_ = (mode == chi::IpcMode::kTcp)
-                                ? chi::FutureShm::FUTURE_CLIENT_TCP
-                                : chi::FutureShm::FUTURE_CLIENT_IPC;
-      future_shm->client_task_vaddr_ = info.task_id_.net_key_;
-      future_shm->client_pid_ = info.task_id_.pid_;
-      // Store transport and routing info for response
-      future_shm->response_transport_ = transport;
-      future_shm->response_fd_ = recv_info.fd_;
-      // Store ZMQ identity from recv frame for response routing
-      if (!recv_info.identity_.empty() &&
-          recv_info.identity_.size() <=
-              sizeof(future_shm->response_identity_)) {
-        std::memcpy(future_shm->response_identity_, recv_info.identity_.data(),
-                    recv_info.identity_.size());
-        future_shm->response_identity_len_ =
-            static_cast<chi::u32>(recv_info.identity_.size());
-      }
-      // No copy_space for ZMQ path — ShmTransferInfo defaults are fine
-      // Mark as copied so the worker routes the completed task back via
-      // lightbeam rather than treating it as a runtime-internal task
-      future_shm->flags_.SetBits(chi::FutureShm::FUTURE_WAS_COPIED);
-
-      // Create Future and enqueue to worker
-      chi::Future<chi::Task> future(future_shm.shm_, task_ptr);
-
-      // Map task to lane using scheduler
-      chi::LaneId lane_id =
-          ipc_manager->GetScheduler()->ClientMapTask(ipc_manager, future);
-      auto *worker_queues = ipc_manager->GetTaskQueue();
-      auto &lane_ref = worker_queues->GetLane(lane_id, 0);
-      bool was_empty = lane_ref.Empty();
-      lane_ref.Push(future);
-      if (was_empty) {
-        ipc_manager->AwakenWorker(&lane_ref);
-      }
-
-      did_work = true;
-      task->tasks_received_++;
-      HLOG(kDebug, "[ClientRecv] Received task pool_id={}, method={}, mode={}",
-           pool_id, method_id, mode_idx == 0 ? "tcp" : "ipc");
-    }
-  }
-
+  chi::u32 tasks_received = 0;
+  bool did_work = chi::IpcCpu2CpuZmq::RuntimeRecv(CHI_IPC, tasks_received);
+  task->tasks_received_ = tasks_received;
   rctx.did_work_ = did_work;
   task->SetReturnCode(0);
   co_return;
@@ -1141,107 +1071,15 @@ chi::TaskResume Runtime::ClientRecv(hipc::FullPtr<ClientRecvTask> task,
 
 /**
  * Handle ClientSend - Send completed task outputs to clients via lightbeam
- * Polls net_queue_ kClientSendTcp and kClientSendIpc priorities
+ * Delegates to IpcCpu2CpuZmq::RuntimeSend for the actual transport logic.
  */
 chi::TaskResume Runtime::ClientSend(hipc::FullPtr<ClientSendTask> task,
                                     chi::RunContext &rctx) {
-  auto *ipc_manager = CHI_IPC;
-  auto *pool_manager = CHI_POOL_MANAGER;
-  bool did_work = false;
-  task->tasks_sent_ = 0;
-
-  // Flush deferred deletes from previous invocation.
-  // Zero-copy send (zmq_msg_init_data) lets ZMQ's IO thread read from the
-  // task buffer after zmq_msg_send returns. Deferring DelTask by one
-  // invocation guarantees the IO thread has flushed the message.
   static std::vector<hipc::FullPtr<chi::Task>> deferred_deletes;
-  for (auto &t : deferred_deletes) {
-    auto *del_container = pool_manager->GetStaticContainer(t->pool_id_);
-    if (del_container) {
-      del_container->DelTask(t->method_, t);
-    }
-  }
-  deferred_deletes.clear();
-
-  // Process both TCP and IPC queues
-  for (int mode_idx = 0; mode_idx < 2; ++mode_idx) {
-    chi::NetQueuePriority priority =
-        (mode_idx == 0) ? chi::NetQueuePriority::kClientSendTcp
-                        : chi::NetQueuePriority::kClientSendIpc;
-    chi::IpcMode mode =
-        (mode_idx == 0) ? chi::IpcMode::kTcp : chi::IpcMode::kIpc;
-
-    chi::Future<chi::Task> queued_future;
-    while (ipc_manager->TryPopNetTask(priority, queued_future)) {
-      auto origin_task = queued_future.GetTaskPtr();
-      if (origin_task.IsNull()) continue;
-
-      // Get the FutureShm to find client's net_key
-      auto future_shm = queued_future.GetFutureShm();
-      if (future_shm.IsNull()) continue;
-
-      // Get container to serialize outputs
-      chi::Container *container =
-          pool_manager->GetStaticContainer(origin_task->pool_id_);
-      if (!container) {
-        HLOG(kError, "ClientSend: Container not found for pool_id {}",
-             origin_task->pool_id_);
-        continue;
-      }
-
-      // Get response transport and routing info from FutureShm
-      hshm::lbm::Transport *response_transport =
-          future_shm->response_transport_;
-      if (!response_transport) {
-        HLOG(kError, "ClientSend: No response transport for mode {} pid {}",
-             mode_idx, future_shm->client_pid_);
-        continue;
-      }
-
-      // Preserve client's net_key for response routing
-      origin_task->task_id_.net_key_ = future_shm->client_task_vaddr_;
-
-      // Serialize task outputs using network archive
-      chi::SaveTaskArchive archive(chi::MsgType::kSerializeOut,
-                                   response_transport);
-      container->SaveTask(origin_task->method_, archive, origin_task);
-
-      // Set routing info for the response
-      if (mode == chi::IpcMode::kTcp) {
-        // TCP (ZMQ ROUTER): identity-based routing
-        // Use the actual ZMQ identity from the recv frame
-        if (future_shm->response_identity_len_ > 0) {
-          archive.client_info_.identity_ =
-              std::string(future_shm->response_identity_,
-                          future_shm->response_identity_len_);
-        } else {
-          // Fallback: construct from PID (legacy 4-byte identity)
-          chi::u32 client_pid = future_shm->client_pid_;
-          archive.client_info_.identity_ = std::string(
-              reinterpret_cast<const char *>(&client_pid), sizeof(client_pid));
-        }
-      } else if (mode == chi::IpcMode::kIpc) {
-        // IPC (Socket): fd-based routing on accepted connection
-        archive.client_info_.fd_ = future_shm->response_fd_;
-      }
-
-      // Send via lightbeam
-      int rc = response_transport->Send(archive, hshm::lbm::LbmContext());
-      if (rc != 0) {
-        HLOG(kError, "ClientSend: lightbeam Send failed: {}", rc);
-      }
-
-      // Clear TASK_DATA_OWNER before deferred deletion so the destructor
-      // doesn't try to FreeBuffer on transport-allocated data
-      origin_task->ClearFlags(TASK_DATA_OWNER);
-
-      // Defer task deletion to next invocation for zero-copy send safety
-      deferred_deletes.push_back(origin_task);
-
-      did_work = true;
-      task->tasks_sent_++;
-    }
-  }
+  chi::u32 tasks_sent = 0;
+  bool did_work = chi::IpcCpu2CpuZmq::RuntimeSend(
+      CHI_IPC, tasks_sent, deferred_deletes);
+  task->tasks_sent_ = tasks_sent;
 
   rctx.did_work_ = did_work;
   task->SetReturnCode(0);
@@ -1688,8 +1526,13 @@ chi::TaskResume Runtime::SubmitBatch(hipc::FullPtr<SubmitBatchTask> task,
     co_return;
   }
 
-  // Create LocalLoadTaskArchive from the serialized data
-  chi::LocalLoadTaskArchive archive(task->serialized_data_);
+  // Create DefaultLoadArchive from the serialized data
+  chi::priv::vector<char> load_buf;
+  load_buf.reserve(task->serialized_data_.size());
+  for (size_t i = 0; i < task->serialized_data_.size(); ++i) {
+    load_buf.push_back(task->serialized_data_[i]);
+  }
+  chi::DefaultLoadArchive archive(load_buf);
 
   // Process tasks in batches of 32
   constexpr size_t kMaxParallelTasks = 32;
@@ -1751,14 +1594,51 @@ chi::TaskResume Runtime::SubmitBatch(hipc::FullPtr<SubmitBatchTask> task,
 chi::TaskResume Runtime::RegisterMemory(hipc::FullPtr<RegisterMemoryTask> task,
                                         chi::RunContext &rctx) {
   auto *ipc_manager = CHI_IPC;
-  hipc::AllocatorId alloc_id(task->alloc_major_, task->alloc_minor_);
+  MemoryType mem_type = static_cast<MemoryType>(task->memory_type_);
 
-  HLOG(kInfo, "Admin::RegisterMemory: Registering alloc_id ({}.{})",
-       alloc_id.major_, alloc_id.minor_);
+  switch (mem_type) {
+    case MemoryType::kCpuMemory: {
+      // Existing path: POSIX shared memory registration
+      hipc::AllocatorId alloc_id(task->alloc_major_, task->alloc_minor_);
+      HLOG(kInfo, "Admin::RegisterMemory: Registering CPU alloc_id ({}.{})",
+           alloc_id.major_, alloc_id.minor_);
+      task->success_ = ipc_manager->RegisterMemory(alloc_id);
+      break;
+    }
+    case MemoryType::kGpuDeviceMemory: {
+      // GPU device memory: open IPC handle and register in gpu_alloc_map_
+      hipc::MemoryBackendId backend_id(task->alloc_major_, task->alloc_minor_);
+      HLOG(kInfo, "Admin::RegisterMemory: Registering GPU device memory ({}.{})"
+           " capacity={}", backend_id.major_, backend_id.minor_,
+           task->data_capacity_);
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+      hshm::GpuIpcMemHandle ipc_handle;
+      memcpy(&ipc_handle, task->ipc_handle_bytes_, sizeof(ipc_handle));
+      task->success_ = ipc_manager->GetGpuIpcManager()->RegisterGpuMemoryFromClient(
+          backend_id, ipc_handle, task->data_capacity_);
+#else
+      HLOG(kError, "Admin::RegisterMemory: GPU memory not supported (no CUDA/ROCm)");
+      task->success_ = false;
+#endif
+      break;
+    }
+    case MemoryType::kPinnedHostMemory: {
+      // Pinned host memory: attach to GpuShmMmap
+      hipc::MemoryBackendId backend_id(task->alloc_major_, task->alloc_minor_);
+      HLOG(kInfo, "Admin::RegisterMemory: Registering pinned host memory ({}.{})",
+           backend_id.major_, backend_id.minor_);
+      // For pinned host memory, the client creates a GpuShmMmap with a URL
+      // and the server attaches by URL like regular SHM
+      task->success_ = false;  // TODO: implement if needed
+      break;
+    }
+    default:
+      HLOG(kError, "Admin::RegisterMemory: Unknown memory type {}", task->memory_type_);
+      task->success_ = false;
+      break;
+  }
 
-  task->success_ = ipc_manager->RegisterMemory(alloc_id);
   task->SetReturnCode(task->success_ ? 0 : 1);
-
   (void)rctx;
   co_return;
 }
@@ -1919,12 +1799,12 @@ chi::TaskResume Runtime::MigrateContainers(
   task->num_migrated_ = 0;
   task->error_message_ = "";
 
-  // Deserialize migrations from cereal binary
+  // Deserialize migrations from binary
   std::string data = task->migrations_json_.str();
   std::vector<chi::MigrateInfo> migrations;
   {
-    std::istringstream is(data);
-    cereal::BinaryInputArchive ar(is);
+    std::vector<char> buf(data.begin(), data.end());
+    hshm::ipc::GlobalDeserialize<std::vector<char>> ar(buf);
     ar(migrations);
   }
 
@@ -2130,9 +2010,9 @@ void Runtime::ScanSendMapTimeouts() {
   std::vector<size_t> keys_to_remove;
   send_map_.for_each(
       [&](const size_t &key, hipc::FullPtr<chi::Task> &origin_task) {
-        if (origin_task.IsNull() || !origin_task->run_ctx_) return;
+        if (origin_task.IsNull() || !origin_task->GetRunCtx()) return;
 
-        chi::RunContext *rctx = origin_task->run_ctx_.get();
+        chi::RunContext *rctx = origin_task->GetRunCtx();
         // Use per-task timeout if set, otherwise kRetryTimeoutSec
         float task_timeout = kRetryTimeoutSec;
         float task_net_timeout = origin_task->pool_query_.GetNetTimeout();
@@ -2184,8 +2064,8 @@ void Runtime::FlushStaleStateForNode(chi::u64 node_id) {
       auto send_it = send_map_.find(net_key);
       if (send_it != nullptr) {
         auto &origin = *send_it;
-        if (origin->run_ctx_) {
-          origin->run_ctx_->completed_replicas_++;
+        if (origin->GetRunCtx()) {
+          origin->GetRunCtx()->completed_replicas_++;
         }
       }
       HLOG(kInfo,
@@ -2566,8 +2446,9 @@ chi::TaskResume Runtime::RecoverContainers(
   // Deserialize assignments
   std::vector<chi::RecoveryAssignment> assignments;
   {
-    std::istringstream is(task->assignments_data_.str());
-    cereal::BinaryInputArchive ar(is);
+    std::string data = task->assignments_data_.str();
+    std::vector<char> buf(data.begin(), data.end());
+    hshm::ipc::GlobalDeserialize<std::vector<char>> ar(buf);
     ar(assignments);
   }
 
@@ -2646,6 +2527,19 @@ chi::TaskResume Runtime::SystemMonitor(hipc::FullPtr<SystemMonitorTask> task,
 
   rctx.did_work_ = true;
   (void)task;
+  co_return;
+}
+
+chi::TaskResume Runtime::RegisterGpuContainer(
+    hipc::FullPtr<RegisterGpuContainerTask> task, chi::RunContext &rctx) {
+  // This task is handled on the CPU side.
+  // The GPU orchestrator's gpu::PoolManager is updated via a GPU kernel launch,
+  // not directly from the admin runtime. The pool_manager.cc CreatePool
+  // handles the actual GPU container creation and registration.
+  // This method exists as a no-op placeholder for task routing completeness.
+  HLOG(kDebug, "RegisterGpuContainer: pool_id={}, container_id={}",
+       task->target_pool_id_, task->container_id_);
+  rctx.did_work_ = true;
   co_return;
 }
 

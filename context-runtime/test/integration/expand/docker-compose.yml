@@ -2,15 +2,13 @@
 # Tests dynamic node induction: nodes 1-2 form initial cluster,
 # node 3 joins via --induct flag.
 #
-# Usage:
-#   docker compose up -d
-#   # Check logs for induction success
-#   docker logs iowarp-expand-node3
+# Image selection: set IOWARP_DOCKER_IMAGE env var to override.
+# Default: iowarp/deps-cpu:latest (use iowarp/deps-nvidia:latest for CUDA builds)
 
 services:
   # Node 1 - Initial cluster member
   iowarp-node1:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: iowarp-expand-node1
@@ -28,7 +26,7 @@ services:
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/expand/hostfile_initial
       - CHI_WITH_RUNTIME=0
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -43,7 +41,7 @@ services:
 
   # Node 2 - Initial cluster member
   iowarp-node2:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: iowarp-expand-node2
@@ -61,7 +59,7 @@ services:
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/expand/hostfile_initial
       - CHI_WITH_RUNTIME=0
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -73,7 +71,7 @@ services:
 
   # Node 3 - Inducted node (joins after cluster is up)
   iowarp-node3:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: iowarp-expand-node3
@@ -94,7 +92,7 @@ services:
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/expand/hostfile_full
       - CHI_WITH_RUNTIME=0
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]

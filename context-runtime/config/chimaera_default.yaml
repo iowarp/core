@@ -47,7 +47,7 @@ compose:
     pool_name: "ram::chi_default_bdev"
     pool_query: local
     pool_id: "301.0"
-    bdev_type: ram                       # "ram" for DRAM-backed block device
+    bdev_type: ram                       # Options: file, ram, hbm, pinned, noop
     capacity: "512MB"
 
   # === Block Device (File) ===
@@ -56,7 +56,7 @@ compose:
   #   pool_name: "/mnt/nvme/chi_bdev"
   #   pool_query: local
   #   pool_id: "302.0"
-  #   bdev_type: file                    # "file" for filesystem-backed block device
+  #   bdev_type: file                    # Options: file, ram, hbm, pinned, noop
   #   capacity: "100GB"
 
   # === Context Transfer Engine (CTE) — optional ===
@@ -73,7 +73,7 @@ compose:
     #        -1.0 = automatic scoring
     storage:
       - path: "ram::cte_ram_tier1"       # "ram::<name>" for DRAM, filesystem path for disk
-        bdev_type: "ram"                 # "ram" or "file"
+        bdev_type: "ram"                 # Options: file, ram, hbm, pinned, noop
         capacity_limit: "512MB"
         score: 1.0                       # DRAM = highest-performance tier
 

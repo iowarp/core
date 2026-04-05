@@ -55,7 +55,7 @@ namespace chi {
 
 // Forward declaration to avoid circular dependency
 using WorkQueue =
-    hshm::ipc::mpsc_ring_buffer<hipc::ShmPtr<TaskLane>, CHI_MAIN_ALLOC_T>;
+    hshm::ipc::mpsc_ring_buffer<hipc::ShmPtr<TaskLane>, CHI_QUEUE_ALLOC_T>;
 
 // Forward declarations
 class Task;
@@ -277,19 +277,32 @@ class Worker {
    */
   TaskLane *GetLane() const;
 
-#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
   /**
    * Set GPU lanes for this worker to process
    * @param lanes Vector of TaskLane pointers for GPU queues
    */
-  void SetGpuLanes(const std::vector<TaskLane *> &lanes);
+  void SetGpuLanes(const std::vector<GpuTaskLane *> &lanes);
 
   /**
    * Get the worker's assigned GPU lanes
    * @return Reference to vector of GPU TaskLanes
    */
-  const std::vector<TaskLane *> &GetGpuLanes() const;
-#endif
+  const std::vector<GpuTaskLane *> &GetGpuLanes() const;
+
+  /**
+   * Poll all GPU lanes for new tasks.
+   * Called from PollOnce when this worker has GPU lanes assigned.
+   * @return Number of GPU tasks processed
+   */
+  u32 ProcessNewTasksGpu();
+
+  /**
+   * Process a single task from a GPU lane.
+   * Pops from the lane and invokes RecvRuntime for deserialization.
+   * @param gpu_lane TaskLane to poll
+   * @return true if a task was processed
+   */
+  bool ProcessNewTaskGpu(GpuTaskLane *gpu_lane);
 
  private:
   /**
@@ -322,16 +335,6 @@ class Worker {
 
 
  public:
-  /**
-   * Begin client transfer for task outputs
-   * Called only when task was copied from client (was_copied = true)
-   * @param task_ptr Task to serialize
-   * @param run_ctx Runtime context
-   * @param container Container for serialization
-   */
-  void EndTaskShmTransfer(const FullPtr<Task> &task_ptr,
-                             RunContext *run_ctx, Container *container);
-
   /**
    * End task execution and perform cleanup
    * @param task_ptr Full pointer to task to end
@@ -428,10 +431,8 @@ class Worker {
   // Single lane assigned to this worker (one lane per worker)
   TaskLane *assigned_lane_;
 
-#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
-  // GPU lanes assigned to this worker (one lane per GPU)
-  std::vector<TaskLane *> gpu_lanes_;
-#endif
+  // GPU lanes assigned to this worker (one lane per GPU, empty when no GPU)
+  std::vector<GpuTaskLane *> gpu_lanes_;
 
   // Note: RunContext cache removed - RunContext is now embedded in Task
 
@@ -456,7 +457,7 @@ class Worker {
   // Stores Future<Task> objects to set FUTURE_COMPLETE, avoiding stale RunContext* pointers
   // Allocated from malloc allocator (temporary runtime data, not IPC)
   static constexpr u32 EVENT_QUEUE_DEPTH = 1024;
-  hshm::ipc::mpsc_ring_buffer<Future<Task, CHI_MAIN_ALLOC_T>, hshm::ipc::MallocAllocator> *event_queue_;
+  hshm::ipc::mpsc_ring_buffer<Future<Task, CHI_QUEUE_ALLOC_T>, hshm::ipc::MallocAllocator> *event_queue_;
 
   // Periodic queue system for time-based periodic tasks:
   // - Queue[0]: Tasks with yield_time_us_ <= 50us (checked every 16 iterations)
@@ -470,10 +471,8 @@ class Worker {
   static constexpr u32 PERIODIC_QUEUE_SIZE = 1024;
   std::queue<RunContext *> periodic_queues_[NUM_PERIODIC_QUEUES];
 
-  // Worker spawn time and queue processing tracking
+  // Worker spawn time
   hshm::Timepoint spawn_time_;  // Time when worker was spawned
-  u64 last_long_queue_check_;   // Last time (in 10us units) long queue was
-                                // processed
 
   // Task completion counter (incremented in EndTask)
   u64 num_tasks_processed_;  // Total tasks completed by this worker
@@ -491,7 +490,7 @@ class Worker {
   hshm::lbm::EventManager event_manager_;
 
   // SHM lightbeam transport (worker-side)
-  hshm::lbm::TransportPtr shm_send_transport_;  // For EndTaskShmTransfer
+  hshm::lbm::TransportPtr shm_send_transport_;  // For IpcManager::SendRuntime
   hshm::lbm::TransportPtr shm_recv_transport_;  // For ProcessNewTask
 
   // Scheduler pointer (owned by IpcManager, not Worker)

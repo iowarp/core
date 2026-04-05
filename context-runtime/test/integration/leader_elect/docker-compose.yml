@@ -9,7 +9,7 @@
 services:
   # Node 1 - Test coordinator / leader (runtime will be shut down and restarted)
   iowarp-node1:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: iowarp-leader-elect-node1
@@ -30,7 +30,7 @@ services:
       - CHI_CLIENT_RETRY_TIMEOUT=5
       - CHI_CLIENT_TRY_NEW_SERVERS=16
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -45,7 +45,7 @@ services:
 
   # Node 2
   iowarp-node2:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: iowarp-leader-elect-node2
@@ -64,7 +64,7 @@ services:
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -76,7 +76,7 @@ services:
 
   # Node 3
   iowarp-node3:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: iowarp-leader-elect-node3
@@ -95,7 +95,7 @@ services:
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -107,7 +107,7 @@ services:
 
   # Node 4
   iowarp-node4:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: iowarp-leader-elect-node4
@@ -126,7 +126,7 @@ services:
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]

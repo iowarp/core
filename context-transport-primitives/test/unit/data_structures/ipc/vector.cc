@@ -773,7 +773,8 @@ TEST_CASE("Vector: copy assignment self", "[vector]") {
 
   vector<int, ArenaAllocator<false>> vec(alloc, {10, 20, 30});
 
-  vec = vec; // Self-assignment
+  auto &self = vec;
+  vec = self; // Self-assignment
 
   REQUIRE(vec.size() == 3);
   REQUIRE(vec[0] == 10);

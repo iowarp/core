@@ -1709,24 +1709,32 @@ HSHM_CROSS_FUN void vector<T, AllocT>::resize(size_t new_size) {
       reserve(new_size);
     }
 
-    // Default-initialize new elements
-    auto fp = FullPtr(alloc, data_);
-    if (fp.ptr_) {
-      for (size_t i = size_; i < new_size; ++i) {
-        if constexpr (IS_SHM_CONTAINER(T)) {
-          new (fp.ptr_ + i) T(alloc);
-        } else {
-          new (fp.ptr_ + i) T();
+    if constexpr (!std::is_trivially_constructible<T>::value) {
+      auto fp = FullPtr(alloc, data_);
+      if (fp.ptr_) {
+        for (size_t i = size_; i < new_size; ++i) {
+          if constexpr (IS_SHM_CONTAINER(T)) {
+            new (fp.ptr_ + i) T(alloc);
+          } else {
+            new (fp.ptr_ + i) T();
+          }
         }
+      }
+    } else {
+      auto fp = FullPtr(alloc, data_);
+      if (fp.ptr_) {
+        memset(fp.ptr_ + size_, 0, (new_size - size_) * sizeof(T));
       }
     }
     size_ = new_size;
   } else {
     // Need to shrink
-    auto fp = FullPtr(alloc, data_);
-    if (fp.ptr_ && !std::is_trivially_destructible<T>::value) {
-      for (size_t i = new_size; i < size_; ++i) {
-        fp.ptr_[i].~T();
+    if constexpr (!std::is_trivially_destructible<T>::value) {
+      auto fp = FullPtr(alloc, data_);
+      if (fp.ptr_) {
+        for (size_t i = new_size; i < size_; ++i) {
+          fp.ptr_[i].~T();
+        }
       }
     }
     size_ = new_size;

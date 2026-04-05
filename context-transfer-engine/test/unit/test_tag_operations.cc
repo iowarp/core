@@ -279,6 +279,7 @@ TEST_CASE("Tag - PutBlob with Custom Score", "[cte][tag][putblob]") {
   REQUIRE(score == 0.9f);
 }
 
+#ifdef WRP_CTE_ENABLE_COMPRESSION
 TEST_CASE("Tag - PutBlob with Context", "[cte][tag][putblob]") {
   TagTestFixture fixture;
   fixture.SetupCTEWithTarget();
@@ -296,6 +297,7 @@ TEST_CASE("Tag - PutBlob with Context", "[cte][tag][putblob]") {
 
   INFO("PutBlob with context completed");
 }
+#endif
 
 TEST_CASE("Tag - PutBlob SHM Version", "[cte][tag][putblob]") {
   TagTestFixture fixture;

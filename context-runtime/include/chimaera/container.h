@@ -35,8 +35,7 @@
 #define CHIMAERA_INCLUDE_CHIMAERA_CONTAINER_H_
 
 #include <cmath>
-#include <cereal/archives/binary.hpp>
-#include <cereal/cereal.hpp>
+#include <hermes_shm/data_structures/serialization/global_serialize.h>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -364,6 +363,15 @@ class Container {
   }
 
   /**
+   * Called after the GPU container for this pool has been allocated and
+   * registered with the GPU work orchestrator (and the orchestrator has been
+   * resumed). Override to send GPU-init tasks that must arrive after the
+   * GPU container is registered (e.g., bdev's UpdateTask).
+   * Default implementation is a no-op.
+   */
+  virtual void PostGpuContainerCreate() {}
+
+  /**
    * Serialize task parameters for network transfer (unified method)
    * Must be implemented by derived classes
    * Uses switch-case structure based on method ID to dispatch to appropriate serialization
@@ -401,30 +409,30 @@ class Container {
    * Uses switch-case structure based on method ID to dispatch to appropriate deserialization
    * Does not allocate - assumes task_ptr is already allocated
    * @param method The method ID to deserialize
-   * @param archive LocalLoadTaskArchive for deserializing inputs
+   * @param archive DefaultLoadArchive for deserializing inputs
    * @param task_ptr Full pointer to the pre-allocated task to load into
    */
-  virtual void LocalLoadTask(u32 method, LocalLoadTaskArchive& archive,
+  virtual void LocalLoadTask(u32 method, DefaultLoadArchive& archive,
                              hipc::FullPtr<Task> task_ptr) = 0;
 
   /**
    * Allocate and deserialize task input parameters using LocalSerialize
    * Wrapper that calls NewTask followed by LocalLoadTask
    * @param method The method ID to deserialize
-   * @param archive LocalLoadTaskArchive for deserializing inputs
+   * @param archive DefaultLoadArchive for deserializing inputs
    * @return Full pointer to the newly allocated and loaded task
    */
-  virtual hipc::FullPtr<Task> LocalAllocLoadTask(u32 method, LocalLoadTaskArchive& archive) = 0;
+  virtual hipc::FullPtr<Task> LocalAllocLoadTask(u32 method, DefaultLoadArchive& archive) = 0;
 
   /**
    * Serialize task output parameters using LocalSerialize (for local transfers)
    * Must be implemented by derived classes
    * Uses switch-case structure based on method ID to dispatch to appropriate serialization
    * @param method The method ID to serialize
-   * @param archive LocalSaveTaskArchive for serializing outputs
+   * @param archive DefaultSaveArchive for serializing outputs
    * @param task_ptr Full pointer to the task to save outputs from
    */
-  virtual void LocalSaveTask(u32 method, LocalSaveTaskArchive& archive,
+  virtual void LocalSaveTask(u32 method, DefaultSaveArchive& archive,
                               hipc::FullPtr<Task> task_ptr) = 0;
 
   /**
@@ -483,14 +491,15 @@ class ContainerClient {
   /**
    * Default constructor
    */
-  ContainerClient() : pool_id_(), return_code_(0) {}
+  HSHM_CROSS_FUN ContainerClient() : pool_id_(), return_code_(0) {}
 
+#if HSHM_IS_HOST
   /**
    * Initialize client with pool ID
    * @param pool_id Pool identifier to connect to
    */
-  virtual void Init(const PoolId& pool_id) { 
-    pool_id_ = pool_id; 
+  virtual void Init(const PoolId& pool_id) {
+    pool_id_ = pool_id;
     return_code_ = 0;
   }
 
@@ -498,6 +507,16 @@ class ContainerClient {
    * Virtual destructor
    */
   virtual ~ContainerClient() = default;
+#else
+  /**
+   * Initialize client with pool ID (GPU version, non-virtual)
+   * @param pool_id Pool identifier to connect to
+   */
+  HSHM_GPU_FUN void Init(const PoolId& pool_id) {
+    pool_id_ = pool_id;
+    return_code_ = 0;
+  }
+#endif
 
   /**
    * Serialization support

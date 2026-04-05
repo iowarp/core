@@ -1,0 +1,131 @@
+name: GPU Tests (CUDA)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'context-runtime/**'
+      - 'context-transfer-engine/**'
+      - 'context-transport-primitives/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'installers/conda/**'
+      - '.github/workflows/gpu-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'context-runtime/**'
+      - 'context-transfer-engine/**'
+      - 'context-transport-primitives/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'installers/conda/**'
+      - '.github/workflows/gpu-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  build-cuda-conda:
+    name: Build CUDA conda package & run GPU tests
+    # Self-hosted runner with NVIDIA GPU.
+    # Register: Settings > Actions > Runners > New self-hosted runner
+    # Add labels: self-hosted, gpu
+    runs-on: [self-hosted, gpu]
+    timeout-minutes: 60
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v5
+      with:
+        submodules: recursive
+
+    - name: Verify GPU access
+      run: nvidia-smi
+
+    # ── Install CUDA toolkit ──────────────────────────────────────────
+    - name: Install CUDA toolkit
+      run: |
+        if ! command -v nvcc &>/dev/null; then
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cuda-toolkit-12-6
+        fi
+        echo "/usr/local/cuda/bin" >> $GITHUB_PATH
+        echo "LD_LIBRARY_PATH=/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> $GITHUB_ENV
+
+    - name: Verify CUDA
+      run: nvcc --version
+
+    # ── Install Miniconda + rattler-build ─────────────────────────────
+    - name: Install Miniconda
+      uses: conda-incubator/setup-miniconda@v3
+      with:
+        auto-update-conda: false
+        python-version: '3.12'
+        activate-environment: iowarp
+
+    - name: Install rattler-build
+      shell: bash -el {0}
+      run: conda install -y rattler-build -c conda-forge
+
+    # ── Build CUDA conda package via install.sh ──────────────────────
+    - name: Build CUDA conda package
+      shell: bash -el {0}
+      run: |
+        chmod +x install.sh
+        ./install.sh cuda
+
+    # ── Verify installation ──────────────────────────────────────────
+    - name: Verify CUDA package installed
+      shell: bash -el {0}
+      run: |
+        conda list iowarp
+        test -f "$CONDA_PREFIX/lib/libchimaera_cxx.so"
+        test -f "$CONDA_PREFIX/lib/libchimaera_cxx_gpu.so"
+        echo "CUDA conda package installed successfully"
+
+    # ── Run GPU tests from build directory ───────────────────────────
+    - name: Run GPU unit tests
+      shell: bash -el {0}
+      working-directory: build
+      run: |
+        echo "=== GPU Unit Tests ==="
+        ctest -R "cte_gpu_tiered_test|cte_gpu_coroutine|cte_gpu_core_all|cte_gpu_create" \
+          --output-on-failure --timeout 120
+
+    - name: Run GPU runtime tests
+      shell: bash -el {0}
+      working-directory: build
+      run: |
+        echo "=== GPU Runtime Tests ==="
+        ctest -R "test_gpu_runtime|cr_gpu_client_process|cr_gpu_parallelism|cr_gpu_runtime_tests|cr_gpu_task_trace|test_gpu_pod_transfer|chimaera_bdev_gpu_kernel|cr_bdev_gpu" \
+          --output-on-failure --timeout 120
+
+    - name: Run GPU allocator tests
+      shell: bash -el {0}
+      working-directory: build
+      run: |
+        echo "=== GPU Allocator Tests ==="
+        ctest -R "test_gpu_shm_mmap|test_local_serialize_gpu|test_local_transfer_gpu|test_buddy_alloc_gpu|test_buddy_alloc_stack_gpu|test_thread_alloc_gpu|test_round_robin_alloc_gpu|test_ipc_allocate_buffer_gpu|test_buddy_benchmark_gpu" \
+          --output-on-failure --timeout 120
+
+    - name: Run GPU benchmarks (regression)
+      shell: bash -el {0}
+      working-directory: build
+      run: |
+        echo "=== GPU Benchmark Regression Tests ==="
+        ctest -R "cte_gpu_bench|cte_gpu_synthetic" \
+          --output-on-failure --timeout 120
+
+    # ── Summary ──────────────────────────────────────────────────────
+    - name: GPU test summary
+      if: always()
+      shell: bash -el {0}
+      working-directory: build
+      run: |
+        echo ""
+        echo "========================================="
+        echo "  GPU Test Summary"
+        echo "========================================="
+        ctest -R "cte_gpu|cr_gpu|chimaera_bdev_gpu|test_gpu|test_ipc_allocate|test_buddy" \
+          --timeout 120 2>&1 | tail -5 || true

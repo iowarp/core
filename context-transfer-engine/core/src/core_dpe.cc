@@ -198,7 +198,7 @@ std::vector<TargetInfo> MaxBwDpe::SelectTargets(const std::vector<TargetInfo>& t
   }
 
   // Sort targets by performance metrics (bandwidth or latency)
-  auto perf_comparator = [data_size, this](const TargetInfo& a, const TargetInfo& b) {
+  auto perf_comparator = [data_size](const TargetInfo& a, const TargetInfo& b) {
     if (data_size >= kLatencyThreshold) {
       // Sort by write bandwidth (descending)
       return a.perf_metrics_.write_bandwidth_mbps_ > b.perf_metrics_.write_bandwidth_mbps_;

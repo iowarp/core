@@ -228,7 +228,10 @@ class Runtime : public chi::Container {
   using CreateParams = chimaera::bdev::CreateParams;
   
   Runtime() : bdev_type_(BdevType::kFile), file_size_(0), alignment_(4096),
-              io_depth_(32), max_blocks_per_operation_(64), ram_buffer_(nullptr), ram_size_(0),
+              io_depth_(32), max_blocks_per_operation_(64),
+              ram_buffer_(nullptr), ram_size_(0),
+              hbm_buffer_(nullptr), hbm_size_(0),
+              pinned_buffer_(nullptr), pinned_size_(0),
               total_reads_(0), total_writes_(0),
               total_bytes_read_(0), total_bytes_written_(0) {
     start_time_ = std::chrono::high_resolution_clock::now();
@@ -273,6 +276,12 @@ class Runtime : public chi::Container {
   chi::TaskResume GetStats(hipc::FullPtr<GetStatsTask> task, chi::RunContext& ctx);
 
   /**
+   * Update GPU container with device/pinned memory pointers (Method::kUpdate)
+   * No-op on the CPU side; UpdateTask is primarily handled by GpuRuntime.
+   */
+  chi::TaskResume Update(hipc::FullPtr<UpdateTask> task, chi::RunContext& ctx);
+
+  /**
    * Monitor container state (Method::kMonitor)
    */
   chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task, chi::RunContext &rctx);
@@ -291,6 +300,12 @@ class Runtime : public chi::Container {
    */
   void Init(const chi::PoolId &pool_id, const std::string &pool_name,
             chi::u32 container_id = 0) override;
+
+  /**
+   * Send UpdateTask to GPU container after GPU container is registered.
+   * Called from pool_manager after RegisterGpuOrchestratorContainer().
+   */
+  void PostGpuContainerCreate() override;
 
   /**
    * Execute a method on a task - using autogen dispatcher
@@ -323,18 +338,18 @@ class Runtime : public chi::Container {
   /**
    * Deserialize task input parameters into an existing task using LocalSerialize
    */
-  void LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
+  void LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive,
                      hipc::FullPtr<chi::Task> task_ptr) override;
 
   /**
    * Allocate and deserialize task input parameters using LocalSerialize
    */
-  hipc::FullPtr<chi::Task> LocalAllocLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive) override;
+  hipc::FullPtr<chi::Task> LocalAllocLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive) override;
 
   /**
    * Serialize task output parameters using LocalSerialize (for local transfers)
    */
-  void LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
+  void LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive& archive,
                      hipc::FullPtr<chi::Task> task_ptr) override;
 
   /**
@@ -369,6 +384,14 @@ class Runtime : public chi::Container {
   // RAM-based storage (kRam)
   char* ram_buffer_;                              // RAM storage buffer
   chi::u64 ram_size_;                            // Total RAM buffer size
+
+  // GPU HBM storage (kHbm) — device memory via cudaMalloc
+  char* hbm_buffer_;
+  chi::u64 hbm_size_;
+
+  // Pinned host storage (kPinned) — pinned memory via cudaMallocHost
+  char* pinned_buffer_;
+  chi::u64 pinned_size_;
 
   // New allocator components
   GlobalBlockMap global_block_map_;              // Global block cache with per-worker locking
@@ -449,6 +472,20 @@ class Runtime : public chi::Container {
    */
   void WriteToRam(hipc::FullPtr<WriteTask> task);
   void ReadFromRam(hipc::FullPtr<ReadTask> task);
+
+  /**
+   * Backend-specific HBM operations (GPU device memory, async cudaMemcpyAsync)
+   * Uses cudaMemcpyAsync + cudaStreamQuery polling with coroutine yield.
+   */
+  chi::TaskResume WriteToHbm(hipc::FullPtr<WriteTask> task, chi::RunContext &ctx);
+  chi::TaskResume ReadFromHbm(hipc::FullPtr<ReadTask> task, chi::RunContext &ctx);
+
+  /**
+   * Backend-specific pinned-host-memory operations (async cudaMemcpyAsync)
+   * Uses cudaMemcpyAsync + cudaStreamQuery polling with coroutine yield.
+   */
+  chi::TaskResume WriteToPinned(hipc::FullPtr<WriteTask> task, chi::RunContext &ctx);
+  chi::TaskResume ReadFromPinned(hipc::FullPtr<ReadTask> task, chi::RunContext &ctx);
 
   /**
    * Update performance metrics

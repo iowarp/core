@@ -32,14 +32,13 @@
  */
 
 /**
- * Multi-process unit test for MultiProcessAllocator with Ownership Tracking
+ * Multi-process unit test for ProducerConsumerAllocator
  *
  * Usage: test_mp_allocator_multiprocess <rank> <duration_sec> <nthreads>
  *
- * rank 0: Initializes shared memory (owner), optionally runs for duration_sec
- *         then calls UnsetOwner() to indicate another process is taking over
- * rank 1+: Attaches to shared memory (non-owner), calls SetOwner() to indicate
- *          it will manage cleanup, and runs for duration_sec
+ * rank 0: Initializes shared memory (producer), runs allocations for
+ *         duration_sec seconds
+ * rank 1+: Attaches to shared memory (consumer), reads only
  */
 
 #include <cstdlib>
@@ -75,7 +74,7 @@ int main(int argc, char **argv) {
   bool success = false;
 
   if (rank == 0) {
-    // Rank 0 initializes
+    // Rank 0 is the producer — initializes shared memory
     std::cout << "Rank 0: Initializing shared memory" << std::endl;
     success = backend.shm_init(MemoryBackendId(0, 0), kShmSize, kShmUrl);
     if (!success) {
@@ -88,7 +87,7 @@ int main(int argc, char **argv) {
     std::memset(backend.data_, 11, backend.data_capacity_);
     backend.UnsetOwner();
   } else {
-    // Other ranks attach to existing shared memory
+    // Other ranks are consumers — attach to existing shared memory
     std::cout << "Rank " << rank << ": Attaching to shared memory" << std::endl;
     success = backend.shm_attach(kShmUrl);
     if (!success) {
@@ -98,25 +97,25 @@ int main(int argc, char **argv) {
     std::cout << "Rank " << rank << ": Backend owner flag set (IsOwner = "
               << (backend.IsOwner() ? "true" : "false") << ")" << std::endl;
 
-    // Rank 1+ takes ownership of the backend
+    // Consumer takes ownership for cleanup purposes
     backend.SetOwner();
     std::cout << "Rank " << rank << ": Called SetOwner() (IsOwner = "
               << (backend.IsOwner() ? "true" : "false") << ")" << std::endl;
   }
 
   // Initialize or attach allocator
-  MultiProcessAllocator *allocator = nullptr;
+  ProducerConsumerAllocator *allocator = nullptr;
 
   if (rank == 0) {
     std::cout << "Rank 0: Initializing allocator" << std::endl;
     std::cout << "  Backend data capacity: " << backend.data_capacity_ << std::endl;
-    allocator = backend.MakeAlloc<MultiProcessAllocator>();
+    allocator = backend.MakeAlloc<ProducerConsumerAllocator>();
     if (allocator == nullptr) {
       std::cerr << "Rank 0: Failed to initialize allocator" << std::endl;
       return 1;
     }
     std::cout << "Rank 0: Allocator initialized successfully" << std::endl;
-    std::cout << "  Allocator size: " << sizeof(MultiProcessAllocator) << std::endl;
+    std::cout << "  Allocator size: " << sizeof(ProducerConsumerAllocator) << std::endl;
   } else {
     std::cout << "Rank " << rank << ": Attaching to allocator" << std::endl;
 
@@ -124,7 +123,7 @@ int main(int argc, char **argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     // Attach to existing allocator without reinitializing
-    allocator = backend.AttachAlloc<MultiProcessAllocator>();
+    allocator = backend.AttachAlloc<ProducerConsumerAllocator>();
     if (allocator == nullptr) {
       std::cerr << "Rank " << rank << ": Failed to attach to allocator" << std::endl;
       return 1;
@@ -138,9 +137,9 @@ int main(int argc, char **argv) {
               << " threads for " << duration_sec << " seconds" << std::endl;
 
     // Create allocator tester and run timed workload with SMALL allocations only
-    AllocatorTest<MultiProcessAllocator> tester(allocator);
+    AllocatorTest<ProducerConsumerAllocator> tester(allocator);
     constexpr size_t kAllocMin = 1;           // 1 byte
-    constexpr size_t kAllocMax = 16 * 1024;   // 16 Mb
+    constexpr size_t kAllocMax = 16 * 1024;   // 16 KB
     tester.TestTimedMultiThreadedWorkload(nthreads, duration_sec, kAllocMin,
                                           kAllocMax);
     std::cout << "Rank " << rank << ": TEST PASSED" << std::endl;

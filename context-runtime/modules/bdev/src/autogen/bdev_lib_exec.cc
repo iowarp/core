@@ -81,6 +81,12 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       co_await GetStats(typed_task, rctx);
       break;
     }
+    case Method::kUpdate: {
+      // Cast task FullPtr to specific type
+      hipc::FullPtr<UpdateTask> typed_task = task_ptr.template Cast<UpdateTask>();
+      co_await Update(typed_task, rctx);
+      break;
+    }
     default: {
       // Unknown method - do nothing
       break;
@@ -130,6 +136,11 @@ void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive,
     }
     case Method::kGetStats: {
       auto typed_task = task_ptr.template Cast<GetStatsTask>();
+      archive << *typed_task.ptr_;
+      break;
+    }
+    case Method::kUpdate: {
+      auto typed_task = task_ptr.template Cast<UpdateTask>();
       archive << *typed_task.ptr_;
       break;
     }
@@ -183,6 +194,11 @@ void Runtime::LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
       archive >> *typed_task.ptr_;
       break;
     }
+    case Method::kUpdate: {
+      auto typed_task = task_ptr.template Cast<UpdateTask>();
+      archive >> *typed_task.ptr_;
+      break;
+    }
     default: {
       // Unknown method - do nothing
       break;
@@ -198,7 +214,7 @@ hipc::FullPtr<chi::Task> Runtime::AllocLoadTask(chi::u32 method, chi::LoadTaskAr
   return task_ptr;
 }
 
-void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
+void Runtime::LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive,
                             hipc::FullPtr<chi::Task> task_ptr) {
   switch (method) {
     case Method::kCreate: {
@@ -249,6 +265,12 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
       archive >> *typed_task.ptr_;
       break;
     }
+    case Method::kUpdate: {
+      auto typed_task = task_ptr.template Cast<UpdateTask>();
+      // Use archive operator which respects msg_type
+      archive >> *typed_task.ptr_;
+      break;
+    }
     default: {
       // Unknown method - do nothing
       break;
@@ -256,7 +278,7 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
   }
 }
 
-hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive) {
+hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive) {
   hipc::FullPtr<chi::Task> task_ptr = NewTask(method);
   if (!task_ptr.IsNull()) {
     LocalLoadTask(method, archive, task_ptr);
@@ -264,7 +286,7 @@ hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::Local
   return task_ptr;
 }
 
-void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive, 
+void Runtime::LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive& archive, 
                              hipc::FullPtr<chi::Task> task_ptr) {
   switch (method) {
     case Method::kCreate: {
@@ -311,6 +333,12 @@ void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive,
     }
     case Method::kGetStats: {
       auto typed_task = task_ptr.template Cast<GetStatsTask>();
+      // Use archive operator which respects msg_type
+      archive << *typed_task.ptr_;
+      break;
+    }
+    case Method::kUpdate: {
+      auto typed_task = task_ptr.template Cast<UpdateTask>();
       // Use archive operator which respects msg_type
       archive << *typed_task.ptr_;
       break;
@@ -417,6 +445,17 @@ hipc::FullPtr<chi::Task> Runtime::NewCopyTask(chi::u32 method, hipc::FullPtr<chi
       }
       break;
     }
+    case Method::kUpdate: {
+      // Allocate new task
+      auto new_task_ptr = ipc_manager->NewTask<UpdateTask>();
+      if (!new_task_ptr.IsNull()) {
+        // Copy task fields (includes base Task fields)
+        auto task_typed = orig_task_ptr.template Cast<UpdateTask>();
+        new_task_ptr->Copy(task_typed);
+        return new_task_ptr.template Cast<chi::Task>();
+      }
+      break;
+    }
     default: {
       // For unknown methods, create base Task copy
       auto new_task_ptr = ipc_manager->NewTask<chi::Task>();
@@ -471,6 +510,10 @@ hipc::FullPtr<chi::Task> Runtime::NewTask(chi::u32 method) {
       auto new_task_ptr = ipc_manager->NewTask<GetStatsTask>();
       return new_task_ptr.template Cast<chi::Task>();
     }
+    case Method::kUpdate: {
+      auto new_task_ptr = ipc_manager->NewTask<UpdateTask>();
+      return new_task_ptr.template Cast<chi::Task>();
+    }
     default: {
       // For unknown methods, return null pointer
       return hipc::FullPtr<chi::Task>();
@@ -521,6 +564,11 @@ void Runtime::Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> orig_task,
       typed_task->Aggregate(replica_task);
       break;
     }
+    case Method::kUpdate: {
+      auto typed_task = orig_task.template Cast<UpdateTask>();
+      typed_task->Aggregate(replica_task);
+      break;
+    }
     default: {
       orig_task->Aggregate(replica_task);
       break;
@@ -562,6 +610,10 @@ void Runtime::DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) {
     }
     case Method::kGetStats: {
       ipc_manager->DelTask(task_ptr.template Cast<GetStatsTask>());
+      break;
+    }
+    case Method::kUpdate: {
+      ipc_manager->DelTask(task_ptr.template Cast<UpdateTask>());
       break;
     }
     default: {

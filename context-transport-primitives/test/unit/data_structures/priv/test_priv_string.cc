@@ -624,30 +624,26 @@ TEST_CASE("String: single character string", "[priv_string]") {
 // }
 
 // ============================================================================
-// Serialization Tests (Cereal)
+// Serialization Tests (GlobalSerialize)
 // ============================================================================
 
-#ifdef HSHM_ENABLE_CEREAL
-#include <cereal/archives/binary.hpp>
-#include <sstream>
+#include "hermes_shm/data_structures/serialization/global_serialize.h"
 
 TEST_CASE("String: serialize small SSO string", "[priv_string][serialization]") {
   basic_string<char, SimpleHeapAllocator> original("hello", &g_allocator);
 
   // Serialize
-  std::ostringstream os(std::ios::binary);
-  {
-    cereal::BinaryOutputArchive oarchive(os);
-    oarchive(original);
-  }
+  std::vector<char> buf;
+  hshm::ipc::GlobalSerialize<std::vector<char>> oarchive(buf);
+  oarchive(original);
+  oarchive.Finalize();
+  std::string result(buf.begin(), buf.end());
 
   // Deserialize
   basic_string<char, SimpleHeapAllocator> restored(&g_allocator);
-  std::istringstream is(os.str(), std::ios::binary);
-  {
-    cereal::BinaryInputArchive iarchive(is);
-    iarchive(restored);
-  }
+  std::vector<char> ibuf(result.begin(), result.end());
+  hshm::ipc::GlobalDeserialize<std::vector<char>> iarchive(ibuf);
+  iarchive(restored);
 
   // Verify
   REQUIRE(restored.size() == original.size());
@@ -664,19 +660,17 @@ TEST_CASE("String: serialize large string exceeding SSO", "[priv_string][seriali
   basic_string<char, SimpleHeapAllocator> original(large_str.c_str(), &g_allocator);
 
   // Serialize
-  std::ostringstream os(std::ios::binary);
-  {
-    cereal::BinaryOutputArchive oarchive(os);
-    oarchive(original);
-  }
+  std::vector<char> buf;
+  hshm::ipc::GlobalSerialize<std::vector<char>> oarchive(buf);
+  oarchive(original);
+  oarchive.Finalize();
+  std::string result(buf.begin(), buf.end());
 
   // Deserialize
   basic_string<char, SimpleHeapAllocator> restored(&g_allocator);
-  std::istringstream is(os.str(), std::ios::binary);
-  {
-    cereal::BinaryInputArchive iarchive(is);
-    iarchive(restored);
-  }
+  std::vector<char> ibuf(result.begin(), result.end());
+  hshm::ipc::GlobalDeserialize<std::vector<char>> iarchive(ibuf);
+  iarchive(restored);
 
   // Verify
   REQUIRE(restored.size() == original.size());
@@ -688,19 +682,17 @@ TEST_CASE("String: serialize empty string", "[priv_string][serialization]") {
   basic_string<char, SimpleHeapAllocator> original(&g_allocator);
 
   // Serialize
-  std::ostringstream os(std::ios::binary);
-  {
-    cereal::BinaryOutputArchive oarchive(os);
-    oarchive(original);
-  }
+  std::vector<char> buf;
+  hshm::ipc::GlobalSerialize<std::vector<char>> oarchive(buf);
+  oarchive(original);
+  oarchive.Finalize();
+  std::string result(buf.begin(), buf.end());
 
   // Deserialize
   basic_string<char, SimpleHeapAllocator> restored(&g_allocator);
-  std::istringstream is(os.str(), std::ios::binary);
-  {
-    cereal::BinaryInputArchive iarchive(is);
-    iarchive(restored);
-  }
+  std::vector<char> ibuf(result.begin(), result.end());
+  hshm::ipc::GlobalDeserialize<std::vector<char>> iarchive(ibuf);
+  iarchive(restored);
 
   // Verify
   REQUIRE(restored.size() == 0);
@@ -712,19 +704,17 @@ TEST_CASE("String: serialize string with special characters", "[priv_string][ser
   basic_string<char, SimpleHeapAllocator> original("hello\nworld\t\r\n!@#$%", &g_allocator);
 
   // Serialize
-  std::ostringstream os(std::ios::binary);
-  {
-    cereal::BinaryOutputArchive oarchive(os);
-    oarchive(original);
-  }
+  std::vector<char> buf;
+  hshm::ipc::GlobalSerialize<std::vector<char>> oarchive(buf);
+  oarchive(original);
+  oarchive.Finalize();
+  std::string result(buf.begin(), buf.end());
 
   // Deserialize
   basic_string<char, SimpleHeapAllocator> restored(&g_allocator);
-  std::istringstream is(os.str(), std::ios::binary);
-  {
-    cereal::BinaryInputArchive iarchive(is);
-    iarchive(restored);
-  }
+  std::vector<char> ibuf(result.begin(), result.end());
+  hshm::ipc::GlobalDeserialize<std::vector<char>> iarchive(ibuf);
+  iarchive(restored);
 
   // Verify
   REQUIRE(restored.size() == original.size());
@@ -736,27 +726,23 @@ TEST_CASE("String: serialize exactly SSO size boundary", "[priv_string][serializ
   basic_string<char, SimpleHeapAllocator, 32> original("0123456789abcdefghijklmnopqrstu", &g_allocator);
 
   // Serialize
-  std::ostringstream os(std::ios::binary);
-  {
-    cereal::BinaryOutputArchive oarchive(os);
-    oarchive(original);
-  }
+  std::vector<char> buf;
+  hshm::ipc::GlobalSerialize<std::vector<char>> oarchive(buf);
+  oarchive(original);
+  oarchive.Finalize();
+  std::string result(buf.begin(), buf.end());
 
   // Deserialize
   basic_string<char, SimpleHeapAllocator, 32> restored(&g_allocator);
-  std::istringstream is(os.str(), std::ios::binary);
-  {
-    cereal::BinaryInputArchive iarchive(is);
-    iarchive(restored);
-  }
+  std::vector<char> ibuf(result.begin(), result.end());
+  hshm::ipc::GlobalDeserialize<std::vector<char>> iarchive(ibuf);
+  iarchive(restored);
 
   // Verify
   REQUIRE(restored.size() == original.size());
   REQUIRE(std::string(restored) == std::string(original));
   REQUIRE(restored.size() == 31);
 }
-
-#endif  // HSHM_ENABLE_CEREAL
 
 // ============================================================================
 // LocalSerialize Tests

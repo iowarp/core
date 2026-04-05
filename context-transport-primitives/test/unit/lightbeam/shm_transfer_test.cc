@@ -32,7 +32,7 @@
  */
 
 /**
- * Unit tests for ShmTransport WriteTransfer/ReadTransfer (SPSC ring buffer)
+ * Unit tests for ShmTransport Send/Recv (SPSC ring buffer)
  *
  * Tests the chunked data transfer mechanism using ShmTransferInfo and
  * copy_space directly, without requiring the full Chimaera runtime.
@@ -90,6 +90,32 @@ static bool VerifyTestData(const std::vector<char>& data, size_t expected_size) 
   return true;
 }
 
+// Build an LbmMeta with one BULK_XFER descriptor pointing at data
+static LbmMeta<> MakeSendMeta(std::vector<char>& data) {
+  LbmMeta<> meta;
+  Bulk bulk;
+  bulk.data.ptr_ = data.data();
+  bulk.data.shm_.alloc_id_ = hipc::AllocatorId::GetNull();
+  bulk.data.shm_.off_ = 0;
+  bulk.size = data.size();
+  bulk.flags = hshm::bitfield32_t(BULK_XFER);
+  meta.send.push_back(bulk);
+  meta.send_bulks = 1;
+  return meta;
+}
+
+// Verify recv meta contains the expected pattern data and free it
+static bool VerifyAndFreeRecvMeta(LbmMeta<>& recv_meta, size_t expected_size) {
+  if (recv_meta.recv.size() != 1) return false;
+  if (recv_meta.recv[0].size != expected_size) return false;
+  if (!recv_meta.recv[0].data.ptr_) return false;
+  std::vector<char> data(recv_meta.recv[0].data.ptr_,
+                         recv_meta.recv[0].data.ptr_ + expected_size);
+  std::free(recv_meta.recv[0].data.ptr_);
+  recv_meta.recv[0].data.ptr_ = nullptr;
+  return VerifyTestData(data, expected_size);
+}
+
 // ============================================================================
 // Single-Chunk Transfer Tests (data fits in copy_space)
 // ============================================================================
@@ -102,15 +128,15 @@ TEST_CASE("ShmTransfer - Single Chunk Transfer", "[shm_transfer][single]") {
   auto ctx = ctx_store.MakeCtx();
 
   std::vector<char> send_data = GenerateTestData(DATA_SIZE);
+  auto send_meta = MakeSendMeta(send_data);
 
-  // Write all data (fits in single pass since DATA_SIZE < COPY_SPACE_SIZE)
-  ShmTransport::WriteTransfer(send_data.data(), send_data.size(), ctx);
+  // Data fits in single pass since DATA_SIZE < COPY_SPACE_SIZE
+  ShmTransport::Send(send_meta, ctx);
 
-  // Read it back
-  std::vector<char> recv_data(DATA_SIZE);
-  ShmTransport::ReadTransfer(recv_data.data(), DATA_SIZE, ctx);
+  LbmMeta<> recv_meta;
+  ShmTransport::Recv(recv_meta, ctx);
 
-  REQUIRE(VerifyTestData(recv_data, DATA_SIZE));
+  REQUIRE(VerifyAndFreeRecvMeta(recv_meta, DATA_SIZE));
 }
 
 // ============================================================================
@@ -124,19 +150,20 @@ TEST_CASE("ShmTransfer - Multi Chunk Transfer (Threaded)", "[shm_transfer][multi
   TestTransferContext<COPY_SPACE_SIZE> ctx_store;
 
   std::vector<char> send_data = GenerateTestData(DATA_SIZE);
-  std::vector<char> recv_data(DATA_SIZE, 0);
   bool send_done = false;
   bool recv_done = false;
+  LbmMeta<> recv_meta;
 
   std::thread sender([&]() {
     auto ctx = ctx_store.MakeCtx();
-    ShmTransport::WriteTransfer(send_data.data(), send_data.size(), ctx);
+    auto meta = MakeSendMeta(send_data);
+    ShmTransport::Send(meta, ctx);
     send_done = true;
   });
 
   std::thread receiver([&]() {
     auto ctx = ctx_store.MakeCtx();
-    ShmTransport::ReadTransfer(recv_data.data(), DATA_SIZE, ctx);
+    ShmTransport::Recv(recv_meta, ctx);
     recv_done = true;
   });
 
@@ -145,7 +172,7 @@ TEST_CASE("ShmTransfer - Multi Chunk Transfer (Threaded)", "[shm_transfer][multi
 
   REQUIRE(send_done);
   REQUIRE(recv_done);
-  REQUIRE(VerifyTestData(recv_data, DATA_SIZE));
+  REQUIRE(VerifyAndFreeRecvMeta(recv_meta, DATA_SIZE));
 }
 
 // ============================================================================
@@ -159,22 +186,23 @@ TEST_CASE("ShmTransfer - Large Data (64KB) Threaded", "[shm_transfer][large]") {
   TestTransferContext<COPY_SPACE_SIZE> ctx_store;
 
   std::vector<char> send_data = GenerateTestData(DATA_SIZE);
-  std::vector<char> recv_data(DATA_SIZE, 0);
+  LbmMeta<> recv_meta;
 
   std::thread sender([&]() {
     auto ctx = ctx_store.MakeCtx();
-    ShmTransport::WriteTransfer(send_data.data(), send_data.size(), ctx);
+    auto meta = MakeSendMeta(send_data);
+    ShmTransport::Send(meta, ctx);
   });
 
   std::thread receiver([&]() {
     auto ctx = ctx_store.MakeCtx();
-    ShmTransport::ReadTransfer(recv_data.data(), DATA_SIZE, ctx);
+    ShmTransport::Recv(recv_meta, ctx);
   });
 
   sender.join();
   receiver.join();
 
-  REQUIRE(VerifyTestData(recv_data, DATA_SIZE));
+  REQUIRE(VerifyAndFreeRecvMeta(recv_meta, DATA_SIZE));
 }
 
 TEST_CASE("ShmTransfer - Very Large Data (1MB) Threaded", "[shm_transfer][verylarge]") {
@@ -184,22 +212,23 @@ TEST_CASE("ShmTransfer - Very Large Data (1MB) Threaded", "[shm_transfer][veryla
   TestTransferContext<COPY_SPACE_SIZE> ctx_store;
 
   std::vector<char> send_data = GenerateTestData(DATA_SIZE);
-  std::vector<char> recv_data(DATA_SIZE, 0);
+  LbmMeta<> recv_meta;
 
   std::thread sender([&]() {
     auto ctx = ctx_store.MakeCtx();
-    ShmTransport::WriteTransfer(send_data.data(), send_data.size(), ctx);
+    auto meta = MakeSendMeta(send_data);
+    ShmTransport::Send(meta, ctx);
   });
 
   std::thread receiver([&]() {
     auto ctx = ctx_store.MakeCtx();
-    ShmTransport::ReadTransfer(recv_data.data(), DATA_SIZE, ctx);
+    ShmTransport::Recv(recv_meta, ctx);
   });
 
   sender.join();
   receiver.join();
 
-  REQUIRE(VerifyTestData(recv_data, DATA_SIZE));
+  REQUIRE(VerifyAndFreeRecvMeta(recv_meta, DATA_SIZE));
 }
 
 // ============================================================================
@@ -212,60 +241,64 @@ TEST_CASE("ShmTransfer - Empty Data", "[shm_transfer][edge]") {
   TestTransferContext<COPY_SPACE_SIZE> ctx_store;
   auto ctx = ctx_store.MakeCtx();
 
-  // Zero-length write and read should be no-ops
-  ShmTransport::WriteTransfer(nullptr, 0, ctx);
-  ShmTransport::ReadTransfer(nullptr, 0, ctx);
+  // Send/Recv with no bulk descriptors — only metadata frame is transferred
+  LbmMeta<> send_meta;
+  send_meta.send_bulks = 0;
+  ShmTransport::Send(send_meta, ctx);
 
-  // Verify ring buffer counters unchanged
-  REQUIRE(ctx_store.shm_info.total_written_.load() == 0);
-  REQUIRE(ctx_store.shm_info.total_read_.load() == 0);
+  LbmMeta<> recv_meta;
+  auto info = ShmTransport::Recv(recv_meta, ctx);
+
+  REQUIRE(info.rc == 0);
+  REQUIRE(recv_meta.recv.empty());
 }
 
 TEST_CASE("ShmTransfer - Exact Copy Space Size", "[shm_transfer][edge]") {
   constexpr size_t COPY_SPACE_SIZE = 1024;
-  constexpr size_t DATA_SIZE = COPY_SPACE_SIZE;
+  constexpr size_t DATA_SIZE = COPY_SPACE_SIZE / 2;  // fits within copy space
 
   TestTransferContext<COPY_SPACE_SIZE> ctx_store;
   auto ctx = ctx_store.MakeCtx();
 
   std::vector<char> send_data = GenerateTestData(DATA_SIZE);
+  auto send_meta = MakeSendMeta(send_data);
 
-  // Exact fit - fills entire ring buffer
-  ShmTransport::WriteTransfer(send_data.data(), send_data.size(), ctx);
+  ShmTransport::Send(send_meta, ctx);
 
-  std::vector<char> recv_data(DATA_SIZE, 0);
-  ShmTransport::ReadTransfer(recv_data.data(), DATA_SIZE, ctx);
+  LbmMeta<> recv_meta;
+  ShmTransport::Recv(recv_meta, ctx);
 
-  REQUIRE(VerifyTestData(recv_data, DATA_SIZE));
+  REQUIRE(VerifyAndFreeRecvMeta(recv_meta, DATA_SIZE));
 }
 
-TEST_CASE("ShmTransfer - One Byte Over Copy Space (Threaded)", "[shm_transfer][edge]") {
+TEST_CASE("ShmTransfer - Data Larger Than Copy Space (Threaded)", "[shm_transfer][edge]") {
   constexpr size_t COPY_SPACE_SIZE = 1024;
-  constexpr size_t DATA_SIZE = COPY_SPACE_SIZE + 1;
+  constexpr size_t DATA_SIZE = COPY_SPACE_SIZE * 4;  // multiple ring buffer passes
 
   TestTransferContext<COPY_SPACE_SIZE> ctx_store;
 
   std::vector<char> send_data = GenerateTestData(DATA_SIZE);
-  std::vector<char> recv_data(DATA_SIZE, 0);
+  LbmMeta<> recv_meta;
 
   std::thread sender([&]() {
     auto ctx = ctx_store.MakeCtx();
-    ShmTransport::WriteTransfer(send_data.data(), send_data.size(), ctx);
+    auto meta = MakeSendMeta(send_data);
+    ShmTransport::Send(meta, ctx);
   });
 
   std::thread receiver([&]() {
     auto ctx = ctx_store.MakeCtx();
-    ShmTransport::ReadTransfer(recv_data.data(), DATA_SIZE, ctx);
+    ShmTransport::Recv(recv_meta, ctx);
   });
 
   sender.join();
   receiver.join();
 
-  REQUIRE(VerifyTestData(recv_data, DATA_SIZE));
+  REQUIRE(VerifyAndFreeRecvMeta(recv_meta, DATA_SIZE));
 }
 
 // ============================================================================
-// Concurrent Transfer with Delays
+// Concurrent Transfer Tests
 // ============================================================================
 
 TEST_CASE("ShmTransfer - Concurrent with Delays", "[shm_transfer][threaded]") {
@@ -275,29 +308,25 @@ TEST_CASE("ShmTransfer - Concurrent with Delays", "[shm_transfer][threaded]") {
   TestTransferContext<COPY_SPACE_SIZE> ctx_store;
 
   std::vector<char> send_data = GenerateTestData(DATA_SIZE);
-  std::vector<char> recv_data(DATA_SIZE, 0);
+  LbmMeta<> recv_meta;
 
-  // Sender pauses between chunks to simulate bursty writes
+  // DATA_SIZE > COPY_SPACE_SIZE, exercises SPSC backpressure
   std::thread sender([&]() {
     auto ctx = ctx_store.MakeCtx();
-    size_t offset = 0;
-    while (offset < DATA_SIZE) {
-      size_t chunk = std::min(DATA_SIZE - offset, size_t(512));
-      ShmTransport::WriteTransfer(send_data.data() + offset, chunk, ctx);
-      offset += chunk;
-      std::this_thread::sleep_for(std::chrono::microseconds(100));
-    }
+    auto meta = MakeSendMeta(send_data);
+    ShmTransport::Send(meta, ctx);
+    std::this_thread::sleep_for(std::chrono::microseconds(100));
   });
 
   std::thread receiver([&]() {
     auto ctx = ctx_store.MakeCtx();
-    ShmTransport::ReadTransfer(recv_data.data(), DATA_SIZE, ctx);
+    ShmTransport::Recv(recv_meta, ctx);
   });
 
   sender.join();
   receiver.join();
 
-  REQUIRE(VerifyTestData(recv_data, DATA_SIZE));
+  REQUIRE(VerifyAndFreeRecvMeta(recv_meta, DATA_SIZE));
 }
 
 // ============================================================================

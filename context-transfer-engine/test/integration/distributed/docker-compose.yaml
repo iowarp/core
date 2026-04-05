@@ -17,7 +17,7 @@
 services:
   # Node 1 - Primary node that runs tests
   cte-node1:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: cte-distributed-node1
@@ -41,7 +41,7 @@ services:
       - CTE_NUM_NODES=4
       - CHI_WITH_RUNTIME=0
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -76,7 +76,7 @@ services:
 
   # Node 2 - Secondary node
   cte-node2:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: cte-distributed-node2
@@ -96,7 +96,7 @@ services:
       - CONTAINER_HOSTFILE=/workspace/context-transfer-engine/test/integration/distributed/hostfile
       - CTE_NUM_NODES=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -108,7 +108,7 @@ services:
 
   # Node 3 - Secondary node
   cte-node3:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: cte-distributed-node3
@@ -128,7 +128,7 @@ services:
       - CONTAINER_HOSTFILE=/workspace/context-transfer-engine/test/integration/distributed/hostfile
       - CTE_NUM_NODES=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -140,7 +140,7 @@ services:
 
   # Node 4 - Secondary node
   cte-node4:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: cte-distributed-node4
@@ -160,7 +160,7 @@ services:
       - CONTAINER_HOSTFILE=/workspace/context-transfer-engine/test/integration/distributed/hostfile
       - CTE_NUM_NODES=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]

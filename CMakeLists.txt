@@ -111,7 +111,10 @@ option(WRP_CORE_ENABLE_HDF5 "Enable HDF5 support in CAE" ON)
 option(WRP_CORE_ENABLE_ELF "Enable ELF support (required for CTE adapters)" OFF)
 option(WRP_CORE_ENABLE_OPENMP "Enable the use of OpenMP" OFF)
 option(WRP_CORE_ENABLE_CUDA "Enable CUDA support" OFF)
+option(WRP_CORE_ENABLE_GPU_RUNTIME "Enable GPU runtime (CDP-based parallelism)" OFF)
 option(WRP_CORE_ENABLE_ROCM "Enable ROCm support" OFF)
+option(WRP_CORE_ENABLE_NIXL "Enable NIXL (NVIDIA Inference Xfer Library) transport" OFF)
+option(WRP_CORE_ENABLE_NVSHMEM "Enable NVSHMEM GPU-to-GPU communication library" OFF)
 option(WRP_CORE_ENABLE_JARVIS "Enable Jarvis CI infrastructure installation" OFF)
 
 #------------------------------------------------------------------------------
@@ -181,6 +184,8 @@ set(HSHM_ENABLE_ELF ${WRP_CORE_ENABLE_ELF} CACHE BOOL "Enable ELF (controlled by
 set(HSHM_ENABLE_CUDA ${WRP_CORE_ENABLE_CUDA} CACHE BOOL "Enable CUDA (controlled by WRP_CORE_ENABLE_CUDA)" FORCE)
 set(HSHM_ENABLE_ROCM ${WRP_CORE_ENABLE_ROCM} CACHE BOOL "Enable ROCm (controlled by WRP_CORE_ENABLE_ROCM)" FORCE)
 set(HSHM_ENABLE_IO_URING ${WRP_CORE_ENABLE_IO_URING} CACHE BOOL "Enable io_uring (controlled by WRP_CORE_ENABLE_IO_URING)" FORCE)
+set(HSHM_ENABLE_NIXL ${WRP_CORE_ENABLE_NIXL} CACHE BOOL "Enable NIXL (controlled by WRP_CORE_ENABLE_NIXL)" FORCE)
+set(HSHM_ENABLE_NVSHMEM ${WRP_CORE_ENABLE_NVSHMEM} CACHE BOOL "Enable NVSHMEM (controlled by WRP_CORE_ENABLE_NVSHMEM)" FORCE)
 # Note: Coverage is handled globally via add_compile_options when WRP_CORE_ENABLE_COVERAGE=ON
 # No need for component-level HSHM_ENABLE_COVERAGE
 
@@ -663,15 +668,14 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   add_compile_options(-fcoroutines)
   message(STATUS "GCC detected - enabling coroutines with -fcoroutines")
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  # GCC's libstdc++ <coroutine> header guards itself with __cpp_impl_coroutine,
-  # which GCC sets via -fcoroutines. Clang does not pass that flag automatically.
-  # Clang 16+ accepts -fcoroutines as an alias; older clang needs a -D instead.
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16")
-    add_compile_options(-fcoroutines)
-    message(STATUS "Clang ${CMAKE_CXX_COMPILER_VERSION} detected - enabling coroutines with -fcoroutines")
+  # Clang 16+ enables C++20 coroutines natively (no flags needed for CXX).
+  # NVCC host compilation uses GCC which needs -fcoroutines for the builtins.
+  add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-fcoroutines>)
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "16")
+    add_compile_definitions(__cpp_impl_coroutine=201902L)
+    message(STATUS "Clang ${CMAKE_CXX_COMPILER_VERSION} detected - enabling coroutines with -D__cpp_impl_coroutine (libstdc++ compat)")
   else()
-    add_compile_definitions(__cpp_impl_coroutine=1)
-    message(STATUS "Clang ${CMAKE_CXX_COMPILER_VERSION} detected - enabling coroutines with -D__cpp_impl_coroutine=1 (libstdc++ compat)")
+    message(STATUS "Clang ${CMAKE_CXX_COMPILER_VERSION} detected - C++20 coroutines enabled natively")
   endif()
 endif()
 
@@ -729,7 +733,10 @@ if(NOT MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-but-set-variable -Wno-unused-function -Wno-cast-function-type")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-self-move -Wno-format")
     # Suppress GCC false positives in template-heavy shared memory code (Release -O3)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-array-bounds -Wno-stringop-overflow")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-array-bounds")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-stringop-overflow")
+    endif()
     # Suppress unused-result warnings (freopen/system in test code)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-result")
 
@@ -767,9 +774,13 @@ if(NOT MSVC)
     endif()
 
     # Code Coverage configuration
+    # Exclude CUDA: NVCC passes --coverage through to device code, generating
+    # __gcov_* symbols in device stubs that the host linker can't resolve.
     if(WRP_CORE_ENABLE_COVERAGE)
         message(STATUS "Code coverage instrumentation enabled for iowarp-core")
-        add_compile_options(--coverage -fprofile-arcs -ftest-coverage)
+        add_compile_options($<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:--coverage>
+                            $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-fprofile-arcs>
+                            $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-ftest-coverage>)
         add_link_options(--coverage)
     endif()
 else()
@@ -865,7 +876,22 @@ if(WRP_CORE_ENABLE_ELF)
     set(ELF_LIB_DIRS ${libelf_LIBRARY_DIRS})
 endif()
 
+# BaM (Big Accelerator Memory) — GPU page cache with optional NVMe
+option(WRP_CORE_ENABLE_BAM "Enable BaM GPU page cache module" OFF)
+option(WRP_CORE_ENABLE_BAM_NVME "Enable NVMe backend for BaM (requires gpu-nvme-bridge)" OFF)
+if(WRP_CORE_ENABLE_BAM)
+    message(STATUS "Building BaM GPU page cache module")
+    set(BAM_ENABLE_NVME ${WRP_CORE_ENABLE_BAM_NVME} CACHE BOOL "NVMe for BaM" FORCE)
+    set(BAM_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS} CACHE BOOL "BaM tests" FORCE)
+    add_subdirectory(external/bam)
+else()
+    message(STATUS "BaM module disabled")
+endif()
+
+set(_WRP_ENABLED_COMPONENT_DIRS "")
+
 add_subdirectory(context-transport-primitives)
+list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-transport-primitives")
 # Set HSHM_ROOT for cross-component access
 set(HSHM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/context-transport-primitives" CACHE PATH "Root directory for context-transport-primitives")
 
@@ -873,6 +899,7 @@ set(HSHM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/context-transport-primitives" CACHE P
 if(WRP_CORE_ENABLE_RUNTIME)
     message(STATUS "Building runtime component")
     add_subdirectory(context-runtime)
+    list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-runtime")
     # Set CHIMAERA_ROOT for cross-component access (e.g., CTE needs bdev includes)
     set(CHIMAERA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/context-runtime" CACHE PATH "Root directory for runtime component")
 else()
@@ -883,6 +910,7 @@ endif()
 if(WRP_CORE_ENABLE_CTE)
     message(STATUS "Building context-transfer-engine component")
     add_subdirectory(context-transfer-engine)
+    list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-transfer-engine")
 else()
     message(STATUS "Context-transfer-engine component disabled")
 endif()
@@ -891,6 +919,7 @@ endif()
 if(WRP_CORE_ENABLE_CAE)
     message(STATUS "Building context-assimilation-engine component")
     add_subdirectory(context-assimilation-engine)
+    list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-assimilation-engine")
 else()
     message(STATUS "Context-assimilation-engine component disabled")
 endif()
@@ -899,6 +928,7 @@ endif()
 if(WRP_CORE_ENABLE_CEE)
     message(STATUS "Building context-exploration-engine component")
     add_subdirectory(context-exploration-engine)
+    list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-exploration-engine")
 else()
     message(STATUS "Context-exploration-engine component disabled")
 endif()
@@ -960,16 +990,8 @@ if(WRP_CORE_ENABLE_TESTS)
         endforeach()
     endfunction()
 
-    foreach(_component_dir
-            context-runtime
-            context-transfer-engine
-            context-assimilation-engine
-            context-exploration-engine)
-        if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${_component_dir}")
-            _chimaera_lock_tests_recursive(
-                "${CMAKE_CURRENT_SOURCE_DIR}/${_component_dir}"
-                "${_lsan_opts}")
-        endif()
+    foreach(_component_dir ${_WRP_ENABLED_COMPONENT_DIRS})
+        _chimaera_lock_tests_recursive("${_component_dir}" "${_lsan_opts}")
     endforeach()
 endif()
 

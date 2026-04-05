@@ -270,12 +270,13 @@ class ZeroMqTransport : public Transport {
       }
     }
 
-    std::ostringstream oss(std::ios::binary);
+    std::vector<char> meta_buf;
     {
-      cereal::BinaryOutputArchive ar(oss);
+      hshm::ipc::GlobalSerialize<std::vector<char>> ar(meta_buf);
       ar(meta);
+      ar.Finalize();
     }
-    std::string meta_str = oss.str();
+    std::string meta_str(meta_buf.begin(), meta_buf.end());
     size_t write_bulk_count = meta.send_bulks;
 
     // ROUTER mode: prepend identity frame + empty delimiter
@@ -418,9 +419,9 @@ class ZeroMqTransport : public Transport {
 
     size_t msg_size = zmq_msg_size(&msg);
     try {
-      std::string meta_str(static_cast<char*>(zmq_msg_data(&msg)), msg_size);
-      std::istringstream iss(meta_str, std::ios::binary);
-      cereal::BinaryInputArchive ar(iss);
+      std::vector<char> meta_buf(static_cast<char*>(zmq_msg_data(&msg)),
+                                  static_cast<char*>(zmq_msg_data(&msg)) + msg_size);
+      hshm::ipc::GlobalDeserialize<std::vector<char>> ar(meta_buf);
       ar(meta);
     } catch (const std::exception& e) {
       HLOG(kFatal,

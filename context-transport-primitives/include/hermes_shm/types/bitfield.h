@@ -91,17 +91,28 @@ struct bitfield {
   /** Set bits using mask */
   HSHM_INLINE_CROSS_FUN void SetBits(T mask) { bits_ |= mask; }
 
-  /** Set bits using system-scope atomic (visible to CPU from GPU) */
-  HSHM_INLINE_CROSS_FUN void SetBitsSystem(T mask) {
-    T cur = bits_.load();
-    bits_.store_system(cur | mask);
-  }
+  /** Set bits using system-scope atomic OR (fence + atomicOr_system on GPU).
+   *  Use this when GPU must signal CPU: all prior GPU writes will be visible
+   *  to CPU before this flag update is observed. */
+  HSHM_INLINE_CROSS_FUN void SetBitsSystem(T mask) { bits_.or_system(mask); }
 
   /** Unset bits in mask */
   HSHM_INLINE_CROSS_FUN void UnsetBits(T mask) { bits_ &= ~mask; }
 
-  /** Check if any bits are set */
-  HSHM_INLINE_CROSS_FUN T Any(T mask) const { return (bits_ & mask).load(); }
+  /** Check if any bits are set (non-destructive: load then AND) */
+  HSHM_INLINE_CROSS_FUN T Any(T mask) const { return bits_.load() & mask; }
+
+  /** Device-scope check: bypasses per-SM L1 cache via ld.global.cg so GPU
+   *  can observe writes from a different SM or concurrent kernel. */
+  HSHM_INLINE_CROSS_FUN T AnyDevice(T mask) const {
+    return bits_.load_device() & mask;
+  }
+
+  /** System-scope check if any bits are set: bypasses GPU L2 so GPU can
+   *  observe CPU-written flags in pinned host memory. */
+  HSHM_INLINE_CROSS_FUN T AnySystem(T mask) const {
+    return bits_.load_system() & mask;
+  }
 
   /** Check if all bits are set */
   HSHM_INLINE_CROSS_FUN T All(T mask) const { return Any(mask) == mask; }

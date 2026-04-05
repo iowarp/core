@@ -253,6 +253,16 @@ chi::TaskResume Runtime::GpuSubmit(hipc::FullPtr<GpuSubmitTask> task,
   co_return;
 }
 
+chi::TaskResume Runtime::SubtaskTest(hipc::FullPtr<SubtaskTestTask> task,
+                                     chi::RunContext &rctx) {
+  HLOG(kDebug, "MOD_NAME: Executing SubtaskTest task with test_value={}",
+       task->test_value_);
+  task->result_value_ = task->test_value_ + 1;
+  task->return_code_ = 0;
+  (void)rctx;
+  co_return;
+}
+
 chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
                                  chi::RunContext &rctx) {
   // Generate test data: a vector of MonitorData structs
