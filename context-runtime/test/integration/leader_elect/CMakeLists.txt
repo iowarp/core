@@ -40,12 +40,12 @@ set(LEADER_ELECT_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Register ctest
 add_test(
-    NAME cr_leader_elect_integration
+    NAME cr_leader_elect_integration_docker
     COMMAND ${LEADER_ELECT_TEST_DIR}/run_tests.sh all
     WORKING_DIRECTORY ${LEADER_ELECT_TEST_DIR}
 )
 
-set_tests_properties(cr_leader_elect_integration PROPERTIES
+set_tests_properties(cr_leader_elect_integration_docker PROPERTIES
     LABELS "integration;docker;leader_elect"
     TIMEOUT 600  # 10 minute timeout for Docker-based tests
     ENVIRONMENT "NUM_NODES=4;TEST_FILTER=[leader_elect]"

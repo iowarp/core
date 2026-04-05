@@ -9,13 +9,13 @@ set(DISTRIBUTED_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Add integration test that runs the distributed test suite
 add_test(
-    NAME cr_distributed_integration
+    NAME cr_distributed_integration_docker
     COMMAND ${DISTRIBUTED_TEST_DIR}/run_tests.sh all
     WORKING_DIRECTORY ${DISTRIBUTED_TEST_DIR}
 )
 
 # Set test properties
-set_tests_properties(cr_distributed_integration PROPERTIES
+set_tests_properties(cr_distributed_integration_docker PROPERTIES
     LABELS "integration;docker;distributed"
     TIMEOUT 600  # 10 minute timeout for Docker-based tests
     ENVIRONMENT "NUM_NODES=4;TEST_FILTER=bdev_file_explicit_backend"

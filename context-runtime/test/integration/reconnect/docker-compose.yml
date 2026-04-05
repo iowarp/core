@@ -23,12 +23,12 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-reconnect-cluster:
-        ipv4_address: 172.29.0.10
+        ipv4_address: 172.26.0.10
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
     environment:
       - NODE_ID=1
-      - NODE_IP=172.29.0.10
+      - NODE_IP=172.26.0.10
       - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/reconnect/wrp_conf.yaml
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/reconnect/hostfile
       - CHI_WITH_RUNTIME=0
@@ -59,12 +59,12 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-reconnect-cluster:
-        ipv4_address: 172.29.0.11
+        ipv4_address: 172.26.0.11
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
     environment:
       - NODE_ID=2
-      - NODE_IP=172.29.0.11
+      - NODE_IP=172.26.0.11
       - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/reconnect/wrp_conf.yaml
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/reconnect/hostfile
       - CHI_WITH_RUNTIME=0
@@ -90,12 +90,12 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-reconnect-cluster:
-        ipv4_address: 172.29.0.12
+        ipv4_address: 172.26.0.12
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
     environment:
       - NODE_ID=3
-      - NODE_IP=172.29.0.12
+      - NODE_IP=172.26.0.12
       - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/reconnect/wrp_conf.yaml
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/reconnect/hostfile
       - CHI_WITH_RUNTIME=0
@@ -121,12 +121,12 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-reconnect-cluster:
-        ipv4_address: 172.29.0.13
+        ipv4_address: 172.26.0.13
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
     environment:
       - NODE_ID=4
-      - NODE_IP=172.29.0.13
+      - NODE_IP=172.26.0.13
       - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/reconnect/wrp_conf.yaml
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/reconnect/hostfile
       - CHI_WITH_RUNTIME=0
@@ -147,4 +147,4 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.29.0.0/16
+        - subnet: 172.26.0.0/24

@@ -9,13 +9,13 @@ set(MIGRATE_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Add integration test that runs the migrate test suite
 add_test(
-    NAME cr_migrate_integration
+    NAME cr_migrate_integration_docker
     COMMAND ${MIGRATE_TEST_DIR}/run_tests.sh all
     WORKING_DIRECTORY ${MIGRATE_TEST_DIR}
 )
 
 # Set test properties
-set_tests_properties(cr_migrate_integration PROPERTIES
+set_tests_properties(cr_migrate_integration_docker PROPERTIES
     LABELS "integration;docker;migrate"
     TIMEOUT 600  # 10 minute timeout for Docker-based tests
     ENVIRONMENT "NUM_NODES=4;TEST_FILTER=[migrate]"
