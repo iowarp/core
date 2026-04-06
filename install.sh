@@ -225,7 +225,7 @@ if [ "$BUILD_SUCCESS" = true ]; then
 
     # Install directly into current environment
     echo -e "${BLUE}>>> Installing iowarp-core into current environment...${NC}"
-    if conda install -y "$PACKAGE_PATH"; then
+    if conda install -y -c conda-forge "$PACKAGE_PATH"; then
         echo ""
         echo -e "${GREEN}======================================================================"
         echo -e "IOWarp Core installed successfully!"
