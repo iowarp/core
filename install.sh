@@ -43,7 +43,7 @@ install_miniconda() {
     MINICONDA_DIR="$HOME/miniconda3"
 
     # Detect platform
-    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    if [[ "$OSTYPE" == "linux"* ]]; then
         PLATFORM="Linux"
         ARCH=$(uname -m)
         if [[ "$ARCH" == "x86_64" ]]; then
