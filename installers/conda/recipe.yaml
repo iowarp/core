@@ -37,7 +37,7 @@ build:
       CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: ONLY
     content:
       - cmake --preset=${{ preset }} -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_PREFIX_PATH=${PREFIX} -DCMAKE_FIND_ROOT_PATH=${PREFIX} -DWRP_CORE_ENABLE_CONDA=ON
-      - cmake --build build --parallel $(( $(nproc) > 32 ? 32 : $(nproc) ))
+      - "cmake --build build --parallel $(( $(nproc) > 32 ? 32 : $(nproc) ))"
       - cmake --install build
 
 requirements:
