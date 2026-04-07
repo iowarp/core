@@ -40,7 +40,7 @@ option(WRP_CORE_STATIC_DEPS "Link external dependencies statically (for self-con
 #------------------------------------------------------------------------------
 # Rust Bindings Configuration
 #------------------------------------------------------------------------------
-option(WRP_CORE_ENABLE_RUST "Enable Rust bindings (requires Corrosion)" OFF)
+option(WRP_CORE_ENABLE_RUST "Enable Rust bindings (requires Corrosion)" ON)
 if(WRP_CORE_ENABLE_RUST)
     message(STATUS "Rust bindings enabled - configuring Corrosion")
 

@@ -33,19 +33,41 @@ set(IOWARP_ENGINE_SRCS
 
 # New CTE-based Iowarp Engine
 add_library(iowarp_engine ${IOWARP_ENGINE_SRCS})
-# ADIOS2 2.10.2 headers use Variable<T>() constructor syntax that is
+# ADIOS2 2.10.0/2.10.2 headers use Variable<T>() constructor syntax that is
 # incompatible with C++20 on GCC 11 (triggers parsing error in Variable.h).
-set_target_properties(iowarp_engine PROPERTIES CXX_STANDARD 17)
+# Force C++17 by any means necessary.
+target_compile_features(iowarp_engine PRIVATE cxx_std_17)
+target_compile_options(iowarp_engine PRIVATE -std=c++17)
+set_target_properties(iowarp_engine PROPERTIES 
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  CXX_EXTENSIONS OFF
+)
+
+# Disable precompiled headers for this target to avoid C++20/C++17 conflict
+set_target_properties(iowarp_engine PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+
 target_include_directories(iowarp_engine PUBLIC
   ${CMAKE_SOURCE_DIR}/include
   ${ADIOS2_INCLUDE_DIR}
 )
 
-target_link_libraries(iowarp_engine PUBLIC
-  wrp_cte::core_client
-  adios2::adios2
-  curl
-)
+# Find curl (optional but recommended for ADIOS2)
+find_package(CURL QUIET)
+if(CURL_FOUND)
+  message(STATUS "ADIOS2 adapter: curl found, enabling HTTP transport support")
+  target_link_libraries(iowarp_engine PUBLIC
+    wrp_cte::core_client
+    adios2::adios2
+    CURL::libcurl
+  )
+else()
+  message(WARNING "ADIOS2 adapter: curl not found, HTTP transport support disabled")
+  target_link_libraries(iowarp_engine PUBLIC
+    wrp_cte::core_client
+    adios2::adios2
+  )
+endif()
 
 # Add MPI support if available
 if(MPI_CXX_FOUND)

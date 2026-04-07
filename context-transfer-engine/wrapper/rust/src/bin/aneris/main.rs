@@ -47,6 +47,7 @@
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use wrp_cte::sync::init;
+use wrp_cte::sync::Client;
 
 fn main() {
     // Parse command line
@@ -72,16 +73,24 @@ fn main() {
     }
     println!("      ✓ CTE runtime initialized\n");
 
-    // Get build directory from compile-time configuration
-    #[cfg(aneris_build_dir)]
-    const BUILD_DIR: &str = aneris_build_dir;
+    // Get build directory with multiple fallback strategies
+    let build_dir = std::env::var("IOWARP_BUILD_DIR")
+        .or_else(|_| std::env::var("CMAKE_BINARY_DIR"))
+        .unwrap_or_else(|_| {
+            // Try to detect from current executable path
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.to_string_lossy().to_string()))
+                .unwrap_or_else(|| "/tmp".to_string())
+        });
 
-    #[cfg(not(aneris_build_dir))]
-    const BUILD_DIR: &str = "/tmp/iowarp-build"; // fallback
-
-    // Get paths - use compile-time configured build directory or environment override
-    let build_dir = std::env::var("IOWARP_BUILD_DIR").unwrap_or_else(|_| BUILD_DIR.to_string());
-    let posix_adapter = format!("{}/lib/libwrp_cte_posix.so", build_dir);
+    // The POSIX adapter is in bin/ not lib/
+    // But build_dir might already be the bin directory if detected from current_exe
+    let posix_adapter = if build_dir.ends_with("/bin") || build_dir.ends_with("/bin/") {
+        format!("{}/libwrp_cte_posix.so", build_dir)
+    } else {
+        format!("{}/bin/libwrp_cte_posix.so", build_dir)
+    };
 
     // Check adapter
     if !std::path::Path::new(&posix_adapter).exists() {
@@ -99,11 +108,16 @@ fn main() {
     let mut child = Command::new(executable)
         .args(exec_args)
         .env("LD_PRELOAD", &posix_adapter)
+        .env_remove("CHI_WITH_RUNTIME") // Child should NOT start its own runtime
         .env(
             "LD_LIBRARY_PATH",
             format!(
-                "{}/bin:{}",
-                build_dir,
+                "{}:{}",
+                if build_dir.ends_with("/bin") || build_dir.ends_with("/bin/") {
+                    build_dir.clone()
+                } else {
+                    format!("{}/bin", build_dir)
+                },
                 std::env::var("LD_LIBRARY_PATH").unwrap_or_default()
             ),
         )
@@ -121,11 +135,93 @@ fn main() {
     // Give runtime time to catch final operations
     std::thread::sleep(Duration::from_millis(500));
 
+    // Create CTE client for telemetry polling
+    let client = match Client::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Warning: Failed to create telemetry client: {}", e);
+            println!("\nSubprocess exited with: {:?}", status.code());
+            return;
+        }
+    };
+
     // Poll and display final results
     println!("\n=== Telemetry Summary ===");
-    // Note: In a real implementation, you would poll telemetry during execution
-    // For this simplified example, we just report subprocess exit status
-    println!("Subprocess completed. Telemetry polling not implemented in this example.");
+
+    // Poll telemetry
+    match client.poll_telemetry(0) {
+        Ok(telemetry) => {
+            if telemetry.is_empty() {
+                println!("No telemetry entries captured.");
+            } else {
+                println!("Captured {} telemetry entries\n", telemetry.len());
+
+                // Display telemetry table
+                println!(
+                    "{:<20} {:>12} {:>20}",
+                    "Operation", "Size (bytes)", "Tag ID"
+                );
+                println!("{}", "-".repeat(60));
+
+                let mut total_ops: u64 = 0;
+                let mut total_bytes: u64 = 0;
+                let mut write_bytes: u64 = 0;
+                let mut read_bytes: u64 = 0;
+
+                for entry in &telemetry {
+                    println!(
+                        "{:<20} {:>12} {:>20}",
+                        format!("{:?}", entry.op),
+                        entry.size,
+                        format!("{}.{}", entry.tag_id.major, entry.tag_id.minor)
+                    );
+
+                    total_ops += 1;
+                    total_bytes += entry.size;
+
+                    // Track read/write separately
+                    match entry.op {
+                        wrp_cte::ffi::CteOp::PutBlob => write_bytes += entry.size,
+                        wrp_cte::ffi::CteOp::GetBlob => read_bytes += entry.size,
+                        _ => {}
+                    }
+                }
+
+                // Summary statistics
+                let avg_size = if total_ops > 0 {
+                    total_bytes / total_ops
+                } else {
+                    0
+                };
+
+                println!("\n{}", "-".repeat(60));
+                println!("=== Summary ===");
+                println!("Total operations: {}", total_ops);
+                println!(
+                    "Total data transferred: {} bytes ({} MB)",
+                    total_bytes,
+                    total_bytes / (1024 * 1024)
+                );
+                println!(
+                    "  - Writes: {} bytes ({} MB)",
+                    write_bytes,
+                    write_bytes / (1024 * 1024)
+                );
+                println!(
+                    "  - Reads: {} bytes ({} MB)",
+                    read_bytes,
+                    read_bytes / (1024 * 1024)
+                );
+                println!("Average size: {} bytes", avg_size);
+            }
+        }
+        Err(e) => {
+            eprintln!("Telemetry poll failed: {}", e);
+            eprintln!("This can happen if:");
+            eprintln!("  - Telemetry collection is disabled");
+            eprintln!("  - The runtime hasn't processed operations yet");
+        }
+    }
 
     println!("\nSubprocess exited with: {:?}", status.code());
 }

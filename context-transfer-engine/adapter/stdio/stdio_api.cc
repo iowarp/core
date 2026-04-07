@@ -38,10 +38,10 @@ bool stdio_intercepted = true;
 #include <limits.h>
 #include <sys/file.h>
 
-#include "wrp_cte/core/core_client.h"
 #include <cstdio>
 
 #include "stdio_fs_api.h"
+#include "wrp_cte/core/core_client.h"
 
 using wrp::cae::AdapterStat;
 using wrp::cae::File;
@@ -58,7 +58,7 @@ extern "C" {
  * STDIO
  */
 
-FILE *WRP_CTE_DECL(fopen)(const char *path, const char *mode) {
+FILE* WRP_CTE_DECL(fopen)(const char* path, const char* mode) {
   wrp_cte::core::WRP_CTE_CLIENT_INIT();
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -72,7 +72,7 @@ FILE *WRP_CTE_DECL(fopen)(const char *path, const char *mode) {
   }
 }
 
-FILE *WRP_CTE_DECL(fopen64)(const char *path, const char *mode) {
+FILE* WRP_CTE_DECL(fopen64)(const char* path, const char* mode) {
   wrp_cte::core::WRP_CTE_CLIENT_INIT();
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -86,7 +86,7 @@ FILE *WRP_CTE_DECL(fopen64)(const char *path, const char *mode) {
   }
 }
 
-FILE *WRP_CTE_DECL(fdopen)(int fd, const char *mode) {
+FILE* WRP_CTE_DECL(fdopen)(int fd, const char* mode) {
   wrp_cte::core::WRP_CTE_CLIENT_INIT();
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -99,30 +99,30 @@ FILE *WRP_CTE_DECL(fdopen)(int fd, const char *mode) {
   }
 }
 
-FILE *WRP_CTE_DECL(freopen)(const char *path, const char *mode, FILE *stream) {
+FILE* WRP_CTE_DECL(freopen)(const char* path, const char* mode, FILE* stream) {
   wrp_cte::core::WRP_CTE_CLIENT_INIT();
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
   if (fs_api->IsFpTracked(stream)) {
     HLOG(kDebug, "Intercepting freopen({}, {})", path, mode);
-    return fs_api->Reopen(path, mode, *(AdapterStat *)stream);
+    return fs_api->Reopen(path, mode, *(AdapterStat*)stream);
   }
   return real_api->freopen(path, mode, stream);
 }
 
-FILE *WRP_CTE_DECL(freopen64)(const char *path, const char *mode,
-                              FILE *stream) {
+FILE* WRP_CTE_DECL(freopen64)(const char* path, const char* mode,
+                              FILE* stream) {
   wrp_cte::core::WRP_CTE_CLIENT_INIT();
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
   if (fs_api->IsFpTracked(stream)) {
     HLOG(kDebug, "Intercepting freopen64({}, {})", path, mode);
-    return fs_api->Reopen(path, mode, *(AdapterStat *)stream);
+    return fs_api->Reopen(path, mode, *(AdapterStat*)stream);
   }
   return real_api->freopen64(path, mode, stream);
 }
 
-int WRP_CTE_DECL(fflush)(FILE *fp) {
+int WRP_CTE_DECL(fflush)(FILE* fp) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -135,12 +135,12 @@ int WRP_CTE_DECL(fflush)(FILE *fp) {
   return real_api->fflush(fp);
 }
 
-int WRP_CTE_DECL(fclose)(FILE *fp) {
+int WRP_CTE_DECL(fclose)(FILE* fp) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
   if (fs_api->IsFpTracked(fp)) {
-    HLOG(kDebug, "Intercepting fclose({})", (void *)fp);
+    HLOG(kDebug, "Intercepting fclose({})", (void*)fp);
     File f;
     f.hermes_fh_ = fp;
     return fs_api->Close(f, stat_exists);
@@ -148,14 +148,14 @@ int WRP_CTE_DECL(fclose)(FILE *fp) {
   return real_api->fclose(fp);
 }
 
-size_t WRP_CTE_DECL(fwrite)(const void *ptr, size_t size, size_t nmemb,
-                            FILE *fp) {
+size_t WRP_CTE_DECL(fwrite)(const void* ptr, size_t size, size_t nmemb,
+                            FILE* fp) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
   if (fs_api->IsFpTracked(fp)) {
     HLOG(kDebug, "Intercepting fwrite with size: {} and nmemb: {}", size,
-          nmemb);
+         nmemb);
     File f;
     f.hermes_fh_ = fp;
     IoStatus io_status;
@@ -169,7 +169,7 @@ size_t WRP_CTE_DECL(fwrite)(const void *ptr, size_t size, size_t nmemb,
   return real_api->fwrite(ptr, size, nmemb, fp);
 }
 
-int WRP_CTE_DECL(fputc)(int c, FILE *fp) {
+int WRP_CTE_DECL(fputc)(int c, FILE* fp) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -186,7 +186,7 @@ int WRP_CTE_DECL(fputc)(int c, FILE *fp) {
   return real_api->fputc(c, fp);
 }
 
-int WRP_CTE_DECL(fgetpos)(FILE *fp, fpos_t *pos) {
+int WRP_CTE_DECL(fgetpos)(FILE* fp, fpos_t* pos) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -207,7 +207,7 @@ int WRP_CTE_DECL(fgetpos)(FILE *fp, fpos_t *pos) {
   return real_api->fgetpos(fp, pos);
 }
 
-int WRP_CTE_DECL(fgetpos64)(FILE *fp, fpos64_t *pos) {
+int WRP_CTE_DECL(fgetpos64)(FILE* fp, fpos64_t* pos) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -226,7 +226,7 @@ int WRP_CTE_DECL(fgetpos64)(FILE *fp, fpos64_t *pos) {
   return real_api->fgetpos64(fp, pos);
 }
 
-int WRP_CTE_DECL(putc)(int c, FILE *fp) {
+int WRP_CTE_DECL(putc)(int c, FILE* fp) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -241,7 +241,7 @@ int WRP_CTE_DECL(putc)(int c, FILE *fp) {
   return real_api->fputc(c, fp);
 }
 
-int WRP_CTE_DECL(putw)(int w, FILE *fp) {
+int WRP_CTE_DECL(putw)(int w, FILE* fp) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -260,7 +260,7 @@ int WRP_CTE_DECL(putw)(int w, FILE *fp) {
   return real_api->putw(w, fp);
 }
 
-int WRP_CTE_DECL(fputs)(const char *s, FILE *stream) {
+int WRP_CTE_DECL(fputs)(const char* s, FILE* stream) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -274,13 +274,12 @@ int WRP_CTE_DECL(fputs)(const char *s, FILE *stream) {
   return real_api->fputs(s, stream);
 }
 
-size_t WRP_CTE_DECL(fread)(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+size_t WRP_CTE_DECL(fread)(void* ptr, size_t size, size_t nmemb, FILE* stream) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
   if (fs_api->IsFpTracked(stream)) {
-    HLOG(kDebug, "Intercepting fread with size: {} and nmemb: {}", size,
-          nmemb);
+    HLOG(kDebug, "Intercepting fread with size: {} and nmemb: {}", size, nmemb);
     File f;
     f.hermes_fh_ = stream;
     IoStatus io_status;
@@ -294,7 +293,7 @@ size_t WRP_CTE_DECL(fread)(void *ptr, size_t size, size_t nmemb, FILE *stream) {
   return real_api->fread(ptr, size, nmemb, stream);
 }
 
-int WRP_CTE_DECL(fgetc)(FILE *stream) {
+int WRP_CTE_DECL(fgetc)(FILE* stream) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -303,14 +302,14 @@ int WRP_CTE_DECL(fgetc)(FILE *stream) {
     File f;
     f.hermes_fh_ = stream;
     IoStatus io_status;
-    u8 value;
-    fs_api->Read(f, stat_exists, &value, sizeof(u8), io_status);
+    hshm::u8 value;
+    fs_api->Read(f, stat_exists, &value, sizeof(hshm::u8), io_status);
     return value;
   }
   return real_api->fgetc(stream);
 }
 
-int WRP_CTE_DECL(getc)(FILE *stream) {
+int WRP_CTE_DECL(getc)(FILE* stream) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -319,14 +318,14 @@ int WRP_CTE_DECL(getc)(FILE *stream) {
     File f;
     f.hermes_fh_ = stream;
     IoStatus io_status;
-    u8 value;
-    fs_api->Read(f, stat_exists, &value, sizeof(u8), io_status);
+    hshm::u8 value;
+    fs_api->Read(f, stat_exists, &value, sizeof(hshm::u8), io_status);
     return value;
   }
   return real_api->getc(stream);
 }
 
-int WRP_CTE_DECL(getw)(FILE *stream) {
+int WRP_CTE_DECL(getw)(FILE* stream) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -342,7 +341,7 @@ int WRP_CTE_DECL(getw)(FILE *stream) {
   return real_api->getc(stream);
 }
 
-char *WRP_CTE_DECL(fgets)(char *s, int size, FILE *stream) {
+char* WRP_CTE_DECL(fgets)(char* s, int size, FILE* stream) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -376,7 +375,7 @@ char *WRP_CTE_DECL(fgets)(char *s, int size, FILE *stream) {
   return real_api->fgets(s, size, stream);
 }
 
-void WRP_CTE_DECL(rewind)(FILE *stream) {
+void WRP_CTE_DECL(rewind)(FILE* stream) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -390,7 +389,7 @@ void WRP_CTE_DECL(rewind)(FILE *stream) {
   real_api->rewind(stream);
 }
 
-int WRP_CTE_DECL(fseek)(FILE *stream, long offset, int whence) {
+int WRP_CTE_DECL(fseek)(FILE* stream, long offset, int whence) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -404,7 +403,7 @@ int WRP_CTE_DECL(fseek)(FILE *stream, long offset, int whence) {
   return real_api->fseek(stream, offset, whence);
 }
 
-int WRP_CTE_DECL(fseeko)(FILE *stream, off_t offset, int whence) {
+int WRP_CTE_DECL(fseeko)(FILE* stream, off_t offset, int whence) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -418,13 +417,12 @@ int WRP_CTE_DECL(fseeko)(FILE *stream, off_t offset, int whence) {
   return real_api->fseeko(stream, offset, whence);
 }
 
-int WRP_CTE_DECL(fseeko64)(FILE *stream, off64_t offset, int whence) {
+int WRP_CTE_DECL(fseeko64)(FILE* stream, off64_t offset, int whence) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
   if (fs_api->IsFpTracked(stream)) {
-    HLOG(kDebug, "Intercepting fseeko64 offset: {} whence: {}", offset,
-          whence);
+    HLOG(kDebug, "Intercepting fseeko64 offset: {} whence: {}", offset, whence);
     File f;
     f.hermes_fh_ = stream;
     fs_api->Seek(f, stat_exists, static_cast<SeekMode>(whence), offset);
@@ -433,7 +431,7 @@ int WRP_CTE_DECL(fseeko64)(FILE *stream, off64_t offset, int whence) {
   return real_api->fseeko64(stream, offset, whence);
 }
 
-int WRP_CTE_DECL(fsetpos)(FILE *stream, const fpos_t *pos) {
+int WRP_CTE_DECL(fsetpos)(FILE* stream, const fpos_t* pos) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -448,7 +446,7 @@ int WRP_CTE_DECL(fsetpos)(FILE *stream, const fpos_t *pos) {
   return real_api->fsetpos(stream, pos);
 }
 
-int WRP_CTE_DECL(fsetpos64)(FILE *stream, const fpos64_t *pos) {
+int WRP_CTE_DECL(fsetpos64)(FILE* stream, const fpos64_t* pos) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -463,7 +461,7 @@ int WRP_CTE_DECL(fsetpos64)(FILE *stream, const fpos64_t *pos) {
   return real_api->fsetpos64(stream, pos);
 }
 
-long int WRP_CTE_DECL(ftell)(FILE *fp) {
+long int WRP_CTE_DECL(ftell)(FILE* fp) {
   bool stat_exists;
   auto real_api = WRP_CTE_STDIO_API;
   auto fs_api = WRP_CTE_STDIO_FS;
@@ -477,4 +475,4 @@ long int WRP_CTE_DECL(ftell)(FILE *fp) {
   return real_api->ftell(fp);
 }
 
-} // extern C
+}  // extern C

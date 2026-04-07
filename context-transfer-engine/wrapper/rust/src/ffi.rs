@@ -438,7 +438,7 @@ pub mod ffi {
             minor: u32,
             name: &str,
             out: &mut Vec<u8>,
-        );
+        ) -> i32;
 
         // Tag factory functions
         //
@@ -511,7 +511,8 @@ impl Client {
     /// PERFORMANCE: Pre-allocates buffer, single FFI call
     pub fn get_blob_info(&self, tag_id: &CteTagId, name: &str) -> Result<BlobInfo, i32> {
         let mut data = Vec::with_capacity(256); // Most blobs have few blocks
-        ffi::client_get_blob_info_raw(&self.inner, tag_id.major, tag_id.minor, name, &mut data);
+        let ret = ffi::client_get_blob_info_raw(&self.inner, tag_id.major, tag_id.minor, name, &mut data);
+        if ret != 0 { return Err(ret); }
 
         // Parse blob info from flat buffer
         // Format: score(4) + total_size(8) + blocks_count(4) + blocks[...](24 each)

@@ -35,12 +35,9 @@ bool mpiio_intercepted = true;
 
 #include "mpiio_api.h"
 
-#include <hermes/bucket.h>
-#include <hermes/hermes.h>
-
-#include "wrp_cte/core/core_client.h"
 #include "hermes_shm/util/singleton.h"
 #include "mpiio_fs_api.h"
+#include "wrp_cte/core/core_client.h"
 
 // #define WRP_CTE_DISABLE_MPIIO
 
@@ -62,7 +59,7 @@ extern "C" {
 /**
  * MPI
  */
-int WRP_CTE_DECL(MPI_Init)(int *argc, char ***argv) {
+int WRP_CTE_DECL(MPI_Init)(int* argc, char*** argv) {
   HLOG(kDebug, "MPI Init intercepted.");
   wrp_cte::core::WRP_CTE_CLIENT_INIT();
   auto real_api = WRP_CTE_MPIIO_API;
@@ -75,13 +72,13 @@ int WRP_CTE_DECL(MPI_Finalize)(void) {
   return real_api->MPI_Finalize();
 }
 
-int WRP_CTE_DECL(MPI_Wait)(MPI_Request *req, MPI_Status *status) {
+int WRP_CTE_DECL(MPI_Wait)(MPI_Request* req, MPI_Status* status) {
   HLOG(kDebug, "In MPI_Wait.");
   auto fs_api = WRP_CTE_MPIIO_FS;
   return fs_api->Wait(req, status);
 }
 
-int WRP_CTE_DECL(MPI_Waitall)(int count, MPI_Request *req, MPI_Status *status) {
+int WRP_CTE_DECL(MPI_Waitall)(int count, MPI_Request* req, MPI_Status* status) {
   HLOG(kDebug, "In MPI_Waitall.");
   auto fs_api = WRP_CTE_MPIIO_FS;
   return fs_api->WaitAll(count, req, status);
@@ -90,14 +87,14 @@ int WRP_CTE_DECL(MPI_Waitall)(int count, MPI_Request *req, MPI_Status *status) {
 /**
  * Metadata functions
  */
-int WRP_CTE_DECL(MPI_File_open)(MPI_Comm comm, const char *filename, int amode,
-                                MPI_Info info, MPI_File *fh) {
+int WRP_CTE_DECL(MPI_File_open)(MPI_Comm comm, const char* filename, int amode,
+                                MPI_Info info, MPI_File* fh) {
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
 #ifndef WRP_CTE_DISABLE_MPIIO
   if (fs_api->IsPathTracked(filename)) {
     HLOG(kDebug, "Intercept MPI_File_open ({}) for filename: {} and mode {}",
-          (void *)MPI_File_open, filename, amode);
+         (void*)MPI_File_open, filename, amode);
     AdapterStat stat;
     stat.comm_ = comm;
     stat.amode_ = amode;
@@ -108,11 +105,11 @@ int WRP_CTE_DECL(MPI_File_open)(MPI_Comm comm, const char *filename, int amode,
   }
 #endif
   HLOG(kDebug, "NOT intercept MPI_File_open ({}) for filename: {} and mode {}",
-        (void *)MPI_File_open, filename, amode);
+       (void*)MPI_File_open, filename, amode);
   return real_api->MPI_File_open(comm, filename, amode, info, fh);
 }
 
-int WRP_CTE_DECL(MPI_File_close)(MPI_File *fh) {
+int WRP_CTE_DECL(MPI_File_close)(MPI_File* fh) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -149,8 +146,8 @@ int WRP_CTE_DECL(MPI_File_seek_shared)(MPI_File fh, MPI_Offset offset,
   auto fs_api = WRP_CTE_MPIIO_FS;
 #ifndef WRP_CTE_DISABLE_MPIIO
   if (fs_api->IsMpiFpTracked(&fh)) {
-    HLOG(kDebug, "Intercept MPI_File_seek_shared offset: {} whence: {}",
-          offset, whence);
+    HLOG(kDebug, "Intercept MPI_File_seek_shared offset: {} whence: {}", offset,
+         whence);
     File f;
     f.hermes_mpi_fh_ = fh;
     return fs_api->SeekShared(f, stat_exists, offset, whence);
@@ -159,7 +156,7 @@ int WRP_CTE_DECL(MPI_File_seek_shared)(MPI_File fh, MPI_Offset offset,
   return real_api->MPI_File_seek_shared(fh, offset, whence);
 }
 
-int WRP_CTE_DECL(MPI_File_get_position)(MPI_File fh, MPI_Offset *offset) {
+int WRP_CTE_DECL(MPI_File_get_position)(MPI_File fh, MPI_Offset* offset) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -175,8 +172,8 @@ int WRP_CTE_DECL(MPI_File_get_position)(MPI_File fh, MPI_Offset *offset) {
   return real_api->MPI_File_get_position(fh, offset);
 }
 
-int WRP_CTE_DECL(MPI_File_read_all)(MPI_File fh, void *buf, int count,
-                                    MPI_Datatype datatype, MPI_Status *status) {
+int WRP_CTE_DECL(MPI_File_read_all)(MPI_File fh, void* buf, int count,
+                                    MPI_Datatype datatype, MPI_Status* status) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -191,9 +188,9 @@ int WRP_CTE_DECL(MPI_File_read_all)(MPI_File fh, void *buf, int count,
   return real_api->MPI_File_read_all(fh, buf, count, datatype, status);
 }
 int WRP_CTE_DECL(MPI_File_read_at_all)(MPI_File fh, MPI_Offset offset,
-                                       void *buf, int count,
+                                       void* buf, int count,
                                        MPI_Datatype datatype,
-                                       MPI_Status *status) {
+                                       MPI_Status* status) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -209,9 +206,9 @@ int WRP_CTE_DECL(MPI_File_read_at_all)(MPI_File fh, MPI_Offset offset,
   return real_api->MPI_File_read_at_all(fh, offset, buf, count, datatype,
                                         status);
 }
-int WRP_CTE_DECL(MPI_File_read_at)(MPI_File fh, MPI_Offset offset, void *buf,
+int WRP_CTE_DECL(MPI_File_read_at)(MPI_File fh, MPI_Offset offset, void* buf,
                                    int count, MPI_Datatype datatype,
-                                   MPI_Status *status) {
+                                   MPI_Status* status) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -225,8 +222,8 @@ int WRP_CTE_DECL(MPI_File_read_at)(MPI_File fh, MPI_Offset offset, void *buf,
 #endif
   return real_api->MPI_File_read_at(fh, offset, buf, count, datatype, status);
 }
-int WRP_CTE_DECL(MPI_File_read)(MPI_File fh, void *buf, int count,
-                                MPI_Datatype datatype, MPI_Status *status) {
+int WRP_CTE_DECL(MPI_File_read)(MPI_File fh, void* buf, int count,
+                                MPI_Datatype datatype, MPI_Status* status) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -236,15 +233,14 @@ int WRP_CTE_DECL(MPI_File_read)(MPI_File fh, void *buf, int count,
     File f;
     f.hermes_mpi_fh_ = fh;
     int ret = fs_api->Read(f, stat_exists, buf, count, datatype, status);
-    if (stat_exists)
-      return ret;
+    if (stat_exists) return ret;
   }
 #endif
   return real_api->MPI_File_read(fh, buf, count, datatype, status);
 }
-int WRP_CTE_DECL(MPI_File_read_ordered)(MPI_File fh, void *buf, int count,
+int WRP_CTE_DECL(MPI_File_read_ordered)(MPI_File fh, void* buf, int count,
                                         MPI_Datatype datatype,
-                                        MPI_Status *status) {
+                                        MPI_Status* status) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -258,9 +254,9 @@ int WRP_CTE_DECL(MPI_File_read_ordered)(MPI_File fh, void *buf, int count,
 #endif
   return real_api->MPI_File_read_ordered(fh, buf, count, datatype, status);
 }
-int WRP_CTE_DECL(MPI_File_read_shared)(MPI_File fh, void *buf, int count,
+int WRP_CTE_DECL(MPI_File_read_shared)(MPI_File fh, void* buf, int count,
                                        MPI_Datatype datatype,
-                                       MPI_Status *status) {
+                                       MPI_Status* status) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -274,9 +270,9 @@ int WRP_CTE_DECL(MPI_File_read_shared)(MPI_File fh, void *buf, int count,
 #endif
   return real_api->MPI_File_read_shared(fh, buf, count, datatype, status);
 }
-int WRP_CTE_DECL(MPI_File_write_all)(MPI_File fh, const void *buf, int count,
+int WRP_CTE_DECL(MPI_File_write_all)(MPI_File fh, const void* buf, int count,
                                      MPI_Datatype datatype,
-                                     MPI_Status *status) {
+                                     MPI_Status* status) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -291,9 +287,9 @@ int WRP_CTE_DECL(MPI_File_write_all)(MPI_File fh, const void *buf, int count,
   return real_api->MPI_File_write_all(fh, buf, count, datatype, status);
 }
 int WRP_CTE_DECL(MPI_File_write_at_all)(MPI_File fh, MPI_Offset offset,
-                                        const void *buf, int count,
+                                        const void* buf, int count,
                                         MPI_Datatype datatype,
-                                        MPI_Status *status) {
+                                        MPI_Status* status) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -310,8 +306,8 @@ int WRP_CTE_DECL(MPI_File_write_at_all)(MPI_File fh, MPI_Offset offset,
                                          status);
 }
 int WRP_CTE_DECL(MPI_File_write_at)(MPI_File fh, MPI_Offset offset,
-                                    const void *buf, int count,
-                                    MPI_Datatype datatype, MPI_Status *status) {
+                                    const void* buf, int count,
+                                    MPI_Datatype datatype, MPI_Status* status) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -325,8 +321,8 @@ int WRP_CTE_DECL(MPI_File_write_at)(MPI_File fh, MPI_Offset offset,
 #endif
   return real_api->MPI_File_write_at(fh, offset, buf, count, datatype, status);
 }
-int WRP_CTE_DECL(MPI_File_write)(MPI_File fh, const void *buf, int count,
-                                 MPI_Datatype datatype, MPI_Status *status) {
+int WRP_CTE_DECL(MPI_File_write)(MPI_File fh, const void* buf, int count,
+                                 MPI_Datatype datatype, MPI_Status* status) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -340,9 +336,9 @@ int WRP_CTE_DECL(MPI_File_write)(MPI_File fh, const void *buf, int count,
 #endif
   return real_api->MPI_File_write(fh, buf, count, datatype, status);
 }
-int WRP_CTE_DECL(MPI_File_write_ordered)(MPI_File fh, const void *buf,
+int WRP_CTE_DECL(MPI_File_write_ordered)(MPI_File fh, const void* buf,
                                          int count, MPI_Datatype datatype,
-                                         MPI_Status *status) {
+                                         MPI_Status* status) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -356,9 +352,9 @@ int WRP_CTE_DECL(MPI_File_write_ordered)(MPI_File fh, const void *buf,
 #endif
   return real_api->MPI_File_write_ordered(fh, buf, count, datatype, status);
 }
-int WRP_CTE_DECL(MPI_File_write_shared)(MPI_File fh, const void *buf, int count,
+int WRP_CTE_DECL(MPI_File_write_shared)(MPI_File fh, const void* buf, int count,
                                         MPI_Datatype datatype,
-                                        MPI_Status *status) {
+                                        MPI_Status* status) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -377,9 +373,9 @@ int WRP_CTE_DECL(MPI_File_write_shared)(MPI_File fh, const void *buf, int count,
 /**
  * Async Read/Write
  */
-int WRP_CTE_DECL(MPI_File_iread_at)(MPI_File fh, MPI_Offset offset, void *buf,
+int WRP_CTE_DECL(MPI_File_iread_at)(MPI_File fh, MPI_Offset offset, void* buf,
                                     int count, MPI_Datatype datatype,
-                                    MPI_Request *request) {
+                                    MPI_Request* request) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -394,8 +390,8 @@ int WRP_CTE_DECL(MPI_File_iread_at)(MPI_File fh, MPI_Offset offset, void *buf,
 #endif
   return real_api->MPI_File_iread_at(fh, offset, buf, count, datatype, request);
 }
-int WRP_CTE_DECL(MPI_File_iread)(MPI_File fh, void *buf, int count,
-                                 MPI_Datatype datatype, MPI_Request *request) {
+int WRP_CTE_DECL(MPI_File_iread)(MPI_File fh, void* buf, int count,
+                                 MPI_Datatype datatype, MPI_Request* request) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -409,9 +405,9 @@ int WRP_CTE_DECL(MPI_File_iread)(MPI_File fh, void *buf, int count,
 #endif
   return real_api->MPI_File_iread(fh, buf, count, datatype, request);
 }
-int WRP_CTE_DECL(MPI_File_iread_shared)(MPI_File fh, void *buf, int count,
+int WRP_CTE_DECL(MPI_File_iread_shared)(MPI_File fh, void* buf, int count,
                                         MPI_Datatype datatype,
-                                        MPI_Request *request) {
+                                        MPI_Request* request) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -427,9 +423,9 @@ int WRP_CTE_DECL(MPI_File_iread_shared)(MPI_File fh, void *buf, int count,
   return real_api->MPI_File_iread_shared(fh, buf, count, datatype, request);
 }
 int WRP_CTE_DECL(MPI_File_iwrite_at)(MPI_File fh, MPI_Offset offset,
-                                     const void *buf, int count,
+                                     const void* buf, int count,
                                      MPI_Datatype datatype,
-                                     MPI_Request *request) {
+                                     MPI_Request* request) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -446,8 +442,8 @@ int WRP_CTE_DECL(MPI_File_iwrite_at)(MPI_File fh, MPI_Offset offset,
                                       request);
 }
 
-int WRP_CTE_DECL(MPI_File_iwrite)(MPI_File fh, const void *buf, int count,
-                                  MPI_Datatype datatype, MPI_Request *request) {
+int WRP_CTE_DECL(MPI_File_iwrite)(MPI_File fh, const void* buf, int count,
+                                  MPI_Datatype datatype, MPI_Request* request) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -462,9 +458,9 @@ int WRP_CTE_DECL(MPI_File_iwrite)(MPI_File fh, const void *buf, int count,
 #endif
   return real_api->MPI_File_iwrite(fh, buf, count, datatype, request);
 }
-int WRP_CTE_DECL(MPI_File_iwrite_shared)(MPI_File fh, const void *buf,
+int WRP_CTE_DECL(MPI_File_iwrite_shared)(MPI_File fh, const void* buf,
                                          int count, MPI_Datatype datatype,
-                                         MPI_Request *request) {
+                                         MPI_Request* request) {
   bool stat_exists;
   auto real_api = WRP_CTE_MPIIO_API;
   auto fs_api = WRP_CTE_MPIIO_FS;
@@ -499,4 +495,4 @@ int WRP_CTE_DECL(MPI_File_sync)(MPI_File fh) {
   return real_api->MPI_File_sync(fh);
 }
 
-} // extern C
+}  // extern C

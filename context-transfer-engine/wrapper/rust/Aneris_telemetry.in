@@ -17,16 +17,6 @@ RUST_WRAPPER_DIR="@CMAKE_CURRENT_SOURCE_DIR@"
 # Library paths
 export LD_LIBRARY_PATH="${IOWARP_BUILD_DIR}/bin:${LD_LIBRARY_PATH}"
 
-# POSIX adapter for I/O interception
-POSIX_ADAPTER="${IOWARP_BUILD_DIR}/bin/libwrp_cte_posix.so"
-if [ -f "$POSIX_ADAPTER" ]; then
-    export LD_PRELOAD="${POSIX_ADAPTER}${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[✓] CTE POSIX adapter loaded: libwrp_cte_posix.so"
-else
-    echo "[!] Warning: POSIX adapter not found at $POSIX_ADAPTER"
-    echo "    I/O interception will not work."
-fi
-
 # CTE configuration
 export CHI_WITH_RUNTIME=1
 export CHI_SERVER_CONF="${HOME}/.chimaera/chimaera.yaml"
@@ -92,18 +82,21 @@ echo ""
 echo "Telemetry will be captured for all I/O operations."
 echo ""
 
-# Check if aneris_runner exists
-ANERIS_RUNNER="${RUST_WRAPPER_DIR}/target/release/examples/aneris_runner"
-if [ ! -f "$ANERIS_RUNNER" ]; then
-    echo "Error: aneris_runner not found at $ANERIS_RUNNER"
+# Use aneris-profiler to run the executable with telemetry capture
+ANERIS_PROFILER="${IOWARP_BUILD_DIR}/bin/aneris-profiler"
+if [ ! -f "$ANERIS_PROFILER" ]; then
+    echo "Error: aneris-profiler not found at $ANERIS_PROFILER"
     echo "Build the project first:"
     echo "  cd ${IOWARP_BUILD_DIR} && cmake --build ."
     exit 1
 fi
 
-echo "[2/3] Launching aneris_runner for telemetry capture..."
+echo "[2/3] Launching aneris-profiler for telemetry capture..."
 echo ""
 
-# Run aneris_runner with the target executable
-# aneris_runner will spawn the executable with LD_PRELOAD and capture telemetry
-exec "$ANERIS_RUNNER" "$EXECUTABLE" "$@"
+# Pass through LD_LIBRARY_PATH and CHI_WITH_RUNTIME
+export LD_LIBRARY_PATH="${IOWARP_BUILD_DIR}/bin:${LD_LIBRARY_PATH}"
+export CHI_WITH_RUNTIME=1
+
+# Run aneris-profiler with the target executable
+exec "$ANERIS_PROFILER" "$EXECUTABLE" "$@"

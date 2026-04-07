@@ -611,9 +611,9 @@ class MpiioFs : public Filesystem {
   }
 
   /** Get initial statistics from the backend */
-  size_t GetBackendSize(const chi::string& bkt_name) override {
+  size_t GetBackendSize(const std::string& bkt_name) override {
     size_t true_size = 0;
-    std::string filename = bkt_name.str();
+    std::string filename = bkt_name;
     int fd = open(filename.c_str(), O_RDONLY);
     if (fd < 0) {
       return 0;
