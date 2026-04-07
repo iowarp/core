@@ -101,6 +101,13 @@ void tag_get_contained_blobs(const Tag& tag, rust::Vec<rust::String>& out);
 void client_poll_telemetry_raw(const Client& client, uint64_t min_time,
                                rust::Vec<uint8_t>& out);
 
+// GetBlobInfo - returns blob metadata with block placement
+// Format: score(f32) + total_size(u64) + blocks_count(u32) + blocks[...]
+// Each block: pool_id(u64) + block_size(u64) + block_offset(u64) = 24 bytes
+int32_t client_get_blob_info_raw(const Client& client, uint32_t major,
+                                 uint32_t minor, rust::Str name,
+                                 rust::Vec<uint8_t>& out);
+
 // Tag ID helpers (exposed for Rust-side conversion)
 uint32_t tag_get_id_major(const Tag& tag);
 uint32_t tag_get_id_minor(const Tag& tag);
