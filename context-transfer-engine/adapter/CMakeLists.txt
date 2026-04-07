@@ -58,6 +58,11 @@ if (WRP_CTE_ENABLE_ADIOS2_ADAPTER)
     add_subdirectory(adios2)
 endif()
 
+# FUSE adapter does not require ELF support (standalone daemon)
+if (WRP_CTE_ENABLE_FUSE_ADAPTER)
+    add_subdirectory(libfuse)
+endif()
+
 #-----------------------------------------------------------------------------
 # Install adapter headers
 #-----------------------------------------------------------------------------
