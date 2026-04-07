@@ -95,6 +95,32 @@ TEST_CASE("TestNumberParser") {
   REQUIRE(hshm::ConfigParse::ParseSize("inf"));
 }
 
+TEST_CASE("TestSystemInfo") {
+  // GetModuleDirectory: should return a non-empty path (exercises PATH_MAX buffer)
+  std::string mod_dir = hshm::SystemInfo::GetModuleDirectory();
+  REQUIRE(!mod_dir.empty());
+
+  // GetMemfdDir / GetMemfdPath: exercises the /tmp/chimaera_<user> path helpers
+  std::string memfd_dir = hshm::SystemInfo::GetMemfdDir();
+  REQUIRE(!memfd_dir.empty());
+  REQUIRE(memfd_dir.find("/tmp/") != std::string::npos);
+
+  std::string memfd_path = hshm::SystemInfo::GetMemfdPath("test_shm");
+  REQUIRE(!memfd_path.empty());
+  REQUIRE(memfd_path.find("test_shm") != std::string::npos);
+
+  // GetSharedLibExtension / GetLibrarySearchPathVar / GetPathListSeparator
+  std::string ext = hshm::SystemInfo::GetSharedLibExtension();
+  REQUIRE(!ext.empty());
+  REQUIRE(ext == ".so" || ext == ".dylib" || ext == ".dll");
+
+  std::string lib_var = hshm::SystemInfo::GetLibrarySearchPathVar();
+  REQUIRE(!lib_var.empty());
+
+  char sep = hshm::SystemInfo::GetPathListSeparator();
+  REQUIRE((sep == ':' || sep == ';'));
+}
+
 TEST_CASE("TestTerminal") {
   std::cout << "\033[1m" << "Bold text" << "\033[0m" << std::endl;
   std::cout << "\033[4m" << "Underlined text" << "\033[0m" << std::endl;

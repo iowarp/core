@@ -40,9 +40,11 @@
 #ifdef __linux__
 #include <linux/limits.h>  // PATH_MAX on some Linux toolchains
 #endif
+// LCOV_EXCL_START — compile-time fallback, unreachable on standard Linux
 #ifndef PATH_MAX
 #define PATH_MAX 4096  // POSIX default; not always in <climits> under NVHPC
 #endif
+// LCOV_EXCL_STOP
 #include <cstdlib>
 #include <string>
 
