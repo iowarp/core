@@ -130,9 +130,21 @@ def get_tokens_for_collection(collection_id, client_id, force_data_access=False)
     # Get the authorization URL
     authorize_url = client.oauth2_get_authorize_url()
 
+    # Save PKCE verifier so --auth-code can complete the exchange later
+    _pkce_state = {
+        "verifier": client.current_oauth2_flow_manager.verifier,
+        "scopes": scopes,
+        "collection_id": collection_id,
+        "client_id": client_id,
+    }
+    with open("/tmp/globus_pkce_state.json", "w") as _f:
+        json.dump(_pkce_state, _f)
+
     print("Please visit this URL to authorize the application:")
     print("")
     print(authorize_url)
+    print("")
+    print("Then re-run with: --auth-code <code>")
     print("")
 
     # Wait for the user to authorize and paste the code
@@ -225,6 +237,11 @@ def parse_args():
         help="Native app client ID registered in Globus.",
     )
     parser.add_argument(
+        "--auth-code",
+        default=None,
+        help="Authorization code from browser; loads saved PKCE state from /tmp/globus_pkce_state.json.",
+    )
+    parser.add_argument(
         "--with-data-access",
         action="store_true",
         help="Always request data_access scope (for non-HA mapped collections; "
@@ -232,13 +249,48 @@ def parse_args():
     )
     return parser.parse_args()
 
+def exchange_with_saved_state(auth_code):
+    """Exchange auth code using PKCE state saved by a prior run."""
+    state_path = "/tmp/globus_pkce_state.json"
+    if not os.path.exists(state_path):
+        print(f"ERROR: No saved PKCE state at {state_path}. Run without --auth-code first.", file=sys.stderr)
+        sys.exit(1)
+    with open(state_path) as f:
+        state = json.load(f)
+    client = globus_sdk.NativeAppAuthClient(state["client_id"])
+    client.oauth2_start_flow(requested_scopes=state["scopes"])
+    # Restore the verifier from the saved state
+    client.current_oauth2_flow_manager.verifier = state["verifier"]
+    token_response = client.oauth2_exchange_code_for_tokens(auth_code)
+    return token_response, state["collection_id"]
+
+
 if __name__ == "__main__":
     args = parse_args()
 
     try:
-        tokens = get_tokens_for_collection(
-            args.collection_id, args.client_id, force_data_access=args.with_data_access
-        )
+        if args.auth_code:
+            token_response, collection_id = exchange_with_saved_state(args.auth_code)
+            transfer_tokens = token_response.by_resource_server['transfer.api.globus.org']
+            collection_tokens = token_response.by_resource_server.get(collection_id)
+            print("=== Tokens Retrieved ===")
+            print(f"\nTransfer API Access Token:\n{transfer_tokens['access_token']}\n")
+            if collection_tokens:
+                print(f"Collection Access Token:\n{collection_tokens['access_token']}\n")
+            sh_path = "/tmp/globus_tokens.sh"
+            with open(sh_path, "w") as f:
+                f.write("#!/usr/bin/env bash\n")
+                f.write(f"export GLOBUS_ACCESS_TOKEN='{transfer_tokens['access_token']}'\n")
+                if collection_tokens:
+                    f.write(f"export GLOBUS_HTTPS_ACCESS_TOKEN='{collection_tokens['access_token']}'\n")
+                f.write(f"export GLOBUS_COLLECTION_ID='{collection_id}'\n")
+            os.chmod(sh_path, 0o700)
+            print(f"Tokens saved to {sh_path}")
+            print(f"Load with: source {sh_path}")
+        else:
+            tokens = get_tokens_for_collection(
+                args.collection_id, args.client_id, force_data_access=args.with_data_access
+            )
     except Exception as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
