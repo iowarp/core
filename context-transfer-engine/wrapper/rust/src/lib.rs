@@ -89,6 +89,8 @@
 pub mod capability_detector;
 pub mod error;
 pub mod ffi;
+pub mod frecency_engine;
+pub mod reorg_batch;
 pub mod types;
 pub mod tier_tracker;
 
@@ -113,6 +115,27 @@ pub use tier_tracker::{
     BlobKey,
     CachedBlobState,
     RegistryEntry,
+};
+
+// Re-export frecency engine types
+pub use frecency_engine::{
+    FrecencyEngine,
+    HotSet,
+    HotSetStats,
+    ColdSetStats,
+    HOT_SET_SIZE,
+    DECAY_FACTOR,
+    DEFAULT_SCORE,
+};
+
+// Re-export reorg batch types
+pub use reorg_batch::{
+    ReorgBatcher,
+    ReorgDecision,
+    LockFreeQueue,
+    Priority,
+    THRESHOLD_HOT,
+    THRESHOLD_COLD,
 };
 
 // Re-export API based on features
