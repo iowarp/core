@@ -245,22 +245,29 @@ pub struct Client {
 impl Client {
     /// Create a new CTE client
     ///
+    /// Prerequisites: CTE must be initialized via `init()` or `sync::init()` before calling this method.
+    ///
     /// # Returns
     /// * `Ok(Client)` on success
-    /// * `Err(CteError::InitFailed)` if initialization fails
+    /// * `Err(CteError::InitFailed)` if CTE is not initialized
     ///
     /// # Example
     /// ```no_run
-    /// use wrp_cte::Client;
+    /// use wrp_cte::{init, Client};
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     // Initialize CTE first
+    ///     init("")?;
+    ///     
+    ///     // Then create client
     ///     let client = Client::new().await?;
     ///     Ok(())
     /// }
     /// ```
     pub async fn new() -> CteResult<Self> {
-        // Initialize is sync (must complete before any operations)
+        // Verify CTE is initialized (but don't call init() - user must initialize)
+        // This check is thread-safe via OnceLock in sync::init
         crate::sync::init("")?;
         Ok(Self {
             _marker: std::marker::PhantomData,

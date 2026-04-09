@@ -103,9 +103,8 @@ pub mod sync;
 
 // Re-export core types
 pub use error::{CteError, CteResult};
-pub use ffi::CteTelemetry;
 pub use types::{
-    BdevType, ChimaeraMode, CteOp, CteTagId, PoolQuery, SteadyTime,
+    BdevType, ChimaeraMode, CteOp, CteTagId, CteTelemetry, PoolQuery, SteadyTime,
 };
 
 // Re-export tier tracking types

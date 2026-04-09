@@ -135,20 +135,22 @@ if(WRP_CORE_ENABLE_RUST)
         # Include rust subdirectory to get ANERIS_RUSTFLAGS variable
         include(${CMAKE_CURRENT_SOURCE_DIR}/wrapper/rust/CMakeLists.txt)
 
-        # Set RUSTFLAGS for corrosion
-        set(ENV{RUSTFLAGS} ${ANERIS_RUSTFLAGS})
+         # Set RUSTFLAGS for corrosion
+         set(ENV{RUSTFLAGS} ${ANERIS_RUSTFLAGS})
 
-        # Import Rust crate using Corrosion
-        corrosion_import_crate(
-            MANIFEST_PATH ${CMAKE_CURRENT_SOURCE_DIR}/wrapper/rust/Cargo.toml
-            FEATURES async
+         # Import Rust crate using Corrosion
+         # Note: Requires tokio features: rt, rt-multi-thread, signal, time, sync, macros
+         # These features are specified in Cargo.toml and picked up during CMake configuration
+         corrosion_import_crate(
+             MANIFEST_PATH ${CMAKE_CURRENT_SOURCE_DIR}/wrapper/rust/Cargo.toml
+             FEATURES async
          )
          
          # Check variable values (for debug, can be removed after verification)
          
          # Set environment variables for aneris-profiler and aneris-rescorer as well
          # These are bin targets in the same Cargo.toml as wrp_cte but need the same env vars
-         foreach(aneris_target aneris-profiler aneris-rescorer)
+         foreach(aneris_target aneris-profiler aneris-rescorer aneris-tune)
              message(STATUS "DEBUG: Checking if TARGET _cargo-build_${aneris_target} exists")
              if(TARGET _cargo-build_${aneris_target})
                  message(STATUS "DEBUG: Setting environment variables for _cargo-build_${aneris_target}")
@@ -247,6 +249,29 @@ if(WRP_CORE_ENABLE_RUST)
               )
               message(STATUS "  Set env vars for target: _cargo-build_aneris-rescorer")
           endif()
+          
+          # Also set environment variables for aneris-tune which is a bin target in the same crate
+          if(TARGET aneris-tune)
+              corrosion_set_env_vars(aneris-tune
+                  "IOWARP_INCLUDE_DIR=${HSHM_ROOT}/include"
+                  "IOWARP_EXTRA_INCLUDES=${CHIMAERA_ROOT}/include:${CTE_ROOT}/core/include:${CHIMODS_ROOT}/admin/include:${CHIMODS_ROOT}/bdev/include:${CEREAL_INCLUDE_DIR}"
+                  "IOWARP_LIB_DIR=${CMAKE_BINARY_DIR}/bin"
+                  "IOWARP_ZMQ_LIBS=${ZMQ_LIBS}"
+                  "IOWARP_ZMQ_LIB_DIRS=${ZMQ_LIB_DIRS}"
+              )
+              message(STATUS "  Set env vars for target: aneris-tune")
+          endif()
+          
+          if(TARGET _cargo-build_aneris-tune)
+              corrosion_set_env_vars(_cargo-build_aneris-tune
+                  "IOWARP_INCLUDE_DIR=${HSHM_ROOT}/include"
+                  "IOWARP_EXTRA_INCLUDES=${CHIMAERA_ROOT}/include:${CTE_ROOT}/core/include:${CHIMODS_ROOT}/admin/include:${CHIMODS_ROOT}/bdev/include:${CEREAL_INCLUDE_DIR}"
+                  "IOWARP_LIB_DIR=${CMAKE_BINARY_DIR}/bin"
+                  "IOWARP_ZMQ_LIBS=${ZMQ_LIBS}"
+                  "IOWARP_ZMQ_LIB_DIRS=${ZMQ_LIB_DIRS}"
+              )
+              message(STATUS "  Set env vars for target: _cargo-build_aneris-tune")
+          endif()
 
          # Debug: Check if target property is set (try both possible property names)
          get_target_property(test_props wrp_cte CORROSION_ENVIRONMENT_VARIABLES)
@@ -282,6 +307,18 @@ if(WRP_CORE_ENABLE_RUST)
         if(TARGET _cargo-build_aneris-rescorer AND TARGET _cargo-build_aneris-profiler)
             add_dependencies(_cargo-build_aneris-rescorer _cargo-build_aneris-profiler)
             message(STATUS "Rust build serialization: aneris-rescorer -> aneris-profiler")
+        endif()
+        
+        # Add dependency chain for aneris-tune (must build after other binaries)
+        if(TARGET _cargo-build_aneris-tune AND TARGET _cargo-build_aneris-rescorer)
+            add_dependencies(_cargo-build_aneris-tune _cargo-build_aneris-rescorer)
+            message(STATUS "Rust build serialization: aneris-tune -> aneris-rescorer")
+        endif()
+        
+        # Also ensure C++ libraries are built before aneris-tune
+        if(TARGET _cargo-build_aneris-tune)
+            add_dependencies(_cargo-build_aneris-tune wrp_cte_core_client)
+            message(STATUS "Added dependency: _cargo-build_aneris-tune -> wrp_cte_core_client")
         endif()
         
         message(STATUS "CTE Rust bindings configured: wrp_cte (from package wrp-cte-rs)")

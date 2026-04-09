@@ -48,6 +48,21 @@ pub enum CteOp {
     ReorganizeBlob = 6,
 }
 
+impl From<u32> for CteOp {
+    fn from(value: u32) -> Self {
+        match value {
+            0 => CteOp::PutBlob,
+            1 => CteOp::GetBlob,
+            2 => CteOp::DelBlob,
+            3 => CteOp::GetOrCreateTag,
+            4 => CteOp::DelTag,
+            5 => CteOp::GetTagSize,
+            6 => CteOp::ReorganizeBlob,
+            _ => CteOp::PutBlob,
+        }
+    }
+}
+
 /// Block device types
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

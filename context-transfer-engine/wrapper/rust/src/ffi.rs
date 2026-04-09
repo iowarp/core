@@ -88,58 +88,8 @@ mod offsets {
     pub const LOGICAL_TIME: usize = 52;
 }
 
-/// Telemetry operation type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CteOp {
-    PutBlob = 0,
-    GetBlob = 1,
-    DelBlob = 2,
-    GetOrCreateTag = 3,
-    DelTag = 4,
-    GetTagSize = 5,
-    ReorganizeBlob = 6,
-}
-
-impl From<u32> for CteOp {
-    fn from(value: u32) -> Self {
-        match value {
-            0 => CteOp::PutBlob,
-            1 => CteOp::GetBlob,
-            2 => CteOp::DelBlob,
-            3 => CteOp::GetOrCreateTag,
-            4 => CteOp::DelTag,
-            5 => CteOp::GetTagSize,
-            6 => CteOp::ReorganizeBlob,
-            _ => CteOp::PutBlob,
-        }
-    }
-}
-
-/// Unique tag identifier (matches chi::UniqueId layout)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CteTagId {
-    pub major: u32,
-    pub minor: u32,
-}
-
-/// Steady clock time point (nanoseconds since epoch)
-#[derive(Debug, Clone, Copy)]
-pub struct SteadyTime {
-    pub nanos: i64,
-}
-
-/// Telemetry entry for CTE operations
-#[derive(Debug, Clone)]
-pub struct CteTelemetry {
-    pub op: CteOp,
-    pub off: u64,
-    pub size: u64,
-    pub tag_id: CteTagId,
-    pub blob_hash: u64,
-    pub mod_time: SteadyTime,
-    pub read_time: SteadyTime,
-    pub logical_time: u64,
-}
+// Re-export types from types module for consistency
+pub use crate::types::{CteOp, CteTagId, CteTelemetry, SteadyTime};
 
 /// Parse telemetry entries from raw byte buffer
 ///

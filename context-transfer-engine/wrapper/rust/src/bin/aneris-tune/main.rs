@@ -51,8 +51,14 @@
 //!
 //! ## Usage
 //!
+//! ### Standalone Mode
 //! ```bash
 //! aneris-tune [OPTIONS]
+//! ```
+//!
+//! ### Wrapping Mode
+//! ```bash
+//! aneris-tune [OPTIONS] -- <executable> [args...]
 //! ```
 //!
 //! ## Options
@@ -64,16 +70,26 @@
 //! - `--reorg-interval-ms <u64>` - Reorg interval in ms (default: 10000)
 //! - `--output <file>` - Optional telemetry output file
 //! - `--verbose` - Enable verbose logging
+//!
+//! ## Examples
+//!
+//! ```bash
+//! # Standalone mode - background tuning
+//! aneris-tune --verbose --threshold-hot 75.0
+//!
+//! # Wrapping mode - tune while running benchmark
+//! aneris-tune -- ior -t 1m -b 16m -s 16
+//! ```
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::time::{interval, timeout};
 
-use wrp_cte::{Client, CteTagId, Tag, FrecencyEngine, ReorgBatcher, ReorgDecision};
+use wrp_cte::{Client, FrecencyEngine, ReorgBatcher};
+use wrp_cte::ffi::CteTagId;
 
 /// Configuration parameters for aneris-tune.
 #[derive(Debug, Clone)]
@@ -92,6 +108,10 @@ struct Config {
     output_file: Option<String>,
     /// Enable verbose logging
     verbose: bool,
+    /// Executable to run (if wrapping mode)
+    executable: Option<String>,
+    /// Arguments for the executable
+    executable_args: Vec<String>,
 }
 
 impl Default for Config {
@@ -104,6 +124,8 @@ impl Default for Config {
             reorg_interval_ms: 10000,
             output_file: None,
             verbose: false,
+            executable: None,
+            executable_args: Vec::new(),
         }
     }
 }
@@ -120,16 +142,25 @@ fn parse_args() -> Config {
                 eprintln!("Aneris Tune - Adaptive Blob Reorganization");
                 eprintln!();
                 eprintln!("Usage: {} [OPTIONS]", args[0]);
+                eprintln!("       {} [OPTIONS] -- <executable> [args...]", args[0]);
                 eprintln!();
                 eprintln!("Options:");
                 eprintln!("  --config <file>              CTE config (default: chimaera_default.yaml)");
                 eprintln!("  --threshold-hot <f64>       Hot threshold (default: 50.0)");
                 eprintln!("  --threshold-cold <f64>       Cold threshold (default: 5.0)");
-                eprintln!("  --decay-interval-ms <u64>    Decay interval ms (default: 1000)");
-                eprintln!("  --reorg-interval-ms <u64>    Reorg interval ms (default: 10000)");
-                eprintln!("  --output <file>              Telemetry output file (optional)");
-                eprintln!("  --verbose                    Enable verbose logging");
-                eprintln!("  --help, -h                   Show this help message");
+                eprintln!("  --decay-interval-ms <u64>   Decay interval ms (default: 1000)");
+                eprintln!("  --reorg-interval-ms <u64>   Reorg interval ms (default: 10000)");
+                eprintln!("  --output <file>             Telemetry output file (optional)");
+                eprintln!("  --verbose                   Enable verbose logging");
+                eprintln!("  --help, -h                  Show this help message");
+                eprintln!();
+                eprintln!("Wrapping Mode:");
+                eprintln!("  Use '--' to wrap an executable with tuning:");
+                eprintln!("  {} -- /path/to/executable [args...]", args[0]);
+                eprintln!();
+                eprintln!("Examples:");
+                eprintln!("  Standalone:  {} --verbose", args[0]);
+                eprintln!("  Wrapping:    {} -- ior -t 1m -b 16m", args[0]);
                 std::process::exit(0);
             }
             "--config" => {
@@ -171,6 +202,15 @@ fn parse_args() -> Config {
             "--verbose" => {
                 config.verbose = true;
             }
+            "--" => {
+                // Remaining args are the executable and its args
+                i += 1;
+                if i < args.len() {
+                    config.executable = Some(args[i].clone());
+                    config.executable_args = args[i + 1..].to_vec();
+                }
+                break;
+            }
             _ => {
                 eprintln!("Unknown argument: {}", args[i]);
                 eprintln!("Run '{}' --help for usage", args[0]);
@@ -186,6 +226,9 @@ fn parse_args() -> Config {
 /// Maps blob_hash to (tag_id, blob_name) for reorg lookups.
 /// This is needed because telemetry only provides blob_hash, but
 /// reorganize_blob() requires tag_id and blob_name.
+///
+/// Note: Uses ffi::CteTagId because poll_telemetry() returns telemetry
+/// with tag_id from the FFI layer, which differs from the root CteTagId type.
 struct BlobRegistry {
     /// blob_hash -> (tag_id, blob_name)
     map: HashMap<u64, (CteTagId, String)>,
@@ -231,87 +274,6 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.2} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
-    }
-}
-
-/// Telemetry receiver task.
-///
-/// Polls CTE telemetry and updates frecency engine.
-async fn telemetry_receiver(
-    client: Arc<Client>,
-    engine: Arc<RwLock<FrecencyEngine>>,
-    registry: Arc<RwLock<BlobRegistry>>,
-    batcher: Arc<ReorgBatcher>,
-    stats: Arc<Mutex<Stats>>,
-    mut shutdown: broadcast::Receiver<()>,
-    config: Config,
-) {
-    let mut ticker = interval(Duration::from_millis(100)); // Poll every 100ms
-    let mut last_logical_time: u64 = 0;
-    let error_backoff = ErrorBackoff::new();
-
-    loop {
-        tokio::select! {
-            _ = ticker.tick() => {
-                // Poll telemetry with timeout=0 to check availability
-                match client.poll_telemetry(last_logical_time, 0.0).await {
-                    Ok(entries) => {
-                        if entries.is_empty() {
-                            continue;
-                        }
-
-                        // Update frecency for each access
-                        let mut engine_guard = engine.write().await;
-                        let mut registry_guard = registry.write().await;
-
-                        for entry in &entries {
-                            // Use blob_hash as the blob identifier
-                            let blob_id = entry.blob_hash;
-
-                            // Level 1: Immediate atomic score update
-                            let score = engine_guard.record_access(blob_id);
-
-                            // Update registry mapping (for future reorg calls)
-                            registry_guard.insert(blob_id, entry.tag_id, format!("blob_{}", blob_id));
-
-                            // Level 2 candidate: Check if should reorg
-                            if let Some(decision) = batcher.should_reorg_blob(blob_id, score) {
-                                if config.verbose {
-                                    println!("[LEVEL-2] Blob {} score {:.2} -> {:?} priority",
-                                             blob_id, score, decision.priority);
-                                }
-
-                                // Push to batch queue (Level 3 batching)
-                                if !batcher.push(decision) {
-                                    eprintln!("Warning: Reorg queue full, dropping decision for blob {}", blob_id);
-                                }
-                            }
-
-                            // Update stats
-                            let mut stats_guard = stats.lock().await;
-                            stats_guard.total_accesses += 1;
-                            stats_guard.total_telemetry_entries += 1;
-
-                            last_logical_time = entry.logical_time.max(last_logical_time);
-                        }
-                    }
-                    Err(wrp_cte::CteError::Timeout) => {
-                        // No data available - continue
-                    }
-                    Err(e) => {
-                        if error_backoff.should_log() {
-                            eprintln!("Telemetry poll error: {}", e);
-                        }
-                    }
-                }
-            }
-            _ = shutdown.recv() => {
-                if config.verbose {
-                    println!("[telemetry_receiver] Shutting down...");
-                }
-                break;
-            }
-        }
     }
 }
 
@@ -364,76 +326,7 @@ async fn decay_scheduler(
     }
 }
 
-/// Reorg executor task.
-///
-/// Drains batch queue every reorg_interval_ms and calls reorganize_blob().
-/// Deduplicates decisions before execution.
-async fn reorg_executor(
-    client: Arc<Client>,
-    batcher: Arc<ReorgBatcher>,
-    stats: Arc<Mutex<Stats>>,
-    mut shutdown: broadcast::Receiver<()>,
-    config: Config,
-) {
-    let mut ticker = interval(Duration::from_millis(config.reorg_interval_ms));
-
-    // Known tags cache
-    let known_tags: Arc<RwLock<Vec<CteTagId>>> = Arc::new(RwLock::new(Vec::new()));
-
-    loop {
-        tokio::select! {
-            _ = ticker.tick() => {
-                // Level 3: Drain batch and execute reorg decisions
-                let mut batch = batcher.drain_batch();
-
-                if batch.is_empty() {
-                    continue;
-                }
-
-                // Coalesce duplicates (keep highest score per blob_id)
-                batcher.coalesce_batch(&mut batch);
-
-                if config.verbose {
-                    println!("[LEVEL-3] Processing {} reorg decisions", batch.len());
-                }
-
-                // Execute reorg decisions
-                for decision in batch {
-                    // For now, we need to discover which tag owns this blob
-                    // In production, this would use a blob registry cache
-                    // For this demo, we iterate known tags
-
-                    let blob_id = decision.blob_id;
-                    let score = decision.new_score;
-
-                    // Try to find the tag that owns this blob
-                    // This is a simplified version - production would use registry
-                    
-                    // Placeholder: We would call tag.reorganize_blob() here
-                    // For the actual implementation, we need tag_id and blob_name
-                    
-                    // Update stats
-                    let mut stats_guard = stats.lock().await;
-                    stats_guard.total_reorgs += 1;
-
-                    if decision.priority == wrp_cte::Priority::High {
-                        stats_guard.hot_reorgs += 1;
-                    } else if decision.priority == wrp_cte::Priority::Low {
-                        stats_guard.cold_reorgs += 1;
-                    }
-                }
-            }
-            _ = shutdown.recv() => {
-                if config.verbose {
-                    println!("[reorg_executor] Shutting down...");
-                }
-                break;
-            }
-        }
-    }
-}
-
-/// Error rate limiter for preventing log spam.
+/// Decay scheduler task (defined below)
 struct ErrorBackoff {
     consecutive: u32,
 }
@@ -479,21 +372,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("      ✓ CTE runtime initialized");
 
     // Give runtime time to fully initialize
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    println!("\n[2/4] Waiting for runtime to stabilize...");
+    tokio::time::sleep(Duration::from_millis(1000)).await;
 
-    // Create client
-    println!("[2/4] Creating CTE client...");
-    let client = Arc::new(Client::new().await?);
-    println!("      ✓ Client created");
+    // Verify runtime is ready by creating a test client
+    println!("[3/4] Verifying CTE client connection...");
+    let test_client = Client::new().await?;
+    println!("      ✓ Client created and verified");
+    
+    // Drop the test client - we'll create fresh clients in tasks
+    drop(test_client);
 
     // Create frecency engine
-    println!("[3/4] Initializing frecency engine...");
+    println!("[4/4] Initializing frecency engine...");
     let engine = Arc::new(RwLock::new(FrecencyEngine::new()));
     println!("      ✓ Frecency engine initialized (hot set: {} entries)",
              wrp_cte::HOT_SET_SIZE);
 
     // Create reorg batcher with custom thresholds
-    println!("[4/4] initializing reorg batcher...");
+    println!("[5/5] Initializing reorg batcher...");
     let batcher = Arc::new(ReorgBatcher::with_settings(
         config.threshold_hot,
         config.threshold_cold,
@@ -509,11 +406,73 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set up shutdown manager
     let shutdown_manager = Arc::new(ShutdownManager::new());
 
+    // Spawn executable if in wrapping mode
+    let mut child_process: Option<std::process::Child> = None;
+    if let Some(ref exec) = config.executable {
+        use std::process::{Command, Stdio};
+        use std::env;
+
+        println!("[5/5] Starting wrapped executable...");
+        println!("      Executable: {}", exec);
+        println!("      Arguments: {:?}", config.executable_args);
+        
+        // Get build directory for LD_PRELOAD
+        let build_dir = env::var("IOWARP_BUILD_DIR")
+            .or_else(|_| env::var("CMAKE_BINARY_DIR"))
+            .unwrap_or_else(|_| {
+                env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|p| p.to_string_lossy().to_string()))
+                    .unwrap_or_else(|| "/tmp".to_string())
+            });
+
+        // The POSIX adapter is in bin/ or lib/
+        let posix_adapter = if build_dir.ends_with("/bin") || build_dir.ends_with("/bin/") {
+            format!("{}/libwrp_cte_posix.so", build_dir)
+        } else {
+            format!("{}/bin/libwrp_cte_posix.so", build_dir)
+        };
+
+        // Check adapter
+        if !std::path::Path::new(&posix_adapter).exists() {
+            eprintln!("[!] Warning: POSIX adapter not found at {}", posix_adapter);
+            eprintln!("    I/O interception will not work.");
+        } else {
+            println!("      ✓ POSIX adapter found");
+        }
+
+        // Spawn subprocess with LD_PRELOAD
+        let child = Command::new(exec)
+            .args(&config.executable_args)
+            .env("LD_PRELOAD", &posix_adapter)
+            .env_remove("CHI_WITH_RUNTIME") // Child should NOT start its own runtime
+            .env(
+                "LD_LIBRARY_PATH",
+                format!(
+                    "{}:{}",
+                    if build_dir.ends_with("/bin") || build_dir.ends_with("/bin/") {
+                        build_dir.clone()
+                    } else {
+                        format!("{}/bin", build_dir)
+                    },
+                    env::var("LD_LIBRARY_PATH").unwrap_or_default()
+                ),
+            )
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("Failed to spawn executable");
+        
+        println!("      ✓ Subprocess started (PID: {})\n", child.id());
+        child_process = Some(child);
+    }
+
     // Spawn tasks
     println!("\nStarting monitoring tasks...");
 
     // Telemetry receiver task
-    let client1 = Arc::clone(&client);
+    // Note: Client doesn't need to be in Arc since it's stateless in async API
+    // Each poll_telemetry() call creates its own FFI client internally
     let engine1 = Arc::clone(&engine);
     let registry1 = Arc::clone(&registry);
     let batcher1 = Arc::clone(&batcher);
@@ -521,8 +480,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shutdown1 = shutdown_manager.subscriber();
     let config1 = config.clone();
     let telemetry_handle = tokio::spawn(async move {
-        telemetry_receiver(client1, engine1, registry1, batcher1, stats1, shutdown1, config1).await;
+        telemetry_receiver_task(engine1, registry1, batcher1, stats1, shutdown1, config1).await
     });
+
+// ... rest of the code
 
     // Decay scheduler task
     let engine2 = Arc::clone(&engine);
@@ -535,21 +496,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Reorg executor task
-    let client3 = Arc::clone(&client);
     let batcher3 = Arc::clone(&batcher);
     let stats3 = Arc::clone(&stats);
     let shutdown3 = shutdown_manager.subscriber();
     let config3 = config.clone();
     let reorg_handle = tokio::spawn(async move {
-        reorg_executor(client3, batcher3, stats3, shutdown3, config3).await;
+        reorg_executor_task(batcher3, stats3, shutdown3, config3).await
     });
 
     println!("✓ All tasks started");
-    println!("\nPress Ctrl+C to shut down gracefully.\n");
+    if child_process.is_some() {
+        println!("\nMonitoring wrapped executable. Press Ctrl+C to terminate.\n");
+    } else {
+        println!("\nPress Ctrl+C to shut down gracefully.\n");
+    }
 
-    // Wait for shutdown signal
-    tokio::signal::ctrl_c().await?;
-    println!("\nShutdown signal received...");
+    // Wait for shutdown signal or child process
+    if let Some(ref mut child) = child_process {
+        // In wrapping mode: wait for child to finish
+        match child.wait() {
+            Ok(status) => {
+                println!("\nWrapped executable exited with status: {:?}", status.code());
+            }
+            Err(e) => {
+                eprintln!("\nError waiting for child process: {}", e);
+            }
+        }
+    } else {
+        // Standalone mode: wait for Ctrl+C
+        tokio::signal::ctrl_c().await?;
+        println!("\nShutdown signal received...");
+    }
 
     // Signal all tasks to stop
     shutdown_manager.shutdown();
@@ -592,6 +569,163 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\nAneris-tune stopped.");
     Ok(())
+}
+
+/// Telemetry receiver task wrapper
+async fn telemetry_receiver_task(
+    engine: Arc<RwLock<FrecencyEngine>>,
+    registry: Arc<RwLock<BlobRegistry>>,
+    batcher: Arc<ReorgBatcher>,
+    stats: Arc<Mutex<Stats>>,
+    mut shutdown: broadcast::Receiver<()>,
+    config: Config,
+) {
+    println!("[telemetry_receiver] Task started");
+    
+    let mut ticker = interval(Duration::from_millis(100)); // Poll every 100ms
+    let mut last_logical_time: u64 = 0;
+    let mut error_backoff = ErrorBackoff::new();
+
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                // Create a fresh client for each poll (Client is stateless in async API)
+                match Client::new().await {
+                    Ok(client) => {
+                        // Poll telemetry with timeout=0 to check availability
+                        match client.poll_telemetry(last_logical_time, 0.0).await {
+                            Ok(entries) => {
+                                if entries.is_empty() {
+                                    continue;
+                                }
+
+                                // Update frecency for each access
+                                let mut engine_guard = engine.write().await;
+                                let mut registry_guard = registry.write().await;
+
+                                for entry in &entries {
+                                    // Use blob_hash as the blob identifier
+                                    let blob_id = entry.blob_hash;
+
+                                    // Level 1: Immediate atomic score update
+                                    let score = engine_guard.record_access(blob_id);
+
+                                    // Update registry mapping (for future reorg calls)
+                                    registry_guard.insert(blob_id, entry.tag_id, format!("blob_{}", blob_id));
+
+                                    // Level 2 candidate: Check if should reorg
+                                    if let Some(decision) = batcher.should_reorg_blob(blob_id, score) {
+                                        if config.verbose {
+                                            println!("[LEVEL-2] Blob {} score {:.2} -> {:?} priority",
+                                                     blob_id, score, decision.priority);
+                                        }
+
+                                        // Push to batch queue (Level 3 batching)
+                                        if !batcher.push(decision) {
+                                            eprintln!("Warning: Reorg queue full, dropping decision for blob {}", blob_id);
+                                        }
+                                    }
+
+                                    // Update stats
+                                    let mut stats_guard = stats.lock().await;
+                                    stats_guard.total_accesses += 1;
+                                    stats_guard.total_telemetry_entries += 1;
+
+                                    last_logical_time = entry.logical_time.max(last_logical_time);
+                                }
+                            }
+                            Err(wrp_cte::CteError::Timeout) => {
+                                // No data available - continue
+                            }
+                            Err(e) => {
+                                if error_backoff.should_log() {
+                                    eprintln!("[telemetry_receiver] Telemetry poll error: {}", e);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if error_backoff.should_log() {
+                            eprintln!("[telemetry_receiver] Failed to create poll client: {}", e);
+                        }
+                    }
+                }
+            }
+            _ = shutdown.recv() => {
+                if config.verbose {
+                    println!("[telemetry_receiver] Shutting down...");
+                }
+                break;
+            }
+        }
+    }
+}
+
+/// Reorg executor task
+async fn reorg_executor_task(
+    batcher: Arc<ReorgBatcher>,
+    stats: Arc<Mutex<Stats>>,
+    mut shutdown: broadcast::Receiver<()>,
+    config: Config,
+) {
+    println!("[reorg_executor] Task started");
+    
+    let mut ticker = interval(Duration::from_millis(config.reorg_interval_ms));
+
+    // Known tags cache
+    let known_tags: Arc<RwLock<Vec<CteTagId>>> = Arc::new(RwLock::new(Vec::new()));
+
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                // Level 3: Drain batch and execute reorg decisions
+                let mut batch = batcher.drain_batch();
+
+                if batch.is_empty() {
+                    continue;
+                }
+
+                // Coalesce duplicates (keep highest score per blob_id)
+                batcher.coalesce_batch(&mut batch);
+
+                if config.verbose {
+                    println!("[LEVEL-3] Processing {} reorg decisions", batch.len());
+                }
+
+                // Execute reorg decisions
+                for decision in batch {
+                    // For now, we need to discover which tag owns this blob
+                    // In production, this would use a blob registry cache
+                    // For this demo, we iterate known tags
+                    
+                    let blob_id = decision.blob_id;
+                    let score = decision.new_score;
+
+                    // Try to find the tag that owns this blob
+                    // This is a simplified version - production would use registry
+                    
+                    // Placeholder: We would call tag.reorganize_blob() here
+                    // For the actual implementation, we need tag_id and blob_name
+                    
+                    // Update stats
+                    let mut stats_guard = stats.lock().await;
+                    stats_guard.total_reorgs += 1;
+
+                    if decision.priority == wrp_cte::Priority::High {
+                        stats_guard.hot_reorgs += 1;
+                    } else if decision.priority == wrp_cte::Priority::Low {
+                        stats_guard.cold_reorgs += 1;
+                    }
+                }
+            }
+            _ = shutdown.recv() => {
+                if config.verbose {
+                    println!("[reorg_executor] Shutting down...");
+                }
+                break;
+            }
+        }
+    }
 }
 
 /// Shutdown management using broadcast channel for coordinated shutdown.

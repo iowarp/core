@@ -56,3 +56,29 @@ file(CHMOD ${CMAKE_BINARY_DIR}/bin/Aneris_telemetry_adios
 )
 
 message(STATUS "Generated Aneris_telemetry_adios wrapper: ${CMAKE_BINARY_DIR}/bin/Aneris_telemetry_adios")
+
+# ADIOS2 tuning script
+configure_file(
+    ${CMAKE_CURRENT_LIST_DIR}/Aneris_tune_adios.in
+    ${CMAKE_BINARY_DIR}/bin/Aneris_tune_adios
+    @ONLY
+)
+
+file(CHMOD ${CMAKE_BINARY_DIR}/bin/Aneris_tune_adios
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+)
+
+message(STATUS "Generated Aneris_tune_adios wrapper: ${CMAKE_BINARY_DIR}/bin/Aneris_tune_adios")
+
+# ADIOS2 intercept script (I/O interception without runtime/telemetry)
+configure_file(
+    ${CMAKE_CURRENT_LIST_DIR}/Aneris_intercept_adios.in
+    ${CMAKE_BINARY_DIR}/bin/Aneris_intercept_adios
+    @ONLY
+)
+
+file(CHMOD ${CMAKE_BINARY_DIR}/bin/Aneris_intercept_adios 
+    PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+)
+
+message(STATUS "Generated Aneris_intercept_adios wrapper: ${CMAKE_BINARY_DIR}/bin/Aneris_intercept_adios")
