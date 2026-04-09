@@ -1,14 +1,67 @@
-# Find FUSE3
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(FUSE3 QUIET fuse3)
-
-if(NOT FUSE3_FOUND)
-  message(WARNING "FUSE3 not found. FUSE adapter will not be built.")
-  message(STATUS "To install FUSE3: sudo apt install libfuse3-dev")
-  return()
+# Find FUSE3 from multiple sources (spack, apt, custom paths)
+# Method 1: Try pkg-config first (works with spack)
+find_package(PkgConfig)
+if(PkgConfig_FOUND)
+  pkg_check_modules(FUSE3 QUIET fuse3)
 endif()
 
-message(STATUS "Found FUSE3: ${FUSE3_VERSION}")
+# Method 2: If pkg-config fails, try direct find (works with apt)
+if(NOT FUSE3_FOUND)
+  # Find the library directly
+  find_library(FUSE3_LIBRARY 
+    NAMES fuse3
+    PATHS 
+      /usr/lib/x86_64-linux-gnu  # Ubuntu/Debian apt location
+      /usr/lib64                 # RHEL/CentOS
+      /usr/local/lib
+      ${FUSE3_ROOT}/lib          # Custom path
+    PATH_SUFFIXES fuse3
+  )
+  
+  # Find headers
+  find_path(FUSE3_INCLUDE_DIR
+    NAMES fuse3/fuse.h
+    PATHS
+      /usr/include/fuse3         # Ubuntu/Debian
+      /usr/local/include/fuse3
+      ${FUSE3_ROOT}/include
+  )
+  
+  if(FUSE3_LIBRARY AND FUSE3_INCLUDE_DIR)
+    set(FUSE3_FOUND TRUE)
+    set(FUSE3_LIBRARIES ${FUSE3_LIBRARY})
+    set(FUSE3_INCLUDE_DIRS ${FUSE3_INCLUDE_DIR})
+    get_filename_component(FUSE3_LIBDIR ${FUSE3_LIBRARY} DIRECTORY)
+  endif()
+endif()
+
+# Method 3: Allow explicit FUSE3_ROOT
+if(FUSE3_ROOT AND NOT FUSE3_FOUND)
+  find_library(FUSE3_LIBRARY fuse3 PATHS ${FUSE3_ROOT}/lib NO_DEFAULT_PATH)
+  find_path(FUSE3_INCLUDE_DIR fuse3/fuse.h PATHS ${FUSE3_ROOT}/include NO_DEFAULT_PATH)
+  if(FUSE3_LIBRARY AND FUSE3_INCLUDE_DIR)
+    set(FUSE3_FOUND TRUE)
+    set(FUSE3_LIBRARIES ${FUSE3_LIBRARY})
+    set(FUSE3_INCLUDE_DIRS ${FUSE3_INCLUDE_DIR})
+  endif()
+endif()
+
+# Verify found or fail
+if(NOT FUSE3_FOUND)
+  message(FATAL_ERROR
+    "FUSE3 not found but WRP_CTE_ENABLE_FUSE_ADAPTER=ON.\n"
+    "Searched:\n"
+    "  - pkg-config (set PKG_CONFIG_PATH for spack)\n"
+    "  - /usr/lib/x86_64-linux-gnu (apt)\n"
+    "  - /usr/local/lib\n"
+    "Install: sudo apt install libfuse3-dev\n"
+    "Or set:  cmake -DFUSE3_ROOT=/path/to/fuse3 .."
+  )
+endif()
+
+message(STATUS "Found FUSE3:")
+message(STATUS "  Libraries: ${FUSE3_LIBRARIES}")
+message(STATUS "  Includes:  ${FUSE3_INCLUDE_DIRS}")
 
 add_executable(wrp_cte_fuse
     fuse_cte.cc)
