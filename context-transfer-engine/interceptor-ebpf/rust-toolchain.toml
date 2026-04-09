@@ -1,0 +1,5 @@
+# Use nightly toolchain for eBPF builds (requires -Zbuild-std)
+[toolchain]
+channel = "nightly"
+components = ["rust-src"]
+targets = ["bpfel-unknown-none"]

@@ -1,0 +1,6 @@
+# Workspace-level Cargo configuration
+# Handles both user-space (native) and eBPF (bpfel-unknown-none) targets
+
+[alias]
+# Convenience alias for building eBPF components
+ebpf = "build --target bpfel-unknown-none --profile ebpf -p interceptor-ebpf"
