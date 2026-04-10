@@ -129,6 +129,22 @@ struct nonatomic {
   /** System-scope load (same as load for nonatomic) */
   HSHM_INLINE_CROSS_FUN T load_system() const { return x; }
 
+  /** System-scope fetch_add (same as fetch_add for nonatomic) */
+  template <typename U>
+  HSHM_INLINE_CROSS_FUN T fetch_add_system(U count) {
+    T orig_x = x;
+    x += (T)count;
+    return orig_x;
+  }
+
+  /** System-scope fetch_sub (same as fetch_sub for nonatomic) */
+  template <typename U>
+  HSHM_INLINE_CROSS_FUN T fetch_sub_system(U count) {
+    T orig_x = x;
+    x -= (T)count;
+    return orig_x;
+  }
+
   /** Get reference to x */
   HSHM_INLINE_CROSS_FUN T &ref() { return x; }
 
@@ -376,6 +392,39 @@ struct rocm_atomic {
     } else {
       return atomicExch(&x, count);
     }
+  }
+
+  /** System-scope atomic fetch_add (visible to CPU from GPU immediately) */
+  template <typename U>
+  HSHM_INLINE_CROSS_FUN T fetch_add_system(U count) {
+#if HSHM_IS_GPU
+    if constexpr (sizeof(T) == 8) {
+      return atomicAdd_system(reinterpret_cast<unsigned long long *>(&x),
+                              static_cast<unsigned long long>(count));
+    } else {
+      return atomicAdd_system(reinterpret_cast<unsigned int *>(&x),
+                              static_cast<unsigned int>(count));
+    }
+#else
+    return fetch_add(count);
+#endif
+  }
+
+  /** System-scope atomic fetch_sub (visible to CPU from GPU immediately) */
+  template <typename U>
+  HSHM_INLINE_CROSS_FUN T fetch_sub_system(U count) {
+#if HSHM_IS_GPU
+    if constexpr (sizeof(T) == 8) {
+      return atomicAdd_system(
+          reinterpret_cast<unsigned long long *>(&x),
+          static_cast<unsigned long long>(-static_cast<long long>(count)));
+    } else {
+      return atomicAdd_system(reinterpret_cast<unsigned int *>(&x),
+                              static_cast<unsigned int>(-static_cast<int>(count)));
+    }
+#else
+    return fetch_sub(count);
+#endif
   }
 
   /** System-scope atomic store (visible to CPU from GPU) */
@@ -640,6 +689,18 @@ struct std_atomic {
   /** System-scope load (same as load for std_atomic) */
   HSHM_INLINE T load_system() const {
     return x.load(std::memory_order_seq_cst);
+  }
+
+  /** System-scope fetch_add (same as fetch_add for std_atomic) */
+  template <typename U>
+  HSHM_INLINE T fetch_add_system(U count) {
+    return x.fetch_add(count, std::memory_order_seq_cst);
+  }
+
+  /** System-scope fetch_sub (same as fetch_sub for std_atomic) */
+  template <typename U>
+  HSHM_INLINE T fetch_sub_system(U count) {
+    return x.fetch_sub(count, std::memory_order_seq_cst);
   }
 
   /** Atomic exchange wrapper */

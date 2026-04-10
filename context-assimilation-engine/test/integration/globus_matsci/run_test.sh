@@ -35,6 +35,11 @@ echo "Globus Materials Science Integration Test"
 echo "========================================="
 echo ""
 
+# Source saved tokens if not already set
+if [ -z "${GLOBUS_ACCESS_TOKEN}" ] && [ -f /tmp/globus_tokens.sh ]; then
+    source /tmp/globus_tokens.sh
+fi
+
 # Check for Globus access token
 if [ -z "${GLOBUS_ACCESS_TOKEN}" ]; then
     echo "ERROR: GLOBUS_ACCESS_TOKEN environment variable is not set"
@@ -62,7 +67,7 @@ echo ""
 # The runtime config contains a compose section that creates both
 # CTE (pool 512.0) and CAE (pool 400.0) automatically on startup.
 echo "Starting Chimaera runtime..."
-export CHIMAERA_CONF="${RUNTIME_CONF}"
+export CHI_SERVER_CONF="${RUNTIME_CONF}"
 chimaera runtime start &
 CHIMAERA_PID=$!
 echo "Chimaera runtime started (PID: ${CHIMAERA_PID})"
@@ -70,7 +75,7 @@ echo ""
 
 # Wait for runtime to initialize and create pools
 echo "Waiting for runtime to initialize..."
-sleep 3
+sleep 10
 echo ""
 
 # Process OMNI file

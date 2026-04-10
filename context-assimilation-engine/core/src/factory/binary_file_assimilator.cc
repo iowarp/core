@@ -55,6 +55,12 @@ BinaryFileAssimilator::BinaryFileAssimilator(
 
 chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
                                                 int& error_code) {
+#ifdef __NVCOMPILER
+  thread_local chi::RunContext _fb_rctx;
+  chi::RunContext* _fp = chi::GetCurrentRunContextFromWorker();
+  chi::RunContext& rctx = _fp ? *_fp : _fb_rctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   HLOG(kDebug,
        "BinaryFileAssimilator::Schedule ENTRY: src='{}', dst='{}', "
        "range_off={}, range_size={}",
@@ -71,7 +77,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
          "'{}'",
          dst_protocol);
     error_code = -1;
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Extract tag name from destination URL
@@ -82,19 +88,19 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
     HLOG(kError,
          "BinaryFileAssimilator: Invalid destination URL, no tag name found");
     error_code = -2;
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Get or create the tag in CTE
   HLOG(kDebug, "BinaryFileAssimilator: Getting or creating tag '{}'", tag_name);
   auto tag_task = cte_client_->AsyncGetOrCreateTag(tag_name);
-  co_await tag_task;
+  CHI_CO_AWAIT(tag_task);
   wrp_cte::core::TagId tag_id = tag_task->tag_id_;
   if (tag_id.IsNull()) {
     HLOG(kError, "BinaryFileAssimilator: Failed to get or create tag '{}'",
          tag_name);
     error_code = -3;
-    co_return;
+    CHI_CO_RETURN;
   }
   HLOG(kDebug, "BinaryFileAssimilator: Tag '{}' obtained/created successfully",
        tag_name);
@@ -108,7 +114,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
          "(depends_on: {})",
          ctx.depends_on);
     error_code = 0;
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Extract source file path
@@ -119,7 +125,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
     HLOG(kError,
          "BinaryFileAssimilator: Invalid source URL, no file path found");
     error_code = -4;
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Determine file size and chunk parameters
@@ -138,7 +144,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
       HLOG(kError, "BinaryFileAssimilator: Failed to get file size for '{}'",
            src_path);
       error_code = -5;
-      co_return;
+      CHI_CO_RETURN;
     }
     HLOG(kDebug, "BinaryFileAssimilator: File size={} bytes", file_size);
     // Validate range
@@ -148,7 +154,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
            "{}, file_size: {})",
            chunk_offset, total_size, file_size);
       error_code = -6;
-      co_return;
+      CHI_CO_RETURN;
     }
   } else {
     HLOG(kDebug, "BinaryFileAssimilator: Using full file mode");
@@ -158,7 +164,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
       HLOG(kError, "BinaryFileAssimilator: Failed to get file size for '{}'",
            src_path);
       error_code = -5;
-      co_return;
+      CHI_CO_RETURN;
     }
     HLOG(kDebug, "BinaryFileAssimilator: File size={} bytes", file_size);
     chunk_offset = 0;
@@ -178,7 +184,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
       cte_client_->AsyncPutBlob(tag_id, "description", 0, desc_size,
                                 desc_buffer.shm_.template Cast<void>(), 1.0f,
                                 wrp_cte::core::Context(), 0);
-  co_await desc_task;
+  CHI_CO_AWAIT(desc_task);
 
   if (desc_task->return_code_ != 0) {
     HLOG(kError,
@@ -186,7 +192,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
          "return_code: {}",
          tag_name, desc_task->return_code_);
     error_code = -9;
-    co_return;
+    CHI_CO_RETURN;
   }
   HLOG(kDebug, "BinaryFileAssimilator: Description blob stored successfully");
 
@@ -207,7 +213,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
   if (!file.is_open()) {
     HLOG(kError, "BinaryFileAssimilator: Failed to open file '{}'", src_path);
     error_code = -7;
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Seek to the starting offset
@@ -218,7 +224,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
          "BinaryFileAssimilator: Failed to seek to offset {} in file '{}'",
          chunk_offset, src_path);
     error_code = -8;
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Process chunks in batches
@@ -274,7 +280,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
                file.tellg(), bytes_processed, total_size);
           CHI_IPC->FreeBuffer(buffer_ptr);
           error_code = -9;
-          co_return;
+          CHI_CO_RETURN;
         }
       }
 
@@ -310,7 +316,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
     if (!active_tasks.empty()) {
       // Wait for the first task to complete
       auto& first_task = active_tasks.front();
-      co_await first_task;
+      CHI_CO_AWAIT(first_task);
 
       if (first_task->return_code_ != 0) {
         HLOG(kError, "BinaryFileAssimilator: PutBlob task failed with code {}",
@@ -318,7 +324,7 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
         // Free the buffer before deleting the task
         CHI_IPC->FreeBuffer(first_task->blob_data_.template Cast<char>());
         error_code = -10;
-        co_return;
+        CHI_CO_RETURN;
       }
 
       // Free the buffer before deleting the task
@@ -332,14 +338,14 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
        "BinaryFileAssimilator: Waiting for {} remaining tasks to complete",
        active_tasks.size());
   for (auto& task : active_tasks) {
-    co_await task;
+    CHI_CO_AWAIT(task);
     if (task->return_code_ != 0) {
       HLOG(kError, "BinaryFileAssimilator: PutBlob task failed with code {}",
            task->return_code_);
       // Free the buffer before deleting the task
       CHI_IPC->FreeBuffer(task->blob_data_.template Cast<char>());
       error_code = -10;
-      co_return;
+      CHI_CO_RETURN;
     }
     // Free the buffer before deleting the task
     CHI_IPC->FreeBuffer(task->blob_data_.template Cast<char>());
@@ -354,7 +360,8 @@ chi::TaskResume BinaryFileAssimilator::Schedule(const AssimilationCtx& ctx,
   HLOG(kDebug, "BinaryFileAssimilator::Schedule EXIT: Success");
 
   error_code = 0;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 std::string BinaryFileAssimilator::GetUrlProtocol(const std::string& url) {

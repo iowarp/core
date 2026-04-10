@@ -35,7 +35,9 @@
 #define CHIMAERA_INCLUDE_CHIMAERA_WORKERS_WORKER_H_
 
 #include <chrono>
+#ifndef __NVCOMPILER
 #include <coroutine>
+#endif
 #include <functional>
 #include <mutex>
 #include <queue>

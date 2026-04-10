@@ -35,7 +35,6 @@
 #define HSHM_SHM_INCLUDE_HSHM_SHM_UTIL_LOGGING_H_
 
 #include <climits>
-#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>

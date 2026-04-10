@@ -539,8 +539,9 @@ public:
     // Test implementation - do nothing
     (void)method;
     (void)task_ptr;
-    (void)rctx;
-    co_return;
+    CHI_TASK_BODY_BEGIN
+    CHI_CO_RETURN;
+    CHI_TASK_BODY_END
   }
 
   void SaveTask(chi::u32 method, chi::SaveTaskArchive &archive,

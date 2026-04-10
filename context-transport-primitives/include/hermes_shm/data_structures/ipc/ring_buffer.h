@@ -105,11 +105,16 @@ struct RingBufferEntry {
   bool IsReady() const { return flags_.Any(1); }
 
   /**
-   * Mark entry as ready (release semantics)
-   * Call this AFTER writing data to ensure visibility
+   * Mark entry as ready with system-scope release semantics.
+   * threadfence_system ensures preceding data_ writes are visible to CPU
+   * before the ready flag is set. SetBitsSystem uses atomicExch_system so
+   * the flag itself is immediately visible across the CPU-GPU boundary.
    */
   HSHM_INLINE_CROSS_FUN
-  void SetReady() { flags_.SetBits(1); }
+  void SetReady() {
+    hshm::ipc::threadfence_system();
+    flags_.SetBitsSystem(1);
+  }
 
   /**
    * Clear ready flag
@@ -418,9 +423,11 @@ class ring_buffer : public ShmContainer<AllocT> {
    */
   template <typename... Args>
   HSHM_CROSS_FUN bool Emplace(Args&&... args) {
-    // Load head and allocate a slot atomically
+    // Load head and allocate a slot atomically.
+    // fetch_add_system ensures the tail increment is immediately visible to
+    // CPU threads polling the ring buffer without cudaDeviceSynchronize.
     u64 head = head_.load();
-    u64 tail = tail_.fetch_add(1);
+    u64 tail = tail_.fetch_add_system(1);
     entry_vector& queue = queue_;
 
     // Check if there's space in the queue
