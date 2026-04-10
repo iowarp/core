@@ -697,15 +697,13 @@ chi::TaskResume Runtime::WriteToFile(hipc::FullPtr<WriteTask> task,
       }
 
       pending_ios.push_back({token, block_idx});
+      data_offset += block_write_size;
       block_idx++;
     }
 
     // Phase 2: Wait for all pending I/Os
     for (auto& [token, idx] : pending_ios) {
       const Block& block = task->blocks_[idx];
-      chi::u64 remaining = task->length_ - total_bytes_written;
-      if (remaining == 0) break;
-      chi::u64 block_write_size = std::min(remaining, block.size_);
 
       hshm::IoResult result;
       while (!io_ctx->async_io_->IsComplete(token, result)) {
@@ -720,9 +718,9 @@ chi::TaskResume Runtime::WriteToFile(hipc::FullPtr<WriteTask> task,
       }
 
       chi::u64 actual_bytes = std::min(
-          static_cast<chi::u64>(result.bytes_transferred), block_write_size);
+          static_cast<chi::u64>(result.bytes_transferred), block.size_);
       total_bytes_written += actual_bytes;
-      data_offset += actual_bytes;
+      // data_offset removed - now incremented in Phase 1
     }
 
     pending_ios.clear();
@@ -782,15 +780,13 @@ chi::TaskResume Runtime::ReadFromFile(hipc::FullPtr<ReadTask> task,
       }
 
       pending_ios.push_back({token, block_idx});
+      data_offset += block_read_size;
       block_idx++;
     }
 
     // Phase 2: Wait for all pending I/Os
     for (auto& [token, idx] : pending_ios) {
       const Block& block = task->blocks_[idx];
-      chi::u64 remaining = task->length_ - total_bytes_read;
-      if (remaining == 0) break;
-      chi::u64 block_read_size = std::min(remaining, block.size_);
 
       hshm::IoResult result;
       while (!io_ctx->async_io_->IsComplete(token, result)) {
@@ -805,9 +801,8 @@ chi::TaskResume Runtime::ReadFromFile(hipc::FullPtr<ReadTask> task,
       }
 
       chi::u64 actual_bytes = std::min(
-          static_cast<chi::u64>(result.bytes_transferred), block_read_size);
+          static_cast<chi::u64>(result.bytes_transferred), block.size_);
       total_bytes_read += actual_bytes;
-      data_offset += actual_bytes;
     }
 
     pending_ios.clear();
@@ -850,9 +845,9 @@ chi::TaskResume Runtime::GetStats(hipc::FullPtr<GetStatsTask> task,
 
 chi::TaskResume Runtime::Destroy(hipc::FullPtr<DestroyTask> task,
                                  chi::RunContext& ctx) {
-  // Worker I/O contexts (and their AsyncIO instances) are cleaned up by
-  // destructor Note: GlobalBlockMap and Heap cleanup is handled by their
-  // destructors
+  // Worker I/O contexts (and their AsyncIO instances) are cleaned up by the
+  // destructor. Note: GlobalBlockMap and Heap cleanup is handled by their
+  // respective destructors.
 
   task->return_code_ = 0;
   (void)ctx;
