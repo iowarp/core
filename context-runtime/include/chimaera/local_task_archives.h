@@ -487,6 +487,11 @@ class LocalSaveTaskArchive : public LocalLbmBase {
     serializer_.Finalize();
     return buffer_;
   }
+
+  HSHM_CROSS_FUN BufferT &GetMutableData() {
+    serializer_.Finalize();
+    return buffer_;
+  }
 };
 
 /**
