@@ -41,7 +41,7 @@
 
 use aya_ebpf::{
     macros::{map, tracepoint},
-    maps::RingBuf,
+    maps::{LruHashMap, RingBuf},
     programs::TracePointContext,
     EbpfContext,
 };
@@ -50,6 +50,12 @@ use interceptor_ebpf_common::{IoEvent, IoOp};
 /// Ring buffer for sending events to user-space.
 #[map]
 static EVENTS: RingBuf = RingBuf::with_byte_size(1024 * 1024, 0);
+
+/// Map for tracking PIDs in the process tree.
+/// Key: PID (u32), Value: placeholder (1_u32)
+/// Using LRU HashMap for automatic eviction of dead processes.
+#[map]
+static TRACKED_PIDS: LruHashMap<u32, u32> = LruHashMap::with_max_entries(1024, 0);
 
 /// Maximum path length for openat syscall.
 const MAX_PATH_LEN: usize = 256;
@@ -141,6 +147,23 @@ struct SysExitCloseArgs {
     ret: i64,
 }
 
+/// Argument structure for sched_process_fork tracepoint.
+#[repr(C)]
+struct SchedProcessForkArgs {
+    parent_pid: i32,
+    parent_comm: *const u8,
+    child_pid: i32,
+    child_comm: *const u8,
+}
+
+/// Argument structure for sched_process_exit tracepoint.
+#[repr(C)]
+struct SchedProcessExitArgs {
+    pid: i32,
+    prio: i32,
+    exit_code: i32,
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -187,6 +210,9 @@ unsafe fn emit_event(event: IoEvent) {
 /// In eBPF tracepoints, the context contains process information.
 /// We extract PID and TID from the current task.
 ///
+/// # Arguments
+/// * `ctx` - Tracepoint context containing syscall arguments.
+///
 /// # Returns
 /// (pid, tid) tuple
 #[inline(always)]
@@ -200,9 +226,48 @@ fn get_pid_tid() -> (u32, u32) {
     (pid, tid)
 }
 
+/// Check if a PID is in the tracked set.
+#[inline(always)]
+fn is_pid_tracked(pid: u32) -> bool {
+    unsafe { TRACKED_PIDS.get(&pid).is_some() }
+}
+
 // ============================================================================
 // Tracepoint Handlers
 // ============================================================================
+// Tracepoint Handlers
+// ============================================================================
+
+/// Tracepoint for sched_process_fork - track child PIDs for process tree.
+#[tracepoint]
+pub fn sched_process_fork(ctx: TracePointContext) -> Result<(), i32> {
+    let args = unsafe { &*(ctx.as_ptr() as *const SchedProcessForkArgs) };
+
+    let pid_tgid = aya_ebpf::helpers::bpf_get_current_pid_tgid();
+    let parent_pid = (pid_tgid >> 32) as u32;
+    let child_pid = args.child_pid as u32;
+
+    // If parent is tracked, add child to tracked set
+    if is_pid_tracked(parent_pid) {
+        if let Err(ret) = unsafe { TRACKED_PIDS.insert(&child_pid, &1_u32, 0) } {
+            return Err(ret);
+        }
+    }
+
+    Ok(())
+}
+
+/// Tracepoint for sched_process_exit - clean up PIDs on process exit.
+#[tracepoint]
+pub fn sched_process_exit(ctx: TracePointContext) -> Result<(), i32> {
+    let args = unsafe { &*(ctx.as_ptr() as *const SchedProcessExitArgs) };
+    let pid = args.pid as u32;
+
+    // Remove from tracked set if present (ignore errors)
+    let _ = unsafe { TRACKED_PIDS.remove(&pid) };
+
+    Ok(())
+}
 
 /// Tracepoint for sys_enter_openat - intercept file open operations.
 ///
@@ -213,6 +278,11 @@ fn get_pid_tid() -> (u32, u32) {
 #[tracepoint]
 pub fn sys_enter_openat(ctx: TracePointContext) {
     let (pid, tid) = get_pid_tid();
+
+    // FILTER: Only process if PID is tracked
+    if !is_pid_tracked(pid) {
+        return;
+    }
 
     // Read tracepoint args using proper structure cast
     let args = unsafe { &*(ctx.as_ptr() as *const SysEnterOpenatArgs) };
@@ -247,6 +317,11 @@ pub fn sys_enter_openat(ctx: TracePointContext) {
 pub fn sys_exit_openat(ctx: TracePointContext) {
     let (pid, tid) = get_pid_tid();
 
+    // FILTER: Only process if PID is tracked
+    if !is_pid_tracked(pid) {
+        return;
+    }
+
     // Read return value from tracepoint args
     let args = unsafe { &*(ctx.as_ptr() as *const SysExitOpenatArgs) };
     let ret = args.ret as i32;
@@ -277,6 +352,11 @@ pub fn sys_exit_openat(ctx: TracePointContext) {
 #[tracepoint]
 pub fn sys_enter_read(ctx: TracePointContext) {
     let (pid, tid) = get_pid_tid();
+
+    // FILTER: Only process if PID is tracked
+    if !is_pid_tracked(pid) {
+        return;
+    }
 
     // Read tracepoint args using proper structure cast
     let args = unsafe { &*(ctx.as_ptr() as *const SysEnterReadArgs) };

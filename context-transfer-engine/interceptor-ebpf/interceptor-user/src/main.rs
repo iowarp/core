@@ -39,6 +39,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use aya::maps::HashMap;
 use aya::programs::TracePoint;
 use aya::{include_bytes_aligned, Ebpf};
 use clap::Parser;
@@ -145,6 +146,35 @@ fn attach_tracepoints(bpf: &mut Ebpf) -> Result<(), anyhow::Error> {
     program.load()?;
     program.attach("syscalls", "sys_exit_close")?;
     info!("Attached sys_exit_close tracepoint");
+
+    Ok(())
+}
+
+/// Attach lifecycle tracepoints for process tree tracking.
+///
+/// # Arguments
+/// * `bpf` - The loaded BPF object.
+///
+/// # Returns
+/// Result indicating success or failure.
+fn attach_lifecycle_tracepoints(bpf: &mut Ebpf) -> Result<(), anyhow::Error> {
+    // Attach sched_process_fork tracepoint
+    let program: &mut TracePoint = bpf
+        .program_mut("sched_process_fork")
+        .ok_or_else(|| anyhow::anyhow!("sched_process_fork program not found"))?
+        .try_into()?;
+    program.load()?;
+    program.attach("sched", "sched_process_fork")?;
+    info!("Attached sched_process_fork tracepoint");
+
+    // Attach sched_process_exit tracepoint
+    let program: &mut TracePoint = bpf
+        .program_mut("sched_process_exit")
+        .ok_or_else(|| anyhow::anyhow!("sched_process_exit program not found"))?
+        .try_into()?;
+    program.load()?;
+    program.attach("sched", "sched_process_exit")?;
+    info!("Attached sched_process_exit tracepoint");
 
     Ok(())
 }
@@ -298,6 +328,22 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Attach tracepoints
     attach_tracepoints(&mut bpf)?;
+
+    // Attach lifecycle tracepoints for process tree tracking
+    attach_lifecycle_tracepoints(&mut bpf)?;
+
+    // Initialize tracked PIDs map if a specific PID was provided
+    if let Some(pid) = args.pid {
+        let mut tracked_pids: HashMap<_, u32, u32> = bpf
+            .map_mut("TRACKED_PIDS")
+            .ok_or_else(|| anyhow::anyhow!("TRACKED_PIDS map not found"))?
+            .try_into()?;
+        tracked_pids.insert(pid, 1u32, 0)?;
+        info!("Tracking PID {} and all its children", pid);
+    } else {
+        // If no PID specified, track all processes by default
+        info!("No PID filter specified - tracking all processes");
+    }
 
     // Get the ring buffer for events
     // In Aya 0.13, take_map() returns Option<Map> directly

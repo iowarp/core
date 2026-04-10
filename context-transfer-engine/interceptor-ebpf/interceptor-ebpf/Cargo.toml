@@ -35,9 +35,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-aya-ebpf = "0.11"
-aya-ebpf-bindings = "0.11"
-aya-log-ebpf = "0.11"
+aya-ebpf = "0.1.1"
+aya-ebpf-bindings = "0.1.1"
+aya-log-ebpf = "0.1.0"
 interceptor-ebpf-common = { path = "../interceptor-ebpf-common" }
 
 [[bin]]
