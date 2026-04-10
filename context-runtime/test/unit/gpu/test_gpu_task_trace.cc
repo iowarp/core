@@ -302,6 +302,10 @@ TEST_CASE("gpu2gpu_trace", "[gpu][gpu2gpu][trace]") {
           ms, result, expected);
   REQUIRE(result == expected);
 
+  // Wait for kernel to fully complete (including gpu::Future destructors
+  // that free task memory from the GPU allocator).
+  cudaStreamSynchronize(static_cast<cudaStream_t>(stream));
+
   // Cleanup
   ipc->GetGpuIpcManager()->PauseGpuOrchestrator();
   cudaFreeHost(d_result);
@@ -387,6 +391,10 @@ TEST_CASE("gpu2cpu_trace", "[gpu][gpu2cpu][trace]") {
   REQUIRE(*d_result == 1);
   REQUIRE(*d_rv == expected);
 
+  // Wait for kernel to fully complete (including gpu::Future destructors
+  // that free task memory from the GPU allocator).
+  cudaStreamSynchronize(static_cast<cudaStream_t>(stream));
+
   // Cleanup
   ipc->GetGpuIpcManager()->PauseGpuOrchestrator();
   cudaFreeHost(d_result);
@@ -401,6 +409,14 @@ int main(int argc, char *argv[]) {
   std::string filter = "";
   if (argc > 1) filter = argv[1];
   int result = SimpleTest::run_all_tests(filter);
+  // Pause the GPU orchestrator before exit to prevent it from accessing
+  // freed memory during CUDA runtime teardown.
+  if (g_initialized) {
+    auto *ipc = CHI_CPU_IPC;
+    if (ipc && ipc->GetGpuIpcManager()) {
+      ipc->GetGpuIpcManager()->PauseGpuOrchestrator();
+    }
+  }
   fflush(stdout);
   fflush(stderr);
   _exit(result == 0 ? 0 : 1);

@@ -32,41 +32,42 @@ void Runtime::Init(const chi::PoolId &pool_id, const std::string &pool_name,
 }
 
 chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) {
+  CHI_TASK_BODY_BEGIN
   switch (method) {
     case Method::kCreate: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<CreateTask> typed_task = task_ptr.template Cast<CreateTask>();
-      co_await Create(typed_task, rctx);
+      CHI_CO_AWAIT(Create(typed_task, rctx));
       break;
     }
     case Method::kDestroy: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<DestroyTask> typed_task = task_ptr.template Cast<DestroyTask>();
-      co_await Destroy(typed_task, rctx);
+      CHI_CO_AWAIT(Destroy(typed_task, rctx));
       break;
     }
     case Method::kMonitor: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<MonitorTask> typed_task = task_ptr.template Cast<MonitorTask>();
-      co_await Monitor(typed_task, rctx);
+      CHI_CO_AWAIT(Monitor(typed_task, rctx));
       break;
     }
     case Method::kDynamicSchedule: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<DynamicScheduleTask> typed_task = task_ptr.template Cast<DynamicScheduleTask>();
-      co_await DynamicSchedule(typed_task, rctx);
+      CHI_CO_AWAIT(DynamicSchedule(typed_task, rctx));
       break;
     }
     case Method::kCompress: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<CompressTask> typed_task = task_ptr.template Cast<CompressTask>();
-      co_await Compress(typed_task, rctx);
+      CHI_CO_AWAIT(Compress(typed_task, rctx));
       break;
     }
     case Method::kDecompress: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<DecompressTask> typed_task = task_ptr.template Cast<DecompressTask>();
-      co_await Decompress(typed_task, rctx);
+      CHI_CO_AWAIT(Decompress(typed_task, rctx));
       break;
     }
     default: {
@@ -74,8 +75,8 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       break;
     }
   }
-  // co_return makes this a coroutine returning TaskResume
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive, 

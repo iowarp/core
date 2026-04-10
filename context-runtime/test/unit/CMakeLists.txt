@@ -237,9 +237,9 @@ set_target_properties(${PER_PROCESS_SHM_TEST_TARGET} PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
-# Create Autogen Coverage test executable (requires wrp_cae libraries)
-if(TARGET wrp_cae_core_runtime AND TARGET wrp_cae_core_client)
-  add_executable(${AUTOGEN_COVERAGE_TEST_TARGET} ${AUTOGEN_COVERAGE_TEST_SOURCES})
+# Create Autogen Coverage test executable (requires CAE)
+if(WRP_CORE_ENABLE_CAE)
+add_executable(${AUTOGEN_COVERAGE_TEST_TARGET} ${AUTOGEN_COVERAGE_TEST_SOURCES})
 
   target_include_directories(${AUTOGEN_COVERAGE_TEST_TARGET} PRIVATE
     ${CHIMAERA_ROOT}/include
@@ -270,10 +270,10 @@ if(TARGET wrp_cae_core_runtime AND TARGET wrp_cae_core_client)
     CXX_STANDARD_REQUIRED ON
   )
 
-  set_target_properties(${AUTOGEN_COVERAGE_TEST_TARGET} PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-  )
-endif()
+set_target_properties(${AUTOGEN_COVERAGE_TEST_TARGET} PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+endif()  # WRP_CORE_ENABLE_CAE
 
 # Create Streaming test executable
 add_executable(${STREAMING_TEST_TARGET} ${STREAMING_TEST_SOURCES})
@@ -807,18 +807,18 @@ if(WRP_CORE_ENABLE_TESTS)
     ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
   )
 
-  # Autogen Coverage Tests (only if wrp_cae libraries are available)
-  if(TARGET ${AUTOGEN_COVERAGE_TEST_TARGET})
-    add_test(
-      NAME cr_autogen_coverage_tests
-      COMMAND ${AUTOGEN_COVERAGE_TEST_TARGET}
-      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-    )
-    set_tests_properties(cr_autogen_coverage_tests PROPERTIES
-      ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
-      TIMEOUT 300
-    )
-  endif()
+  # Autogen Coverage Tests (requires CAE)
+  if(WRP_CORE_ENABLE_CAE)
+  add_test(
+    NAME cr_autogen_coverage_tests
+    COMMAND ${AUTOGEN_COVERAGE_TEST_TARGET}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_autogen_coverage_tests PROPERTIES
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    TIMEOUT 300
+  )
+  endif()  # WRP_CORE_ENABLE_CAE
 
   # Streaming Tests
   add_test(
@@ -1179,7 +1179,7 @@ add_custom_target(test_all_unit
 )
 
 # Install test executables
-set(_INSTALL_TARGETS
+set(_install_test_targets
   ${TEST_TARGET}
   ${IPC_ALLOCATE_BUFFER_TEST_TARGET}
   ${UNORDERED_MAP_LL_TEST_TARGET}
@@ -1193,10 +1193,10 @@ set(_INSTALL_TARGETS
   ${IPC_TRANSPORT_MODES_TEST_TARGET}
   ${CLIENT_RETRY_TEST_TARGET}
 )
-if(TARGET ${AUTOGEN_COVERAGE_TEST_TARGET})
-  list(APPEND _INSTALL_TARGETS ${AUTOGEN_COVERAGE_TEST_TARGET})
+if(WRP_CORE_ENABLE_CAE)
+  list(APPEND _install_test_targets ${AUTOGEN_COVERAGE_TEST_TARGET})
 endif()
-install(TARGETS ${_INSTALL_TARGETS} RUNTIME DESTINATION bin)
+install(TARGETS ${_install_test_targets} RUNTIME DESTINATION bin)
 
 # Note: Module-specific tests are now in their respective module directories
 # Note: Distributed tests are run via Docker using the chimaera_bdev_chimod_tests binary

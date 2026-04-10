@@ -2221,16 +2221,18 @@ TEST_CASE("End-to-End CTE Core Workflow", "[cte][core][integration]") {
       CTECoreFunctionalTestFixture::kCTECorePoolId, params));
   INFO("Step 1 completed: CTE core pool initialized");
 
-  // Step 2: Register multiple targets
+  // Step 2: Register multiple targets with unique bdev pool IDs.
+  // Each target must use a distinct PoolId so the pool manager creates
+  // separate bdev pools; reusing the same ID causes the second CreatePool
+  // to return the existing pool, leaving only one target registered.
   const std::vector<std::string> target_suffixes = {"target_1", "target_2"};
-  for (const auto &suffix : target_suffixes) {
-    // Use the actual file path as target_name since that's what matters for
-    // bdev creation
-    std::string target_name = fixture->test_storage_path_ + "_" + suffix;
+  for (size_t i = 0; i < target_suffixes.size(); ++i) {
+    std::string target_name =
+        fixture->test_storage_path_ + "_" + target_suffixes[i];
     chi::u32 result = fixture->RegisterTargetAsync(
         target_name, chimaera::bdev::BdevType::kFile,
         CTECoreFunctionalTestFixture::kTestTargetSize, chi::PoolQuery::Local(),
-        chi::PoolId(607, 0));
+        chi::PoolId(607 + static_cast<chi::u32>(i), 0));
     REQUIRE(result == 0);
   }
   INFO("Step 2 completed: Multiple targets registered");

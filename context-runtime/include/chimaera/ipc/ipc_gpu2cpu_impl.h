@@ -51,14 +51,27 @@ HSHM_GPU_FUN gpu::Future<TaskT> IpcGpu2Cpu::ClientSend(
 #if HSHM_IS_GPU_COMPILER
 /**
  * GPU-side ClientRecv: poll gpu::FutureShm FUTURE_COMPLETE.
- * Same mechanism as IpcGpu2Gpu::ClientRecv — the CPU runtime signals
- * completion on the gpu::FutureShm via system-scope atomics.
+ * Unlike IpcGpu2Gpu::ClientRecv, this does NOT mark the future as consumed
+ * because the CPU RuntimeSend owns task cleanup for gpu2cpu tasks. The GPU
+ * kernel must not free the task — the pinned host memory is freed by the
+ * CPU after signaling completion.
  */
 template <typename TaskT>
 HSHM_GPU_FUN void IpcGpu2Cpu::ClientRecv(
     gpu::IpcManager *ipc, gpu::Future<TaskT> &future, TaskT *task_ptr) {
-  // Reuse IpcGpu2Gpu::ClientRecv — the polling mechanism is identical
-  gpu::IpcGpu2Gpu::ClientRecv(ipc, future, task_ptr);
+  (void)ipc; (void)task_ptr;
+  if (threadIdx.x != 0) return;
+
+  hipc::FullPtr<gpu::FutureShm> fshm_full = future.GetFutureShm();
+  if (fshm_full.IsNull()) return;
+  gpu::FutureShm *fshm = fshm_full.ptr_;
+  // Poll FUTURE_COMPLETE via volatile read (safe for pinned host memory).
+  volatile unsigned int *fp =
+      reinterpret_cast<volatile unsigned int *>(&fshm->flags_.bits_.x);
+  while (!((*fp) & gpu::FutureShm::FUTURE_COMPLETE)) {}
+  __threadfence_system();
+  // Do NOT call future.Destroy(true): that sets consumed_=true which
+  // causes ~Future to call DelTask. The CPU RuntimeSend handles cleanup.
 }
 #endif  // HSHM_IS_GPU_COMPILER
 

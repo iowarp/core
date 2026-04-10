@@ -41,7 +41,9 @@ using pid_t = int;
 #endif
 
 #include <atomic>
+#ifndef __NVCOMPILER
 #include <coroutine>
+#endif
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -62,6 +64,71 @@ namespace hshm::priv {
 template <typename T, typename AllocT, size_t SmallSize>
 class basic_string;
 }
+
+// ============================================================================
+// NVHPC ucontext_t fiber infrastructure
+// Replaces C++20 coroutines for NVHPC compiler (which crashes on libstdc++
+// coroutines with ICE in llc).
+// ============================================================================
+#ifdef __NVCOMPILER
+#include <ucontext.h>
+#include <functional>
+namespace chi::detail {
+  static constexpr size_t FIBER_STACK_SIZE = 256 * 1024;
+  // Forward declare RunContext for FiberState
+  struct FiberState;
+  inline thread_local FiberState* tls_current_fiber = nullptr;
+
+  struct FiberCallable {
+    virtual void call() = 0;
+    virtual ~FiberCallable() = default;
+  };
+
+  template<typename F>
+  struct FiberCallableT : FiberCallable {
+    F fn;
+    explicit FiberCallableT(F&& f) : fn(std::move(f)) {}
+    void call() override { fn(); }
+  };
+
+  struct FiberState {
+    ucontext_t fiber_ctx;
+    ucontext_t caller_ctx;
+    bool done = false;
+    std::unique_ptr<FiberCallable> fn;
+    std::unique_ptr<char[]> stack;
+    FiberState() : done(false), stack(new char[FIBER_STACK_SIZE]) {}
+  };
+
+  static void fiber_trampoline() {
+    auto* fs = tls_current_fiber;
+    try { fs->fn->call(); } catch(...) {}
+    fs->done = true;
+    swapcontext(&fs->fiber_ctx, &fs->caller_ctx);
+  }
+
+  class FiberHandle {
+  public:
+    FiberState* state_ = nullptr;
+    FiberHandle() = default;
+    explicit FiberHandle(FiberState* s) : state_(s) {}
+    bool done() const noexcept { return !state_ || state_->done; }
+    void resume() {
+      if (!state_ || state_->done) return;
+      auto* prev = tls_current_fiber;
+      tls_current_fiber = state_;
+      swapcontext(&state_->caller_ctx, &state_->fiber_ctx);
+      tls_current_fiber = prev;
+    }
+    void destroy() { delete state_; state_ = nullptr; }
+    explicit operator bool() const { return state_ != nullptr; }
+    bool operator!() const { return state_ == nullptr; }
+    FiberHandle& operator=(std::nullptr_t) noexcept { state_ = nullptr; return *this; }
+    bool operator==(std::nullptr_t) const noexcept { return state_ == nullptr; }
+    bool operator!=(std::nullptr_t) const noexcept { return state_ != nullptr; }
+  };
+} // namespace chi::detail
+#endif // __NVCOMPILER
 
 namespace chi {
 
@@ -436,6 +503,8 @@ class Task {
 // FutureShm and Future classes (must be before RunContext which uses Future)
 #include "chimaera/future.h"
 
+// FutureShm and Future are defined in chimaera/future.h (included above)
+
 namespace chi {
 
 // ============================================================================
@@ -511,8 +580,12 @@ namespace chi {
  * the coro_handle_ is used to resume execution later.
  */
 struct RunContext {
-  /** Coroutine handle for C++20 stackless coroutines */
+  /** Coroutine handle for C++20 stackless coroutines (or fiber handle for NVHPC) */
+#ifndef __NVCOMPILER
   std::coroutine_handle<> coro_handle_;
+#else
+  chi::detail::FiberHandle coro_handle_;
+#endif
   u32 worker_id_;               /**< Worker ID executing this task */
   FullPtr<Task> task_;          /**< Task being executed by this context */
   bool is_yielded_;             /**< Task is waiting for completion */
@@ -541,7 +614,7 @@ struct RunContext {
       predicted_stat_; /**< TaskStat used for prediction (for reinforcement) */
 
   RunContext()
-      : coro_handle_(nullptr),
+      : coro_handle_(),
         worker_id_(0),
         is_yielded_(false),
         yield_time_us_(0.0),
@@ -559,7 +632,7 @@ struct RunContext {
    * Move constructor
    */
   RunContext(RunContext&& other) noexcept
-      : coro_handle_(other.coro_handle_),
+      : coro_handle_(std::move(other.coro_handle_)),
         worker_id_(other.worker_id_),
         task_(std::move(other.task_)),
         is_yielded_(other.is_yielded_),
@@ -581,7 +654,11 @@ struct RunContext {
         wall_timer_(other.wall_timer_),
         predicted_wall_us_(other.predicted_wall_us_),
         predicted_stat_(other.predicted_stat_) {
+#ifndef __NVCOMPILER
     other.coro_handle_ = nullptr;
+#else
+    other.coro_handle_ = chi::detail::FiberHandle{};
+#endif
     other.event_queue_ = nullptr;
   }
 
@@ -590,7 +667,7 @@ struct RunContext {
    */
   RunContext& operator=(RunContext&& other) noexcept {
     if (this != &other) {
-      coro_handle_ = other.coro_handle_;
+      coro_handle_ = std::move(other.coro_handle_);
       worker_id_ = other.worker_id_;
       task_ = std::move(other.task_);
       is_yielded_ = other.is_yielded_;
@@ -612,7 +689,11 @@ struct RunContext {
       wall_timer_ = other.wall_timer_;
       predicted_wall_us_ = other.predicted_wall_us_;
       predicted_stat_ = other.predicted_stat_;
+#ifndef __NVCOMPILER
       other.coro_handle_ = nullptr;
+#else
+      other.coro_handle_ = chi::detail::FiberHandle{};
+#endif
       other.event_queue_ = nullptr;
     }
     return *this;
@@ -649,6 +730,7 @@ struct RunContext {
 // definition)
 // ============================================================================
 
+#ifndef __NVCOMPILER
 template <typename TaskT, typename AllocT>
 bool Future<TaskT, AllocT>::await_suspend_impl(
     std::coroutine_handle<> handle) noexcept {
@@ -669,11 +751,13 @@ bool Future<TaskT, AllocT>::await_suspend_impl(
   run_ctx->yield_time_us_ = 0.0;
   return true;  // Suspend the coroutine
 }
+#endif // !__NVCOMPILER
 
 // ============================================================================
 // TaskResume and YieldAwaiter (must be after RunContext for member access)
 // ============================================================================
 
+#ifndef __NVCOMPILER
 /**
  * TaskResume - Coroutine return type for runtime methods
  *
@@ -984,6 +1068,63 @@ class TaskResume {
   }
 };
 
+#else // __NVCOMPILER - use ucontext_t fiber-based TaskResume
+
+/**
+ * TaskResume (NVHPC) - Fiber-based return type for runtime methods
+ *
+ * Wraps a chi::detail::FiberHandle instead of a coroutine handle.
+ * Used when compiling with NVHPC which crashes on C++20 coroutines.
+ */
+class TaskResume {
+  chi::detail::FiberHandle handle_;
+
+public:
+  TaskResume() = default;
+  explicit TaskResume(chi::detail::FiberHandle h) : handle_(std::move(h)) {}
+
+  TaskResume(TaskResume&& o) noexcept : handle_(o.handle_) {
+    o.handle_ = chi::detail::FiberHandle{};
+  }
+
+  TaskResume& operator=(TaskResume&& o) noexcept {
+    if (this != &o) {
+      if (handle_) handle_.destroy();
+      handle_ = o.handle_;
+      o.handle_ = chi::detail::FiberHandle{};
+    }
+    return *this;
+  }
+
+  TaskResume(const TaskResume&) = delete;
+  TaskResume& operator=(const TaskResume&) = delete;
+
+  ~TaskResume() {
+    if (handle_) handle_.destroy();
+  }
+
+  bool done() const { return handle_.done(); }
+  void resume() { handle_.resume(); }
+  void destroy() { handle_.destroy(); }
+
+  chi::detail::FiberHandle& get_handle() { return handle_; }
+  const chi::detail::FiberHandle& get_handle() const { return handle_; }
+
+  /**
+   * Release ownership of the fiber handle without destroying it
+   */
+  chi::detail::FiberHandle release() {
+    auto h = handle_;
+    handle_ = chi::detail::FiberHandle{};
+    return h;
+  }
+
+  explicit operator bool() const { return bool(handle_); }
+  bool operator!() const { return !handle_; }
+};
+
+#endif // __NVCOMPILER
+
 /**
  * YieldAwaiter - Awaitable for yielding control in coroutines
  *
@@ -1013,6 +1154,7 @@ class YieldAwaiter {
    */
   bool await_ready() const noexcept { return false; }
 
+#ifndef __NVCOMPILER
   /**
    * Suspend the coroutine and mark for yielded resumption
    *
@@ -1033,11 +1175,17 @@ class YieldAwaiter {
     run_ctx->yield_time_us_ = yield_time_us_;
     return true;  // Suspend the coroutine
   }
+#endif // !__NVCOMPILER
 
   /**
    * Resume after yield - nothing to return
    */
   void await_resume() noexcept {}
+
+  /**
+   * Get the yield time in microseconds (used by fiber_co_await for NVHPC)
+   */
+  double get_yield_time_us() const noexcept { return yield_time_us_; }
 };
 
 /**
@@ -1060,5 +1208,94 @@ inline YieldAwaiter yield(double us = 0.0) { return YieldAwaiter(us); }
 #undef CLASS_NEW_ARGS
 
 }  // namespace chi
+
+// ============================================================================
+// NVHPC fiber_co_await overloads and make_task_fiber
+// (outside chi namespace, in chi::detail namespace)
+// ============================================================================
+#ifdef __NVCOMPILER
+namespace chi::detail {
+
+/// Yield awaiter overload: suspends fiber and marks rctx as yielded
+inline void fiber_co_await(chi::YieldAwaiter ya, chi::RunContext& rctx) {
+  auto* fs = tls_current_fiber;
+  if (!fs) return;
+  rctx.is_yielded_ = true;
+  rctx.yield_time_us_ = ya.get_yield_time_us();
+  swapcontext(&fs->fiber_ctx, &fs->caller_ctx);
+  rctx.is_yielded_ = false;
+}
+
+/// Future overload: waits for async task completion
+template<typename TaskT, typename AllocT>
+inline void fiber_co_await(chi::Future<TaskT, AllocT>& future, chi::RunContext& rctx) {
+  if (future.IsReady()) return;
+  auto* fs = tls_current_fiber;
+  if (!fs) return;
+  future.SetParentTask(&rctx);
+  rctx.is_yielded_ = true;
+  rctx.yield_time_us_ = 0.0;
+  swapcontext(&fs->fiber_ctx, &fs->caller_ctx);
+  rctx.is_yielded_ = false;
+}
+
+/// Future rvalue overload (for temporaries)
+template<typename TaskT, typename AllocT>
+inline void fiber_co_await(chi::Future<TaskT, AllocT>&& future, chi::RunContext& rctx) {
+  fiber_co_await(future, rctx);
+}
+
+/// TaskResume fiber overload: runs inner fiber until it completes, yielding
+/// outer fiber whenever inner suspends
+inline void fiber_co_await(chi::TaskResume inner, chi::RunContext& rctx) {
+  if (!inner) return;
+  while (!inner.done()) {
+    inner.get_handle().resume();
+    if (!inner.done() && rctx.is_yielded_) {
+      // Inner fiber yielded - propagate yield upward
+      rctx.is_yielded_ = false;
+      auto* fs = tls_current_fiber;
+      if (fs) {
+        rctx.is_yielded_ = true;
+        swapcontext(&fs->fiber_ctx, &fs->caller_ctx);
+        rctx.is_yielded_ = false;
+      }
+    }
+  }
+}
+
+/// Create a TaskResume wrapping a new fiber
+template<typename F>
+inline chi::TaskResume make_task_fiber(F&& fn) {
+  auto* state = new FiberState();
+  state->fn = std::make_unique<FiberCallableT<typename std::decay<F>::type>>(std::forward<F>(fn));
+  getcontext(&state->fiber_ctx);
+  state->fiber_ctx.uc_stack.ss_sp = state->stack.get();
+  state->fiber_ctx.uc_stack.ss_size = FIBER_STACK_SIZE;
+  state->fiber_ctx.uc_link = nullptr;
+  makecontext(&state->fiber_ctx, fiber_trampoline, 0);
+  return chi::TaskResume(FiberHandle(state));
+}
+
+} // namespace chi::detail
+#endif // __NVCOMPILER
+
+// ============================================================================
+// Cross-compiler macros for task bodies (co_await / co_return replacements)
+// ============================================================================
+#ifndef __NVCOMPILER
+#  define CHI_TASK_BODY_BEGIN
+#  define CHI_TASK_BODY_END
+#  define CHI_CO_AWAIT(expr)  co_await (expr)
+#  define CHI_CO_RETURN       co_return
+#else
+#  define CHI_TASK_BODY_BEGIN return chi::detail::make_task_fiber([=, &rctx]() mutable {
+#  define CHI_TASK_BODY_END   });
+#  define CHI_CO_AWAIT(expr)  chi::detail::fiber_co_await((expr), rctx)
+// Use plain return so RAII destructors (e.g. ScopedCoMutex) run before the
+// fiber stack is freed. fiber_trampoline handles the final swapcontext back
+// to the worker after the lambda returns.
+#  define CHI_CO_RETURN       return
+#endif
 
 #endif  // CHIMAERA_INCLUDE_CHIMAERA_TASK_H_

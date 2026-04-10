@@ -64,12 +64,17 @@ HSHM_GPU_FUN void IpcGpu2Gpu::ClientRecv(
   hipc::FullPtr<FutureShm> fshm_full = future.GetFutureShm();
   if (fshm_full.IsNull()) return;
   FutureShm *fshm = fshm_full.ptr_;
-  // Poll FUTURE_COMPLETE via system-scope atomic read
-  while (!(atomicAdd_system(reinterpret_cast<unsigned int*>(&fshm->flags_.bits_.x), 0u)
-           & FutureShm::FUTURE_COMPLETE)) {
-    HSHM_THREAD_MODEL->Yield();
-  }
-  hipc::threadfence();
+  // Poll FUTURE_COMPLETE.
+  // For gpu2gpu (device memory): use volatile read (device-scope).
+  // For gpu2cpu (pinned host memory): use volatile read. System-scope
+  // atomics (atomicAdd_system) can hang on pinned host memory on some
+  // GPU architectures, so we use volatile reads which bypass GPU L1
+  // cache. For pinned host memory, volatile reads go through PCIe and
+  // snoop CPU caches.
+  volatile unsigned int *fp =
+      reinterpret_cast<volatile unsigned int *>(&fshm->flags_.bits_.x);
+  while (!((*fp) & FutureShm::FUTURE_COMPLETE)) {}
+  __threadfence_system();
   future.Destroy(true);
 }
 

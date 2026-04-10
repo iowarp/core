@@ -338,7 +338,7 @@ class Future {
         reinterpret_cast<volatile unsigned int *>(
             &fshm_full.ptr_->flags_.bits_.x);
     while (!((*fp) & FutureT::FUTURE_COMPLETE)) {}
-    hipc::threadfence();
+    __threadfence_system();
 #endif
   }
 

@@ -69,6 +69,7 @@ namespace chimaera::admin {
 
 chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
                                 chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   // Admin container creation logic (IS_ADMIN=true)
   HLOG(kDebug, "Admin: Initializing admin container");
 
@@ -146,7 +147,8 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
        "Admin: Spawned periodic Recv, Send, ClientConnect, ClientRecv, "
        "ClientSend tasks");
   (void)rctx;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::PoolQuery Runtime::ScheduleTask(const hipc::FullPtr<chi::Task> &task) {
@@ -172,6 +174,7 @@ chi::TaskResume Runtime::GetOrCreatePool(
         chimaera::admin::GetOrCreatePoolTask<chimaera::admin::CreateParams>>
         task,
     chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   // Debug: Log do_compose_ value
   HLOG(kDebug,
        "Admin::GetOrCreatePool ENTRY: task->do_compose_={}, task->is_admin_={}",
@@ -192,12 +195,12 @@ chi::TaskResume Runtime::GetOrCreatePool(
   try {
     // Use the simplified PoolManager API that extracts all parameters from the
     // task. CreatePool is now a coroutine that co_awaits nested Create methods.
-    co_await pool_manager->CreatePool(task.Cast<chi::Task>(), &rctx);
+    CHI_CO_AWAIT(pool_manager->CreatePool(task.Cast<chi::Task>(), &rctx));
 
     // Check if CreatePool set an error (return code is set on the task)
     if (task->return_code_ != 0) {
       // Error already set by CreatePool
-      co_return;
+      CHI_CO_RETURN;
     }
 
     // Set success results (task->new_pool_id_ is already updated by CreatePool)
@@ -216,18 +219,22 @@ chi::TaskResume Runtime::GetOrCreatePool(
     task->error_message_ = chi::priv::string(HSHM_MALLOC, error_msg);
     HLOG(kError, "Admin: Pool creation failed with exception: {}", e.what());
   }
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::Destroy(hipc::FullPtr<DestroyTask> task,
                                  chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   // DestroyTask is aliased to DestroyPoolTask, so delegate to DestroyPool
-  co_await DestroyPool(task, rctx);
-  co_return;
+  CHI_CO_AWAIT(DestroyPool(task, rctx));
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::DestroyPool(hipc::FullPtr<DestroyPoolTask> task,
                                      chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   HLOG(kDebug, "Admin: Executing DestroyPool task - Pool ID: {}",
        task->target_pool_id_);
 
@@ -243,12 +250,12 @@ chi::TaskResume Runtime::DestroyPool(hipc::FullPtr<DestroyPoolTask> task,
     if (!pool_manager || !pool_manager->IsInitialized()) {
       task->return_code_ = 1;
       task->error_message_ = "Pool manager not available";
-      co_return;
+      CHI_CO_RETURN;
     }
 
     // Use PoolManager to destroy the complete pool including metadata
     // DestroyPool is now a coroutine for consistency
-    co_await pool_manager->DestroyPool(target_pool);
+    CHI_CO_AWAIT(pool_manager->DestroyPool(target_pool));
 
     // Set success results
     task->return_code_ = 0;
@@ -266,11 +273,13 @@ chi::TaskResume Runtime::DestroyPool(hipc::FullPtr<DestroyPoolTask> task,
     task->error_message_ = chi::priv::string(HSHM_MALLOC, error_msg);
     HLOG(kError, "Admin: Pool destruction failed with exception: {}", e.what());
   }
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::StopRuntime(hipc::FullPtr<StopRuntimeTask> task,
                                      chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   HLOG(kDebug, "Admin: Executing StopRuntime task - Grace period: {}ms",
        task->grace_period_ms_);
 
@@ -283,7 +292,8 @@ chi::TaskResume Runtime::StopRuntime(hipc::FullPtr<StopRuntimeTask> task,
   HLOG(kInfo, "Admin: Runtime shutdown initiated successfully");
   InitiateShutdown(task->grace_period_ms_);
   (void)rctx;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 void Runtime::InitiateShutdown(chi::u32 grace_period_ms) {
@@ -309,6 +319,7 @@ void Runtime::InitiateShutdown(chi::u32 grace_period_ms) {
 
 chi::TaskResume Runtime::Flush(hipc::FullPtr<FlushTask> task,
                                chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   HLOG(kDebug, "Admin: Executing Flush task");
 
   // Initialize output values
@@ -320,7 +331,7 @@ chi::TaskResume Runtime::Flush(hipc::FullPtr<FlushTask> task,
     auto *work_orchestrator = CHI_WORK_ORCHESTRATOR;
     if (!work_orchestrator || !work_orchestrator->IsInitialized()) {
       task->return_code_ = 1;
-      co_return;
+      CHI_CO_RETURN;
     }
 
     // Loop until all work is complete
@@ -331,7 +342,7 @@ chi::TaskResume Runtime::Flush(hipc::FullPtr<FlushTask> task,
            total_work_remaining);
 
       // Brief yield to avoid busy waiting
-      co_await chi::yield(25);
+      CHI_CO_AWAIT(chi::yield(25));
     }
 
     // Store the final work count (should be 0)
@@ -345,7 +356,8 @@ chi::TaskResume Runtime::Flush(hipc::FullPtr<FlushTask> task,
     task->return_code_ = 99;
     HLOG(kError, "Admin: Flush failed with exception: {}", e.what());
   }
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 //===========================================================================
@@ -647,6 +659,7 @@ void Runtime::SendOut(hipc::FullPtr<chi::Task> origin_task) {
  */
 chi::TaskResume Runtime::Send(hipc::FullPtr<SendTask> task,
                               chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   auto *ipc_manager = CHI_IPC;
   chi::Future<chi::Task> queued_future;
   bool did_send = false;
@@ -699,7 +712,8 @@ chi::TaskResume Runtime::Send(hipc::FullPtr<SendTask> task,
   rctx.did_work_ = did_send;
 
   task->SetReturnCode(0);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 /**
@@ -954,12 +968,13 @@ void Runtime::RecvOut(hipc::FullPtr<RecvTask> task,
  */
 chi::TaskResume Runtime::Recv(hipc::FullPtr<RecvTask> task,
                               chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   // Get the main server from CHI_IPC (already bound during initialization)
   auto *ipc_manager = CHI_IPC;
 
   hshm::lbm::Transport *lbm_transport = ipc_manager->GetMainTransport();
   if (lbm_transport == nullptr) {
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Note: No socket lock needed - single net worker processes all Recv tasks
@@ -972,7 +987,7 @@ chi::TaskResume Runtime::Recv(hipc::FullPtr<RecvTask> task,
     // No message available - this is normal for polling, mark as no work done
     task->SetReturnCode(0);
     rctx.did_work_ = false;
-    co_return;
+    CHI_CO_RETURN;
   }
 
   if (rc != 0) {
@@ -981,7 +996,7 @@ chi::TaskResume Runtime::Recv(hipc::FullPtr<RecvTask> task,
     }
     task->SetReturnCode(2);
     rctx.did_work_ = false;
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Mark that we received data (did work)
@@ -1010,7 +1025,8 @@ chi::TaskResume Runtime::Recv(hipc::FullPtr<RecvTask> task,
       break;
   }
 
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 /**
@@ -1021,6 +1037,7 @@ chi::TaskResume Runtime::Recv(hipc::FullPtr<RecvTask> task,
  */
 chi::TaskResume Runtime::ClientConnect(hipc::FullPtr<ClientConnectTask> task,
                                        chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   task->response_ = 0;
   task->server_generation_ = CHI_IPC->GetServerGeneration();
   task->server_pid_ = static_cast<int32_t>(getpid());
@@ -1052,7 +1069,8 @@ chi::TaskResume Runtime::ClientConnect(hipc::FullPtr<ClientConnectTask> task,
 
   task->SetReturnCode(0);
   rctx.did_work_ = true;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 /**
@@ -1066,7 +1084,8 @@ chi::TaskResume Runtime::ClientRecv(hipc::FullPtr<ClientRecvTask> task,
   task->tasks_received_ = tasks_received;
   rctx.did_work_ = did_work;
   task->SetReturnCode(0);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 /**
@@ -1083,19 +1102,21 @@ chi::TaskResume Runtime::ClientSend(hipc::FullPtr<ClientSendTask> task,
 
   rctx.did_work_ = did_work;
   task->SetReturnCode(0);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
                                  chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   if (task->query_ == "worker_stats") {
     MonitorWorkerStats(task);
   } else if (task->query_.rfind("pool_stats://", 0) == 0) {
-    co_await MonitorPoolStats(task);
+    CHI_CO_AWAIT(MonitorPoolStats(task));
   } else if (task->query_.rfind("system_stats", 0) == 0) {
     MonitorSystemStats(task);
   } else if (task->query_ == "bdev_stats") {
-    co_await MonitorBdevStats(task);
+    CHI_CO_AWAIT(MonitorBdevStats(task));
   } else if (task->query_ == "container_stats") {
     MonitorContainerStats(task);
   } else if (task->query_ == "get_host_info") {
@@ -1105,7 +1126,8 @@ chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
     task->SetReturnCode(0);
   }
   (void)rctx;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 void Runtime::MonitorWorkerStats(hipc::FullPtr<MonitorTask> task) {
@@ -1232,6 +1254,11 @@ void Runtime::MonitorContainerStats(hipc::FullPtr<MonitorTask> task) {
 }
 
 chi::TaskResume Runtime::MonitorPoolStats(hipc::FullPtr<MonitorTask> task) {
+#ifdef __NVCOMPILER
+  chi::RunContext _dummy_rctx;
+  chi::RunContext& rctx = _dummy_rctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   // Parse pool_stats://PoolId:PoolQuery:selector
   // Format: pool_stats://<major.minor>:<routing_mode[:params...]>:<selector>
   std::string uri_body = task->query_.substr(13);  // skip "pool_stats://"
@@ -1242,7 +1269,7 @@ chi::TaskResume Runtime::MonitorPoolStats(hipc::FullPtr<MonitorTask> task) {
     task->SetReturnCode(2);
     HLOG(kError, "Monitor(pool_stats): missing ':' after PoolId in '{}'",
          task->query_);
-    co_return;
+    CHI_CO_RETURN;
   }
   std::string pool_id_str = uri_body.substr(0, first_colon);
   chi::PoolId target_pool_id;
@@ -1252,7 +1279,7 @@ chi::TaskResume Runtime::MonitorPoolStats(hipc::FullPtr<MonitorTask> task) {
     task->SetReturnCode(2);
     HLOG(kError, "Monitor(pool_stats): invalid PoolId '{}': {}", pool_id_str,
          e.what());
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // 2. Token-based parse of routing mode and its parameters
@@ -1291,7 +1318,7 @@ chi::TaskResume Runtime::MonitorPoolStats(hipc::FullPtr<MonitorTask> task) {
            "Monitor(pool_stats): not enough tokens for routing mode '{}' "
            "in '{}'",
            routing_token, task->query_);
-      co_return;
+      CHI_CO_RETURN;
     }
     size_t next_colon = remainder.find(':', parse_pos);
     std::string token =
@@ -1317,7 +1344,7 @@ chi::TaskResume Runtime::MonitorPoolStats(hipc::FullPtr<MonitorTask> task) {
     task->SetReturnCode(2);
     HLOG(kError, "Monitor(pool_stats): invalid PoolQuery '{}': {}",
          pool_query_str, e.what());
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // 4. Verify the target pool exists
@@ -1326,7 +1353,7 @@ chi::TaskResume Runtime::MonitorPoolStats(hipc::FullPtr<MonitorTask> task) {
   if (!container) {
     task->SetReturnCode(3);
     HLOG(kError, "Monitor(pool_stats): pool {} not found", target_pool_id);
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // 5. Create sub-MonitorTask targeting the pool and dispatch it
@@ -1334,7 +1361,7 @@ chi::TaskResume Runtime::MonitorPoolStats(hipc::FullPtr<MonitorTask> task) {
   auto sub_task = ipc_manager->NewTask<MonitorTask>(
       chi::CreateTaskId(), target_pool_id, target_pool_query, selector);
   chi::Future<MonitorTask> sub_future = ipc_manager->Send(sub_task);
-  co_await sub_future;
+  CHI_CO_AWAIT(sub_future);
 
   // 6. Copy results from sub-task into this task
   if (sub_future->GetReturnCode() != 0) {
@@ -1345,7 +1372,8 @@ chi::TaskResume Runtime::MonitorPoolStats(hipc::FullPtr<MonitorTask> task) {
     task->results_ = sub_future->results_;
     task->SetReturnCode(0);
   }
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 void Runtime::MonitorSystemStats(hipc::FullPtr<MonitorTask> task) {
@@ -1436,6 +1464,7 @@ void Runtime::MonitorGetHostInfo(hipc::FullPtr<MonitorTask> task) {
 
 chi::TaskResume Runtime::AnnounceShutdown(
     hipc::FullPtr<AnnounceShutdownTask> task, chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   chi::u64 dead_node_id = task->shutting_down_node_id_;
   auto *ipc_manager = CHI_IPC;
 
@@ -1447,15 +1476,21 @@ chi::TaskResume Runtime::AnnounceShutdown(
 
   // If we are the new leader, trigger recovery for the departing node
   if (ipc_manager->IsLeader()) {
-    co_await TriggerRecovery(dead_node_id);
+    CHI_CO_AWAIT(TriggerRecovery(dead_node_id));
   }
 
   task->SetReturnCode(0);
   (void)rctx;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::MonitorBdevStats(hipc::FullPtr<MonitorTask> task) {
+#ifdef __NVCOMPILER
+  chi::RunContext _dummy_rctx;
+  chi::RunContext& rctx = _dummy_rctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   // Collect stats from all bdev pools on this node
   auto *pool_manager = CHI_POOL_MANAGER;
   auto *ipc_manager = CHI_IPC;
@@ -1482,7 +1517,7 @@ chi::TaskResume Runtime::MonitorBdevStats(hipc::FullPtr<MonitorTask> task) {
     auto sub_task = ipc_manager->NewTask<MonitorTask>(chi::CreateTaskId(), pid,
                                                       bdev_query, "stats");
     chi::Future<MonitorTask> sub_future = ipc_manager->Send(sub_task);
-    co_await sub_future;
+    CHI_CO_AWAIT(sub_future);
 
     if (sub_future->GetReturnCode() == 0 && !sub_future->results_.empty()) {
       // Wrap bdev stats with pool_id metadata
@@ -1504,11 +1539,13 @@ chi::TaskResume Runtime::MonitorBdevStats(hipc::FullPtr<MonitorTask> task) {
 
   task->results_[container_id_] = std::string(sbuf.data(), sbuf.size());
   task->SetReturnCode(0);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::SubmitBatch(hipc::FullPtr<SubmitBatchTask> task,
                                      chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   HLOG(kInfo, "Admin: Executing SubmitBatch task with {} tasks",
        task->task_infos_.size());
 
@@ -1523,7 +1560,7 @@ chi::TaskResume Runtime::SubmitBatch(hipc::FullPtr<SubmitBatchTask> task,
   if (task->task_infos_.empty()) {
     task->SetReturnCode(0);
     HLOG(kInfo, "SubmitBatch: No tasks to submit");
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Create DefaultLoadArchive from the serialized data
@@ -1573,9 +1610,9 @@ chi::TaskResume Runtime::SubmitBatch(hipc::FullPtr<SubmitBatchTask> task,
       pending_futures.push_back(std::move(future));
     }
 
-    // co_await all pending futures in this batch
+    // CHI_CO_AWAIT all pending futures in this batch
     for (auto &future : pending_futures) {
-      co_await future;
+      CHI_CO_AWAIT(future);
       task->tasks_completed_++;
     }
 
@@ -1588,11 +1625,13 @@ chi::TaskResume Runtime::SubmitBatch(hipc::FullPtr<SubmitBatchTask> task,
        total_tasks);
 
   (void)rctx;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::RegisterMemory(hipc::FullPtr<RegisterMemoryTask> task,
                                         chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   auto *ipc_manager = CHI_IPC;
   MemoryType mem_type = static_cast<MemoryType>(task->memory_type_);
 
@@ -1640,11 +1679,13 @@ chi::TaskResume Runtime::RegisterMemory(hipc::FullPtr<RegisterMemoryTask> task,
 
   task->SetReturnCode(task->success_ ? 0 : 1);
   (void)rctx;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::RestartContainers(
     hipc::FullPtr<RestartContainersTask> task, chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   HLOG(kDebug, "Admin: Executing RestartContainers task");
 
   task->containers_restarted_ = 0;
@@ -1658,7 +1699,7 @@ chi::TaskResume Runtime::RestartContainers(
     if (!fs::exists(restart_dir) || !fs::is_directory(restart_dir)) {
       HLOG(kDebug, "Admin: No restart directory found at {}", restart_dir);
       task->SetReturnCode(0);
-      co_return;
+      CHI_CO_RETURN;
     }
 
     for (const auto &entry : fs::directory_iterator(restart_dir)) {
@@ -1678,7 +1719,7 @@ chi::TaskResume Runtime::RestartContainers(
              pool_config.pool_name_, pool_config.mod_name_);
 
         auto future = client_.AsyncCompose(pool_config);
-        co_await future;
+        CHI_CO_AWAIT(future);
 
         chi::u32 rc = future->GetReturnCode();
         if (rc != 0) {
@@ -1704,11 +1745,13 @@ chi::TaskResume Runtime::RestartContainers(
     HLOG(kError, "Admin: RestartContainers failed: {}", e.what());
   }
   (void)rctx;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::AddNode(hipc::FullPtr<AddNodeTask> task,
                                  chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   (void)rctx;
   HLOG(kInfo, "Admin: Executing AddNode for {}:{}", task->new_node_ip_.str(),
        task->new_node_port_);
@@ -1735,11 +1778,13 @@ chi::TaskResume Runtime::AddNode(hipc::FullPtr<AddNodeTask> task,
 
   HLOG(kInfo, "Admin: AddNode complete, assigned node_id={}", new_node_id);
   task->SetReturnCode(0);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::WreapDeadIpcs(hipc::FullPtr<WreapDeadIpcsTask> task,
                                        chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   auto *ipc_manager = CHI_IPC;
 
   // Call IpcManager::WreapDeadIpcs to reap shared memory from dead processes
@@ -1756,11 +1801,13 @@ chi::TaskResume Runtime::WreapDeadIpcs(hipc::FullPtr<WreapDeadIpcsTask> task,
   }
 
   task->SetReturnCode(0);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::ChangeAddressTable(
     hipc::FullPtr<ChangeAddressTableTask> task, chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   (void)rctx;
   auto *pool_manager = CHI_POOL_MANAGER;
 
@@ -1787,11 +1834,13 @@ chi::TaskResume Runtime::ChangeAddressTable(
         HSHM_MALLOC, "Failed to update container node mapping");
     task->SetReturnCode(1);
   }
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::MigrateContainers(
     hipc::FullPtr<MigrateContainersTask> task, chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   (void)rctx;
   HLOG(kInfo, "Admin: Executing MigrateContainers task");
 
@@ -1828,7 +1877,7 @@ chi::TaskResume Runtime::MigrateContainers(
     auto change_task = client_.AsyncChangeAddressTable(
         chi::PoolQuery::Broadcast(), info.pool_id_, info.container_id_,
         info.dest_);
-    co_await change_task;
+    CHI_CO_AWAIT(change_task);
 
     if (change_task->GetReturnCode() != 0) {
       HLOG(kError,
@@ -1851,7 +1900,8 @@ chi::TaskResume Runtime::MigrateContainers(
   task->SetReturnCode(0);
   HLOG(kInfo, "Admin: MigrateContainers completed, {} migrated",
        task->num_migrated_);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 /**
@@ -2093,13 +2143,16 @@ void Runtime::FlushStaleStateForNode(chi::u64 node_id) {
 
 chi::TaskResume Runtime::Heartbeat(hipc::FullPtr<HeartbeatTask> task,
                                    chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   task->SetReturnCode(0);
   rctx.did_work_ = true;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::HeartbeatProbe(hipc::FullPtr<HeartbeatProbeTask> task,
                                         chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   auto *ipc_manager = CHI_IPC;
   auto now = std::chrono::steady_clock::now();
   chi::u64 self_node_id = ipc_manager->GetNodeId();
@@ -2233,7 +2286,7 @@ chi::TaskResume Runtime::HeartbeatProbe(hipc::FullPtr<HeartbeatProbeTask> task,
                h.node_id);
           ipc_manager->SetDead(h.node_id);
           did_work = true;
-          co_await TriggerRecovery(h.node_id);
+          CHI_CO_AWAIT(TriggerRecovery(h.node_id));
         }
       }
     }
@@ -2306,11 +2359,13 @@ chi::TaskResume Runtime::HeartbeatProbe(hipc::FullPtr<HeartbeatProbeTask> task,
 
   rctx.did_work_ = did_work;
   task->SetReturnCode(0);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::ProbeRequest(hipc::FullPtr<ProbeRequestTask> task,
                                       chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   // Probe the target node on behalf of the requester using cooperative yield
   auto future =
       client_.AsyncHeartbeat(chi::PoolQuery::Physical(task->target_node_id_));
@@ -2321,7 +2376,7 @@ chi::TaskResume Runtime::ProbeRequest(hipc::FullPtr<ProbeRequestTask> task,
         std::chrono::duration<float>(std::chrono::steady_clock::now() - start)
             .count();
     if (elapsed >= kIndirectProbeTimeoutSec) break;
-    co_await chi::yield(1000.0);
+    CHI_CO_AWAIT(chi::yield(1000.0));
   }
 
   if (future.IsComplete()) {
@@ -2333,7 +2388,8 @@ chi::TaskResume Runtime::ProbeRequest(hipc::FullPtr<ProbeRequestTask> task,
 
   task->SetReturnCode(0);
   rctx.did_work_ = true;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskStat Runtime::GetTaskStats(chi::u32 method_id) const {
@@ -2411,14 +2467,19 @@ std::vector<chi::RecoveryAssignment> Runtime::ComputeRecoveryPlan(
 }
 
 chi::TaskResume Runtime::TriggerRecovery(chi::u64 dead_node_id) {
+#ifdef __NVCOMPILER
+  chi::RunContext _dummy_rctx;
+  chi::RunContext& rctx = _dummy_rctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   auto *ipc_manager = CHI_IPC;
-  if (!ipc_manager->IsLeader()) co_return;
-  if (recovery_initiated_.count(dead_node_id)) co_return;
+  if (!ipc_manager->IsLeader()) CHI_CO_RETURN;
+  if (recovery_initiated_.count(dead_node_id)) CHI_CO_RETURN;
   recovery_initiated_.insert(dead_node_id);
   if (ipc_manager->IsSelfFenced()) {
     HLOG(kWarning, "Recovery: Skipping for node {} - self-fenced",
          dead_node_id);
-    co_return;
+    CHI_CO_RETURN;
   }
 
   HLOG(kInfo, "Recovery: Leader initiating for dead node {}", dead_node_id);
@@ -2426,17 +2487,19 @@ chi::TaskResume Runtime::TriggerRecovery(chi::u64 dead_node_id) {
   if (assignments.empty()) {
     HLOG(kInfo, "Recovery: No containers to recover from node {}",
          dead_node_id);
-    co_return;
+    CHI_CO_RETURN;
   }
 
   HLOG(kInfo, "Recovery: {} containers to redistribute from node {}",
        assignments.size(), dead_node_id);
-  co_await client_.AsyncRecoverContainers(chi::PoolQuery::Broadcast(0),
-                                          assignments, dead_node_id);
+  CHI_CO_AWAIT(client_.AsyncRecoverContainers(chi::PoolQuery::Broadcast(0),
+                                          assignments, dead_node_id));
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::RecoverContainers(
     hipc::FullPtr<RecoverContainersTask> task, chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   auto *ipc_manager = CHI_IPC;
   auto *pool_manager = CHI_POOL_MANAGER;
   auto *module_manager = CHI_MODULE_MANAGER;
@@ -2479,7 +2542,8 @@ chi::TaskResume Runtime::RecoverContainers(
 
   task->SetReturnCode(0);
   rctx.did_work_ = true;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 //===========================================================================
@@ -2488,6 +2552,7 @@ chi::TaskResume Runtime::RecoverContainers(
 
 chi::TaskResume Runtime::SystemMonitor(hipc::FullPtr<SystemMonitorTask> task,
                                        chi::RunContext &rctx) {
+  CHI_TASK_BODY_BEGIN
   SystemStats stats;
 
   // Timestamps
@@ -2527,7 +2592,8 @@ chi::TaskResume Runtime::SystemMonitor(hipc::FullPtr<SystemMonitorTask> task,
 
   rctx.did_work_ = true;
   (void)task;
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 chi::TaskResume Runtime::RegisterGpuContainer(

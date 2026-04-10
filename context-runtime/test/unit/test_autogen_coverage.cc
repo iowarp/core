@@ -13926,7 +13926,7 @@ TEST_CASE("Autogen - RunContext struct", "[autogen][types][runcontext]") {
     REQUIRE(rctx.container_ == nullptr);
     REQUIRE(rctx.lane_ == nullptr);
     REQUIRE(rctx.event_queue_ == nullptr);
-    REQUIRE(rctx.coro_handle_ == nullptr);
+    REQUIRE(!rctx.coro_handle_);  // NVHPC: use operator! instead of == nullptr
     INFO("RunContext default construction verified");
   }
 

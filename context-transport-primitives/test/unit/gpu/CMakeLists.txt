@@ -18,6 +18,7 @@ if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
     Catch2::Catch2WithMain
   )
   add_test(NAME test_gpu_shm_mmap COMMAND test_gpu_shm_mmap)
+  set_tests_properties(test_gpu_shm_mmap PROPERTIES TIMEOUT 60)
 
   # GpuMalloc test (commented out — not well-written)
   # add_cuda_executable(test_gpu_malloc TRUE test_gpu_malloc.cc)
@@ -35,6 +36,7 @@ if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
     Catch2::Catch2WithMain
   )
   add_test(NAME test_local_serialize_gpu COMMAND test_local_serialize_gpu)
+  set_tests_properties(test_local_serialize_gpu PROPERTIES TIMEOUT 60)
 
   # LocalTransfer GPU test
   add_cuda_executable(test_local_transfer_gpu TRUE test_local_transfer_gpu.cc
@@ -44,6 +46,7 @@ if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
     Catch2::Catch2WithMain
   )
   add_test(NAME test_local_transfer_gpu COMMAND test_local_transfer_gpu)
+  set_tests_properties(test_local_transfer_gpu PROPERTIES TIMEOUT 60)
 
   # BuddyAllocator GPU test
   add_cuda_executable(test_buddy_alloc_gpu TRUE test_buddy_alloc_gpu.cc

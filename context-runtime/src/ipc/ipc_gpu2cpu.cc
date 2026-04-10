@@ -49,17 +49,36 @@ void IpcGpu2Cpu::RuntimeSend(
        task_ptr->pool_id_, task_ptr->method_,
        (size_t)future_shm->task_device_ptr_);
 
-  // Signal the device-side gpu::FutureShm so the GPU waiter sees COMPLETE
+  // Signal the device-side gpu::FutureShm so the GPU waiter sees COMPLETE.
+  // Use direct volatile write to the flags field. The gpu::FutureShm lives
+  // in pinned host memory (cudaMallocHost), so CPU stores are visible to
+  // GPU volatile reads through PCIe cache snooping.
   if (future_shm->task_device_ptr_) {
     auto *gpu_fshm = reinterpret_cast<gpu::FutureShm *>(
         future_shm->task_device_ptr_);
-    gpu_fshm->flags_.SetBitsSystem(gpu::FutureShm::FUTURE_COMPLETE);
+    // Direct volatile RMW on the raw storage to ensure the write is not
+    // reordered or held in a CPU store buffer.
+    volatile u32 *flags_ptr = reinterpret_cast<volatile u32 *>(
+        &gpu_fshm->flags_.bits_.x);
+    __sync_fetch_and_or(flags_ptr, gpu::FutureShm::FUTURE_COMPLETE);
   }
 
   // Also mark chi-side future complete for host-side waiters
   future_shm->flags_.SetBitsSystem(FutureShm::FUTURE_COMPLETE);
-  task_ptr->ClearFlags(TASK_DATA_OWNER);
-  container->DelTask(task_ptr->method_, task_ptr);
+
+  // Free the task from the GPU orchestrator's scratch allocator.
+  // The task lives in pinned host memory allocated by the GPU-side
+  // RoundRobinAllocator. The GPU kernel does NOT free it (ClientRecv
+  // skips Destroy), so the CPU handles cleanup here.
+  auto *gpu_mgr = ipc->GetGpuIpcManager();
+  if (gpu_mgr) {
+    auto *alloc = reinterpret_cast<hipc::RoundRobinAllocator *>(
+        gpu_mgr->gpu_orchestrator_info_.backend.data_);
+    if (alloc && alloc->ContainsPtr(task_ptr.ptr_)) {
+      task_ptr->ClearFlags(TASK_DATA_OWNER);
+      alloc->Free(task_ptr.template Cast<char>());
+    }
+  }
 }
 
 }  // namespace chi

@@ -66,7 +66,7 @@ set(HSHM_EXPORTED_TARGETS "HermesShm")
 # ------------------------------------------------------------------------------
 
 # CMAKE_POSITION_INDEPENDENT_CODE is set by root CMakeLists.txt
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "^(Apple)?Clang$" OR CMAKE_CXX_COMPILER_ID STREQUAL "MinGW" OR CMAKE_CXX_COMPILER_ID MATCHES "^Intel")
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "^(Apple)?Clang$" OR CMAKE_CXX_COMPILER_ID STREQUAL "MinGW" OR CMAKE_CXX_COMPILER_ID MATCHES "^Intel" OR CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         message("IN DEBUG MODE")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0 -Wfatal-errors")
@@ -99,7 +99,11 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     set(HSHM_COMPILER_MSVC "ON")
     set(REAL_TIME_FLAGS "ws2_32")
 else()
-    message(FATAL_ERROR "Unsupported compiler ${CMAKE_CXX_COMPILER_ID}")
+    # Treat unrecognized compilers (e.g. NVHPC on first cmake run) as GNU-compatible
+    message(WARNING "Unrecognized compiler '${CMAKE_CXX_COMPILER_ID}', assuming GNU-compatible flags")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O3")
+    set(HSHM_COMPILER_GNU "ON")
+    set(REAL_TIME_FLAGS "-lrt -ldl")
 endif()
 
 # ------------------------------------------------------------------------------

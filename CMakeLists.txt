@@ -668,6 +668,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   add_compile_options(-fcoroutines)
   message(STATUS "GCC detected - enabling coroutines with -fcoroutines")
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
+  # NVHPC 25.5 crashes (ICE in llc) when compiling GCC 14 libstdc++ coroutines.
+  # Chimaera uses ucontext_t fibers via CHI_CO_AWAIT/CHI_CO_RETURN macros instead.
+  # No __cpp_impl_coroutine needed - we do not include <coroutine> for NVHPC.
+  message(STATUS "NVHPC detected - using ucontext_t fiber fallback for C++20 coroutines")
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   # Clang 16+ enables C++20 coroutines natively (no flags needed for CXX).
   # NVCC host compilation uses GCC which needs -fcoroutines for the builtins.
@@ -725,21 +730,20 @@ endif()
 # Compiler Flags
 #------------------------------------------------------------------------------
 if(NOT MSVC)
-    # Add compiler flags following Google C++ style guide
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
-    # Disable warnings that are false positives or from external dependencies
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-parameter -Wno-unused-variable -Wno-reorder")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-pedantic -Wno-sign-compare -Wno-missing-field-initializers")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-but-set-variable -Wno-unused-function -Wno-cast-function-type")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-self-move -Wno-format")
-    # Suppress GCC false positives in template-heavy shared memory code (Release -O3)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-array-bounds")
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-stringop-overflow")
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
+        # Add compiler flags following Google C++ style guide
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic")
+        # Disable warnings that are false positives or from external dependencies
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-parameter -Wno-unused-variable -Wno-reorder")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-pedantic -Wno-sign-compare -Wno-missing-field-initializers")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-but-set-variable -Wno-unused-function -Wno-cast-function-type")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-self-move -Wno-format")
+        # Suppress GCC false positives in template-heavy shared memory code (Release -O3)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-array-bounds -Wno-stringop-overflow")
+        # Suppress unused-result warnings (freopen/system in test code)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-result")
     endif()
-    # Suppress unused-result warnings (freopen/system in test code)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-result")
 
     # Debug configuration
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -DDEBUG")
@@ -991,8 +995,19 @@ if(WRP_CORE_ENABLE_TESTS)
         endforeach()
     endfunction()
 
-    foreach(_component_dir ${_WRP_ENABLED_COMPONENT_DIRS})
-        _chimaera_lock_tests_recursive("${_component_dir}" "${_lsan_opts}")
+    foreach(_component_dir_pair
+            "context-runtime:WRP_CORE_ENABLE_RUNTIME"
+            "context-transfer-engine:WRP_CORE_ENABLE_CTE"
+            "context-assimilation-engine:WRP_CORE_ENABLE_CAE"
+            "context-exploration-engine:WRP_CORE_ENABLE_CEE")
+        string(REPLACE ":" ";" _pair "${_component_dir_pair}")
+        list(GET _pair 0 _component_dir)
+        list(GET _pair 1 _component_flag)
+        if(${_component_flag} AND IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${_component_dir}")
+            _chimaera_lock_tests_recursive(
+                "${CMAKE_CURRENT_SOURCE_DIR}/${_component_dir}"
+                "${_lsan_opts}")
+        endif()
     endforeach()
 endif()
 

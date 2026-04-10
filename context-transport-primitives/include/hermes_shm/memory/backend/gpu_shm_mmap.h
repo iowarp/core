@@ -96,38 +96,57 @@ class GpuShmMmap : public MemoryBackend, public UrlMemoryBackend {
    */
   bool shm_init(const MemoryBackendId &backend_id, size_t backend_size,
                 const std::string &url, int gpu_id = 0) {
+    // Enforce minimum backend size of 1MB
     constexpr size_t kMinBackendSize = 1024 * 1024;
     if (backend_size < kMinBackendSize) {
       backend_size = kMinBackendSize;
     }
     url_ = url;
+    (void)gpu_id;
 
-    // Allocate Unified Virtual Memory (UVM).
-    // cudaMallocManaged provides hardware cache coherence between CPU and GPU
-    // on systems with ConcurrentManagedAccess (SM 7.0+), eliminating the need
-    // for clflush, write-combining memory, or native host atomics.
-    void *ptr = nullptr;
-    cudaError_t err = cudaMallocManaged(&ptr, backend_size,
-                                        cudaMemAttachGlobal);
-    if (err != cudaSuccess || !ptr) {
-      HLOG(kError, "GpuShmMmap: cudaMallocManaged failed for {}: {}", url,
-           cudaGetErrorString(err));
+    // Allocate pinned host memory accessible from both CPU and GPU.
+    //
+    // Why cudaMallocHost instead of cudaMallocManaged:
+    //   - cudaMallocManaged with SetPreferredLocation=CPU does NOT provide
+    //     cache-coherent GPU→CPU visibility on PCIe-only systems (e.g.,
+    //     Polaris: AMD EPYC + A100 without NVLink to host). PCIe writes from
+    //     GPU bypass the CPU cache, so atomicExch_system writes are invisible
+    //     to CPU loads until an explicit page migration occurs.
+    //   - cudaMallocHost allocates pages locked in CPU DRAM. With CUDA Unified
+    //     Virtual Addressing (UVA), the same pointer is valid in both host code
+    //     and GPU kernels at the same virtual address. GPU PCIe DMA writes to
+    //     pinned pages DO participate in cache snooping on x86, making
+    //     system-scope atomics (atomicExch_system, atomicAdd_system) immediately
+    //     visible to CPU reads after cudaDeviceSynchronize() or via polling.
+    void *pinned_ptr = nullptr;
+    cudaError_t cuda_err = cudaMallocHost(&pinned_ptr, backend_size);
+    if (cuda_err != cudaSuccess) {
+      HLOG(kError, "cudaMallocHost failed: {}",
+           cudaGetErrorString(cuda_err));
       return false;
     }
 
-    region_ = reinterpret_cast<char *>(ptr);
-    header_ = reinterpret_cast<MemoryBackendHeader *>(region_);
-    data_ = region_ + kBackendHeaderSize;
+    // Zero-initialize so offset-based allocators start from a clean state.
+    memset(pinned_ptr, 0, backend_size);
 
+    // Layout: [kBackendHeaderSize header] [kBackendHeaderSize reserved] [data]
+    region_ = reinterpret_cast<char*>(pinned_ptr);
+    header_ = reinterpret_cast<MemoryBackendHeader *>(region_);
+    data_ = region_ + 2 * kBackendHeaderSize;
+
+    // Initialize backend header fields
     id_ = backend_id;
     backend_size_ = backend_size;
     data_capacity_ = backend_size - kBackendHeaderSize;
     data_id_ = gpu_id;
     flags_.Clear();
 
+    // Copy header fields into the managed memory header region
     new (header_) MemoryBackendHeader();
     (*header_) = (const MemoryBackendHeader &)*this;
 
+    // Mark as initialized and owned
+    flags_.SetBits(MEMORY_BACKEND_INITIALIZED);
     SetOwner();
     return true;
   }
@@ -146,20 +165,32 @@ class GpuShmMmap : public MemoryBackend, public UrlMemoryBackend {
   void shm_destroy() { _Destroy(); }
 
  protected:
-  void _Detach() { _Destroy(); }
+  /**
+   * Unregister memory region from GPU
+   */
+  void _UnregisterFromGpu(void *ptr) {
+    GpuApi::UnregisterHostMemory(ptr);
+  }
 
-  void _Destroy() {
+  /** Detach from (and free) pinned host memory */
+  void _Detach() {
     if (!flags_.Any(MEMORY_BACKEND_INITIALIZED)) {
       return;
     }
+
+    // Free pinned host memory allocated by shm_init via cudaMallocHost
     if (region_) {
-      cudaFree(region_);
+      cudaFreeHost(region_);
       region_ = nullptr;
-      data_ = nullptr;
       header_ = nullptr;
+      data_ = nullptr;
     }
+
     flags_.UnsetBits(MEMORY_BACKEND_INITIALIZED);
   }
+
+  /** Destroy pinned memory (same as detach for cudaMallocHost) */
+  void _Destroy() { _Detach(); }
 };
 
 }  // namespace hshm::ipc

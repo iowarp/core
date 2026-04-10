@@ -42,14 +42,6 @@
 
 namespace wrp_cte::uvm {
 
-/** Kernel to fill a GPU memory region with a repeated int value */
-__global__ void fillKernel(int *ptr, int value, size_t count) {
-  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx < count) {
-    ptr[idx] = value;
-  }
-}
-
 GpuVirtualMemoryManager::GpuVirtualMemoryManager() = default;
 
 GpuVirtualMemoryManager::~GpuVirtualMemoryManager() { destroy(); }
@@ -184,6 +176,9 @@ void GpuVirtualMemoryManager::destroy() {
   va_size_ = 0;
   total_pages_ = 0;
   page_table_.clear();
+
+  // Release our reference to the primary context
+  cuDevicePrimaryCtxRelease(device_);
 }
 
 size_t GpuVirtualMemoryManager::getMappedPageCount() const {
@@ -300,12 +295,19 @@ CUresult GpuVirtualMemoryManager::touchPage(size_t page_index) {
         host_backing_store_.erase(it);
         entry.evicted_to_host = false;
       } else {
-        // Fresh page: fill with configured value
+        // Fresh page: fill with configured value using driver API memset.
+        // cuMemsetD32 uses the same driver API context as cuMemMap/cuMemSetAccess,
+        // avoiding the runtime/driver context mismatch that causes fillKernel
+        // writes to appear as 0 when read back (A100 / Polaris).
         size_t num_ints = page_size_ / sizeof(int);
-        int threads = 256;
-        int blocks = (int)((num_ints + threads - 1) / threads);
-        fillKernel<<<blocks, threads>>>((int *)page_addr, fill_value_, num_ints);
-        cudaDeviceSynchronize();
+        CUresult fill_res = cuMemsetD32(page_addr, (unsigned int)fill_value_, num_ints);
+        if (fill_res != CUDA_SUCCESS) {
+          fprintf(stderr,
+                  "GpuVmm: cuMemsetD32 failed for page %zu: %d "
+                  "(page_addr=0x%llx, fill_value=%d)\n",
+                  page_index, fill_res,
+                  (unsigned long long)page_addr, fill_value_);
+        }
         entry.evicted_to_host = false;
       }
     }
@@ -362,12 +364,17 @@ CUresult GpuVirtualMemoryManager::touchPageAsync(size_t page_index) {
       // Note: host buffer freed after sync (kept alive for async safety)
       entry.evicted_to_host = false;
     } else {
-      // Async fill
+      // Async fill using driver API for context consistency with cuMemMap
       size_t num_ints = page_size_ / sizeof(int);
-      int threads = 256;
-      int blocks = (int)((num_ints + threads - 1) / threads);
-      fillKernel<<<blocks, threads, 0, transfer_stream_>>>(
-          (int *)page_addr, fill_value_, num_ints);
+      CUresult fill_res = cuMemsetD32Async(page_addr, (unsigned int)fill_value_,
+                                           num_ints, transfer_stream_);
+      if (fill_res != CUDA_SUCCESS) {
+        fprintf(stderr,
+                "GpuVmm: cuMemsetD32Async failed for page %zu: %d "
+                "(page_addr=0x%llx, fill_value=%d)\n",
+                page_index, fill_res,
+                (unsigned long long)page_addr, fill_value_);
+      }
       entry.evicted_to_host = false;
     }
   }

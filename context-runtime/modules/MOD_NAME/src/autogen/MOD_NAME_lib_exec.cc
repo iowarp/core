@@ -32,59 +32,60 @@ void Runtime::Init(const chi::PoolId &pool_id, const std::string &pool_name,
 }
 
 chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) {
+  CHI_TASK_BODY_BEGIN
   switch (method) {
     case Method::kCreate: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<CreateTask> typed_task = task_ptr.template Cast<CreateTask>();
-      co_await Create(typed_task, rctx);
+      CHI_CO_AWAIT(Create(typed_task, rctx));
       break;
     }
     case Method::kDestroy: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<DestroyTask> typed_task = task_ptr.template Cast<DestroyTask>();
-      co_await Destroy(typed_task, rctx);
+      CHI_CO_AWAIT(Destroy(typed_task, rctx));
       break;
     }
     case Method::kMonitor: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<MonitorTask> typed_task = task_ptr.template Cast<MonitorTask>();
-      co_await Monitor(typed_task, rctx);
+      CHI_CO_AWAIT(Monitor(typed_task, rctx));
       break;
     }
     case Method::kCustom: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<CustomTask> typed_task = task_ptr.template Cast<CustomTask>();
-      co_await Custom(typed_task, rctx);
+      CHI_CO_AWAIT(Custom(typed_task, rctx));
       break;
     }
     case Method::kCoMutexTest: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<CoMutexTestTask> typed_task = task_ptr.template Cast<CoMutexTestTask>();
-      co_await CoMutexTest(typed_task, rctx);
+      CHI_CO_AWAIT(CoMutexTest(typed_task, rctx));
       break;
     }
     case Method::kCoRwLockTest: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<CoRwLockTestTask> typed_task = task_ptr.template Cast<CoRwLockTestTask>();
-      co_await CoRwLockTest(typed_task, rctx);
+      CHI_CO_AWAIT(CoRwLockTest(typed_task, rctx));
       break;
     }
     case Method::kWaitTest: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<WaitTestTask> typed_task = task_ptr.template Cast<WaitTestTask>();
-      co_await WaitTest(typed_task, rctx);
+      CHI_CO_AWAIT(WaitTest(typed_task, rctx));
       break;
     }
     case Method::kTestLargeOutput: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<TestLargeOutputTask> typed_task = task_ptr.template Cast<TestLargeOutputTask>();
-      co_await TestLargeOutput(typed_task, rctx);
+      CHI_CO_AWAIT(TestLargeOutput(typed_task, rctx));
       break;
     }
     case Method::kGpuSubmit: {
       // Cast task FullPtr to specific type
       hipc::FullPtr<GpuSubmitTask> typed_task = task_ptr.template Cast<GpuSubmitTask>();
-      co_await GpuSubmit(typed_task, rctx);
+      CHI_CO_AWAIT(GpuSubmit(typed_task, rctx));
       break;
     }
     case Method::kSubtaskTest: {
@@ -98,8 +99,8 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       break;
     }
   }
-  // co_return makes this a coroutine returning TaskResume
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive, 

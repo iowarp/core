@@ -36,8 +36,17 @@
 
 #include "hermes_shm/introspect/system_info.h"
 
+#include <climits>
+#ifdef __linux__
+#include <linux/limits.h>  // PATH_MAX on some Linux toolchains
+#endif
+// LCOV_EXCL_START — compile-time fallback, unreachable on standard Linux
+#ifndef PATH_MAX
+#define PATH_MAX 4096  // POSIX default; not always in <climits> under NVHPC
+#endif
+// LCOV_EXCL_STOP
 #include <cstdlib>
-#include <filesystem>
+#include <string>
 
 #include "hermes_shm/constants/macros.h"
 // MSan: inform sanitizer that mmap-backed memory is initialized by the kernel
@@ -581,7 +590,9 @@ std::string SystemInfo::GetModuleDirectory() {
   if (dladdr(addr, &dl_info) == 0) return "";
   char resolved[PATH_MAX];
   if (realpath(dl_info.dli_fname, resolved) == nullptr) return "";
-  return std::filesystem::path(resolved).parent_path().string();
+  std::string resolved_str(resolved);
+  auto pos = resolved_str.rfind('/');
+  return (pos != std::string::npos) ? resolved_str.substr(0, pos) : std::string();
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
   HMODULE hModule = nullptr;
   if (!GetModuleHandleExA(
@@ -593,7 +604,10 @@ std::string SystemInfo::GetModuleDirectory() {
   }
   char path[MAX_PATH];
   if (GetModuleFileNameA(hModule, path, MAX_PATH) == 0) return "";
-  return std::filesystem::path(path).parent_path().string();
+  std::string path_str(path);
+  auto pos2 = path_str.rfind('\\');
+  if (pos2 == std::string::npos) pos2 = path_str.rfind('/');
+  return (pos2 != std::string::npos) ? path_str.substr(0, pos2) : std::string();
 #endif
 }
 
