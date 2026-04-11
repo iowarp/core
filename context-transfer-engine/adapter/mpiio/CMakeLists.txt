@@ -7,11 +7,23 @@ include_directories(
 
 # Create the MPIIO interceptor
 if(HERMES_MPICH)
-        message(STATUS "Using HERMES_MPICH")
-        add_definitions(-DHERMES_MPICH)
+        message(STATUS "Using MPICH")
+        add_definitions(-DWRP_CTE_MPICH)
 elseif(HERMES_OPENMPI)
-        message(STATUS "Using HERMES_OPENMPI")
-        add_definitions(-DHERMES_OPENMPI)
+        message(STATUS "Using OpenMPI")
+        add_definitions(-DWRP_CTE_OPENMPI)
+else()
+        # Auto-detect based on MPI implementation
+        if(MPI_C_INCLUDE_DIRS MATCHES "openmpi" OR MPI_CXX_INCLUDE_DIRS MATCHES "openmpi")
+                message(STATUS "Auto-detected OpenMPI")
+                add_definitions(-DWRP_CTE_OPENMPI)
+        elseif(MPI_C_INCLUDE_DIRS MATCHES "mpich" OR MPI_CXX_INCLUDE_DIRS MATCHES "mpich")
+                message(STATUS "Auto-detected MPICH")
+                add_definitions(-DWRP_CTE_MPICH)
+        else()
+                message(WARNING "Could not auto-detect MPI implementation, defaulting to OpenMPI")
+                add_definitions(-DWRP_CTE_OPENMPI)
+        endif()
 endif()
 
 set(INTERCEPTOR_DEPS

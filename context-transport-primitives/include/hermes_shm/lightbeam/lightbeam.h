@@ -38,9 +38,9 @@
 #include <cassert>
 #include <cstring>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
-#include <sstream>
 
 #if HSHM_ENABLE_CEREAL
 #include <cereal/archives/binary.hpp>
@@ -81,10 +81,10 @@ struct Bulk {
 
 // --- Client Info (returned by Recv, used by Send for routing) ---
 struct ClientInfo {
-  int rc = 0;               // Return code (0 = success, EAGAIN = no data, etc.)
-  int fd_ = -1;             // Socket fd (SocketTransport server mode)
+  int rc = 0;    // Return code (0 = success, EAGAIN = no data, etc.)
+  int fd_ = -1;  // Socket fd (SocketTransport server mode)
 #if !HSHM_IS_GPU
-  std::string identity_;    // ZMQ identity (ZeroMqTransport server mode)
+  std::string identity_;  // ZMQ identity (ZeroMqTransport server mode)
 #endif
 };
 
@@ -109,7 +109,7 @@ class LbmMeta {
       recv;  // Receiver's bulk descriptors (copy of send with local pointers)
   size_t send_bulks = 0;  // Count of BULK_XFER entries in send vector
   size_t recv_bulks = 0;  // Count of BULK_XFER entries in recv vector
-  AllocT* alloc_;          // Allocator used for internal vectors
+  AllocT* alloc_;         // Allocator used for internal vectors
 #if !HSHM_IS_GPU
   ClientInfo client_info_;  // Client routing info (not serialized, host-only)
 #endif
@@ -154,17 +154,18 @@ constexpr uint32_t LBM_SYNC =
     0x1; /**< Synchronous send (wait for completion) */
 
 struct LbmContext {
-  uint32_t flags;      /**< Combination of LBM_* flags */
-  int timeout_ms;      /**< Timeout in milliseconds (0 = no timeout) */
-  char* copy_space = nullptr;                      /**< Shared buffer for chunked transfer */
-  ShmTransferInfo* shm_info_ = nullptr;            /**< Transfer info in shared memory */
-  int server_pid_ = 0;                             /**< Server PID for SHM liveness check */
+  uint32_t flags;             /**< Combination of LBM_* flags */
+  int timeout_ms;             /**< Timeout in milliseconds (0 = no timeout) */
+  char* copy_space = nullptr; /**< Shared buffer for chunked transfer */
+  ShmTransferInfo* shm_info_ = nullptr; /**< Transfer info in shared memory */
+  int server_pid_ = 0; /**< Server PID for SHM liveness check */
 
   HSHM_CROSS_FUN LbmContext() : flags(0), timeout_ms(0) {}
 
   HSHM_CROSS_FUN explicit LbmContext(uint32_t f) : flags(f), timeout_ms(0) {}
 
-  HSHM_CROSS_FUN LbmContext(uint32_t f, int timeout) : flags(f), timeout_ms(timeout) {}
+  HSHM_CROSS_FUN LbmContext(uint32_t f, int timeout)
+      : flags(f), timeout_ms(timeout) {}
 
   HSHM_CROSS_FUN bool IsSync() const { return (flags & LBM_SYNC) != 0; }
   HSHM_CROSS_FUN bool HasTimeout() const { return timeout_ms > 0; }
@@ -203,14 +204,14 @@ class Transport {
   void ClearRecvHandles(LbmMeta<>& meta);
 
   // Event registration API
-  void RegisterEventManager(EventManager &em);
+  void RegisterEventManager(EventManager& em);
 
   // Liveness check
   bool IsServerAlive(const LbmContext& ctx = LbmContext()) const;
 };
 
 // --- Transport custom deleter (dispatches via type_ instead of vtable) ---
-struct TransportDeleter {
+struct HSHM_API TransportDeleter {
   inline void operator()(Transport* t) const;
 };
 using TransportPtr = std::unique_ptr<Transport, TransportDeleter>;
@@ -218,14 +219,17 @@ using TransportPtr = std::unique_ptr<Transport, TransportDeleter>;
 // --- Factory ---
 class TransportFactory {
  public:
-  static TransportPtr Get(const std::string& addr,
-                          TransportType t, TransportMode mode,
-                          const std::string& protocol = "",
+  static TransportPtr Get(const std::string& addr, TransportType t,
+                          TransportMode mode, const std::string& protocol = "",
                           int port = 0);
-  static TransportPtr Get(const std::string& addr,
-                          TransportType t, TransportMode mode,
-                          const std::string& protocol, int port,
-                          const std::string& domain);
+  static TransportPtr Get(const std::string& addr, TransportType t,
+                          TransportMode mode, const std::string& protocol,
+                          int port, const std::string& domain);
 };
 
 }  // namespace hshm::lbm
+
+// Include template implementations
+// This must be at the end to avoid circular include issues (pragma once handles
+// it)
+#include "transport_factory_impl.h"

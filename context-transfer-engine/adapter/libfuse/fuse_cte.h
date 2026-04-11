@@ -41,12 +41,13 @@
 #include <fuse3/fuse.h>
 #endif
 
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <string>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <vector>
 
 #include "wrp_cte/core/core_client.h"
@@ -82,8 +83,8 @@ struct FuseFileHandle {
 // ============================================================================
 
 /** Query CTE for the authoritative tag size */
-static inline size_t CteGetTagSize(const wrp_cte::core::TagId &tag_id) {
-  auto *cte_client = WRP_CTE_CLIENT;
+static inline size_t CteGetTagSize(const wrp_cte::core::TagId& tag_id) {
+  auto* cte_client = WRP_CTE_CLIENT;
   auto task = cte_client->AsyncGetTagSize(tag_id);
   task.Wait();
   if (task->GetReturnCode() != 0) return 0;
@@ -91,15 +92,30 @@ static inline size_t CteGetTagSize(const wrp_cte::core::TagId &tag_id) {
 }
 
 /** Delete a CTE tag by name */
-static inline void CteDelTag(const std::string &tag_name) {
-  auto *cte_client = WRP_CTE_CLIENT;
+static inline void CteDelTag(const std::string& tag_name) {
+  auto* cte_client = WRP_CTE_CLIENT;
   auto task = cte_client->AsyncDelTag(tag_name);
   task.Wait();
 }
 
+/** Escape a string for use as a literal in std::regex */
+static inline std::string RegexEscape(const std::string& s) {
+  std::string out;
+  for (char c : s) {
+    if (c == '.' || c == '[' || c == ']' || c == '(' || c == ')' || c == '{' ||
+        c == '}' || c == '+' || c == '*' || c == '?' || c == '\\' || c == '^' ||
+        c == '$' || c == '|') {
+      out += '\\';
+    }
+    out += c;
+  }
+  return out;
+}
+
 /** Get or create a CTE tag, returning its TagId. Returns null id on failure. */
-static inline wrp_cte::core::TagId CteGetOrCreateTag(const std::string &name) {
-  auto *cte_client = WRP_CTE_CLIENT;
+static inline wrp_cte::core::TagId CteGetOrCreateTag(const std::string& name) {
+  fprintf(stderr, "[DEBUG] CteGetOrCreateTag: name='%s'\n", name.c_str());
+  auto* cte_client = WRP_CTE_CLIENT;
   auto task = cte_client->AsyncGetOrCreateTag(name);
   task.Wait();
   if (task->GetReturnCode() != 0) return wrp_cte::core::TagId::GetNull();
@@ -107,21 +123,37 @@ static inline wrp_cte::core::TagId CteGetOrCreateTag(const std::string &name) {
 }
 
 /** Check if a tag exists by name using TagQuery with exact match */
-static inline bool CteTagExists(const std::string &tag_name) {
-  auto *cte_client = WRP_CTE_CLIENT;
+static inline bool CteTagExists(const std::string& tag_name) {
+  auto* cte_client = WRP_CTE_CLIENT;
   // Escape regex special chars and do exact match
-  std::string escaped;
-  for (char c : tag_name) {
-    if (c == '.' || c == '[' || c == ']' || c == '(' || c == ')' ||
-        c == '{' || c == '}' || c == '+' || c == '*' || c == '?' ||
-        c == '\\' || c == '^' || c == '$' || c == '|') {
-      escaped += '\\';
-    }
-    escaped += c;
-  }
+  std::string escaped = RegexEscape(tag_name);
   auto task = cte_client->AsyncTagQuery(escaped, 1);
   task.Wait();
   return task->GetReturnCode() == 0 && !task->results_.empty();
+}
+
+/**
+ * Create a directory marker tag for explicit directory creation.
+ * Creates tag: ".cte_dir:/path/to/dir"
+ * @param dir_path Absolute path of directory to mark
+ * @return true if successful, false on error
+ */
+static inline bool CteMakeDir(const std::string& dir_path) {
+  std::string marker_tag = ".cte_dir:" + dir_path;
+  auto tag_id = CteGetOrCreateTag(marker_tag);
+  return !tag_id.IsNull();
+}
+
+/**
+ * Remove a directory marker tag.
+ * @param dir_path Absolute path of directory
+ * @return true if marker existed and was removed, false otherwise
+ */
+static inline bool CteRemoveDir(const std::string& dir_path) {
+  std::string marker_tag = ".cte_dir:" + dir_path;
+  if (!CteTagExists(marker_tag)) return false;
+  CteDelTag(marker_tag);
+  return true;
 }
 
 /**
@@ -129,20 +161,12 @@ static inline bool CteTagExists(const std::string &tag_name) {
  * For directory "/a/b", finds tags matching "^/a/b/[^/]+$".
  * Returns just the basenames (not full paths).
  */
-static inline std::vector<std::string>
-CteListDirectChildren(const std::string &dir_path) {
-  auto *cte_client = WRP_CTE_CLIENT;
+static inline std::vector<std::string> CteListDirectChildren(
+    const std::string& dir_path) {
+  auto* cte_client = WRP_CTE_CLIENT;
 
   // Build regex: escape dir_path, then match one path component
-  std::string escaped;
-  for (char c : dir_path) {
-    if (c == '.' || c == '[' || c == ']' || c == '(' || c == ')' ||
-        c == '{' || c == '}' || c == '+' || c == '*' || c == '?' ||
-        c == '\\' || c == '^' || c == '$' || c == '|') {
-      escaped += '\\';
-    }
-    escaped += c;
-  }
+  std::string escaped = RegexEscape(dir_path);
   // Ensure trailing slash
   if (!escaped.empty() && escaped.back() != '/') escaped += '/';
   std::string regex = "^" + escaped + "[^/]+$";
@@ -156,7 +180,7 @@ CteListDirectChildren(const std::string &dir_path) {
   // Extract basenames from full paths
   size_t prefix_len = dir_path.size();
   if (!dir_path.empty() && dir_path.back() != '/') prefix_len++;
-  for (const auto &full_path : task->results_) {
+  for (const auto& full_path : task->results_) {
     if (full_path.size() > prefix_len) {
       basenames.push_back(full_path.substr(prefix_len));
     }
@@ -169,20 +193,12 @@ CteListDirectChildren(const std::string &dir_path) {
  * For dir "/a", if tags "/a/b/c.txt" and "/a/b/d.txt" and "/a/e/f.txt" exist,
  * returns {"b", "e"}.
  */
-static inline std::vector<std::string>
-CteListSubdirs(const std::string &dir_path) {
-  auto *cte_client = WRP_CTE_CLIENT;
+static inline std::vector<std::string> CteListSubdirs(
+    const std::string& dir_path) {
+  auto* cte_client = WRP_CTE_CLIENT;
 
   // Match any tag that has at least two more path components after dir_path
-  std::string escaped;
-  for (char c : dir_path) {
-    if (c == '.' || c == '[' || c == ']' || c == '(' || c == ')' ||
-        c == '{' || c == '}' || c == '+' || c == '*' || c == '?' ||
-        c == '\\' || c == '^' || c == '$' || c == '|') {
-      escaped += '\\';
-    }
-    escaped += c;
-  }
+  std::string escaped = RegexEscape(dir_path);
   if (!escaped.empty() && escaped.back() != '/') escaped += '/';
   // Match tags with at least one more slash after the child component
   std::string regex = "^" + escaped + "[^/]+/.*";
@@ -195,7 +211,7 @@ CteListSubdirs(const std::string &dir_path) {
   size_t prefix_len = dir_path.size();
   if (!dir_path.empty() && dir_path.back() != '/') prefix_len++;
 
-  for (const auto &full_path : task->results_) {
+  for (const auto& full_path : task->results_) {
     if (full_path.size() <= prefix_len) continue;
     std::string remainder = full_path.substr(prefix_len);
     size_t slash_pos = remainder.find('/');
@@ -211,20 +227,18 @@ CteListSubdirs(const std::string &dir_path) {
 }
 
 /**
- * Check if a directory path has any tags underneath it.
- * A directory exists if any tag starts with "dir_path/".
+ * Check if a directory exists (either explicit marker or implicit from tags).
+ * Checks both:
+ * - Explicit marker (.cte_dir:/path)
+ * - Implicit directory (any tags under /path/)
  */
-static inline bool CteDirExists(const std::string &dir_path) {
-  auto *cte_client = WRP_CTE_CLIENT;
-  std::string escaped;
-  for (char c : dir_path) {
-    if (c == '.' || c == '[' || c == ']' || c == '(' || c == ')' ||
-        c == '{' || c == '}' || c == '+' || c == '*' || c == '?' ||
-        c == '\\' || c == '^' || c == '$' || c == '|') {
-      escaped += '\\';
-    }
-    escaped += c;
-  }
+static inline bool CteDirExists(const std::string& dir_path) {
+  // Check if explicit marker exists
+  if (CteIsExplicitDir(dir_path)) return true;
+
+  // Check if implicit directory exists (any tags under this path)
+  auto* cte_client = WRP_CTE_CLIENT;
+  std::string escaped = RegexEscape(dir_path);
   if (!escaped.empty() && escaped.back() != '/') escaped += '/';
   std::string regex = "^" + escaped + ".*";
   auto task = cte_client->AsyncTagQuery(regex, 1);
@@ -233,19 +247,79 @@ static inline bool CteDirExists(const std::string &dir_path) {
 }
 
 /**
+ * Check if directory has an explicit marker.
+ * @param dir_path Absolute path of directory
+ * @return true if explicit marker exists
+ */
+static inline bool CteIsExplicitDir(const std::string& dir_path) {
+  std::string marker_tag = ".cte_dir:" + dir_path;
+  return CteTagExists(marker_tag);
+}
+
+/**
+ * List explicit directory markers under a parent path.
+ * Returns basenames of explicit subdirectories.
+ * @param dir_path Absolute path of parent directory
+ * @return Vector of explicit subdirectory basenames
+ */
+static inline std::vector<std::string> CteListExplicitDirs(
+    const std::string& dir_path) {
+  std::string escaped = RegexEscape(dir_path);
+  if (!escaped.empty() && escaped.back() != '/') escaped += '/';
+  std::string marker_regex = "^\\.cte_dir:" + escaped + "([^/]+)$";
+
+  auto* cte_client = WRP_CTE_CLIENT;
+  auto task = cte_client->AsyncTagQuery(marker_regex);
+  task.Wait();
+
+  std::vector<std::string> explicit_dirs;
+  for (const auto& marker : task->results_) {
+    // Extract basename from ".cte_dir:/parent/basename"
+    size_t last_slash = marker.rfind('/');
+    if (last_slash != std::string::npos) {
+      explicit_dirs.push_back(marker.substr(last_slash + 1));
+    }
+  }
+  return explicit_dirs;
+}
+
+/**
+ * Check if directory is empty (for rmdir).
+ * A directory is empty if:
+ * - No direct file children (tags matching ^path/[^/]+$)
+ * - No subdirectories (neither implicit nor explicit children)
+ * @param dir_path Absolute path of directory
+ * @return true if directory is empty
+ */
+static inline bool CteIsDirEmpty(const std::string& dir_path) {
+  // Check for direct file children
+  auto files = CteListDirectChildren(dir_path);
+  for (const auto& file : files) {
+    // Exclude marker tags
+    if (file.find(".cte_dir:") == std::string::npos) {
+      return false;
+    }
+  }
+
+  // Check for subdirectories
+  auto subdirs = CteListSubdirs(dir_path);
+  return subdirs.empty();
+}
+
+/**
  * Page-based PutBlob: allocate SHM, copy data, async put, wait, free.
  */
-static inline bool CtePutBlob(const wrp_cte::core::TagId &tag_id,
-                              const std::string &blob_name, const char *data,
+static inline bool CtePutBlob(const wrp_cte::core::TagId& tag_id,
+                              const std::string& blob_name, const char* data,
                               size_t data_size, size_t blob_off) {
-  auto *ipc_manager = CHI_IPC;
-  auto *cte_client = WRP_CTE_CLIENT;
+  auto* ipc_manager = CHI_IPC;
+  auto* cte_client = WRP_CTE_CLIENT;
   hipc::FullPtr<char> shm_buf = ipc_manager->AllocateBuffer(data_size);
   if (shm_buf.IsNull()) return false;
   memcpy(shm_buf.ptr_, data, data_size);
   hipc::ShmPtr<> shm_ptr(shm_buf.shm_);
-  auto task = cte_client->AsyncPutBlob(tag_id, blob_name, blob_off, data_size,
-                                       shm_ptr);
+  auto task =
+      cte_client->AsyncPutBlob(tag_id, blob_name, blob_off, data_size, shm_ptr);
   task.Wait();
   ipc_manager->FreeBuffer(shm_buf);
   return task->GetReturnCode() == 0;
@@ -254,11 +328,11 @@ static inline bool CtePutBlob(const wrp_cte::core::TagId &tag_id,
 /**
  * Page-based GetBlob: allocate SHM, async get, wait, copy out, free.
  */
-static inline bool CteGetBlob(const wrp_cte::core::TagId &tag_id,
-                              const std::string &blob_name, char *data,
+static inline bool CteGetBlob(const wrp_cte::core::TagId& tag_id,
+                              const std::string& blob_name, char* data,
                               size_t data_size, size_t blob_off) {
-  auto *ipc_manager = CHI_IPC;
-  auto *cte_client = WRP_CTE_CLIENT;
+  auto* ipc_manager = CHI_IPC;
+  auto* cte_client = WRP_CTE_CLIENT;
   hipc::FullPtr<char> shm_buf = ipc_manager->AllocateBuffer(data_size);
   if (shm_buf.IsNull()) return false;
   hipc::ShmPtr<> shm_ptr(shm_buf.shm_);
@@ -269,20 +343,6 @@ static inline bool CteGetBlob(const wrp_cte::core::TagId &tag_id,
   if (ok) memcpy(data, shm_buf.ptr_, data_size);
   ipc_manager->FreeBuffer(shm_buf);
   return ok;
-}
-
-/** Escape a string for use as a literal in std::regex */
-static inline std::string RegexEscape(const std::string &s) {
-  std::string out;
-  for (char c : s) {
-    if (c == '.' || c == '[' || c == ']' || c == '(' || c == ')' ||
-        c == '{' || c == '}' || c == '+' || c == '*' || c == '?' ||
-        c == '\\' || c == '^' || c == '$' || c == '|') {
-      out += '\\';
-    }
-    out += c;
-  }
-  return out;
 }
 
 }  // namespace wrp::cae::fuse

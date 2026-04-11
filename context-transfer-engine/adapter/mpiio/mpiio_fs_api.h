@@ -44,39 +44,39 @@ namespace wrp::cae {
 
 /** A class to represent MPI IO seek mode conversion */
 class MpiioSeekModeConv {
-public:
+ public:
   /** normalize \a mpi_seek MPI seek mode */
   static SeekMode Normalize(int mpi_seek) {
     switch (mpi_seek) {
-    case MPI_SEEK_SET:
-      return SeekMode::kSet;
-    case MPI_SEEK_CUR:
-      return SeekMode::kCurrent;
-    case MPI_SEEK_END:
-      return SeekMode::kEnd;
-    default:
-      return SeekMode::kNone;
+      case MPI_SEEK_SET:
+        return SeekMode::kSet;
+      case MPI_SEEK_CUR:
+        return SeekMode::kCurrent;
+      case MPI_SEEK_END:
+        return SeekMode::kEnd;
+      default:
+        return SeekMode::kNone;
     }
   }
 };
 
 /** A class to represent POSIX IO file system */
 class MpiioFs : public Filesystem {
-public:
+ public:
   WRP_CTE_MPIIO_API_T real_api_; /**< pointer to real APIs */
 
   MpiioFs() : Filesystem(AdapterType::kMpiio) { real_api_ = WRP_CTE_MPIIO_API; }
 
   /** Initialize I/O opts using count + datatype */
   static size_t IoSizeFromCount(int count, MPI_Datatype datatype,
-                                FsIoOptions &opts) {
+                                FsIoOptions& opts) {
     opts.mpi_type_ = datatype;
     opts.mpi_count_ = count;
     MPI_Type_size(datatype, &opts.type_size_);
     return static_cast<size_t>(count * opts.type_size_);
   }
 
-  inline bool IsMpiFpTracked(MPI_File *fh, std::shared_ptr<AdapterStat> &stat) {
+  inline bool IsMpiFpTracked(MPI_File* fh, std::shared_ptr<AdapterStat>& stat) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     if (fh == nullptr) {
       return false;
@@ -87,13 +87,13 @@ public:
     return stat != nullptr;
   }
 
-  inline bool IsMpiFpTracked(MPI_File *fh) {
+  inline bool IsMpiFpTracked(MPI_File* fh) {
     std::shared_ptr<AdapterStat> stat;
     return IsMpiFpTracked(fh, stat);
   }
 
-  int Read(File &f, AdapterStat &stat, void *ptr, size_t offset, int count,
-           MPI_Datatype datatype, MPI_Status *status, FsIoOptions opts) {
+  int Read(File& f, AdapterStat& stat, void* ptr, size_t offset, int count,
+           MPI_Datatype datatype, MPI_Status* status, FsIoOptions opts) {
     IoStatus io_status;
     io_status.mpi_status_ptr_ = status;
     size_t total_size = IoSizeFromCount(count, datatype, opts);
@@ -101,28 +101,28 @@ public:
     return io_status.mpi_ret_;
   }
 
-  int ARead(File &f, AdapterStat &stat, void *ptr, size_t offset, int count,
-            MPI_Datatype datatype, MPI_Request *request, FsIoOptions opts) {
+  int ARead(File& f, AdapterStat& stat, void* ptr, size_t offset, int count,
+            MPI_Datatype datatype, MPI_Request* request, FsIoOptions opts) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     IoStatus io_status;
     size_t total_size = IoSizeFromCount(count, datatype, opts);
-    FsAsyncTask *fstask =
+    FsAsyncTask* fstask =
         Filesystem::ARead(f, stat, ptr, offset, total_size,
                           reinterpret_cast<size_t>(request), io_status, opts);
     mdm->EmplaceTask(reinterpret_cast<size_t>(request), fstask);
     return io_status.mpi_ret_;
   }
 
-  int ReadAll(File &f, AdapterStat &stat, void *ptr, size_t offset, int count,
-              MPI_Datatype datatype, MPI_Status *status, FsIoOptions opts) {
+  int ReadAll(File& f, AdapterStat& stat, void* ptr, size_t offset, int count,
+              MPI_Datatype datatype, MPI_Status* status, FsIoOptions opts) {
     MPI_Barrier(stat.comm_);
     size_t ret = Read(f, stat, ptr, offset, count, datatype, status, opts);
     MPI_Barrier(stat.comm_);
     return ret;
   }
 
-  int ReadOrdered(File &f, AdapterStat &stat, void *ptr, int count,
-                  MPI_Datatype datatype, MPI_Status *status, FsIoOptions opts) {
+  int ReadOrdered(File& f, AdapterStat& stat, void* ptr, int count,
+                  MPI_Datatype datatype, MPI_Status* status, FsIoOptions opts) {
     opts.mpi_type_ = datatype;
 
     int total;
@@ -133,8 +133,8 @@ public:
     return ret;
   }
 
-  int Write(File &f, AdapterStat &stat, const void *ptr, size_t offset,
-            int count, MPI_Datatype datatype, MPI_Status *status,
+  int Write(File& f, AdapterStat& stat, const void* ptr, size_t offset,
+            int count, MPI_Datatype datatype, MPI_Status* status,
             FsIoOptions opts) {
     IoStatus io_status;
     io_status.mpi_status_ptr_ = status;
@@ -143,13 +143,13 @@ public:
     return io_status.mpi_ret_;
   }
 
-  int AWrite(File &f, AdapterStat &stat, const void *ptr, size_t offset,
-             int count, MPI_Datatype datatype, MPI_Request *request,
+  int AWrite(File& f, AdapterStat& stat, const void* ptr, size_t offset,
+             int count, MPI_Datatype datatype, MPI_Request* request,
              FsIoOptions opts) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     IoStatus io_status;
     size_t total_size = IoSizeFromCount(count, datatype, opts);
-    FsAsyncTask *fstask =
+    FsAsyncTask* fstask =
         Filesystem::AWrite(f, stat, ptr, offset, total_size,
                            reinterpret_cast<size_t>(request), io_status, opts);
     mdm->EmplaceTask(reinterpret_cast<size_t>(request), fstask);
@@ -157,9 +157,9 @@ public:
   }
 
   template <bool ASYNC>
-  int BaseWriteAll(File &f, AdapterStat &stat, const void *ptr, size_t offset,
-                   int count, MPI_Datatype datatype, MPI_Status *status,
-                   MPI_Request *request, FsIoOptions opts) {
+  int BaseWriteAll(File& f, AdapterStat& stat, const void* ptr, size_t offset,
+                   int count, MPI_Datatype datatype, MPI_Status* status,
+                   MPI_Request* request, FsIoOptions opts) {
     if constexpr (!ASYNC) {
       MPI_Barrier(stat.comm_);
       int ret = Write(f, stat, ptr, offset, count, datatype, status, opts);
@@ -170,24 +170,24 @@ public:
     }
   }
 
-  int WriteAll(File &f, AdapterStat &stat, const void *ptr, size_t offset,
-               int count, MPI_Datatype datatype, MPI_Status *status,
+  int WriteAll(File& f, AdapterStat& stat, const void* ptr, size_t offset,
+               int count, MPI_Datatype datatype, MPI_Status* status,
                FsIoOptions opts) {
     return BaseWriteAll<false>(f, stat, ptr, offset, count, datatype, status,
                                nullptr, opts);
   }
 
-  int AWriteAll(File &f, AdapterStat &stat, const void *ptr, size_t offset,
-                int count, MPI_Datatype datatype, MPI_Request *request,
+  int AWriteAll(File& f, AdapterStat& stat, const void* ptr, size_t offset,
+                int count, MPI_Datatype datatype, MPI_Request* request,
                 FsIoOptions opts) {
     return BaseWriteAll<true>(f, stat, ptr, offset, count, datatype, nullptr,
                               request, opts);
   }
 
   template <bool ASYNC>
-  int BaseWriteOrdered(File &f, AdapterStat &stat, const void *ptr, int count,
-                       MPI_Datatype datatype, MPI_Status *status,
-                       MPI_Request *request, FsIoOptions opts) {
+  int BaseWriteOrdered(File& f, AdapterStat& stat, const void* ptr, int count,
+                       MPI_Datatype datatype, MPI_Status* status,
+                       MPI_Request* request, FsIoOptions opts) {
     int total;
     MPI_Scan(&count, &total, 1, MPI_INT, MPI_SUM, stat.comm_);
     MPI_Offset my_offset = total - count;
@@ -200,24 +200,24 @@ public:
     }
   }
 
-  int WriteOrdered(File &f, AdapterStat &stat, const void *ptr, int count,
-                   MPI_Datatype datatype, MPI_Status *status,
+  int WriteOrdered(File& f, AdapterStat& stat, const void* ptr, int count,
+                   MPI_Datatype datatype, MPI_Status* status,
                    FsIoOptions opts) {
     return BaseWriteOrdered<false>(f, stat, ptr, count, datatype, status,
                                    nullptr, opts);
   }
 
-  int AWriteOrdered(File &f, AdapterStat &stat, const void *ptr, int count,
-                    MPI_Datatype datatype, MPI_Request *request,
+  int AWriteOrdered(File& f, AdapterStat& stat, const void* ptr, int count,
+                    MPI_Datatype datatype, MPI_Request* request,
                     FsIoOptions opts) {
     HLOG(kDebug, "Starting an asynchronous write");
     return BaseWriteOrdered<true>(f, stat, ptr, count, datatype, nullptr,
                                   request, opts);
   }
 
-  int Wait(MPI_Request *req, MPI_Status *status) {
+  int Wait(MPI_Request* req, MPI_Status* status) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
-    FsAsyncTask *fstask = mdm->FindTask(reinterpret_cast<size_t>(req));
+    FsAsyncTask* fstask = mdm->FindTask(reinterpret_cast<size_t>(req));
     if (fstask) {
       Filesystem::Wait(fstask);
       memcpy(status, fstask->io_status_.mpi_status_ptr_, sizeof(MPI_Status));
@@ -228,7 +228,7 @@ public:
     return real_api_->MPI_Wait(req, status);
   }
 
-  int WaitAll(int count, MPI_Request *req, MPI_Status *status) {
+  int WaitAll(int count, MPI_Request* req, MPI_Status* status) {
     int ret = 0;
     for (int i = 0; i < count; i++) {
       auto sub_ret = Wait(&req[i], &status[i]);
@@ -239,12 +239,12 @@ public:
     return ret;
   }
 
-  int Seek(File &f, AdapterStat &stat, MPI_Offset offset, int whence) {
+  int Seek(File& f, AdapterStat& stat, MPI_Offset offset, int whence) {
     Filesystem::Seek(f, stat, MpiioSeekModeConv::Normalize(whence), offset);
     return MPI_SUCCESS;
   }
 
-  int SeekShared(File &f, AdapterStat &stat, MPI_Offset offset, int whence) {
+  int SeekShared(File& f, AdapterStat& stat, MPI_Offset offset, int whence) {
     MPI_Offset sum_offset;
     int sum_whence;
     int comm_participators;
@@ -253,12 +253,14 @@ public:
                   stat.comm_);
     MPI_Allreduce(&whence, &sum_whence, 1, MPI_INT, MPI_SUM, stat.comm_);
     if (sum_offset / comm_participators != offset) {
-      HLOG(kError, "Same offset should be passed "
-                    "across the opened file communicator.");
+      HLOG(kError,
+           "Same offset should be passed "
+           "across the opened file communicator.");
     }
     if (sum_whence / comm_participators != whence) {
-      HLOG(kError, "Same whence should be passed "
-                    "across the opened file communicator.");
+      HLOG(kError,
+           "Same whence should be passed "
+           "across the opened file communicator.");
     }
     Seek(f, stat, offset, whence);
     return 0;
@@ -268,38 +270,38 @@ public:
   /// NO OFFSET PARAM
   //////////////////////////
 
-  int Read(File &f, AdapterStat &stat, void *ptr, int count,
-           MPI_Datatype datatype, MPI_Status *status) {
+  int Read(File& f, AdapterStat& stat, void* ptr, int count,
+           MPI_Datatype datatype, MPI_Status* status) {
     FsIoOptions opts = FsIoOptions::DataType(datatype, true);
     return Read(f, stat, ptr, Tell(f, stat), count, datatype, status, opts);
   }
 
-  int ARead(File &f, AdapterStat &stat, void *ptr, int count,
-            MPI_Datatype datatype, MPI_Request *request) {
+  int ARead(File& f, AdapterStat& stat, void* ptr, int count,
+            MPI_Datatype datatype, MPI_Request* request) {
     FsIoOptions opts = FsIoOptions::DataType(datatype, true);
     return ARead(f, stat, ptr, Tell(f, stat), count, datatype, request, opts);
   }
 
-  int ReadAll(File &f, AdapterStat &stat, void *ptr, int count,
-              MPI_Datatype datatype, MPI_Status *status) {
+  int ReadAll(File& f, AdapterStat& stat, void* ptr, int count,
+              MPI_Datatype datatype, MPI_Status* status) {
     FsIoOptions opts = FsIoOptions::DataType(datatype, true);
     return ReadAll(f, stat, ptr, Tell(f, stat), count, datatype, status, opts);
   }
 
-  int Write(File &f, AdapterStat &stat, const void *ptr, int count,
-            MPI_Datatype datatype, MPI_Status *status) {
+  int Write(File& f, AdapterStat& stat, const void* ptr, int count,
+            MPI_Datatype datatype, MPI_Status* status) {
     FsIoOptions opts = FsIoOptions::DataType(datatype, true);
     return Write(f, stat, ptr, Tell(f, stat), count, datatype, status, opts);
   }
 
-  int AWrite(File &f, AdapterStat &stat, const void *ptr, int count,
-             MPI_Datatype datatype, MPI_Request *request) {
+  int AWrite(File& f, AdapterStat& stat, const void* ptr, int count,
+             MPI_Datatype datatype, MPI_Request* request) {
     FsIoOptions opts = FsIoOptions::DataType(datatype, true);
     return AWrite(f, stat, ptr, Tell(f, stat), count, datatype, request, opts);
   }
 
-  int WriteAll(File &f, AdapterStat &stat, const void *ptr, int count,
-               MPI_Datatype datatype, MPI_Status *status) {
+  int WriteAll(File& f, AdapterStat& stat, const void* ptr, int count,
+               MPI_Datatype datatype, MPI_Status* status) {
     FsIoOptions opts = FsIoOptions::DataType(datatype, true);
     return WriteAll(f, stat, ptr, Tell(f, stat), count, datatype, status, opts);
   }
@@ -308,8 +310,8 @@ public:
   /// NO STAT PARAM
   //////////////////////////
 
-  int Read(File &f, bool &stat_exists, void *ptr, size_t offset, int count,
-           MPI_Datatype datatype, MPI_Status *status) {
+  int Read(File& f, bool& stat_exists, void* ptr, size_t offset, int count,
+           MPI_Datatype datatype, MPI_Status* status) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -321,8 +323,8 @@ public:
     return Read(f, *stat, ptr, offset, count, datatype, status, opts);
   }
 
-  int ARead(File &f, bool &stat_exists, void *ptr, size_t offset, int count,
-            MPI_Datatype datatype, MPI_Request *request) {
+  int ARead(File& f, bool& stat_exists, void* ptr, size_t offset, int count,
+            MPI_Datatype datatype, MPI_Request* request) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -334,8 +336,8 @@ public:
     return ARead(f, *stat, ptr, offset, count, datatype, request, opts);
   }
 
-  int ReadAll(File &f, bool &stat_exists, void *ptr, size_t offset, int count,
-              MPI_Datatype datatype, MPI_Status *status) {
+  int ReadAll(File& f, bool& stat_exists, void* ptr, size_t offset, int count,
+              MPI_Datatype datatype, MPI_Status* status) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -347,8 +349,8 @@ public:
     return ReadAll(f, *stat, ptr, offset, count, datatype, status, opts);
   }
 
-  int ReadOrdered(File &f, bool &stat_exists, void *ptr, int count,
-                  MPI_Datatype datatype, MPI_Status *status) {
+  int ReadOrdered(File& f, bool& stat_exists, void* ptr, int count,
+                  MPI_Datatype datatype, MPI_Status* status) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -360,8 +362,8 @@ public:
     return ReadOrdered(f, *stat, ptr, count, datatype, status, opts);
   }
 
-  int Write(File &f, bool &stat_exists, const void *ptr, size_t offset,
-            int count, MPI_Datatype datatype, MPI_Status *status) {
+  int Write(File& f, bool& stat_exists, const void* ptr, size_t offset,
+            int count, MPI_Datatype datatype, MPI_Status* status) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -373,8 +375,8 @@ public:
     return Write(f, *stat, ptr, offset, count, datatype, status, opts);
   }
 
-  int AWrite(File &f, bool &stat_exists, const void *ptr, size_t offset,
-             int count, MPI_Datatype datatype, MPI_Request *request) {
+  int AWrite(File& f, bool& stat_exists, const void* ptr, size_t offset,
+             int count, MPI_Datatype datatype, MPI_Request* request) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -386,8 +388,8 @@ public:
     return AWrite(f, *stat, ptr, offset, count, datatype, request, opts);
   }
 
-  int WriteAll(File &f, bool &stat_exists, const void *ptr, size_t offset,
-               int count, MPI_Datatype datatype, MPI_Status *status) {
+  int WriteAll(File& f, bool& stat_exists, const void* ptr, size_t offset,
+               int count, MPI_Datatype datatype, MPI_Status* status) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -399,8 +401,8 @@ public:
     return WriteAll(f, *stat, ptr, offset, count, datatype, status, opts);
   }
 
-  int WriteOrdered(File &f, bool &stat_exists, const void *ptr, int count,
-                   MPI_Datatype datatype, MPI_Status *status) {
+  int WriteOrdered(File& f, bool& stat_exists, const void* ptr, int count,
+                   MPI_Datatype datatype, MPI_Status* status) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -412,8 +414,8 @@ public:
     return WriteOrdered(f, *stat, ptr, count, datatype, status, opts);
   }
 
-  int AWriteOrdered(File &f, bool &stat_exists, const void *ptr, int count,
-                    MPI_Datatype datatype, MPI_Request *request) {
+  int AWriteOrdered(File& f, bool& stat_exists, const void* ptr, int count,
+                    MPI_Datatype datatype, MPI_Request* request) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -425,8 +427,8 @@ public:
     return AWriteOrdered(f, *stat, ptr, count, datatype, request, opts);
   }
 
-  int Read(File &f, bool &stat_exists, void *ptr, int count,
-           MPI_Datatype datatype, MPI_Status *status) {
+  int Read(File& f, bool& stat_exists, void* ptr, int count,
+           MPI_Datatype datatype, MPI_Status* status) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -437,8 +439,8 @@ public:
     return Read(f, *stat, ptr, count, datatype, status);
   }
 
-  int ARead(File &f, bool &stat_exists, void *ptr, int count,
-            MPI_Datatype datatype, MPI_Request *request) {
+  int ARead(File& f, bool& stat_exists, void* ptr, int count,
+            MPI_Datatype datatype, MPI_Request* request) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -449,8 +451,8 @@ public:
     return ARead(f, *stat, ptr, count, datatype, request);
   }
 
-  int ReadAll(File &f, bool &stat_exists, void *ptr, int count,
-              MPI_Datatype datatype, MPI_Status *status) {
+  int ReadAll(File& f, bool& stat_exists, void* ptr, int count,
+              MPI_Datatype datatype, MPI_Status* status) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -461,8 +463,8 @@ public:
     return ReadAll(f, *stat, ptr, count, datatype, status);
   }
 
-  int Write(File &f, bool &stat_exists, const void *ptr, int count,
-            MPI_Datatype datatype, MPI_Status *status) {
+  int Write(File& f, bool& stat_exists, const void* ptr, int count,
+            MPI_Datatype datatype, MPI_Status* status) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -473,8 +475,8 @@ public:
     return Write(f, *stat, ptr, count, datatype, status);
   }
 
-  int AWrite(File &f, bool &stat_exists, const void *ptr, int count,
-             MPI_Datatype datatype, MPI_Request *request) {
+  int AWrite(File& f, bool& stat_exists, const void* ptr, int count,
+             MPI_Datatype datatype, MPI_Request* request) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -485,8 +487,8 @@ public:
     return AWrite(f, *stat, ptr, count, datatype, request);
   }
 
-  int WriteAll(File &f, bool &stat_exists, const void *ptr, int count,
-               MPI_Datatype datatype, MPI_Status *status) {
+  int WriteAll(File& f, bool& stat_exists, const void* ptr, int count,
+               MPI_Datatype datatype, MPI_Status* status) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -497,7 +499,7 @@ public:
     return WriteAll(f, *stat, ptr, count, datatype, status);
   }
 
-  int Seek(File &f, bool &stat_exists, MPI_Offset offset, int whence) {
+  int Seek(File& f, bool& stat_exists, MPI_Offset offset, int whence) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -508,7 +510,7 @@ public:
     return Seek(f, *stat, offset, whence);
   }
 
-  int SeekShared(File &f, bool &stat_exists, MPI_Offset offset, int whence) {
+  int SeekShared(File& f, bool& stat_exists, MPI_Offset offset, int whence) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -519,9 +521,9 @@ public:
     return SeekShared(f, *stat, offset, whence);
   }
 
-public:
+ public:
   /** Allocate an fd for the file f */
-  void RealOpen(File &f, AdapterStat &stat, const std::string &path) override {
+  void RealOpen(File& f, AdapterStat& stat, const std::string& path) override {
     if (stat.amode_ & MPI_MODE_CREATE) {
       stat.hflags_.SetBits(WRP_CTE_FS_CREATE);
       stat.hflags_.SetBits(WRP_CTE_FS_TRUNC);
@@ -543,7 +545,7 @@ public:
     // NOTE(llogan): Allowing scratch mode to create empty files for MPI to
     // satisfy IOR.
     HLOG(kDebug, "Beginning real MPI open: {}",
-          (void *)real_api_->MPI_File_open);
+         (void*)real_api_->MPI_File_open);
     f.mpi_status_ = real_api_->MPI_File_open(
         stat.comm_, path.c_str(), stat.amode_, stat.info_, &stat.mpi_fh_);
     if (f.mpi_status_ != MPI_SUCCESS) {
@@ -576,19 +578,19 @@ public:
    * and hermes file handler. These are not the same as STDIO file
    * descriptor and STDIO file handler.
    * */
-  void HermesOpen(File &f, const AdapterStat &stat,
-                  FilesystemIoClientState &fs_mdm) override {
+  void HermesOpen(File& f, const AdapterStat& stat,
+                  FilesystemIoClientState& fs_mdm) override {
     // f.hermes_mpi_fh_ = (MPI_File)fs_mdm.stat_;
     f.hermes_mpi_fh_ = stat.mpi_fh_;
   }
 
   /** Synchronize \a file FILE f */
-  int RealSync(const File &f, const AdapterStat &stat) override {
+  int RealSync(const File& f, const AdapterStat& stat) override {
     return real_api_->MPI_File_sync(stat.mpi_fh_);
   }
 
   /** Close \a file FILE f */
-  int RealClose(const File &f, AdapterStat &stat) override {
+  int RealClose(const File& f, AdapterStat& stat) override {
     return real_api_->MPI_File_close(&stat.mpi_fh_);
   }
 
@@ -596,22 +598,22 @@ public:
    * Called before RealClose. Releases information provisioned during
    * the allocation phase.
    * */
-  void HermesClose(File &f, const AdapterStat &stat,
-                   FilesystemIoClientState &fs_mdm) override {
+  void HermesClose(File& f, const AdapterStat& stat,
+                   FilesystemIoClientState& fs_mdm) override {
     (void)f;
     (void)stat;
     (void)fs_mdm;
   }
 
   /** Remove \a file FILE f */
-  int RealRemove(const std::string &path) override {
+  int RealRemove(const std::string& path) override {
     return remove(path.c_str());
   }
 
   /** Get initial statistics from the backend */
-  size_t GetBackendSize(const chi::string &bkt_name) override {
+  size_t GetBackendSize(const std::string& bkt_name) override {
     size_t true_size = 0;
-    std::string filename = bkt_name.str();
+    std::string filename = bkt_name;
     int fd = open(filename.c_str(), O_RDONLY);
     if (fd < 0) {
       return 0;
@@ -622,19 +624,19 @@ public:
     close(fd);
 
     HLOG(kDebug, "The size of the file {} on disk is {} bytes", filename,
-          true_size);
+         true_size);
     return true_size;
   }
 
   /** Write blob to backend */
-  void WriteBlob(const std::string &bkt_name, const Blob &full_blob,
-                 const FsIoOptions &opts, IoStatus &status) override {
+  void WriteBlob(const std::string& bkt_name, const void* data, size_t size,
+                 const FsIoOptions& opts, IoStatus& status) override {
     status.success_ = true;
     HLOG(kDebug,
-          "Write called for: {}"
-          " on offset: {}"
-          " and size: {}",
-          bkt_name, opts.backend_off_, full_blob.size());
+         "Write called for: {}"
+         " on offset: {}"
+         " and size: {}",
+         bkt_name, opts.backend_off_, size);
     MPI_File fh;
     int write_count = 0;
     status.mpi_ret_ = real_api_->MPI_File_open(
@@ -651,30 +653,30 @@ public:
       goto ERROR;
     }
     status.mpi_ret_ =
-        real_api_->MPI_File_write(fh, full_blob.data(), opts.mpi_count_,
+        real_api_->MPI_File_write(fh, const_cast<void*>(data), opts.mpi_count_,
                                   opts.mpi_type_, status.mpi_status_ptr_);
     MPI_Get_count(status.mpi_status_ptr_, opts.mpi_type_, &write_count);
     if (write_count != opts.mpi_count_) {
       status.success_ = false;
       HLOG(kError, "writing failed: wrote {} / {}", write_count,
-            opts.mpi_count_);
+           opts.mpi_count_);
     }
 
   ERROR:
     real_api_->MPI_File_close(&fh);
-    status.size_ = full_blob.size();
+    status.size_ = size;
     UpdateIoStatus(opts, status);
   }
 
   /** Read blob from the backend */
-  void ReadBlob(const std::string &bkt_name, Blob &full_blob,
-                const FsIoOptions &opts, IoStatus &status) override {
+  void ReadBlob(const std::string& bkt_name, void* data, size_t size,
+                const FsIoOptions& opts, IoStatus& status) override {
     status.success_ = true;
     HLOG(kDebug,
-          "Reading from: {}"
-          " on offset: {}"
-          " and size: {}",
-          bkt_name, opts.backend_off_, full_blob.size());
+         "Reading from: {}"
+         " on offset: {}"
+         " and size: {}",
+         bkt_name, opts.backend_off_, size);
     MPI_File fh;
     int read_count = 0;
     status.mpi_ret_ = real_api_->MPI_File_open(
@@ -690,24 +692,22 @@ public:
       status.success_ = false;
       goto ERROR;
     }
-    status.mpi_ret_ =
-        real_api_->MPI_File_read(fh, full_blob.data(), opts.mpi_count_,
-                                 opts.mpi_type_, status.mpi_status_ptr_);
+    status.mpi_ret_ = real_api_->MPI_File_read(
+        fh, data, opts.mpi_count_, opts.mpi_type_, status.mpi_status_ptr_);
     MPI_Get_count(status.mpi_status_ptr_, opts.mpi_type_, &read_count);
     if (read_count != opts.mpi_count_) {
       status.success_ = false;
-      HLOG(kError, "reading failed: read {} / {}", read_count,
-            opts.mpi_count_);
+      HLOG(kError, "reading failed: read {} / {}", read_count, opts.mpi_count_);
     }
 
   ERROR:
     real_api_->MPI_File_close(&fh);
-    status.size_ = full_blob.size();
+    status.size_ = size;
     UpdateIoStatus(opts, status);
   }
 
   /** Update the I/O status after a ReadBlob or WriteBlob */
-  void UpdateIoStatus(const FsIoOptions &opts, IoStatus &status) override {
+  void UpdateIoStatus(const FsIoOptions& opts, IoStatus& status) override {
 #ifdef WRP_CTE_OPENMPI
     status.mpi_status_ptr_->_cancelled = 0;
     status.mpi_status_ptr_->_ucount = (int)(status.size_ / opts.type_size_);
@@ -720,11 +720,10 @@ public:
   }
 };
 
-} // namespace wrp::cae
+}  // namespace wrp::cae
 
 /** Simplify access to the stateless StdioFs Singleton */
-#define WRP_CTE_MPIIO_FS                                                        \
-  hshm::Singleton<::wrp::cae::MpiioFs>::GetInstance()
-#define WRP_CTE_STDIO_FS_T wrp::cae::MpiioFs *
+#define WRP_CTE_MPIIO_FS hshm::Singleton<::wrp::cae::MpiioFs>::GetInstance()
+#define WRP_CTE_STDIO_FS_T wrp::cae::MpiioFs*
 
-#endif // WRP_CTE_ADAPTER_MPIIO_MPIIO_FS_API_H_
+#endif  // WRP_CTE_ADAPTER_MPIIO_MPIIO_FS_API_H_

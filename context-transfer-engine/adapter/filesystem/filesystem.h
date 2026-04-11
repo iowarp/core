@@ -71,10 +71,10 @@ enum class SeekMode {
 
 /** A class to represent file system */
 class Filesystem : public FilesystemIoClient {
-public:
+ public:
   AdapterType type_;
 
-public:
+ public:
   /** Constructor */
   explicit Filesystem(AdapterType type) : type_(type) {
     wrp_cte::core::WRP_CTE_CLIENT_INIT();
@@ -82,7 +82,7 @@ public:
   }
 
   /** open \a path */
-  File Open(AdapterStat &stat, const std::string &path) {
+  File Open(AdapterStat& stat, const std::string& path) {
     File f;
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     if (stat.adapter_mode_ == AdapterMode::kNone) {
@@ -97,7 +97,7 @@ public:
   }
 
   /** open \a f File in \a path */
-  void Open(AdapterStat &stat, File &f, const std::string &path) {
+  void Open(AdapterStat& stat, File& f, const std::string& path) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     // No longer need Context object for CTE
 
@@ -130,7 +130,7 @@ public:
         stat.file_size_ = GetBackendSize(stat.path_);
       }
       HLOG(kDebug, "Tag vs file size: tag_id={},{}, file_size={}",
-            stat.tag_id_.major_, stat.tag_id_.minor_, stat.file_size_);
+           stat.tag_id_.major_, stat.tag_id_.minor_, stat.file_size_);
       // Update file position pointer
       if (stat.hflags_.Any(WRP_CTE_FS_APPEND)) {
         stat.st_ptr_ = std::numeric_limits<size_t>::max();
@@ -139,7 +139,7 @@ public:
       }
       // Allocate internal hermes data
       auto stat_ptr = std::make_shared<AdapterStat>(stat);
-      FilesystemIoClientState fs_ctx(&mdm->fs_mdm_, (void *)stat_ptr.get());
+      FilesystemIoClientState fs_ctx(&mdm->fs_mdm_, (void*)stat_ptr.get());
       HermesOpen(f, stat, fs_ctx);
       mdm->Create(f, stat_ptr);
     } else {
@@ -148,7 +148,7 @@ public:
     }
   }
 
-private:
+ private:
   /** Helper function to calculate page index from offset */
   static size_t CalculatePageIndex(size_t offset, size_t page_size) {
     return offset / page_size;
@@ -165,10 +165,10 @@ private:
     return page_size - page_offset;
   }
 
-public:
+ public:
   /** write */
-  size_t Write(File &f, AdapterStat &stat, const void *ptr, size_t off,
-               size_t total_size, IoStatus &io_status,
+  size_t Write(File& f, AdapterStat& stat, const void* ptr, size_t off,
+               size_t total_size, IoStatus& io_status,
                FsIoOptions opts = FsIoOptions()) {
     (void)f;
     std::string filename = stat.path_;
@@ -189,7 +189,7 @@ public:
       WriteBlob(filename, ptr, total_size, opts, io_status);
       if (!io_status.success_) {
         HLOG(kDebug, "Failed to write blob of size {} to backend",
-              opts.backend_size_);
+             opts.backend_size_);
         return 0;
       }
       if (opts.DoSeek() && !is_append) {
@@ -202,8 +202,9 @@ public:
     if (is_append) {
       // TODO: Append operations not yet supported in CTE
       // Perform append
-      HLOG(kWarning, "Append operations not yet supported in CTE, treating as "
-                      "regular write");
+      HLOG(kWarning,
+           "Append operations not yet supported in CTE, treating as "
+           "regular write");
       // Fallback to regular write at end of file
       off = stat.file_size_;
     }
@@ -212,7 +213,7 @@ public:
     {
       size_t bytes_written = 0;
       size_t current_offset = off;
-      const char *data_ptr = static_cast<const char *>(ptr);
+      const char* data_ptr = static_cast<const char*>(ptr);
 
       // Create Tag object from stored TagId
       wrp_cte::core::Tag file_tag(stat.tag_id_);
@@ -232,13 +233,14 @@ public:
         // Generate blob name using stringified page index
         std::string blob_name = std::to_string(page_index);
 
-        // Use Tag API PutBlob with raw char* (handles SHM allocation internally)
+        // Use Tag API PutBlob with raw char* (handles SHM allocation
+        // internally)
         try {
           file_tag.PutBlob(blob_name, data_ptr + bytes_written, bytes_to_write,
                            page_offset);
-        } catch (const std::exception &e) {
+        } catch (const std::exception& e) {
           HLOG(kError, "Tag PutBlob failed for page {}: {}", page_index,
-                e.what());
+               e.what());
           io_status.success_ = false;
           return bytes_written;
         }
@@ -262,19 +264,19 @@ public:
 
   /** base read function */
   template <bool ASYNC>
-  size_t BaseRead(File &f, AdapterStat &stat, void *ptr, size_t off,
+  size_t BaseRead(File& f, AdapterStat& stat, void* ptr, size_t off,
                   size_t total_size, size_t req_id,
-                  std::vector<GetBlobAsyncTask> &tasks, IoStatus &io_status,
+                  std::vector<GetBlobAsyncTask>& tasks, IoStatus& io_status,
                   FsIoOptions opts = FsIoOptions()) {
     (void)f;
     std::string filename = stat.path_;
 
     HLOG(kDebug,
-          "Read called for filename: {}"
-          " on offset: {}"
-          " from position: {}"
-          " and size: {}",
-          stat.path_, off, stat.st_ptr_, total_size);
+         "Read called for filename: {}"
+         " on offset: {}"
+         " from position: {}"
+         " and size: {}",
+         stat.path_, off, stat.st_ptr_, total_size);
 
     // SEEK_END is not a valid read position
     if (off == std::numeric_limits<size_t>::max()) {
@@ -305,7 +307,7 @@ public:
         ReadBlob(filename, ptr, total_size, opts, io_status);
         if (!io_status.success_) {
           HLOG(kDebug, "Failed to read blob of size {} from backend",
-                opts.backend_size_);
+               opts.backend_size_);
           return 0;
         }
         if (opts.DoSeek()) {
@@ -319,13 +321,13 @@ public:
     if constexpr (ASYNC) {
       // TODO: Async read operations not yet fully supported in CTE adapter
       HLOG(kWarning,
-            "Async read operations not yet fully supported, using sync read");
+           "Async read operations not yet fully supported, using sync read");
     }
 
     // Use page-based CTE GetBlob operations with Tag API
     size_t bytes_read = 0;
     size_t current_offset = off;
-    char *data_ptr = static_cast<char *>(ptr);
+    char* data_ptr = static_cast<char*>(ptr);
 
     // Create Tag object from stored TagId
     wrp_cte::core::Tag file_tag(stat.tag_id_);
@@ -348,9 +350,9 @@ public:
       try {
         file_tag.GetBlob(blob_name, data_ptr + bytes_read, bytes_to_read,
                          page_offset);
-      } catch (const std::exception &e) {
+      } catch (const std::exception& e) {
         HLOG(kError, "Tag GetBlob failed for page {}: {}", page_index,
-              e.what());
+             e.what());
         io_status.success_ = false;
         return bytes_read;
       }
@@ -360,7 +362,7 @@ public:
       current_offset += bytes_to_read;
     }
 
-    size_t data_offset = bytes_read; // Total bytes read
+    size_t data_offset = bytes_read;  // Total bytes read
     if (opts.DoSeek()) {
       stat.st_ptr_ = off + data_offset;
     }
@@ -371,8 +373,8 @@ public:
   }
 
   /** read */
-  size_t Read(File &f, AdapterStat &stat, void *ptr, size_t off,
-              size_t total_size, IoStatus &io_status,
+  size_t Read(File& f, AdapterStat& stat, void* ptr, size_t off,
+              size_t total_size, IoStatus& io_status,
               FsIoOptions opts = FsIoOptions()) {
     std::vector<GetBlobAsyncTask> tasks;
     return BaseRead<false>(f, stat, ptr, off, total_size, 0, tasks, io_status,
@@ -380,113 +382,199 @@ public:
   }
 
   /** write asynchronously */
-  FsAsyncTask *AWrite(File &f, AdapterStat &stat, const void *ptr, size_t off,
-                      size_t total_size, size_t req_id, IoStatus &io_status,
+  FsAsyncTask* AWrite(File& f, AdapterStat& stat, const void* ptr, size_t off,
+                      size_t total_size, size_t req_id, IoStatus& io_status,
                       FsIoOptions opts = FsIoOptions()) {
-    // Writes are completely async at this time
-    FsAsyncTask *fstask = new FsAsyncTask();
-    Write(f, stat, ptr, off, total_size, io_status, opts);
-    fstask->io_status_.Copy(io_status);
+    FsAsyncTask* fstask = new FsAsyncTask();
+
+    // Get CTE client for async operations
+    auto* cte_client = WRP_CTE_CLIENT;
+    if (cte_client == nullptr) {
+      // CTE not initialized, use sync fallback
+      Write(f, stat, ptr, off, total_size, io_status, opts);
+      fstask->io_status_.Copy(io_status);
+      fstask->opts_ = opts;
+      return fstask;
+    }
+
+    // Create async PutBlob operation
+    // Allocate shared memory for data using IPC manager
+    auto* ipc_manager = CHI_IPC;
+    hipc::FullPtr<char> shm_fullptr = ipc_manager->AllocateBuffer(total_size);
+    if (!shm_fullptr.IsNull()) {
+      // Copy data to shared memory
+      memcpy(shm_fullptr.ptr_, ptr, total_size);
+
+      // Convert to ShmPtr for API call
+      hipc::ShmPtr<> data_ptr(shm_fullptr.shm_);
+
+      // Create async PutBlob and store Future
+      auto future = cte_client->AsyncPutBlob(
+          stat.tag_id_, stat.path_, off, total_size, data_ptr,
+          -1.0f,  // Use default score
+          wrp_cte::core::Context(), 0, chi::PoolQuery::Local());
+
+      fstask->put_futures_.push_back(std::move(future));
+    }
+
     fstask->opts_ = opts;
+    fstask->io_status_.success_ = true;  // Async - will complete later
     return fstask;
   }
 
   /** read asynchronously */
-  FsAsyncTask *ARead(File &f, AdapterStat &stat, void *ptr, size_t off,
-                     size_t total_size, size_t req_id, IoStatus &io_status,
+  FsAsyncTask* ARead(File& f, AdapterStat& stat, void* ptr, size_t off,
+                     size_t total_size, size_t req_id, IoStatus& io_status,
                      FsIoOptions opts = FsIoOptions()) {
-    FsAsyncTask *fstask = new FsAsyncTask();
-    BaseRead<true>(f, stat, ptr, off, total_size, req_id, fstask->get_tasks_,
-                   io_status, opts);
-    fstask->io_status_ = io_status;
+    FsAsyncTask* fstask = new FsAsyncTask();
+
+    // Get CTE client for async operations
+    auto* cte_client = WRP_CTE_CLIENT;
+    if (cte_client == nullptr) {
+      // CTE not initialized, use sync fallback
+      BaseRead<true>(f, stat, ptr, off, total_size, req_id, fstask->get_tasks_,
+                     io_status, opts);
+      fstask->io_status_ = io_status;
+      fstask->opts_ = opts;
+      return fstask;
+    }
+
+    // Allocate shared memory for read data
+    hipc::FullPtr<char> shm_fullptr = CHI_IPC->AllocateBuffer(total_size);
+    if (shm_fullptr.IsNull()) {
+      fstask->io_status_.success_ = false;
+      fstask->io_status_.mpi_ret_ = -ENOMEM;
+      return fstask;
+    }
+
+    // Create async GetBlob and store Future
+    hipc::ShmPtr<> data_ptr(shm_fullptr.shm_);
+    auto future =
+        cte_client->AsyncGetBlob(stat.tag_id_, stat.path_, off, total_size,
+                                 0,  // flags
+                                 data_ptr, chi::PoolQuery::Local());
+
+    // Store the future and buffer info for later
+    GetBlobAsyncTask async_task;
+    async_task.future_ = std::move(future);
+    async_task.orig_data_ = static_cast<char*>(ptr);
+    async_task.orig_size_ = total_size;
+    fstask->get_tasks_.push_back(std::move(async_task));
+
     fstask->opts_ = opts;
+    fstask->io_status_.success_ = true;  // Async - will complete later
     return fstask;
   }
 
   /** wait for \a req_id request ID */
-  size_t Wait(FsAsyncTask *fstask) {
-    // CTE async operations - updated for new task types
-    for (hipc::FullPtr<wrp_cte::core::PutBlobTask> &task : fstask->put_tasks_) {
-      task->Wait();
-      CHI_IPC->DelTask(task);
+  size_t Wait(FsAsyncTask* fstask) {
+    int ret = 0;
+
+    // CTE async operations - wait on futures and check return codes
+    for (auto& future : fstask->put_futures_) {
+      future.Wait();
+      // Check return code
+      if (future->GetReturnCode() != 0) {
+        HLOG(kError, "PutBlob failed with return code: {}",
+             future->GetReturnCode());
+        ret = -EIO;
+      }
+      // Future destructor handles cleanup
     }
 
     // Update I/O status for gets
     if (!fstask->get_tasks_.empty()) {
       size_t get_size = 0;
-      for (GetBlobAsyncTask &task : fstask->get_tasks_) {
-        task.task_->Wait();
-        // TODO: CTE GetBlob tasks may have different result structure
-        // For now, just use the requested size
+      for (GetBlobAsyncTask& task : fstask->get_tasks_) {
+        task.future_.Wait();
+        // Check return code
+        if (task.future_->GetReturnCode() != 0) {
+          HLOG(kError, "GetBlob failed with return code: {}",
+               task.future_->GetReturnCode());
+          ret = -EIO;
+          continue;
+        }
+        // Copy data from shared memory to user buffer
+        // The blob_data_ field contains the shared memory pointer with the data
+        // Convert ShmPtr to FullPtr to access the data
+        if (!task.future_->blob_data_.IsNull()) {
+          hipc::FullPtr<char> full_ptr = CHI_IPC->ToFullPtr<char>(
+              task.future_->blob_data_.template Cast<char>());
+          if (full_ptr.ptr_ != nullptr) {
+            memcpy(task.orig_data_, full_ptr.ptr_, task.orig_size_);
+          }
+        }
         get_size += task.orig_size_;
-        // TODO: CTE may handle data copying differently
-        // memcpy(task.orig_data_, data.ptr_, task.orig_size_);
-        CHI_IPC->DelTask(task.task_);
+        // Future destructor handles cleanup
       }
       fstask->io_status_.size_ = get_size;
       UpdateIoStatus(fstask->opts_, fstask->io_status_);
     }
-    return 0;
+
+    fstask->io_status_.success_ = (ret == 0);
+    fstask->io_status_.mpi_ret_ = ret;
+    return ret;
   }
 
   /** wait for request IDs in \a req_id vector */
-  void Wait(std::vector<FsAsyncTask *> &req_ids, std::vector<size_t> &ret) {
-    for (auto &req_id : req_ids) {
+  void Wait(std::vector<FsAsyncTask*>& req_ids, std::vector<size_t>& ret) {
+    for (auto& req_id : req_ids) {
       ret.emplace_back(Wait(req_id));
     }
   }
 
   /** seek */
-  size_t Seek(File &f, AdapterStat &stat, SeekMode whence, off64_t offset) {
+  size_t Seek(File& f, AdapterStat& stat, SeekMode whence, off64_t offset) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     switch (whence) {
-    case SeekMode::kSet: {
-      stat.st_ptr_ = offset;
-      break;
-    }
-    case SeekMode::kCurrent: {
-      if (stat.st_ptr_ != std::numeric_limits<size_t>::max()) {
-        stat.st_ptr_ = (off64_t)stat.st_ptr_ + offset;
-        offset = stat.st_ptr_;
-      } else {
-        stat.st_ptr_ = (off64_t)stat.file_size_ + offset;
-        offset = stat.st_ptr_;
+      case SeekMode::kSet: {
+        stat.st_ptr_ = offset;
+        break;
       }
-      break;
-    }
-    case SeekMode::kEnd: {
-      if (offset == 0) {
-        stat.st_ptr_ = std::numeric_limits<size_t>::max();
-        offset = stat.file_size_;
-      } else {
-        stat.st_ptr_ = (off64_t)stat.file_size_ + offset;
-        offset = stat.st_ptr_;
+      case SeekMode::kCurrent: {
+        if (stat.st_ptr_ != std::numeric_limits<size_t>::max()) {
+          stat.st_ptr_ = (off64_t)stat.st_ptr_ + offset;
+          offset = stat.st_ptr_;
+        } else {
+          stat.st_ptr_ = (off64_t)stat.file_size_ + offset;
+          offset = stat.st_ptr_;
+        }
+        break;
       }
-      break;
-    }
-    default: {
-      HLOG(kError, "Invalid seek mode");
-      return (size_t)-1;
-    }
+      case SeekMode::kEnd: {
+        if (offset == 0) {
+          stat.st_ptr_ = std::numeric_limits<size_t>::max();
+          offset = stat.file_size_;
+        } else {
+          stat.st_ptr_ = (off64_t)stat.file_size_ + offset;
+          offset = stat.st_ptr_;
+        }
+        break;
+      }
+      default: {
+        HLOG(kError, "Invalid seek mode");
+        return (size_t)-1;
+      }
     }
     mdm->Update(f, stat);
     return offset;
   }
 
   /** file size */
-  size_t GetSize(File &f, AdapterStat &stat) {
+  size_t GetSize(File& f, AdapterStat& stat) {
     (void)f;
     if (stat.adapter_mode_ != AdapterMode::kBypass) {
-      // For CTE, query the actual tag size from CTE runtime
-      auto *cte_client = WRP_CTE_CLIENT;
-      size_t cte_tag_size =
-          cte_client->GetTagSize(hipc::MemContext(), stat.tag_id_);
+      // For CTE, query the actual tag size from CTE runtime using async API
+      auto* cte_client = WRP_CTE_CLIENT;
+      auto get_size_task =
+          cte_client->AsyncGetTagSize(stat.tag_id_, chi::PoolQuery::Local());
+      get_size_task.Wait();
+      size_t cte_tag_size = get_size_task->tag_size_;
 
-      HLOG(
-          kDebug,
-          "GetSize: queried CTE for tag_id={},{}, got size={}, cached_size={}",
-          stat.tag_id_.major_, stat.tag_id_.minor_, cte_tag_size,
-          stat.file_size_);
+      HLOG(kDebug,
+           "GetSize: queried CTE for tag_id={},{}, got size={}, cached_size={}",
+           stat.tag_id_.major_, stat.tag_id_.minor_, cte_tag_size,
+           stat.file_size_);
 
       // Update cached file size with actual CTE tag size
       stat.file_size_ = cte_tag_size;
@@ -497,7 +585,7 @@ public:
   }
 
   /** tell */
-  size_t Tell(File &f, AdapterStat &stat) {
+  size_t Tell(File& f, AdapterStat& stat) {
     (void)f;
     if (stat.st_ptr_ != std::numeric_limits<size_t>::max()) {
       return stat.st_ptr_;
@@ -507,7 +595,7 @@ public:
   }
 
   /** sync */
-  int Sync(File &f, AdapterStat &stat) {
+  int Sync(File& f, AdapterStat& stat) {
     (void)f;
     (void)stat;
     // CTE sync operations would be handled by the runtime
@@ -516,17 +604,17 @@ public:
   }
 
   /** truncate */
-  int Truncate(File &f, AdapterStat &stat, size_t new_size) {
+  int Truncate(File& f, AdapterStat& stat, size_t new_size) {
     // hapi::Bucket &bkt = stat.bkt_id_;
     // TODO(llogan)
     return 0;
   }
 
   /** close */
-  int Close(File &f, AdapterStat &stat) {
+  int Close(File& f, AdapterStat& stat) {
     Sync(f, stat);
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
-    FilesystemIoClientState fs_ctx(&mdm->fs_mdm_, (void *)&stat);
+    FilesystemIoClientState fs_ctx(&mdm->fs_mdm_, (void*)&stat);
     HermesClose(f, stat, fs_ctx);
     RealClose(f, stat);
     mdm->Delete(stat.path_, f);
@@ -539,7 +627,7 @@ public:
   }
 
   /** remove */
-  int Remove(const std::string &pathname) {
+  int Remove(const std::string& pathname) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     int ret = RealRemove(pathname);
 
@@ -548,8 +636,11 @@ public:
     std::string canon_path = stdfs::absolute(pathname).string();
     // Note: Tag API doesn't provide delete functionality yet, so we use core
     // client directly
-    auto *cte_client = WRP_CTE_CLIENT;
-    bool tag_deleted = cte_client->DelTag(hipc::MemContext(), canon_path);
+    auto* cte_client = WRP_CTE_CLIENT;
+    auto del_task =
+        cte_client->AsyncDelTag(canon_path, chi::PoolQuery::Local());
+    del_task.Wait();
+    bool tag_deleted = del_task->GetReturnCode() == 0;
     if (tag_deleted) {
       HLOG(kDebug, "Deleted CTE tag for file: {}", pathname);
     } else {
@@ -557,18 +648,18 @@ public:
     }
 
     // Destroy all file descriptors
-    std::list<File> *filesp = mdm->Find(pathname);
+    std::list<File>* filesp = mdm->Find(pathname);
     if (filesp == nullptr) {
       return ret;
     }
     HLOG(kDebug, "Destroying the file descriptors: {}", pathname);
     std::list<File> files = *filesp;
-    for (File &f : files) {
+    for (File& f : files) {
       std::shared_ptr<AdapterStat> stat = mdm->Find(f);
       if (stat == nullptr) {
         continue;
       }
-      FilesystemIoClientState fs_ctx(&mdm->fs_mdm_, (void *)&stat);
+      FilesystemIoClientState fs_ctx(&mdm->fs_mdm_, (void*)&stat);
       HermesClose(f, *stat, fs_ctx);
       RealClose(f, *stat);
       mdm->Delete(stat->path_, f);
@@ -584,32 +675,32 @@ public:
    * instead of taking an offset as input.
    */
 
-public:
+ public:
   /** write */
-  size_t Write(File &f, AdapterStat &stat, const void *ptr, size_t total_size,
-               IoStatus &io_status, FsIoOptions opts) {
+  size_t Write(File& f, AdapterStat& stat, const void* ptr, size_t total_size,
+               IoStatus& io_status, FsIoOptions opts) {
     size_t off = stat.st_ptr_;
     return Write(f, stat, ptr, off, total_size, io_status, opts);
   }
 
   /** read */
-  size_t Read(File &f, AdapterStat &stat, void *ptr, size_t total_size,
-              IoStatus &io_status, FsIoOptions opts) {
+  size_t Read(File& f, AdapterStat& stat, void* ptr, size_t total_size,
+              IoStatus& io_status, FsIoOptions opts) {
     size_t off = stat.st_ptr_;
     return Read(f, stat, ptr, off, total_size, io_status, opts);
   }
 
   /** write asynchronously */
-  FsAsyncTask *AWrite(File &f, AdapterStat &stat, const void *ptr,
-                      size_t total_size, size_t req_id, IoStatus &io_status,
+  FsAsyncTask* AWrite(File& f, AdapterStat& stat, const void* ptr,
+                      size_t total_size, size_t req_id, IoStatus& io_status,
                       FsIoOptions opts) {
     size_t off = stat.st_ptr_;
     return AWrite(f, stat, ptr, off, total_size, req_id, io_status, opts);
   }
 
   /** read asynchronously */
-  FsAsyncTask *ARead(File &f, AdapterStat &stat, void *ptr, size_t total_size,
-                     size_t req_id, IoStatus &io_status, FsIoOptions opts) {
+  FsAsyncTask* ARead(File& f, AdapterStat& stat, void* ptr, size_t total_size,
+                     size_t req_id, IoStatus& io_status, FsIoOptions opts) {
     size_t off = stat.st_ptr_;
     return ARead(f, stat, ptr, off, total_size, req_id, io_status, opts);
   }
@@ -619,10 +710,10 @@ public:
    * call the underlying APIs which take AdapterStat as input.
    */
 
-public:
+ public:
   /** write */
-  size_t Write(File &f, bool &stat_exists, const void *ptr, size_t total_size,
-               IoStatus &io_status, FsIoOptions opts = FsIoOptions()) {
+  size_t Write(File& f, bool& stat_exists, const void* ptr, size_t total_size,
+               IoStatus& io_status, FsIoOptions opts = FsIoOptions()) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -634,8 +725,8 @@ public:
   }
 
   /** read */
-  size_t Read(File &f, bool &stat_exists, void *ptr, size_t total_size,
-              IoStatus &io_status, FsIoOptions opts = FsIoOptions()) {
+  size_t Read(File& f, bool& stat_exists, void* ptr, size_t total_size,
+              IoStatus& io_status, FsIoOptions opts = FsIoOptions()) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -647,8 +738,8 @@ public:
   }
 
   /** write \a off offset */
-  size_t Write(File &f, bool &stat_exists, const void *ptr, size_t off,
-               size_t total_size, IoStatus &io_status,
+  size_t Write(File& f, bool& stat_exists, const void* ptr, size_t off,
+               size_t total_size, IoStatus& io_status,
                FsIoOptions opts = FsIoOptions()) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
@@ -662,8 +753,8 @@ public:
   }
 
   /** read \a off offset */
-  size_t Read(File &f, bool &stat_exists, void *ptr, size_t off,
-              size_t total_size, IoStatus &io_status,
+  size_t Read(File& f, bool& stat_exists, void* ptr, size_t off,
+              size_t total_size, IoStatus& io_status,
               FsIoOptions opts = FsIoOptions()) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
@@ -677,11 +768,11 @@ public:
   }
 
   /** write asynchronously */
-  FsAsyncTask *
-  AWrite(File &f, bool &stat_exists, const void *ptr, size_t total_size,
-         size_t req_id,
-         std::vector<hipc::FullPtr<wrp_cte::core::PutBlobTask>> &tasks,
-         IoStatus &io_status, FsIoOptions opts) {
+  FsAsyncTask* AWrite(
+      File& f, bool& stat_exists, const void* ptr, size_t total_size,
+      size_t req_id,
+      std::vector<hipc::FullPtr<wrp_cte::core::PutBlobTask>>& tasks,
+      IoStatus& io_status, FsIoOptions opts) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -693,8 +784,8 @@ public:
   }
 
   /** read asynchronously */
-  FsAsyncTask *ARead(File &f, bool &stat_exists, void *ptr, size_t total_size,
-                     size_t req_id, IoStatus &io_status, FsIoOptions opts) {
+  FsAsyncTask* ARead(File& f, bool& stat_exists, void* ptr, size_t total_size,
+                     size_t req_id, IoStatus& io_status, FsIoOptions opts) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -706,8 +797,8 @@ public:
   }
 
   /** write \a off offset asynchronously */
-  FsAsyncTask *AWrite(File &f, bool &stat_exists, const void *ptr, size_t off,
-                      size_t total_size, size_t req_id, IoStatus &io_status,
+  FsAsyncTask* AWrite(File& f, bool& stat_exists, const void* ptr, size_t off,
+                      size_t total_size, size_t req_id, IoStatus& io_status,
                       FsIoOptions opts) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
@@ -721,8 +812,8 @@ public:
   }
 
   /** read \a off offset asynchronously */
-  FsAsyncTask *ARead(File &f, bool &stat_exists, void *ptr, size_t off,
-                     size_t total_size, size_t req_id, IoStatus &io_status,
+  FsAsyncTask* ARead(File& f, bool& stat_exists, void* ptr, size_t off,
+                     size_t total_size, size_t req_id, IoStatus& io_status,
                      FsIoOptions opts) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
@@ -736,7 +827,7 @@ public:
   }
 
   /** seek */
-  size_t Seek(File &f, bool &stat_exists, SeekMode whence, size_t offset) {
+  size_t Seek(File& f, bool& stat_exists, SeekMode whence, size_t offset) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -748,7 +839,7 @@ public:
   }
 
   /** file sizes */
-  size_t GetSize(File &f, bool &stat_exists) {
+  size_t GetSize(File& f, bool& stat_exists) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -760,7 +851,7 @@ public:
   }
 
   /** tell */
-  size_t Tell(File &f, bool &stat_exists) {
+  size_t Tell(File& f, bool& stat_exists) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -772,7 +863,7 @@ public:
   }
 
   /** sync */
-  int Sync(File &f, bool &stat_exists) {
+  int Sync(File& f, bool& stat_exists) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -784,7 +875,7 @@ public:
   }
 
   /** truncate */
-  int Truncate(File &f, bool &stat_exists, size_t new_size) {
+  int Truncate(File& f, bool& stat_exists, size_t new_size) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -796,7 +887,7 @@ public:
   }
 
   /** close */
-  int Close(File &f, bool &stat_exists) {
+  int Close(File& f, bool& stat_exists) {
     auto mdm = WRP_CTE_FS_METADATA_MANAGER;
     auto stat = mdm->Find(f);
     if (!stat) {
@@ -807,11 +898,11 @@ public:
     return Close(f, *stat);
   }
 
-public:
+ public:
   /** Whether or not \a path PATH is tracked by Hermes */
-  static bool IsPathTracked(const std::string &path) {
+  static bool IsPathTracked(const std::string& path) {
     // Check if the CAE config singleton is available
-    auto *cae_config = WRP_CAE_CONF;
+    auto* cae_config = WRP_CAE_CONF;
     if (cae_config == nullptr) {
       return false;
     }
@@ -826,7 +917,7 @@ public:
     }
 
     // Check if CTE is not initialized yet
-    auto *cte_manager = CTE_MANAGER;
+    auto* cte_manager = CTE_MANAGER;
     if (cte_manager != nullptr && !cte_manager->IsInitialized()) {
       return false;
     }
@@ -837,6 +928,6 @@ public:
   }
 };
 
-} // namespace wrp::cae
+}  // namespace wrp::cae
 
-#endif // WRP_CTE_ADAPTER_FILESYSTEM_FILESYSTEM_H_
+#endif  // WRP_CTE_ADAPTER_FILESYSTEM_FILESYSTEM_H_

@@ -1,0 +1,37 @@
+# IOWarp CTE Storage Configuration
+# Multiple tiered storage devices
+
+devices:
+  # RAM - fastest, smallest
+  - name: ram
+    type: ramfs
+    capacity: 512M
+    path: /dev/shm/chimaera_ram
+
+  # NVMe - fast SSD
+  - name: nvme
+    type: file
+    capacity: 1g
+    path: /mnt/nvme/nrajesh/chimaera_nvme
+
+  # SSD - medium speed
+  - name: ssd
+    type: file
+    capacity: 2g
+    path: /mnt/ssd/nrajesh/chimaera_ssd
+
+  # HDD - slow, largest capacity
+  - name: hdd
+    type: file
+    capacity: 4g
+    path: /mnt/hdd/nrajesh/chimaera_hdd
+
+# Shared memory configuration
+main_segment_size: 1G
+client_data_segment_size: 512M
+runtime_data_segment_size: 512M
+
+# Scheduler configuration
+sched:
+  workers: 4
+  queue_depth: 1024

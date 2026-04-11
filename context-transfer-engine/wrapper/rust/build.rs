@@ -1,54 +1,340 @@
+/*
+ * Copyright (c) 2024, Gnosis Research Center, Illinois Institute of Technology
+ * All rights reserved.
+ *
+ * This file is part of IOWarp Core.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+use std::env;
+use std::path::Path;
+
+/// Parses a semicolon-separated list of library specifications.
+/// Each item can be:
+/// - A library name (e.g., "zmq")
+/// - A full path to a library (e.g., "/usr/lib/libzmq.so.5")
+/// - A colon-separated list for static linking (e.g., "zmq;stdc++;gcc_s")
+fn parse_zmq_libs(libs_var: &str) -> Vec<String> {
+    libs_var
+        .split(';')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim().to_string())
+        .collect()
+}
+
+/// Parses a colon-separated list of library directories.
+fn parse_zmq_lib_dirs(dirs_var: &str) -> Vec<String> {
+    dirs_var
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim().to_string())
+        .collect()
+}
+
+/// Determines if a string is a path (contains / or \ or .)
+fn is_library_path(spec: &str) -> bool {
+    spec.contains('/') || spec.contains('\\') || spec.contains('.')
+}
+
+/// Links a library by name (extracts library name from path if needed).
+fn link_library(lib_spec: &str) {
+    if is_library_path(lib_spec) {
+        // It's a path - we need to extract the library name
+        let path = Path::new(lib_spec);
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(lib_spec);
+
+        // Remove common library prefixes and suffixes
+        // libzmq.so.5 -> zmq
+        // libzmq.so -> zmq
+        // zmq.so -> zmq
+        let lib_name = filename
+            .strip_prefix("lib")
+            .unwrap_or(filename)
+            .split('.')
+            .next()
+            .unwrap_or(filename);
+
+        // Add the directory containing the library to search path
+        if let Some(parent) = path.parent() {
+            if let Some(parent_str) = parent.to_str() {
+                if !parent_str.is_empty() {
+                    println!("cargo:rustc-link-search=native={}", parent_str);
+                }
+            }
+        }
+
+        println!("cargo:rustc-link-lib=dylib={}", lib_name);
+    } else {
+        // It's just a library name
+        println!("cargo:rustc-link-lib=dylib={}", lib_spec);
+    }
+}
+
+/// Attempts to link ZMQ from environment variables set by CMake.
+/// Returns true if successful, false if fallback should be used.
+fn try_link_zmq_from_cmake() -> bool {
+    let zmq_libs = env::var("IOWARP_ZMQ_LIBS").unwrap_or_default();
+    let zmq_lib_dirs = env::var("IOWARP_ZMQ_LIB_DIRS").unwrap_or_default();
+
+    if zmq_libs.is_empty() {
+        return false;
+    }
+
+    // Add library directories to search path
+    for dir in parse_zmq_lib_dirs(&zmq_lib_dirs) {
+        println!("cargo:rustc-link-search=native={}", dir);
+    }
+
+    // Link each library specification
+    let libs = parse_zmq_libs(&zmq_libs);
+    if libs.is_empty() {
+        return false;
+    }
+
+    for lib in libs {
+        link_library(&lib);
+    }
+
+    true
+}
+
+/// Attempts to link ZMQ using common library names for standalone cargo builds.
+/// Tries common naming conventions as fallback.
+fn link_zmq_fallback() {
+    // Common ZMQ library names to try
+    let fallback_names = vec!["zmq", "zmq:5"];
+
+    let mut linked = false;
+    for name in fallback_names {
+        // Try to link and verify
+        println!("cargo:rustc-link-lib=dylib={}", name);
+        // Note: We can't verify at build time if the library exists,
+        // so we just add it and let the linker fail with clear message if not found
+        linked = true;
+        break; // Use first successful candidate
+    }
+
+    if !linked {
+        panic!(
+            "ZeroMQ (libzmq) not found. Please either:\n\
+             1. Build with CMake which will set IOWARP_ZMQ_LIBS and IOWARP_ZMQ_LIB_DIRS\n\
+             2. Install libzmq development package:\n\
+                - Ubuntu/Debian: sudo apt-get install libzmq3-dev\n\
+                - CentOS/RHEL: sudo yum install zeromq-devel\n\
+                - macOS: brew install zeromq\n\
+             3. Set environment variables manually:\n\
+                export IOWARP_ZMQ_LIBS=zmq\n\
+                export IOWARP_ZMQ_LIB_DIRS=/usr/local/lib\n\
+             4. Set IOWARP_LIB_DIR to directory containing libzmq.so\n"
+        );
+    }
+}
+
 fn main() {
-    cxx_build::bridge("src/lib.rs")
+    use std::io::Write;
+    // Debug: Print all environment variables at the start
+    eprintln!("=== BUILD.RS START ===");
+    eprintln!("Expected environment variables (set by CMake/Corrosion):");
+    eprintln!("  IOWARP_INCLUDE_DIR: Primary include directory (hermes_shm)");
+    eprintln!("  IOWARP_EXTRA_INCLUDES: Colon-separated extra includes (chimaera, CTE, etc.)");
+    eprintln!("  IOWARP_LIB_DIR: Library directory for linking");
+    eprintln!("  IOWARP_ZMQ_LIBS: ZeroMQ library specifications");
+    eprintln!("  IOWARP_ZMQ_LIB_DIRS: ZeroMQ library directories");
+
+    // Write all env vars to a file for debugging
+    let mut file = std::fs::File::create("/tmp/cargo_env_vars.txt").expect("Failed to create file");
+    for (key, value) in std::env::vars() {
+        writeln!(file, "{} = {}", key, value).expect("Failed to write");
+    }
+    file.flush().expect("Failed to flush");
+    eprintln!("Wrote env vars to /tmp/cargo_env_vars.txt");
+
+    eprintln!("Path to env vars file: /tmp/cargo_env_vars.txt");
+
+    // Get include and library paths from environment (set by CMake/Corrosion)
+    // Fall back to defaults for standalone cargo builds
+    let include_dir = match std::env::var("IOWARP_INCLUDE_DIR") {
+        Ok(val) => {
+            eprintln!("DEBUG: IOWARP_INCLUDE_DIR = {}", val);
+            val
+        }
+        Err(_) => {
+            eprintln!("DEBUG: IOWARP_INCLUDE_DIR not set, using default");
+            // Default to workspace root for standalone builds
+            let workspace_root = env::var("CMAKE_SOURCE_DIR").unwrap_or_else(|_| {
+                // Fallback: try to infer from CARGO_MANIFEST_DIR
+                let manifest_dir =
+                    env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+                format!("{}/../../..", manifest_dir)
+            });
+            format!("{}/context-transport-primitives/include", workspace_root)
+        }
+    };
+    let lib_dir = match std::env::var("IOWARP_LIB_DIR") {
+        Ok(val) => {
+            eprintln!("DEBUG: IOWARP_LIB_DIR = {}", val);
+            val
+        }
+        Err(_) => {
+            eprintln!("DEBUG: IOWARP_LIB_DIR not set, using default");
+            // Default to build directory or system lib
+            env::var("CMAKE_BINARY_DIR")
+                .map(|b| format!("{}/bin", b))
+                .unwrap_or_else(|_| "/usr/local/lib".to_string())
+        }
+    };
+
+    // Additional include paths for chimaera and other dependencies
+    // Multiple paths separated by colons
+    let extra_includes = match std::env::var("IOWARP_EXTRA_INCLUDES") {
+        Ok(val) => {
+            eprintln!("DEBUG: IOWARP_EXTRA_INCLUDES = {}", val);
+            val
+        }
+        Err(_) => {
+            eprintln!("DEBUG: IOWARP_EXTRA_INCLUDES not set, using computed defaults");
+            // Compute default extra includes from workspace root
+            let workspace_root = env::var("CMAKE_SOURCE_DIR").unwrap_or_else(|_| {
+                let manifest_dir =
+                    env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+                format!("{}/../../..", manifest_dir)
+            });
+            format!(
+                "{}/context-runtime/include:{}/context-transfer-engine/core/include",
+                workspace_root, workspace_root
+            )
+        }
+    };
+
+    // Split extra_includes and add fallback paths for cereal if not present
+    let mut include_paths: Vec<String> = extra_includes
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+
+    // Check if cereal is already in the include paths
+    let has_cereal = include_paths.iter().any(|path| {
+        let cereal_path = format!("{}/cereal", path);
+        std::path::Path::new(&cereal_path).exists()
+    });
+
+    // Add cereal fallback paths if not already present
+    if !has_cereal {
+        eprintln!("DEBUG: Cereal not found in IOWARP_EXTRA_INCLUDES, adding fallback paths");
+
+        // Primary fallback: Check the build directory for CMake-fetched cereal
+        let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let workspace_root = format!("{}/../../..", manifest_dir);
+
+        let cereal_fallbacks = vec![
+            // CMake FetchContent location
+            format!("{}/build/_deps/cereal-src/include", workspace_root),
+            // System locations
+            "/usr/local/include".to_string(),
+            "/usr/include".to_string(),
+        ];
+
+        for fallback in cereal_fallbacks {
+            let cereal_path = format!("{}/cereal", fallback);
+            if std::path::Path::new(&cereal_path).exists() {
+                eprintln!("DEBUG: Found cereal at {}", fallback);
+                include_paths.push(fallback);
+            }
+        }
+    }
+
+    // Build the CXX bridge and C++ shim
+    let mut build = cxx_build::bridge("src/ffi.rs");
+    build
         .file("shim/shim.cc")
         .std("c++20")
-        // Include paths
-        .include("/usr/local/include")
-        .include("/home/iowarp/miniconda3/include") // yaml-cpp, cereal, etc.
-        .include(".") // for "shim/shim.h"
         // Coroutine support
         .flag("-fcoroutines")
+        // Include paths
+        .include(&include_dir)
+        .include(".") // for shim/shim.h
+        // HSHM defines (match CMake build)
+        .define("HSHM_ENABLE_CEREAL", "1")
+        .define("HSHM_ENABLE_ZMQ", "1")
+        .define("HSHM_ENABLE_PTHREADS", "1")
+        .define("HSHM_ENABLE_OPENMP", "0")
+        .define("HSHM_ENABLE_WINDOWS_THREADS", "0")
+        .define("HSHM_DEFAULT_THREAD_MODEL", "hshm::thread::Pthread")
+        .define("HSHM_DEFAULT_THREAD_MODEL_GPU", "hshm::thread::StdThread")
+        .define("HSHM_LOG_LEVEL", "0")
         // Suppress warnings from CTE/chimaera headers
         .flag("-Wno-unused-parameter")
         .flag("-Wno-unused-variable")
         .flag("-Wno-missing-field-initializers")
         .flag("-Wno-sign-compare")
         .flag("-Wno-reorder")
-        .flag("-Wno-pedantic")
-        // HSHM / chimaera defines (match CMake build)
-        .define("HSHM_COMPILER_GNU", "1")
-        .define("HSHM_COMPILER_MSVC", "0")
-        .define("HSHM_DEBUG_LOCK", "0")
-        .define("HSHM_DEFAULT_ALLOC_T", "hipc::ThreadLocalAllocator")
-        .define("HSHM_DEFAULT_THREAD_MODEL", "hshm::thread::Pthread")
-        .define("HSHM_DEFAULT_THREAD_MODEL_GPU", "hshm::thread::Cuda")
-        .define("HSHM_ENABLE_CEREAL", "1")
-        .define("HSHM_ENABLE_DLL_EXPORT", "1")
-        .define("HSHM_ENABLE_DOXYGEN", "0")
-        .define("HSHM_ENABLE_LIBFABRIC", "0")
-        .define("HSHM_ENABLE_LIGHTBEAM", "1")
-        .define("HSHM_ENABLE_OPENMP", "0")
-        .define("HSHM_ENABLE_PROCFS_SYSINFO", "1")
-        .define("HSHM_ENABLE_PTHREADS", "1")
-        .define("HSHM_ENABLE_THALLIUM", "0")
-        .define("HSHM_ENABLE_WINDOWS_SYSINFO", "0")
-        .define("HSHM_ENABLE_WINDOWS_THREADS", "0")
-        .define("HSHM_ENABLE_ZMQ", "1")
-        .define("HSHM_LOG_LEVEL", "0")
-        .compile("cte_shim");
+        .flag("-Wno-pedantic");
 
-    println!("cargo:rustc-link-search=native=/usr/local/lib");
-    println!("cargo:rustc-link-search=native=/home/iowarp/miniconda3/lib");
+    // Add extra include directories
+    eprintln!("DEBUG: Adding extra include directories:");
+    for path in &include_paths {
+        eprintln!("  - {}", path);
+        build.include(path);
+    }
 
-    // Direct dependency
+    // Debug: Print all include paths being used
+    eprintln!("DEBUG: Primary include directory: {}", include_dir);
+    eprintln!("DEBUG: Library directory: {}", lib_dir);
+
+    build.compile("cte_shim");
+
+    // Library search paths
+    println!("cargo:rustc-link-search=native={}", lib_dir);
+
+    // Link to CTE and dependencies
     println!("cargo:rustc-link-lib=dylib=wrp_cte_core_client");
-    // Transitive deps (needed for test binary linking)
     println!("cargo:rustc-link-lib=dylib=chimaera_cxx");
     println!("cargo:rustc-link-lib=dylib=hermes_shm_host");
-    println!("cargo:rustc-link-lib=dylib=zmq");
 
-    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/local/lib");
-    println!("cargo:rustc-link-arg=-Wl,-rpath,/home/iowarp/miniconda3/lib");
+    // Dynamic ZMQ linking with CMake environment variables or fallback
+    if !try_link_zmq_from_cmake() {
+        link_zmq_fallback();
+    }
+
+    // RPATH for relocatable builds
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib_dir);
+
+    // Rebuild triggers
     println!("cargo:rerun-if-changed=shim/shim.h");
     println!("cargo:rerun-if-changed=shim/shim.cc");
+    println!("cargo:rerun-if-changed=src/ffi.rs");
+    println!("cargo:rerun-if-env-changed=IOWARP_INCLUDE_DIR");
+    println!("cargo:rerun-if-env-changed=IOWARP_LIB_DIR");
+    println!("cargo:rerun-if-env-changed=IOWARP_EXTRA_INCLUDES");
+    println!("cargo:rerun-if-env-changed=IOWARP_ZMQ_LIBS");
+    println!("cargo:rerun-if-env-changed=IOWARP_ZMQ_LIB_DIRS");
 }

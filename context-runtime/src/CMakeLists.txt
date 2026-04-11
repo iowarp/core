@@ -16,10 +16,15 @@ add_library(${CHIMAERA_LIB_NAME} SHARED ${CHIMAERA_SOURCES})
 # Set include directories as PUBLIC so they propagate to consumers
 # Use CMAKE_CURRENT_SOURCE_DIR/.. to get runtime directory (this is runtime/src)
 # Also include hermes_shm headers which are in context-transport-primitives/include
+# Include CTE and CAE headers for task definitions
+# Include module headers for task dependencies
 target_include_directories(${CHIMAERA_LIB_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../modules/admin/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../modules/bdev/include>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../context-transport-primitives/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../context-transfer-engine/core/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../context-assimilation-engine/core/include>
   $<INSTALL_INTERFACE:include>
 )
 
@@ -27,8 +32,10 @@ target_include_directories(${CHIMAERA_LIB_NAME} PUBLIC
 # Removed CHIMAERA_RUNTIME compile definition - using runtime IsRuntime() checks instead
 
 # Add CMAKE_INSTALL_PREFIX as a compile definition for ChiMod search paths
+# Also define HSHM_BUILDING to ensure proper symbol visibility for LTO
 target_compile_definitions(${CHIMAERA_LIB_NAME} PRIVATE
   CHI_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}"
+  HSHM_BUILDING=1
 )
 
 # Link libraries

@@ -37,6 +37,33 @@ option(WRP_CORE_ENABLE_DOCKER_CI "Enable Docker-based integration tests (require
 option(BUILD_SHARED_LIBS "Build shared libraries (.dll/.so) instead of static ones (.lib/.a)" ON)
 option(WRP_CORE_STATIC_DEPS "Link external dependencies statically (for self-contained wheels)" OFF)
 
+#------------------------------------------------------------------------------
+# Rust Bindings Configuration
+#------------------------------------------------------------------------------
+option(WRP_CORE_ENABLE_RUST "Enable Rust bindings (requires Corrosion)" ON)
+if(WRP_CORE_ENABLE_RUST)
+    message(STATUS "Rust bindings enabled - configuring Corrosion")
+
+    # Ensure cmake module path is set before including AutoConfigureRust
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+
+    # Auto-configure Rust paths BEFORE FetchContent_MakeAvailable(Corrosion)
+    # because Corrosion's FindRust.cmake runs immediately
+    include(AutoConfigureRust)
+
+    # Fetch Corrosion
+    include(FetchContent)
+    FetchContent_Declare(
+        Corrosion
+        GIT_REPOSITORY https://github.com/corrosion-rs/corrosion.git
+        GIT_TAG v0.5.1
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(Corrosion)
+
+    message(STATUS "Corrosion configured - Rust bindings available")
+endif()
+
 # Installation Prefix Configuration
 # - For Conda builds: Set CMAKE_INSTALL_PREFIX via -DCMAKE_INSTALL_PREFIX=$CONDA_PREFIX
 # - For custom installs: Set CMAKE_INSTALL_PREFIX to desired root directory
@@ -84,7 +111,7 @@ message(STATUS "  Install prefix:     ${CMAKE_INSTALL_PREFIX}")
 #------------------------------------------------------------------------------
 # Transport and Network Features
 #------------------------------------------------------------------------------
-option(WRP_CORE_ENABLE_MPI "Enable MPI support" OFF)
+option(WRP_CORE_ENABLE_MPI "Enable MPI support" ON)
 option(WRP_CORE_ENABLE_ZMQ "Enable ZeroMQ transport" ON)
 option(WRP_CORE_ENABLE_LIBFABRIC "Enable Libfabric transport" OFF)
 option(WRP_CORE_ENABLE_THALLIUM "Build tests which depend on thallium" OFF)
@@ -108,7 +135,7 @@ option(WRP_CORE_ENABLE_HDF5 "Enable HDF5 support in CAE" ON)
 #------------------------------------------------------------------------------
 # System and Runtime Features
 #------------------------------------------------------------------------------
-option(WRP_CORE_ENABLE_ELF "Enable ELF support (required for CTE adapters)" OFF)
+option(WRP_CORE_ENABLE_ELF "Enable ELF support (required for CTE adapters)" ON)
 option(WRP_CORE_ENABLE_OPENMP "Enable the use of OpenMP" OFF)
 option(WRP_CORE_ENABLE_CUDA "Enable CUDA support" OFF)
 option(WRP_CORE_ENABLE_ROCM "Enable ROCm support" OFF)
@@ -132,12 +159,13 @@ set(HSHM_LOG_LEVEL "1" CACHE STRING "Log level threshold (0=Debug, 1=Info, 2=War
 #------------------------------------------------------------------------------
 # CTE Adapter Options (require WRP_CORE_ENABLE_ELF=ON)
 option(WRP_CTE_ENABLE_POSIX_ADAPTER "Enable POSIX adapter" ON)
-option(WRP_CTE_ENABLE_STDIO_ADAPTER "Enable STDIO adapter" OFF)
-option(WRP_CTE_ENABLE_MPIIO_ADAPTER "Enable MPI-IO adapter" OFF)
+option(WRP_CTE_ENABLE_STDIO_ADAPTER "Enable STDIO adapter" ON)
+option(WRP_CTE_ENABLE_MPIIO_ADAPTER "Enable MPI-IO adapter" ON)
 option(WRP_CTE_ENABLE_VFD "Enable HDF5 VFD adapter" OFF)
 option(WRP_CTE_ENABLE_NVIDIA_GDS_ADAPTER "Enable NVIDIA GDS adapter" OFF)
-option(WRP_CTE_ENABLE_ADIOS2_ADAPTER "Enable ADIOS2 adapter" OFF)
+option(WRP_CTE_ENABLE_ADIOS2_ADAPTER "Enable ADIOS2 adapter" ON)
 option(WRP_CTE_ENABLE_FUSE_ADAPTER "Enable FUSE3 adapter" OFF)
+option(WRP_CTE_ENABLE_EBPF_ADAPTER "Enable eBPF I/O interceptor adapter" OFF)
 
 #------------------------------------------------------------------------------
 # CAE (context-assimilation-engine) Options
@@ -270,10 +298,21 @@ if(WRP_CORE_STATIC_DEPS)
     endif()
 endif()
 
-# Cereal - find from system or install.sh installation
-find_package(cereal REQUIRED)
+# Cereal - find from system, install.sh installation, or FetchContent
+find_package(cereal CONFIG QUIET)
 if(cereal_FOUND)
     message(STATUS "found cereal at ${cereal_DIR}")
+else()
+    # Fallback to FetchContent if not found on system
+    include(FetchContent)
+    FetchContent_Declare(
+        cereal
+        GIT_REPOSITORY https://github.com/USCiLab/cereal.git
+        GIT_TAG v1.3.2
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(cereal)
+    message(STATUS "cereal fetched and configured via FetchContent")
 endif()
 
 # MessagePack C library (pure C, no Boost dependency)

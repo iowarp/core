@@ -1,121 +1,338 @@
+/*
+ * Copyright (c) 2024, Gnosis Research Center, Illinois Institute of Technology
+ * All rights reserved.
+ *
+ * This file is part of IOWarp Core.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of the copyright holder nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+#include "shim/shim.h"
+
 #include <chimaera/bdev/bdev_client.h>
 #include <wrp_cte/core/content_transfer_engine.h>
+#include <wrp_cte/core/core_client.h>
 
-// cxx-generated header: defines CteTagId shared struct
-#include "wrp-cte-rs/src/lib.rs.h"
+#include <cstring>
 
 namespace cte_ffi {
 
-bool cte_init(rust::Str config_path) {
-  std::string path(config_path.data(), config_path.size());
-  bool ok = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
-  if (!ok) return false;
-  return wrp_cte::core::WRP_CTE_CLIENT_INIT(path);
+// Maximum blob size (16 GB) - must match Rust constant
+constexpr uint64_t MAX_BLOB_SIZE = 16ULL * 1024ULL * 1024ULL * 1024ULL;
+
+// Thread-safe initialization globals
+std::once_flag g_init_flag;
+bool g_init_done = false;
+
+// Initialization with thread safety
+int32_t cte_init(rust::Str config_path) {
+  std::call_once(g_init_flag, [&]() {
+    std::string path(config_path.data(), config_path.size());
+    bool ok = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
+    if (!ok) {
+      g_init_done = false;
+      return;
+    }
+    // WRP_CTE_CLIENT_INIT is in wrp_cte::core namespace (inside the namespace
+    // block)
+    g_init_done = ::wrp_cte::core::WRP_CTE_CLIENT_INIT(path);
+  });
+  return g_init_done ? 0 : -1;
 }
 
-std::unique_ptr<CteTag> tag_new(rust::Str tag_name) {
-  std::string name(tag_name.data(), tag_name.size());
-  return std::make_unique<CteTag>(name);
-}
-
-std::unique_ptr<CteTag> tag_from_id(uint32_t major, uint32_t minor) {
-  wrp_cte::core::TagId tid(major, minor);
-  return std::make_unique<CteTag>(tid);
-}
-
-void tag_put_blob(const CteTag &tag, rust::Str name,
-                  rust::Slice<const uint8_t> data, uint64_t offset,
-                  float score) {
-  std::string blob_name(name.data(), name.size());
-  tag.inner.PutBlob(blob_name, reinterpret_cast<const char *>(data.data()),
-                    data.size(), static_cast<size_t>(offset), score);
-}
-
-std::unique_ptr<std::vector<uint8_t>> tag_get_blob(const CteTag &tag,
-                                                    rust::Str name,
-                                                    uint64_t size,
-                                                    uint64_t offset) {
-  std::string blob_name(name.data(), name.size());
-  auto buf = std::make_unique<std::vector<uint8_t>>(size);
-  tag.inner.GetBlob(blob_name, reinterpret_cast<char *>(buf->data()),
-                    static_cast<size_t>(size), static_cast<size_t>(offset));
-  return buf;
-}
-
-float tag_get_blob_score(const CteTag &tag, rust::Str name) {
-  std::string blob_name(name.data(), name.size());
-  return tag.inner.GetBlobScore(blob_name);
-}
-
-uint64_t tag_get_blob_size(const CteTag &tag, rust::Str name) {
-  std::string blob_name(name.data(), name.size());
-  return tag.inner.GetBlobSize(blob_name);
-}
-
-std::unique_ptr<std::vector<std::string>> tag_get_contained_blobs(
-    const CteTag &tag) {
-  auto blobs = tag.inner.GetContainedBlobs();
-  return std::make_unique<std::vector<std::string>>(std::move(blobs));
-}
-
-void tag_reorganize_blob(const CteTag &tag, rust::Str name, float score) {
-  std::string blob_name(name.data(), name.size());
-  tag.inner.ReorganizeBlob(blob_name, score);
-}
-
-CteTagId tag_get_id(const CteTag &tag) {
-  const auto &id = tag.inner.GetTagId();
-  return CteTagId{id.major_, id.minor_};
-}
-
-bool client_register_target(rust::Str target_path, uint64_t size) {
-  std::string path(target_path.data(), target_path.size());
-  // Create a bdev pool for this target
-  chi::PoolId bdev_pool_id(800, 0);
-  chimaera::bdev::Client bdev_client(bdev_pool_id);
-  auto create_task = bdev_client.AsyncCreate(
-      chi::PoolQuery::Dynamic(), path, bdev_pool_id,
-      chimaera::bdev::BdevType::kFile);
-  create_task.Wait();
-  // Register with CTE
-  auto *client = WRP_CTE_CLIENT;
-  auto reg_task = client->AsyncRegisterTarget(
-      path, chimaera::bdev::BdevType::kFile, size,
-      chi::PoolQuery::Local(), bdev_pool_id);
-  reg_task.Wait();
-  return true;
-}
-
-bool client_del_tag(rust::Str name) {
-  std::string tag_name(name.data(), name.size());
-  auto *client = WRP_CTE_CLIENT;
-  auto task = client->AsyncDelTag(tag_name);
-  task.Wait();
-  return true;
-}
-
-std::unique_ptr<std::vector<std::string>> client_tag_query(rust::Str regex,
-                                                            uint32_t max_tags) {
-  std::string re(regex.data(), regex.size());
-  auto *mgr = CTE_MANAGER;
-  auto results = mgr->TagQuery(re, max_tags);
-  return std::make_unique<std::vector<std::string>>(std::move(results));
-}
-
-std::unique_ptr<std::vector<std::string>> client_blob_query(rust::Str tag_re,
-                                                             rust::Str blob_re,
-                                                             uint32_t max_results) {
-  std::string tre(tag_re.data(), tag_re.size());
-  std::string bre(blob_re.data(), blob_re.size());
-  auto *mgr = CTE_MANAGER;
-  auto pairs = mgr->BlobQuery(tre, bre, max_results);
-  auto out = std::make_unique<std::vector<std::string>>();
-  out->reserve(pairs.size() * 2);
-  for (auto &p : pairs) {
-    out->push_back(std::move(p.first));
-    out->push_back(std::move(p.second));
+// Client factory
+std::unique_ptr<Client> client_new() {
+  // Get the global CTE client that was initialized by WRP_CTE_CLIENT_INIT
+  auto* global_client = wrp_cte::core::g_cte_client;
+  if (global_client == nullptr) {
+    // Fallback: create a client (will fail later when used)
+    return std::make_unique<Client>();
   }
-  return out;
+  // Create a client with the proper pool_id from the global client
+  auto client = std::make_unique<Client>();
+  client->inner.pool_id_ = global_client->pool_id_;
+  return client;
+}
+
+// Tag factory functions
+std::unique_ptr<Tag> tag_new(rust::Str name) {
+  std::string n(name.data(), name.size());
+  return std::make_unique<Tag>(n);
+}
+
+std::unique_ptr<Tag> tag_from_id(uint32_t major, uint32_t minor) {
+  chi::UniqueId id(major, minor);
+  return std::make_unique<Tag>(id);
+}
+
+// Tag ID helpers
+uint32_t tag_get_id_major(const Tag& tag) {
+  return tag.inner.GetTagId().major_;
+}
+uint32_t tag_get_id_minor(const Tag& tag) {
+  return tag.inner.GetTagId().minor_;
+}
+
+// Tag operations - simple scalars
+float tag_get_blob_score(const Tag& tag, rust::Str name) {
+  std::string n(name.data(), name.size());
+  return tag.inner.GetBlobScore(n);
+}
+
+int32_t tag_reorganize_blob(const Tag& tag, rust::Str name, float score) {
+  std::string n(name.data(), name.size());
+  tag.inner.ReorganizeBlob(n, score);
+  // Tag::ReorganizeBlob is synchronous and returns void
+  // Return 0 for success (no error detection available from sync API)
+  return 0;
+}
+
+uint64_t tag_get_blob_size(const Tag& tag, rust::Str name) {
+  std::string n(name.data(), name.size());
+  return tag.inner.GetBlobSize(n);
+}
+
+// Client operations with simple returns
+int32_t client_reorganize_blob(const Client& client, uint32_t major,
+                               uint32_t minor, rust::Str name, float score) {
+  chi::UniqueId tag_id(major, minor);
+  std::string blob_name(name.data(), name.size());
+  auto task = client.inner.AsyncReorganizeBlob(tag_id, blob_name, score);
+  task.Wait();
+  return task->GetReturnCode();
+}
+
+int32_t client_del_blob(const Client& client, uint32_t major, uint32_t minor,
+                        rust::Str name) {
+  chi::UniqueId tag_id(major, minor);
+  std::string blob_name(name.data(), name.size());
+  auto task = client.inner.AsyncDelBlob(tag_id, blob_name);
+  task.Wait();
+  return task->GetReturnCode();
+}
+
+// Tag operations with buffers
+int32_t tag_put_blob(const Tag& tag, rust::Str name,
+                     rust::Slice<const uint8_t> data, uint64_t offset,
+                     float score) {
+  std::string n(name.data(), name.size());
+
+  // Validate blob size
+  uint64_t data_size = data.size();
+  if (data_size > MAX_BLOB_SIZE) {
+    return -1;  // Error: data too large
+  }
+
+  // Check for offset overflow
+  if (offset > MAX_BLOB_SIZE - data_size) {
+    return -2;  // Error: offset + size overflow
+  }
+
+  tag.inner.PutBlob(n, reinterpret_cast<const char*>(data.data()), data.size(),
+                    static_cast<size_t>(offset), score);
+  return 0;  // Success
+}
+
+void tag_get_blob(const Tag& tag, rust::Str name, uint64_t size,
+                  uint64_t offset, rust::Vec<uint8_t>& out) {
+  std::string n(name.data(), name.size());
+  auto buf = std::vector<uint8_t>(size);
+  tag.inner.GetBlob(n, reinterpret_cast<char*>(buf.data()),
+                    static_cast<size_t>(size), static_cast<size_t>(offset));
+  out.clear();
+  out.reserve(buf.size());
+  for (auto b : buf) {
+    out.push_back(b);
+  }
+}
+
+void tag_get_contained_blobs(const Tag& tag, rust::Vec<rust::String>& out) {
+  auto blobs = tag.inner.GetContainedBlobs();
+  out.clear();
+  out.reserve(blobs.size());
+  for (const auto& b : blobs) {
+    out.push_back(rust::String(b));
+  }
+}
+
+// Telemetry - encoded as raw bytes for Rust to decode
+// Each entry: op(u32) + off(u64) + size(u64) + tag_major(u32) + tag_minor(u32)
+// +
+//             blob_hash(u64) + mod_time_nanos(i64) + read_time_nanos(i64) +
+//             logical_time(u64) = 4 + 8 + 8 + 4 + 4 + 8 + 8 + 8 + 8 = 60 bytes
+// per entry
+// Returns: 0 on success with data, 1 on timeout, 2 on error
+int32_t client_poll_telemetry_raw(const Client& client, uint64_t min_time,
+                                  float timeout_sec, rust::Vec<uint8_t>& out) {
+  auto task = client.inner.AsyncPollTelemetryLog(min_time);
+
+  // Wait with timeout (0 means no timeout, but we use passed timeout_sec)
+  bool completed = task.Wait(timeout_sec);
+
+  if (!completed) {
+    // Timeout occurred
+    return 1;
+  }
+
+  // Check for errors
+  if (task->GetReturnCode() != 0) {
+    return 2;
+  }
+
+  out.clear();
+  out.reserve(task->entries_.size() * 60);
+
+  for (const auto& entry : task->entries_) {
+    // op (u32)
+    uint32_t op = static_cast<uint32_t>(entry.op_);
+    out.push_back(static_cast<uint8_t>((op >> 0) & 0xFF));
+    out.push_back(static_cast<uint8_t>((op >> 8) & 0xFF));
+    out.push_back(static_cast<uint8_t>((op >> 16) & 0xFF));
+    out.push_back(static_cast<uint8_t>((op >> 24) & 0xFF));
+
+    // off (u64)
+    uint64_t off = entry.off_;
+    for (int i = 0; i < 8; ++i) {
+      out.push_back(static_cast<uint8_t>((off >> (i * 8)) & 0xFF));
+    }
+
+    // size (u64)
+    uint64_t sz = entry.size_;
+    for (int i = 0; i < 8; ++i) {
+      out.push_back(static_cast<uint8_t>((sz >> (i * 8)) & 0xFF));
+    }
+
+    // tag_major (u32)
+    uint32_t major = entry.tag_id_.major_;
+    out.push_back(static_cast<uint8_t>((major >> 0) & 0xFF));
+    out.push_back(static_cast<uint8_t>((major >> 8) & 0xFF));
+    out.push_back(static_cast<uint8_t>((major >> 16) & 0xFF));
+    out.push_back(static_cast<uint8_t>((major >> 24) & 0xFF));
+
+    // tag_minor (u32)
+    uint32_t minor = entry.tag_id_.minor_;
+    out.push_back(static_cast<uint8_t>((minor >> 0) & 0xFF));
+    out.push_back(static_cast<uint8_t>((minor >> 8) & 0xFF));
+    out.push_back(static_cast<uint8_t>((minor >> 16) & 0xFF));
+    out.push_back(static_cast<uint8_t>((minor >> 24) & 0xFF));
+
+    // blob_hash (u64)
+    uint64_t hash = entry.blob_hash_;
+    for (int i = 0; i < 8; ++i) {
+      out.push_back(static_cast<uint8_t>((hash >> (i * 8)) & 0xFF));
+    }
+
+    // mod_time_nanos (i64)
+    int64_t mod_time = entry.mod_time_.time_since_epoch().count();
+    for (int i = 0; i < 8; ++i) {
+      out.push_back(static_cast<uint8_t>((mod_time >> (i * 8)) & 0xFF));
+    }
+
+    // read_time_nanos (i64)
+    int64_t read_time = entry.read_time_.time_since_epoch().count();
+    for (int i = 0; i < 8; ++i) {
+      out.push_back(static_cast<uint8_t>((read_time >> (i * 8)) & 0xFF));
+    }
+
+    // logical_time (u64)
+    uint64_t logical = entry.logical_time_;
+    for (int i = 0; i < 8; ++i) {
+      out.push_back(static_cast<uint8_t>((logical >> (i * 8)) & 0xFF));
+    }
+  }
+
+  return 0;  // Success
+}
+
+// GetBlobInfo FFI - performance-critical serialization
+// Format: score(f32) + total_size(u64) + blocks_count(u32) + blocks[...]
+// Each block: target_pool_id(u64) + block_size(u64) + block_offset(u64) = 24
+// bytes
+int32_t client_get_blob_info_raw(const Client& client, uint32_t major,
+                                 uint32_t minor, rust::Str name,
+                                 rust::Vec<uint8_t>& out) {
+  chi::UniqueId tag_id(major, minor);
+  std::string blob_name(name.data(), name.size());
+
+  auto task = client.inner.AsyncGetBlobInfo(tag_id, blob_name);
+  task.Wait();
+
+  if (task->GetReturnCode() != 0) {
+    return task->GetReturnCode();
+  }
+
+  // PERFORMANCE: Pre-allocate exact size to avoid reallocations
+  const size_t total_size = 16 + task->blocks_.size() * 24;
+  out.clear();
+  out.reserve(total_size);
+
+  // Serialize score (f32) - use memcpy for performance
+  uint32_t score_bits;
+  static_assert(sizeof(score_bits) == sizeof(task->score_), "Size mismatch");
+  std::memcpy(&score_bits, &task->score_, sizeof(float));
+  for (int i = 0; i < 4; ++i) {
+    out.push_back(static_cast<uint8_t>((score_bits >> (i * 8)) & 0xFF));
+  }
+
+  // Serialize total_size (u64)
+  uint64_t total_size_val = task->total_size_;
+  for (int i = 0; i < 8; ++i) {
+    out.push_back(static_cast<uint8_t>((total_size_val >> (i * 8)) & 0xFF));
+  }
+
+  // Serialize blocks_count (u32)
+  uint32_t blocks_count = static_cast<uint32_t>(task->blocks_.size());
+  for (int i = 0; i < 4; ++i) {
+    out.push_back(static_cast<uint8_t>((blocks_count >> (i * 8)) & 0xFF));
+  }
+
+  // Serialize each block - direct field access for performance
+  for (const auto& block : task->blocks_) {
+    // target_pool_id (u64)
+    uint64_t pool_id =
+        block.target_pool_id_.IsNull() ? 0 : block.target_pool_id_.ToU64();
+    for (int i = 0; i < 8; ++i) {
+      out.push_back(static_cast<uint8_t>((pool_id >> (i * 8)) & 0xFF));
+    }
+
+    // block_size (u64)
+    uint64_t block_size = block.block_size_;
+    for (int i = 0; i < 8; ++i) {
+      out.push_back(static_cast<uint8_t>((block_size >> (i * 8)) & 0xFF));
+    }
+
+    // block_offset (u64)
+    uint64_t block_offset = block.block_offset_;
+    for (int i = 0; i < 8; ++i) {
+      out.push_back(static_cast<uint8_t>((block_offset >> (i * 8)) & 0xFF));
+    }
+  }
+
+  return 0;
 }
 
 }  // namespace cte_ffi

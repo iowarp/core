@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<!--
+  Default ADIOS2 Configuration for IOWarp IowarpEngine Plugin
+  
+  This configuration routes all ADIOS2 I/O through the IowarpEngine,
+  which provides tiered storage management via the Context Transfer Engine (CTE).
+  
+  Usage:
+    export ADIOS2_CONFIG_FILE=/path/to/iowarp_default.xml
+    ./your_adios_application
+    
+  Or use with Aneris_telemetry_adios script which automatically sets this up.
+-->
+<adios-config>
+    <!-- 
+      Wildcard pattern matches all IO objects.
+      Individual IOs can be configured separately if needed.
+    -->
+    <io name="*">
+        <engine type="Plugin">
+            <parameter key="PluginName" value="IowarpEngine"/>
+            <parameter key="PluginLibrary" value="iowarp_engine"/>
+            <!-- Optional: Pool selection -->
+            <parameter key="PoolQuery" value="Local"/>
+            <!-- Optional: Tier policy (hot, warm, cold) -->
+            <parameter key="TierPolicy" value="hot"/>
+        </engine>
+    </io>
+    
+    <!-- Example: Specific IO configuration for LAMMPS -->
+    <!--
+    <io name="lammps_dump">
+        <engine type="Plugin">
+            <parameter key="PluginName" value="IowarpEngine"/>
+            <parameter key="PluginLibrary" value="iowarp_engine"/>
+            <parameter key="PoolQuery" value="Local"/>
+        </engine>
+    </io>
+    -->
+</adios-config>

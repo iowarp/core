@@ -36,18 +36,21 @@
 
 #include <chimaera/chimaera.h>
 #include <chimaera/comutex.h>
-#include "bdev_client.h"
-#include "bdev_tasks.h"
 #include <hermes_shm/io/async_io_factory.h>
-#include <vector>
-#include <list>
+
 #include <atomic>
 #include <chrono>
+#include <list>
+#include <vector>
+
+#include "bdev_client.h"
+#include "bdev_tasks.h"
 
 /**
  * Runtime container for bdev ChiMod
  *
- * Provides block device operations with async I/O and data allocation management
+ * Provides block device operations with async I/O and data allocation
+ * management
  */
 
 namespace chimaera::bdev {
@@ -58,18 +61,19 @@ namespace chimaera::bdev {
  * for efficient parallel I/O without contention
  */
 struct WorkerIOContext {
-  std::unique_ptr<hshm::AsyncIO> async_io_;  /**< Async I/O backend for this worker */
-  bool is_initialized_ = false;              /**< Whether this context is initialized */
+  std::unique_ptr<hshm::AsyncIO>
+      async_io_;                /**< Async I/O backend for this worker */
+  bool is_initialized_ = false; /**< Whether this context is initialized */
 
   WorkerIOContext() = default;
 
-  WorkerIOContext(WorkerIOContext &&other) noexcept
+  WorkerIOContext(WorkerIOContext&& other) noexcept
       : async_io_(std::move(other.async_io_)),
         is_initialized_(other.is_initialized_) {
     other.is_initialized_ = false;
   }
 
-  WorkerIOContext &operator=(WorkerIOContext &&other) noexcept {
+  WorkerIOContext& operator=(WorkerIOContext&& other) noexcept {
     if (this != &other) {
       Cleanup();
       async_io_ = std::move(other.async_io_);
@@ -79,8 +83,8 @@ struct WorkerIOContext {
     return *this;
   }
 
-  WorkerIOContext(const WorkerIOContext &) = delete;
-  WorkerIOContext &operator=(const WorkerIOContext &) = delete;
+  WorkerIOContext(const WorkerIOContext&) = delete;
+  WorkerIOContext& operator=(const WorkerIOContext&) = delete;
 
   /**
    * Initialize the worker I/O context
@@ -89,18 +93,16 @@ struct WorkerIOContext {
    * @param worker_id Worker ID for logging
    * @return true if initialization successful, false otherwise
    */
-  bool Init(const std::string &file_path, chi::u32 io_depth, chi::u32 worker_id);
+  bool Init(const std::string& file_path, chi::u32 io_depth,
+            chi::u32 worker_id);
 
   /**
    * Cleanup and close all resources
    */
   void Cleanup();
 
-  ~WorkerIOContext() {
-    Cleanup();
-  }
+  ~WorkerIOContext() { Cleanup(); }
 };
-
 
 /**
  * Block size categories for data allocator
@@ -115,6 +117,14 @@ enum class BlockSizeCategory : chi::u32 {
   k1MB = 5,
   kMaxCategories = 6
 };
+
+/**
+ * Default configuration constants
+ */
+inline constexpr chi::u32 kDefaultIoDepth = 32;
+inline constexpr chi::u32 kDefaultAlignment = 4096;
+inline constexpr chi::u64 kDefaultFileSize = 1ULL
+                                             << 30;  // 1GB default file size
 
 /**
  * Per-worker block cache
@@ -194,9 +204,9 @@ class Heap {
   /**
    * Initialize heap with total size and alignment
    * @param total_size Total size available for allocation
-   * @param alignment Alignment requirement for offsets and sizes (default 4096)
+   * @param alignment Alignment requirement for offsets and sizes (default kDefaultAlignment)
    */
-  void Init(chi::u64 total_size, chi::u32 alignment = 4096);
+  void Init(chi::u64 total_size, chi::u32 alignment = kDefaultAlignment);
 
   /**
    * Allocate a block from the heap
@@ -226,11 +236,19 @@ class Runtime : public chi::Container {
  public:
   // Required typedef for CHI_TASK_CC macro
   using CreateParams = chimaera::bdev::CreateParams;
-  
-  Runtime() : bdev_type_(BdevType::kFile), file_size_(0), alignment_(4096),
-              io_depth_(32), max_blocks_per_operation_(64), ram_buffer_(nullptr), ram_size_(0),
-              total_reads_(0), total_writes_(0),
-              total_bytes_read_(0), total_bytes_written_(0) {
+
+  Runtime()
+      : bdev_type_(BdevType::kFile),
+        file_size_(0),
+        alignment_(kDefaultAlignment),
+        io_depth_(kDefaultIoDepth),
+        max_blocks_per_operation_(64),
+        ram_buffer_(nullptr),
+        ram_size_(0),
+        total_reads_(0),
+        total_writes_(0),
+        total_bytes_read_(0),
+        total_bytes_written_(0) {
     start_time_ = std::chrono::high_resolution_clock::now();
   }
   ~Runtime() override;
@@ -250,12 +268,14 @@ class Runtime : public chi::Container {
   /**
    * Allocate multiple blocks (Method::kAllocateBlocks)
    */
-  chi::TaskResume AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task, chi::RunContext& ctx);
+  chi::TaskResume AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task,
+                                 chi::RunContext& ctx);
 
   /**
    * Free data blocks (Method::kFreeBlocks)
    */
-  chi::TaskResume FreeBlocks(hipc::FullPtr<FreeBlocksTask> task, chi::RunContext& ctx);
+  chi::TaskResume FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
+                             chi::RunContext& ctx);
 
   /**
    * Write data to a block (Method::kWrite)
@@ -270,17 +290,20 @@ class Runtime : public chi::Container {
   /**
    * Get performance statistics (Method::kGetStats)
    */
-  chi::TaskResume GetStats(hipc::FullPtr<GetStatsTask> task, chi::RunContext& ctx);
+  chi::TaskResume GetStats(hipc::FullPtr<GetStatsTask> task,
+                           chi::RunContext& ctx);
 
   /**
    * Monitor container state (Method::kMonitor)
    */
-  chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task, chi::RunContext &rctx);
+  chi::TaskResume Monitor(hipc::FullPtr<MonitorTask> task,
+                          chi::RunContext& rctx);
 
   /**
    * Destroy the container (Method::kDestroy)
    */
-  chi::TaskResume Destroy(hipc::FullPtr<DestroyTask> task, chi::RunContext& ctx);
+  chi::TaskResume Destroy(hipc::FullPtr<DestroyTask> task,
+                          chi::RunContext& ctx);
 
   /**
    * REQUIRED VIRTUAL METHODS FROM chi::Container
@@ -289,7 +312,7 @@ class Runtime : public chi::Container {
   /**
    * Initialize container with pool information
    */
-  void Init(const chi::PoolId &pool_id, const std::string &pool_name,
+  void Init(const chi::PoolId& pool_id, const std::string& pool_name,
             chi::u32 container_id = 0) override;
 
   /**
@@ -318,10 +341,12 @@ class Runtime : public chi::Container {
   /**
    * Allocate and deserialize task parameters from network transfer
    */
-  hipc::FullPtr<chi::Task> AllocLoadTask(chi::u32 method, chi::LoadTaskArchive& archive) override;
+  hipc::FullPtr<chi::Task> AllocLoadTask(
+      chi::u32 method, chi::LoadTaskArchive& archive) override;
 
   /**
-   * Deserialize task input parameters into an existing task using LocalSerialize
+   * Deserialize task input parameters into an existing task using
+   * LocalSerialize
    */
   void LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
                      hipc::FullPtr<chi::Task> task_ptr) override;
@@ -329,7 +354,8 @@ class Runtime : public chi::Container {
   /**
    * Allocate and deserialize task input parameters using LocalSerialize
    */
-  hipc::FullPtr<chi::Task> LocalAllocLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive) override;
+  hipc::FullPtr<chi::Task> LocalAllocLoadTask(
+      chi::u32 method, chi::LocalLoadTaskArchive& archive) override;
 
   /**
    * Serialize task output parameters using LocalSerialize (for local transfers)
@@ -340,8 +366,9 @@ class Runtime : public chi::Container {
   /**
    * Create a new copy of a task (deep copy for distributed execution)
    */
-  hipc::FullPtr<chi::Task> NewCopyTask(chi::u32 method, hipc::FullPtr<chi::Task> orig_task_ptr,
-                                        bool deep) override;
+  hipc::FullPtr<chi::Task> NewCopyTask(chi::u32 method,
+                                       hipc::FullPtr<chi::Task> orig_task_ptr,
+                                       bool deep) override;
 
   /**
    * Create a new task of the specified method type
@@ -356,23 +383,24 @@ class Runtime : public chi::Container {
   Client client_;
 
   // Storage backend configuration
-  BdevType bdev_type_;                            // Backend type (file or RAM)
+  BdevType bdev_type_;  // Backend type (file or RAM)
 
   // File-based storage (kFile)
-  std::string file_path_;                         // Path to the file (for per-worker FD creation)
+  std::string file_path_;  // Path to the file (for per-worker FD creation)
   std::vector<WorkerIOContext> worker_io_contexts_;  // Per-worker I/O contexts
-  chi::u64 file_size_;                            // Total file size
-  chi::u32 alignment_;                            // I/O alignment requirement
-  chi::u32 io_depth_;                             // Max concurrent I/O operations
-  chi::u32 max_blocks_per_operation_;             // Maximum blocks per I/O operation
+  chi::u64 file_size_;                               // Total file size
+  chi::u32 alignment_;                 // I/O alignment requirement
+  chi::u32 io_depth_;                  // Max concurrent I/O operations
+  chi::u32 max_blocks_per_operation_;  // Maximum blocks per I/O operation
 
   // RAM-based storage (kRam)
-  char* ram_buffer_;                              // RAM storage buffer
-  chi::u64 ram_size_;                            // Total RAM buffer size
+  char* ram_buffer_;   // RAM storage buffer
+  chi::u64 ram_size_;  // Total RAM buffer size
 
   // New allocator components
-  GlobalBlockMap global_block_map_;              // Global block cache with per-worker locking
-  Heap heap_;                                     // Heap allocator for new blocks
+  GlobalBlockMap
+      global_block_map_;  // Global block cache with per-worker locking
+  Heap heap_;             // Heap allocator for new blocks
 
   // Performance tracking
   std::atomic<chi::u64> total_reads_;
@@ -380,10 +408,10 @@ class Runtime : public chi::Container {
   std::atomic<chi::u64> total_bytes_read_;
   std::atomic<chi::u64> total_bytes_written_;
   std::chrono::high_resolution_clock::time_point start_time_;
-  
+
   // User-provided performance characteristics
   PerfMetrics perf_metrics_;
-  
+
   /**
    * Initialize the data allocator
    */
@@ -417,9 +445,10 @@ class Runtime : public chi::Container {
    * Get or create the worker I/O context for the given worker
    * Lazily initializes per-worker file descriptors and AIO contexts
    * @param worker_id Worker ID
-   * @return Pointer to the worker's I/O context, or nullptr if initialization fails
+   * @return Pointer to the worker's I/O context, or nullptr if initialization
+   * fails
    */
-  WorkerIOContext *GetWorkerIOContext(size_t worker_id);
+  WorkerIOContext* GetWorkerIOContext(size_t worker_id);
 
   /**
    * Initialize per-worker I/O contexts
@@ -434,15 +463,57 @@ class Runtime : public chi::Container {
   void CleanupWorkerIOContexts();
 
   /**
+   * Validate and fix CreateParams with sensible defaults.
+   * Ensures io_depth >= 1, alignment >= 1, etc.
+   * Critical: io_depth=0 causes infinite loop in WriteToFile/ReadFromFile.
+   * @param params The creation parameters to validate (modified in-place)
+   */
+  void ValidateAndFixParams(CreateParams& params);
+
+  /**
    * Align size to required boundary
    */
   chi::u64 AlignSize(chi::u64 size);
 
   /**
+   * Result of a batch I/O operation
+   */
+  struct IoBatchResult {
+    chi::u32 error_code;
+    chi::u64 bytes_transferred;
+  };
+
+  /**
+   * Submit and await completion of async I/O operations (shared by
+   * WriteToFile/ReadFromFile).
+   *
+   * Phase 1: Submit — push up to io_depth async I/O operations into the
+   * kernel. Each submission is non-blocking; completion is polled later.
+   * data_offset is incremented during submission to ensure each block gets
+   * its own distinct buffer region.
+   *
+   * Phase 2: Await — poll each pending I/O for completion. We yield the
+   * current task between polls to avoid busy-spinning. All submitted I/Os
+   * must be awaited before returning (no early break).
+   *
+   * @param io_ctx Worker I/O context (must be valid and initialized)
+   * @param task The WriteTask or ReadTask containing blocks, data, length
+   * @param is_write True for write operation, false for read
+   * @param ctx Runtime context for yielding
+   * @return IoBatchResult with error_code (0=success) and bytes_transferred
+   */
+  template <typename TaskT>
+  chi::TaskResume SubmitAndAwaitIo(WorkerIOContext* io_ctx,
+                                   hipc::FullPtr<TaskT> task, bool is_write,
+                                   chi::RunContext& ctx);
+
+  /**
    * Backend-specific file operations (coroutines that yield on I/O)
    */
-  chi::TaskResume WriteToFile(hipc::FullPtr<WriteTask> task, chi::RunContext &ctx);
-  chi::TaskResume ReadFromFile(hipc::FullPtr<ReadTask> task, chi::RunContext &ctx);
+  chi::TaskResume WriteToFile(hipc::FullPtr<WriteTask> task,
+                              chi::RunContext& ctx);
+  chi::TaskResume ReadFromFile(hipc::FullPtr<ReadTask> task,
+                               chi::RunContext& ctx);
 
   /**
    * Backend-specific RAM operations (synchronous, no coroutine needed)
@@ -457,6 +528,6 @@ class Runtime : public chi::Container {
                                 double duration_us);
 };
 
-} // namespace chimaera::bdev
+}  // namespace chimaera::bdev
 
-#endif // BDEV_RUNTIME_H_
+#endif  // BDEV_RUNTIME_H_

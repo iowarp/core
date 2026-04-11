@@ -224,6 +224,7 @@ function(hshm_target_compile_definitions target)
         HSHM_DEFAULT_ALLOC_T=hipc::ThreadLocalAllocator
         HSHM_ENABLE_DLL_EXPORT=$<BOOL:${BUILD_SHARED_LIBS}>
         HSHM_LOG_LEVEL=${HSHM_LOG_LEVEL}
+        HSHM_BUILDING=1
     )
 
     # Add CUDA/ROCM definitions for GPU targets only.

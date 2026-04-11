@@ -58,7 +58,7 @@ using MonitorTask = chimaera::admin::MonitorTask;
 static constexpr chi::PoolId kCtePoolId(512, 0);
 
 // CTE Core Pool Name constant
-static constexpr const char *kCtePoolName = "wrp_cte_core";
+static constexpr const char* kCtePoolName = "wrp_cte_core";
 
 // Timestamp type definition
 using Timestamp = std::chrono::time_point<std::chrono::steady_clock>;
@@ -72,17 +72,17 @@ struct CreateParams {
   Config config_;
 
   // Required: chimod library name for module manager
-  static constexpr const char *chimod_lib_name = "wrp_cte_core";
+  static constexpr const char* chimod_lib_name = "wrp_cte_core";
 
   // Default constructor
   CreateParams() {}
 
   // Copy constructor (required for task creation)
-  CreateParams(const CreateParams &other) : config_(other.config_) {}
+  CreateParams(const CreateParams& other) : config_(other.config_) {}
 
   // Constructor with pool_id and CreateParams (required for admin
   // task creation)
-  CreateParams(const chi::PoolId &pool_id, const CreateParams &other)
+  CreateParams(const chi::PoolId& pool_id, const CreateParams& other)
       : config_(other.config_) {
     // pool_id is used by the admin task framework, but we don't need to store
     // it
@@ -91,7 +91,7 @@ struct CreateParams {
 
   // Serialization support for cereal
   template <class Archive>
-  void serialize(Archive &ar) {
+  void serialize(Archive& ar) {
     // Config is not serialized - it's loaded from pool_config.config_ in
     // LoadConfig
     (void)ar;
@@ -102,7 +102,7 @@ struct CreateParams {
    * Required for compose feature support
    * @param pool_config Pool configuration from compose section
    */
-  void LoadConfig(const chi::PoolConfig &pool_config) {
+  void LoadConfig(const chi::PoolConfig& pool_config) {
     // The pool_config.config_ contains the full CTE configuration YAML
     // in the format of config/cte_config.yaml (targets, storage, dpe sections).
     // Parse it directly into the Config object
@@ -158,7 +158,8 @@ struct TargetInfo {
   float target_score_;        // Target score (0-1, normalized log bandwidth)
   chi::u64 remaining_space_;  // Remaining allocatable space in bytes
   chimaera::bdev::PerfMetrics perf_metrics_;  // Performance metrics from bdev
-  chimaera::bdev::PersistenceLevel persistence_level_ = chimaera::bdev::PersistenceLevel::kVolatile;
+  chimaera::bdev::PersistenceLevel persistence_level_ =
+      chimaera::bdev::PersistenceLevel::kVolatile;
 
   TargetInfo() = default;
 
@@ -193,10 +194,10 @@ struct RegisterTargetTask : public chi::Task {
 
   // Emplace constructor
   explicit RegisterTargetTask(
-      const chi::TaskId &task_id, const chi::PoolId &pool_id,
-      const chi::PoolQuery &pool_query, const std::string &target_name,
+      const chi::TaskId& task_id, const chi::PoolId& pool_id,
+      const chi::PoolQuery& pool_query, const std::string& target_name,
       chimaera::bdev::BdevType bdev_type, chi::u64 total_size,
-      const chi::PoolQuery &target_query, const chi::PoolId &bdev_id)
+      const chi::PoolQuery& target_query, const chi::PoolId& bdev_id)
       : chi::Task(task_id, pool_id, pool_query, Method::kRegisterTarget),
         target_name_(HSHM_MALLOC, target_name),
         bdev_type_(bdev_type),
@@ -214,7 +215,7 @@ struct RegisterTargetTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(target_name_, bdev_type_, total_size_, target_query_, bdev_id_);
   }
@@ -223,7 +224,7 @@ struct RegisterTargetTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
   }
 
@@ -231,7 +232,7 @@ struct RegisterTargetTask : public chi::Task {
    * Copy from another RegisterTargetTask
    * Used when creating replicas for remote execution
    */
-  void Copy(const hipc::FullPtr<RegisterTargetTask> &other) {
+  void Copy(const hipc::FullPtr<RegisterTargetTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     // Copy RegisterTargetTask-specific fields
@@ -246,7 +247,7 @@ struct RegisterTargetTask : public chi::Task {
    * Aggregate replica results into this task
    * @param other Pointer to the replica task to aggregate from
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<RegisterTargetTask>());
   }
@@ -263,10 +264,10 @@ struct UnregisterTargetTask : public chi::Task {
   UnregisterTargetTask() : chi::Task(), target_name_(HSHM_MALLOC) {}
 
   // Emplace constructor
-  explicit UnregisterTargetTask(const chi::TaskId &task_id,
-                                const chi::PoolId &pool_id,
-                                const chi::PoolQuery &pool_query,
-                                const std::string &target_name)
+  explicit UnregisterTargetTask(const chi::TaskId& task_id,
+                                const chi::PoolId& pool_id,
+                                const chi::PoolQuery& pool_query,
+                                const std::string& target_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kUnregisterTarget),
         target_name_(HSHM_MALLOC, target_name) {
     task_id_ = task_id;
@@ -280,7 +281,7 @@ struct UnregisterTargetTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(target_name_);
   }
@@ -289,7 +290,7 @@ struct UnregisterTargetTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     // No output parameters (return_code_ handled by base class)
   }
@@ -297,7 +298,7 @@ struct UnregisterTargetTask : public chi::Task {
   /**
    * Copy from another UnregisterTargetTask
    */
-  void Copy(const hipc::FullPtr<UnregisterTargetTask> &other) {
+  void Copy(const hipc::FullPtr<UnregisterTargetTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     target_name_ = other->target_name_;
@@ -307,7 +308,7 @@ struct UnregisterTargetTask : public chi::Task {
    * Aggregate replica results into this task
    * @param other Pointer to the replica task to aggregate from
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<UnregisterTargetTask>());
   }
@@ -324,9 +325,9 @@ struct ListTargetsTask : public chi::Task {
   ListTargetsTask() : chi::Task() {}
 
   // Emplace constructor
-  explicit ListTargetsTask(const chi::TaskId &task_id,
-                           const chi::PoolId &pool_id,
-                           const chi::PoolQuery &pool_query)
+  explicit ListTargetsTask(const chi::TaskId& task_id,
+                           const chi::PoolId& pool_id,
+                           const chi::PoolQuery& pool_query)
       : chi::Task(task_id, pool_id, pool_query, Method::kListTargets) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -339,7 +340,7 @@ struct ListTargetsTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     // No input parameters
   }
@@ -348,7 +349,7 @@ struct ListTargetsTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(target_names_);
   }
@@ -356,7 +357,7 @@ struct ListTargetsTask : public chi::Task {
   /**
    * Copy from another ListTargetsTask
    */
-  void Copy(const hipc::FullPtr<ListTargetsTask> &other) {
+  void Copy(const hipc::FullPtr<ListTargetsTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     target_names_ = other->target_names_;
@@ -366,10 +367,10 @@ struct ListTargetsTask : public chi::Task {
    * Aggregate entries from another ListTargetsTask
    * Appends all target names from the other task to this one
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     auto other = other_base.template Cast<ListTargetsTask>();
-    for (const auto &target_name : other->target_names_) {
+    for (const auto& target_name : other->target_names_) {
       target_names_.push_back(target_name);
     }
   }
@@ -383,9 +384,9 @@ struct StatTargetsTask : public chi::Task {
   StatTargetsTask() : chi::Task() {}
 
   // Emplace constructor
-  explicit StatTargetsTask(const chi::TaskId &task_id,
-                           const chi::PoolId &pool_id,
-                           const chi::PoolQuery &pool_query)
+  explicit StatTargetsTask(const chi::TaskId& task_id,
+                           const chi::PoolId& pool_id,
+                           const chi::PoolQuery& pool_query)
       : chi::Task(task_id, pool_id, pool_query, Method::kStatTargets) {
     task_id_ = task_id;
     pool_id_ = pool_id;
@@ -398,7 +399,7 @@ struct StatTargetsTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     // No input parameters
   }
@@ -407,7 +408,7 @@ struct StatTargetsTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     // No output parameters (return_code_ handled by base class)
   }
@@ -415,7 +416,7 @@ struct StatTargetsTask : public chi::Task {
   /**
    * Copy from another StatTargetsTask
    */
-  void Copy(const hipc::FullPtr<StatTargetsTask> &other) {
+  void Copy(const hipc::FullPtr<StatTargetsTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     // No task-specific fields to copy
@@ -426,7 +427,7 @@ struct StatTargetsTask : public chi::Task {
    * Aggregate replica results into this task
    * @param other Pointer to the replica task to aggregate from
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<StatTargetsTask>());
   }
@@ -457,10 +458,10 @@ struct GetTargetInfoTask : public chi::Task {
         ops_written_(0) {}
 
   // Emplace constructor
-  explicit GetTargetInfoTask(const chi::TaskId &task_id,
-                             const chi::PoolId &pool_id,
-                             const chi::PoolQuery &pool_query,
-                             const std::string &target_name)
+  explicit GetTargetInfoTask(const chi::TaskId& task_id,
+                             const chi::PoolId& pool_id,
+                             const chi::PoolQuery& pool_query,
+                             const std::string& target_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetTargetInfo),
         target_name_(HSHM_MALLOC, target_name),
         target_score_(0.0f),
@@ -480,7 +481,7 @@ struct GetTargetInfoTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(target_name_);
   }
@@ -489,7 +490,7 @@ struct GetTargetInfoTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(target_score_, remaining_space_, bytes_read_, bytes_written_, ops_read_,
        ops_written_);
@@ -498,7 +499,7 @@ struct GetTargetInfoTask : public chi::Task {
   /**
    * Copy from another GetTargetInfoTask
    */
-  void Copy(const hipc::FullPtr<GetTargetInfoTask> &other) {
+  void Copy(const hipc::FullPtr<GetTargetInfoTask>& other) {
     Task::Copy(other.template Cast<Task>());
     target_name_ = other->target_name_;
     target_score_ = other->target_score_;
@@ -512,7 +513,7 @@ struct GetTargetInfoTask : public chi::Task {
   /**
    * Aggregate replica results
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     // For target info, just copy (should be same across replicas)
     Copy(other_base.template Cast<GetTargetInfoTask>());
@@ -531,7 +532,7 @@ using TagId = chi::UniqueId;
 namespace hshm {
 template <>
 struct hash<wrp_cte::core::TagId> {
-  std::size_t operator()(const wrp_cte::core::TagId &id) const {
+  std::size_t operator()(const wrp_cte::core::TagId& id) const {
     std::hash<chi::u32> hasher;
     return hasher(id.major_) ^ (hasher(id.minor_) << 1);
   }
@@ -557,7 +558,7 @@ struct TagInfo {
         last_modified_(std::chrono::steady_clock::now()),
         last_read_(std::chrono::steady_clock::now()) {}
 
-  TagInfo(const std::string &tag_name, const TagId &tag_id)
+  TagInfo(const std::string& tag_name, const TagId& tag_id)
       : tag_name_(tag_name),
         tag_id_(tag_id),
         total_size_(0),
@@ -565,7 +566,7 @@ struct TagInfo {
         last_read_(std::chrono::steady_clock::now()) {}
 
   // Copy constructor
-  TagInfo(const TagInfo &other)
+  TagInfo(const TagInfo& other)
       : tag_name_(other.tag_name_),
         tag_id_(other.tag_id_),
         total_size_(other.total_size_.load()),
@@ -573,7 +574,7 @@ struct TagInfo {
         last_read_(other.last_read_) {}
 
   // Copy assignment operator
-  TagInfo &operator=(const TagInfo &other) {
+  TagInfo& operator=(const TagInfo& other) {
     if (this != &other) {
       tag_name_ = other.tag_name_;
       tag_id_ = other.tag_id_;
@@ -597,8 +598,8 @@ struct BlobBlock {
 
   BlobBlock() = default;
 
-  BlobBlock(const chimaera::bdev::Client &client,
-            const chi::PoolQuery &target_query, chi::u64 offset, chi::u64 size)
+  BlobBlock(const chimaera::bdev::Client& client,
+            const chi::PoolQuery& target_query, chi::u64 offset, chi::u64 size)
       : bdev_client_(client),
         target_query_(target_query),
         target_offset_(offset),
@@ -631,7 +632,7 @@ struct BlobInfo {
         compress_preset_(2),
         trace_key_(0) {}
 
-  BlobInfo(const std::string &blob_name, float score)
+  BlobInfo(const std::string& blob_name, float score)
       : blob_name_(blob_name),
         blocks_(),
         score_(score),
@@ -673,7 +674,8 @@ struct Context {
   chi::u64 trace_key_;    // Unique trace ID for this Put operation
   int trace_node_;        // Node ID where trace was initiated
   int min_persistence_level_;  // 0=volatile, 1=temp-nonvolatile, 2=long-term
-  int persistence_target_;     // Specific persistence level to target (-1 = use min_persistence_level_)
+  int persistence_target_;     // Specific persistence level to target (-1 = use
+                               // min_persistence_level_)
 
   // Dynamic statistics (populated after compression)
   chi::u64 actual_original_size_;    // Original data size in bytes
@@ -705,7 +707,7 @@ struct Context {
 
   // Serialization support for cereal
   template <class Archive>
-  void serialize(Archive &ar) {
+  void serialize(Archive& ar) {
     ar(dynamic_compress_, compress_lib_, compress_preset_, target_psnr_,
        psnr_chance_, max_performance_, consumer_node_, data_type_, trace_,
        trace_key_, trace_node_, min_persistence_level_, persistence_target_,
@@ -723,7 +725,8 @@ enum class CteOp : chi::u32 {
   kDelBlob = 2,
   kGetOrCreateTag = 3,
   kDelTag = 4,
-  kGetTagSize = 5
+  kGetTagSize = 5,
+  kReorganizeBlob = 6
 };
 
 /**
@@ -734,6 +737,7 @@ struct CteTelemetry {
   size_t off_;                  // Offset within blob (for Put/Get operations)
   size_t size_;                 // Size of operation (for Put/Get operations)
   TagId tag_id_;                // Tag ID involved
+  std::uint64_t blob_hash_;     // 64-bit FNV-1a hash of tag_id + blob_name
   Timestamp mod_time_;          // Last modification time
   Timestamp read_time_;         // Last read time
   std::uint64_t logical_time_;  // Logical time for ordering telemetry entries
@@ -743,28 +747,31 @@ struct CteTelemetry {
         off_(0),
         size_(0),
         tag_id_(TagId::GetNull()),
+        blob_hash_(0),
         mod_time_(std::chrono::steady_clock::now()),
         read_time_(std::chrono::steady_clock::now()),
         logical_time_(0) {}
 
-  CteTelemetry(CteOp op, size_t off, size_t size, const TagId &tag_id,
-               const Timestamp &mod_time, const Timestamp &read_time,
-               std::uint64_t logical_time = 0)
+  CteTelemetry(CteOp op, size_t off, size_t size, const TagId& tag_id,
+               std::uint64_t blob_hash, const Timestamp& mod_time,
+               const Timestamp& read_time, std::uint64_t logical_time = 0)
       : op_(op),
         off_(off),
         size_(size),
         tag_id_(tag_id),
+        blob_hash_(blob_hash),
         mod_time_(mod_time),
         read_time_(read_time),
         logical_time_(logical_time) {}
 
   // Serialization support for cereal
   template <class Archive>
-  void serialize(Archive &ar) {
+  void serialize(Archive& ar) {
     // Convert timestamps to duration counts for serialization
     auto mod_count = mod_time_.time_since_epoch().count();
     auto read_count = read_time_.time_since_epoch().count();
-    ar(op_, off_, size_, tag_id_, mod_count, read_count, logical_time_);
+    ar(op_, off_, size_, tag_id_, blob_hash_, mod_count, read_count,
+       logical_time_);
     // Note: On deserialization, timestamps will be reconstructed from counts
     if (Archive::is_loading::value) {
       mod_time_ = Timestamp(Timestamp::duration(mod_count));
@@ -787,11 +794,11 @@ struct GetOrCreateTagTask : public chi::Task {
       : chi::Task(), tag_name_(HSHM_MALLOC), tag_id_(TagId::GetNull()) {}
 
   // Emplace constructor
-  explicit GetOrCreateTagTask(const chi::TaskId &task_id,
-                              const chi::PoolId &pool_id,
-                              const chi::PoolQuery &pool_query,
-                              const std::string &tag_name,
-                              const TagId &tag_id = TagId::GetNull())
+  explicit GetOrCreateTagTask(const chi::TaskId& task_id,
+                              const chi::PoolId& pool_id,
+                              const chi::PoolQuery& pool_query,
+                              const std::string& tag_name,
+                              const TagId& tag_id = TagId::GetNull())
       : chi::Task(task_id, pool_id, pool_query, Method::kGetOrCreateTag),
         tag_name_(HSHM_MALLOC, tag_name),
         tag_id_(tag_id) {
@@ -806,7 +813,7 @@ struct GetOrCreateTagTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_name_, tag_id_);
   }
@@ -815,7 +822,7 @@ struct GetOrCreateTagTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(tag_id_);
   }
@@ -823,7 +830,7 @@ struct GetOrCreateTagTask : public chi::Task {
   /**
    * Copy from another GetOrCreateTagTask
    */
-  void Copy(const hipc::FullPtr<GetOrCreateTagTask> &other) {
+  void Copy(const hipc::FullPtr<GetOrCreateTagTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     tag_name_ = other->tag_name_;
@@ -834,7 +841,7 @@ struct GetOrCreateTagTask : public chi::Task {
    * Aggregate replica results into this task
    * @param other Pointer to the replica task to aggregate from
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<GetOrCreateTagTask>());
   }
@@ -869,11 +876,11 @@ struct PutBlobTask : public chi::Task {
         flags_(0) {}
 
   // Emplace constructor
-  explicit PutBlobTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
-                       const chi::PoolQuery &pool_query, const TagId &tag_id,
-                       const std::string &blob_name, chi::u64 offset,
+  explicit PutBlobTask(const chi::TaskId& task_id, const chi::PoolId& pool_id,
+                       const chi::PoolQuery& pool_query, const TagId& tag_id,
+                       const std::string& blob_name, chi::u64 offset,
                        chi::u64 size, hipc::ShmPtr<> blob_data, float score,
-                       const Context &context, chi::u32 flags)
+                       const Context& context, chi::u32 flags)
       : chi::Task(task_id, pool_id, pool_query, Method::kPutBlob),
         tag_id_(tag_id),
         blob_name_(HSHM_MALLOC, blob_name),
@@ -895,7 +902,7 @@ struct PutBlobTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_, offset_, size_, score_, context_, flags_);
     // Use BULK_XFER to transfer blob data from client to runtime
@@ -906,7 +913,7 @@ struct PutBlobTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(blob_name_, context_);
     // No bulk transfer needed for PutBlob output (metadata only)
@@ -915,7 +922,7 @@ struct PutBlobTask : public chi::Task {
   /**
    * Copy from another PutBlobTask
    */
-  void Copy(const hipc::FullPtr<PutBlobTask> &other) {
+  void Copy(const hipc::FullPtr<PutBlobTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     tag_id_ = other->tag_id_;
@@ -932,7 +939,7 @@ struct PutBlobTask : public chi::Task {
    * Aggregate replica results into this task
    * @param other Pointer to the replica task to aggregate from
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<PutBlobTask>());
   }
@@ -961,9 +968,9 @@ struct GetBlobTask : public chi::Task {
         blob_data_(hipc::ShmPtr<>::GetNull()) {}
 
   // Emplace constructor
-  explicit GetBlobTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
-                       const chi::PoolQuery &pool_query, const TagId &tag_id,
-                       const std::string &blob_name, chi::u64 offset,
+  explicit GetBlobTask(const chi::TaskId& task_id, const chi::PoolId& pool_id,
+                       const chi::PoolQuery& pool_query, const TagId& tag_id,
+                       const std::string& blob_name, chi::u64 offset,
                        chi::u64 size, chi::u32 flags, hipc::ShmPtr<> blob_data)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetBlob),
         tag_id_(tag_id),
@@ -984,7 +991,7 @@ struct GetBlobTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_, offset_, size_, flags_);
     // Use BULK_EXPOSE - metadata only, runtime will allocate buffer for read
@@ -996,7 +1003,7 @@ struct GetBlobTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     // Use BULK_XFER to transfer read data back to client
     ar.bulk(blob_data_, size_, BULK_XFER);
@@ -1005,7 +1012,7 @@ struct GetBlobTask : public chi::Task {
   /**
    * Copy from another GetBlobTask
    */
-  void Copy(const hipc::FullPtr<GetBlobTask> &other) {
+  void Copy(const hipc::FullPtr<GetBlobTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     tag_id_ = other->tag_id_;
@@ -1020,7 +1027,7 @@ struct GetBlobTask : public chi::Task {
    * Aggregate replica results into this task
    * @param other Pointer to the replica task to aggregate from
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<GetBlobTask>());
   }
@@ -1042,10 +1049,10 @@ struct ReorganizeBlobTask : public chi::Task {
         new_score_(0.0f) {}
 
   // Emplace constructor
-  explicit ReorganizeBlobTask(const chi::TaskId &task_id,
-                              const chi::PoolId &pool_id,
-                              const chi::PoolQuery &pool_query,
-                              const TagId &tag_id, const std::string &blob_name,
+  explicit ReorganizeBlobTask(const chi::TaskId& task_id,
+                              const chi::PoolId& pool_id,
+                              const chi::PoolQuery& pool_query,
+                              const TagId& tag_id, const std::string& blob_name,
                               float new_score)
       : chi::Task(task_id, pool_id, pool_query, Method::kReorganizeBlob),
         tag_id_(tag_id),
@@ -1062,7 +1069,7 @@ struct ReorganizeBlobTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_, new_score_);
   }
@@ -1071,7 +1078,7 @@ struct ReorganizeBlobTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     // No output parameters (return_code_ handled by base class)
   }
@@ -1079,7 +1086,7 @@ struct ReorganizeBlobTask : public chi::Task {
   /**
    * Copy from another ReorganizeBlobTask
    */
-  void Copy(const hipc::FullPtr<ReorganizeBlobTask> &other) {
+  void Copy(const hipc::FullPtr<ReorganizeBlobTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     tag_id_ = other->tag_id_;
@@ -1091,7 +1098,7 @@ struct ReorganizeBlobTask : public chi::Task {
    * Aggregate replica results into this task
    * @param other Pointer to the replica task to aggregate from
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<ReorganizeBlobTask>());
   }
@@ -1109,9 +1116,9 @@ struct DelBlobTask : public chi::Task {
       : chi::Task(), tag_id_(TagId::GetNull()), blob_name_(HSHM_MALLOC) {}
 
   // Emplace constructor
-  explicit DelBlobTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
-                       const chi::PoolQuery &pool_query, const TagId &tag_id,
-                       const std::string &blob_name)
+  explicit DelBlobTask(const chi::TaskId& task_id, const chi::PoolId& pool_id,
+                       const chi::PoolQuery& pool_query, const TagId& tag_id,
+                       const std::string& blob_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kDelBlob),
         tag_id_(tag_id),
         blob_name_(HSHM_MALLOC, blob_name) {
@@ -1126,7 +1133,7 @@ struct DelBlobTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_);
   }
@@ -1135,7 +1142,7 @@ struct DelBlobTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     // No output parameters (return_code_ handled by base class)
   }
@@ -1143,7 +1150,7 @@ struct DelBlobTask : public chi::Task {
   /**
    * Copy from another DelBlobTask
    */
-  void Copy(const hipc::FullPtr<DelBlobTask> &other) {
+  void Copy(const hipc::FullPtr<DelBlobTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     tag_id_ = other->tag_id_;
@@ -1154,7 +1161,7 @@ struct DelBlobTask : public chi::Task {
    * Aggregate replica results into this task
    * @param other Pointer to the replica task to aggregate from
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<DelBlobTask>());
   }
@@ -1173,8 +1180,8 @@ struct DelTagTask : public chi::Task {
       : chi::Task(), tag_id_(TagId::GetNull()), tag_name_(HSHM_MALLOC) {}
 
   // Emplace constructor with tag ID
-  explicit DelTagTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
-                      const chi::PoolQuery &pool_query, const TagId &tag_id)
+  explicit DelTagTask(const chi::TaskId& task_id, const chi::PoolId& pool_id,
+                      const chi::PoolQuery& pool_query, const TagId& tag_id)
       : chi::Task(task_id, pool_id, pool_query, Method::kDelTag),
         tag_id_(tag_id),
         tag_name_(HSHM_MALLOC) {
@@ -1186,9 +1193,9 @@ struct DelTagTask : public chi::Task {
   }
 
   // Emplace constructor with tag name
-  explicit DelTagTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
-                      const chi::PoolQuery &pool_query,
-                      const std::string &tag_name)
+  explicit DelTagTask(const chi::TaskId& task_id, const chi::PoolId& pool_id,
+                      const chi::PoolQuery& pool_query,
+                      const std::string& tag_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kDelTag),
         tag_id_(TagId::GetNull()),
         tag_name_(HSHM_MALLOC, tag_name) {
@@ -1203,7 +1210,7 @@ struct DelTagTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, tag_name_);
   }
@@ -1212,7 +1219,7 @@ struct DelTagTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(tag_id_);
   }
@@ -1220,7 +1227,7 @@ struct DelTagTask : public chi::Task {
   /**
    * Copy from another DelTagTask
    */
-  void Copy(const hipc::FullPtr<DelTagTask> &other) {
+  void Copy(const hipc::FullPtr<DelTagTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     tag_id_ = other->tag_id_;
@@ -1231,7 +1238,7 @@ struct DelTagTask : public chi::Task {
    * Aggregate replica results into this task
    * @param other Pointer to the replica task to aggregate from
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<DelTagTask>());
   }
@@ -1248,9 +1255,9 @@ struct GetTagSizeTask : public chi::Task {
   GetTagSizeTask() : chi::Task(), tag_id_(TagId::GetNull()), tag_size_(0) {}
 
   // Emplace constructor
-  explicit GetTagSizeTask(const chi::TaskId &task_id,
-                          const chi::PoolId &pool_id,
-                          const chi::PoolQuery &pool_query, const TagId &tag_id)
+  explicit GetTagSizeTask(const chi::TaskId& task_id,
+                          const chi::PoolId& pool_id,
+                          const chi::PoolQuery& pool_query, const TagId& tag_id)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetTagSize),
         tag_id_(tag_id),
         tag_size_(0) {
@@ -1265,7 +1272,7 @@ struct GetTagSizeTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_id_);
   }
@@ -1274,7 +1281,7 @@ struct GetTagSizeTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(tag_size_);
   }
@@ -1282,7 +1289,7 @@ struct GetTagSizeTask : public chi::Task {
   /**
    * Copy from another GetTagSizeTask
    */
-  void Copy(const hipc::FullPtr<GetTagSizeTask> &other) {
+  void Copy(const hipc::FullPtr<GetTagSizeTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     tag_id_ = other->tag_id_;
@@ -1293,7 +1300,7 @@ struct GetTagSizeTask : public chi::Task {
    * Aggregate results from a replica task
    * Sums the tag_size_ values from multiple nodes
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     auto replica = other_base.template Cast<GetTagSizeTask>();
     tag_size_ += replica->tag_size_;
@@ -1316,9 +1323,9 @@ struct PollTelemetryLogTask : public chi::Task {
         entries_(HSHM_MALLOC) {}
 
   // Emplace constructor
-  explicit PollTelemetryLogTask(const chi::TaskId &task_id,
-                                const chi::PoolId &pool_id,
-                                const chi::PoolQuery &pool_query,
+  explicit PollTelemetryLogTask(const chi::TaskId& task_id,
+                                const chi::PoolId& pool_id,
+                                const chi::PoolQuery& pool_query,
                                 std::uint64_t minimum_logical_time)
       : chi::Task(task_id, pool_id, pool_query, Method::kPollTelemetryLog),
         minimum_logical_time_(minimum_logical_time),
@@ -1335,7 +1342,7 @@ struct PollTelemetryLogTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(minimum_logical_time_);
   }
@@ -1344,7 +1351,7 @@ struct PollTelemetryLogTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(last_logical_time_, entries_);
   }
@@ -1352,7 +1359,7 @@ struct PollTelemetryLogTask : public chi::Task {
   /**
    * Copy from another PollTelemetryLogTask
    */
-  void Copy(const hipc::FullPtr<PollTelemetryLogTask> &other) {
+  void Copy(const hipc::FullPtr<PollTelemetryLogTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     minimum_logical_time_ = other->minimum_logical_time_;
@@ -1364,7 +1371,7 @@ struct PollTelemetryLogTask : public chi::Task {
    * Aggregate replica results into this task
    * @param other Pointer to the replica task to aggregate from
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<PollTelemetryLogTask>());
   }
@@ -1386,10 +1393,10 @@ struct GetBlobScoreTask : public chi::Task {
         score_(0.0f) {}
 
   // Emplace constructor
-  explicit GetBlobScoreTask(const chi::TaskId &task_id,
-                            const chi::PoolId &pool_id,
-                            const chi::PoolQuery &pool_query,
-                            const TagId &tag_id, const std::string &blob_name)
+  explicit GetBlobScoreTask(const chi::TaskId& task_id,
+                            const chi::PoolId& pool_id,
+                            const chi::PoolQuery& pool_query,
+                            const TagId& tag_id, const std::string& blob_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetBlobScore),
         tag_id_(tag_id),
         blob_name_(HSHM_MALLOC, blob_name),
@@ -1405,7 +1412,7 @@ struct GetBlobScoreTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_);
   }
@@ -1414,7 +1421,7 @@ struct GetBlobScoreTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(score_);
   }
@@ -1422,7 +1429,7 @@ struct GetBlobScoreTask : public chi::Task {
   /**
    * Copy from another GetBlobScoreTask
    */
-  void Copy(const hipc::FullPtr<GetBlobScoreTask> &other) {
+  void Copy(const hipc::FullPtr<GetBlobScoreTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     tag_id_ = other->tag_id_;
@@ -1434,7 +1441,7 @@ struct GetBlobScoreTask : public chi::Task {
    * Aggregate replica results into this task
    * @param other Pointer to the replica task to aggregate from
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<GetBlobScoreTask>());
   }
@@ -1456,10 +1463,10 @@ struct GetBlobSizeTask : public chi::Task {
         size_(0) {}
 
   // Emplace constructor
-  explicit GetBlobSizeTask(const chi::TaskId &task_id,
-                           const chi::PoolId &pool_id,
-                           const chi::PoolQuery &pool_query,
-                           const TagId &tag_id, const std::string &blob_name)
+  explicit GetBlobSizeTask(const chi::TaskId& task_id,
+                           const chi::PoolId& pool_id,
+                           const chi::PoolQuery& pool_query,
+                           const TagId& tag_id, const std::string& blob_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetBlobSize),
         tag_id_(tag_id),
         blob_name_(HSHM_MALLOC, blob_name),
@@ -1475,7 +1482,7 @@ struct GetBlobSizeTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_);
   }
@@ -1484,7 +1491,7 @@ struct GetBlobSizeTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(size_);
   }
@@ -1492,7 +1499,7 @@ struct GetBlobSizeTask : public chi::Task {
   /**
    * Copy from another GetBlobSizeTask
    */
-  void Copy(const hipc::FullPtr<GetBlobSizeTask> &other) {
+  void Copy(const hipc::FullPtr<GetBlobSizeTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     tag_id_ = other->tag_id_;
@@ -1504,7 +1511,7 @@ struct GetBlobSizeTask : public chi::Task {
    * Aggregate replica results into this task
    * @param other Pointer to the replica task to aggregate from
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<GetBlobSizeTask>());
   }
@@ -1521,11 +1528,11 @@ struct BlobBlockInfo {
   chi::u64 block_offset_;  // Offset within target where block is stored
 
   BlobBlockInfo() : target_pool_id_(), block_size_(0), block_offset_(0) {}
-  BlobBlockInfo(const chi::PoolId &pool_id, chi::u64 size, chi::u64 offset)
+  BlobBlockInfo(const chi::PoolId& pool_id, chi::u64 size, chi::u64 offset)
       : target_pool_id_(pool_id), block_size_(size), block_offset_(offset) {}
 
   template <typename Archive>
-  void serialize(Archive &ar) {
+  void serialize(Archive& ar) {
     chi::u64 pool_id_u64 =
         target_pool_id_.IsNull() ? 0 : target_pool_id_.ToU64();
     ar(pool_id_u64, block_size_, block_offset_);
@@ -1555,10 +1562,10 @@ struct GetBlobInfoTask : public chi::Task {
         blocks_() {}
 
   // Emplace constructor
-  explicit GetBlobInfoTask(const chi::TaskId &task_id,
-                           const chi::PoolId &pool_id,
-                           const chi::PoolQuery &pool_query,
-                           const TagId &tag_id, const std::string &blob_name)
+  explicit GetBlobInfoTask(const chi::TaskId& task_id,
+                           const chi::PoolId& pool_id,
+                           const chi::PoolQuery& pool_query,
+                           const TagId& tag_id, const std::string& blob_name)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetBlobInfo),
         tag_id_(tag_id),
         blob_name_(HSHM_MALLOC, blob_name),
@@ -1575,7 +1582,7 @@ struct GetBlobInfoTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_id_, blob_name_);
   }
@@ -1584,7 +1591,7 @@ struct GetBlobInfoTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(score_, total_size_);
     // NOTE: blocks_ temporarily removed from serialization for debugging
@@ -1593,7 +1600,7 @@ struct GetBlobInfoTask : public chi::Task {
   /**
    * Copy from another GetBlobInfoTask
    */
-  void Copy(const hipc::FullPtr<GetBlobInfoTask> &other) {
+  void Copy(const hipc::FullPtr<GetBlobInfoTask>& other) {
     Task::Copy(other.template Cast<Task>());
     tag_id_ = other->tag_id_;
     blob_name_ = other->blob_name_;
@@ -1605,7 +1612,7 @@ struct GetBlobInfoTask : public chi::Task {
   /**
    * Aggregate replica results into this task
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<GetBlobInfoTask>());
   }
@@ -1622,10 +1629,10 @@ struct GetContainedBlobsTask : public chi::Task {
   GetContainedBlobsTask() : chi::Task(), tag_id_(TagId::GetNull()) {}
 
   // Emplace constructor
-  explicit GetContainedBlobsTask(const chi::TaskId &task_id,
-                                 const chi::PoolId &pool_id,
-                                 const chi::PoolQuery &pool_query,
-                                 const TagId &tag_id)
+  explicit GetContainedBlobsTask(const chi::TaskId& task_id,
+                                 const chi::PoolId& pool_id,
+                                 const chi::PoolQuery& pool_query,
+                                 const TagId& tag_id)
       : chi::Task(task_id, pool_id, pool_query, Method::kGetContainedBlobs),
         tag_id_(tag_id) {
     task_id_ = task_id;
@@ -1639,7 +1646,7 @@ struct GetContainedBlobsTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_id_);
   }
@@ -1648,7 +1655,7 @@ struct GetContainedBlobsTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(blob_names_);
   }
@@ -1656,7 +1663,7 @@ struct GetContainedBlobsTask : public chi::Task {
   /**
    * Copy from another GetContainedBlobsTask
    */
-  void Copy(const hipc::FullPtr<GetContainedBlobsTask> &other) {
+  void Copy(const hipc::FullPtr<GetContainedBlobsTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     tag_id_ = other->tag_id_;
@@ -1667,7 +1674,7 @@ struct GetContainedBlobsTask : public chi::Task {
    * Aggregate results from a replica task
    * Merges the blob_names_ vectors from multiple nodes
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     auto replica = other_base.template Cast<GetContainedBlobsTask>();
     // Merge blob names from replica into this task's blob_names_
@@ -1700,9 +1707,9 @@ struct TagQueryTask : public chi::Task {
         total_tags_matched_(0) {}
 
   // Emplace constructor
-  explicit TagQueryTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
-                        const chi::PoolQuery &pool_query,
-                        const std::string &tag_regex, chi::u32 max_tags = 0)
+  explicit TagQueryTask(const chi::TaskId& task_id, const chi::PoolId& pool_id,
+                        const chi::PoolQuery& pool_query,
+                        const std::string& tag_regex, chi::u32 max_tags = 0)
       : chi::Task(task_id, pool_id, pool_query, Method::kTagQuery),
         tag_regex_(HSHM_MALLOC, tag_regex),
         max_tags_(max_tags),
@@ -1718,7 +1725,7 @@ struct TagQueryTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_regex_, max_tags_);
   }
@@ -1727,7 +1734,7 @@ struct TagQueryTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(total_tags_matched_, results_);
   }
@@ -1735,7 +1742,7 @@ struct TagQueryTask : public chi::Task {
   /**
    * Copy from another TagQueryTask
    */
-  void Copy(const hipc::FullPtr<TagQueryTask> &other) {
+  void Copy(const hipc::FullPtr<TagQueryTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     tag_regex_ = other->tag_regex_;
@@ -1747,14 +1754,14 @@ struct TagQueryTask : public chi::Task {
   /**
    * Aggregate results from multiple nodes
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     auto other = other_base.template Cast<TagQueryTask>();
     // Sum total matched tags across replicas
     total_tags_matched_ += other->total_tags_matched_;
 
     // Append results up to max_tags_ (if non-zero)
-    for (const auto &tag_name : other->results_) {
+    for (const auto& tag_name : other->results_) {
       if (max_tags_ != 0 && results_.size() >= static_cast<size_t>(max_tags_))
         break;
       results_.push_back(tag_name);
@@ -1789,10 +1796,10 @@ struct BlobQueryTask : public chi::Task {
         total_blobs_matched_(0) {}
 
   // Emplace constructor
-  explicit BlobQueryTask(const chi::TaskId &task_id, const chi::PoolId &pool_id,
-                         const chi::PoolQuery &pool_query,
-                         const std::string &tag_regex,
-                         const std::string &blob_regex, chi::u32 max_blobs = 0)
+  explicit BlobQueryTask(const chi::TaskId& task_id, const chi::PoolId& pool_id,
+                         const chi::PoolQuery& pool_query,
+                         const std::string& tag_regex,
+                         const std::string& blob_regex, chi::u32 max_blobs = 0)
       : chi::Task(task_id, pool_id, pool_query, Method::kBlobQuery),
         tag_regex_(HSHM_MALLOC, tag_regex),
         blob_regex_(HSHM_MALLOC, blob_regex),
@@ -1809,7 +1816,7 @@ struct BlobQueryTask : public chi::Task {
    * Serialize IN and INOUT parameters
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(tag_regex_, blob_regex_, max_blobs_);
   }
@@ -1818,7 +1825,7 @@ struct BlobQueryTask : public chi::Task {
    * Serialize OUT and INOUT parameters
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(total_blobs_matched_, tag_names_, blob_names_);
   }
@@ -1826,7 +1833,7 @@ struct BlobQueryTask : public chi::Task {
   /**
    * Copy from another BlobQueryTask
    */
-  void Copy(const hipc::FullPtr<BlobQueryTask> &other) {
+  void Copy(const hipc::FullPtr<BlobQueryTask>& other) {
     // Copy base Task fields
     Task::Copy(other.template Cast<Task>());
     tag_regex_ = other->tag_regex_;
@@ -1840,7 +1847,7 @@ struct BlobQueryTask : public chi::Task {
   /**
    * Aggregate results from multiple nodes
    */
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     auto other = other_base.template Cast<BlobQueryTask>();
     // Sum total matched blobs across replicas
@@ -1858,7 +1865,8 @@ struct BlobQueryTask : public chi::Task {
 };
 
 /**
- * FlushMetadataTask - Periodic task to flush tag/blob metadata to durable storage
+ * FlushMetadataTask - Periodic task to flush tag/blob metadata to durable
+ * storage
  */
 struct FlushMetadataTask : public chi::Task {
   OUT chi::u64 entries_flushed_;
@@ -1867,9 +1875,9 @@ struct FlushMetadataTask : public chi::Task {
   FlushMetadataTask() : chi::Task(), entries_flushed_(0) {}
 
   /** Emplace constructor */
-  explicit FlushMetadataTask(const chi::TaskId &task_node,
-                             const chi::PoolId &pool_id,
-                             const chi::PoolQuery &pool_query)
+  explicit FlushMetadataTask(const chi::TaskId& task_node,
+                             const chi::PoolId& pool_id,
+                             const chi::PoolQuery& pool_query)
       : chi::Task(task_node, pool_id, pool_query, Method::kFlushMetadata),
         entries_flushed_(0) {
     task_id_ = task_node;
@@ -1880,29 +1888,30 @@ struct FlushMetadataTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(entries_flushed_);
   }
 
-  void Copy(const hipc::FullPtr<FlushMetadataTask> &other) {
+  void Copy(const hipc::FullPtr<FlushMetadataTask>& other) {
     Task::Copy(other.template Cast<Task>());
     entries_flushed_ = other->entries_flushed_;
   }
 
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<FlushMetadataTask>());
   }
 };
 
 /**
- * FlushDataTask - Periodic task to flush data from volatile to non-volatile targets
+ * FlushDataTask - Periodic task to flush data from volatile to non-volatile
+ * targets
  */
 struct FlushDataTask : public chi::Task {
   IN int target_persistence_level_;
@@ -1917,9 +1926,9 @@ struct FlushDataTask : public chi::Task {
         blobs_flushed_(0) {}
 
   /** Emplace constructor */
-  explicit FlushDataTask(const chi::TaskId &task_node,
-                         const chi::PoolId &pool_id,
-                         const chi::PoolQuery &pool_query,
+  explicit FlushDataTask(const chi::TaskId& task_node,
+                         const chi::PoolId& pool_id,
+                         const chi::PoolQuery& pool_query,
                          int target_persistence_level = 1)
       : chi::Task(task_node, pool_id, pool_query, Method::kFlushData),
         target_persistence_level_(target_persistence_level),
@@ -1933,25 +1942,25 @@ struct FlushDataTask : public chi::Task {
   }
 
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
     ar(target_persistence_level_);
   }
 
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
     ar(bytes_flushed_, blobs_flushed_);
   }
 
-  void Copy(const hipc::FullPtr<FlushDataTask> &other) {
+  void Copy(const hipc::FullPtr<FlushDataTask>& other) {
     Task::Copy(other.template Cast<Task>());
     target_persistence_level_ = other->target_persistence_level_;
     bytes_flushed_ = other->bytes_flushed_;
     blobs_flushed_ = other->blobs_flushed_;
   }
 
-  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+  void Aggregate(const hipc::FullPtr<chi::Task>& other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<FlushDataTask>());
   }

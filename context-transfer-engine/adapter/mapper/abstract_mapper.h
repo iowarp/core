@@ -42,9 +42,7 @@ namespace wrp::cae {
  * Define different types of mappers supported by POSIX Adapter.
  * Also define its construction in the MapperFactory.
  */
-enum class MapperType {
-  kBalancedMapper
-};
+enum class MapperType { kBalancedMapper };
 
 /**
  A structure to represent BLOB placement
@@ -56,24 +54,24 @@ struct BlobPlacement {
   size_t blob_size_;  /**< Size after offset to read */
 
   /** create a BLOB name from index. */
-  static chi::string CreateBlobName(size_t page) {
-    chi::string buf(sizeof(page));
+  static chi::priv::string CreateBlobName(size_t page) {
+    chi::priv::string buf(HSHM_MALLOC, std::string(sizeof(page), '\0'));
     hipc::LocalSerialize srl(buf);
     srl << page;
     return buf;
   }
 
   /** create a BLOB name from index. */
-  chi::string CreateBlobName() const {
-    chi::string buf(sizeof(page_));
+  chi::priv::string CreateBlobName() const {
+    chi::priv::string buf(HSHM_MALLOC, std::string(sizeof(page_), '\0'));
     hipc::LocalSerialize srl(buf);
     srl << page_;
     return buf;
   }
 
   /** decode \a blob_name BLOB name to index.  */
-  template<typename StringT>
-  void DecodeBlobName(const StringT &blob_name, size_t page_size) {
+  template <typename StringT>
+  void DecodeBlobName(const StringT& blob_name, size_t page_size) {
     hipc::LocalDeserialize srl(blob_name);
     srl >> page_;
     bucket_off_ = page_ * page_size;
@@ -101,7 +99,7 @@ class AbstractMapper {
    *
    */
   virtual void map(size_t off, size_t size, size_t page_size,
-                   BlobPlacements &ps) = 0;
+                   BlobPlacements& ps) = 0;
 };
 }  // namespace wrp::cae
 

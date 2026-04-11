@@ -79,6 +79,21 @@
 #define HSHM_DLL_SINGLETON HSHM_DLL_IMPORT
 #endif
 
+/** API export/import for LTO template instantiation visibility */
+#ifdef _MSC_VER
+#define HSHM_API_EXPORT __declspec(dllexport)
+#define HSHM_API_IMPORT __declspec(dllimport)
+#else
+#define HSHM_API_EXPORT __attribute__((visibility("default")))
+#define HSHM_API_IMPORT __attribute__((visibility("default")))
+#endif
+
+#ifdef HSHM_BUILDING
+#define HSHM_API HSHM_API_EXPORT
+#else
+#define HSHM_API HSHM_API_IMPORT
+#endif
+
 /**
  * Remove parenthesis surrounding "X" if it has parenthesis
  * Used for helper macros which take templated types as parameters
@@ -150,22 +165,21 @@
 #endif
 
 /** Error checking for ROCM */
-#define HIP_ERROR_CHECK(X)                                                  \
-  do {                                                                      \
-    if (X != hipSuccess) {                                                  \
-      hipError_t hipErr = hipGetLastError();                                \
+#define HIP_ERROR_CHECK(X)                                                 \
+  do {                                                                     \
+    if (X != hipSuccess) {                                                 \
+      hipError_t hipErr = hipGetLastError();                               \
       HLOG(kFatal, "HIP Error {}: {}", hipErr, hipGetErrorString(hipErr)); \
-    }                                                                       \
+    }                                                                      \
   } while (false)
 
 /** Error checking for CUDA */
-#define CUDA_ERROR_CHECK(X)                       \
-  do {                                            \
-    if (X != cudaSuccess) {                       \
-      cudaError_t cudaErr = cudaGetLastError();   \
-      HLOG(kFatal, "CUDA Error {}: {}", cudaErr, \
-            cudaGetErrorString(cudaErr));         \
-    }                                             \
+#define CUDA_ERROR_CHECK(X)                                                    \
+  do {                                                                         \
+    if (X != cudaSuccess) {                                                    \
+      cudaError_t cudaErr = cudaGetLastError();                                \
+      HLOG(kFatal, "CUDA Error {}: {}", cudaErr, cudaGetErrorString(cudaErr)); \
+    }                                                                          \
   } while (false)
 
 /**

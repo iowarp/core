@@ -32,8 +32,11 @@
  */
 
 #pragma once
+
+// Include transport headers when LIGHTBEAM is enabled
+// These must come BEFORE the TransportDeleter implementation because
+// it references the derived transport class types for proper deletion.
 #if HSHM_ENABLE_LIGHTBEAM
-#include "lightbeam.h"
 #include "shm_transport.h"
 #include "socket_transport.h"
 #if HSHM_ENABLE_ZMQ
@@ -45,13 +48,18 @@
 #if HSHM_ENABLE_LIBFABRIC
 #include "libfabric_transport.h"
 #endif
+#endif
 
 namespace hshm::lbm {
 
-#if HSHM_IS_HOST
-// --- TransportDeleter implementation ---
+// --- TransportDeleter Implementation ---
+// This MUST be defined unconditionally because the declaration in lightbeam.h
+// is unconditional. The inline keyword requires the definition to be visible
+// in every translation unit that uses it (ODR - One Definition Rule).
 inline void TransportDeleter::operator()(Transport* t) const {
   if (!t) return;
+#if HSHM_ENABLE_LIGHTBEAM
+  // Transport-specific deletion with proper cast
   switch (t->type_) {
 #if HSHM_ENABLE_ZMQ
     case TransportType::kZeroMq:
@@ -68,10 +76,28 @@ inline void TransportDeleter::operator()(Transport* t) const {
       delete t;
       break;
   }
+#else
+  // Lightbeam disabled: just call base destructor
+  // Note: This may not properly clean up derived transport resources
+  // if derived classes have their own cleanup, but it's the best we can do
+  // when lightbeam is disabled.
+  delete t;
+#endif
 }
 
-// --- Unified Transport Non-Template Dispatch ---
-inline Bulk Transport::Expose(const hipc::FullPtr<char>& ptr, size_t data_size, u32 flags) {
+}  // namespace hshm::lbm
+
+#if HSHM_IS_HOST
+// --- Transport Non-Template Method Implementations ---
+// These MUST be defined unconditionally because the declarations in lightbeam.h
+// are unconditional. They use conditional compilation internally to dispatch
+// to the appropriate transport type when lightbeam is enabled.
+
+namespace hshm::lbm {
+
+inline Bulk Transport::Expose(const hipc::FullPtr<char>& ptr, size_t data_size,
+                              u32 flags) {
+#if HSHM_ENABLE_LIGHTBEAM
   switch (type_) {
 #if HSHM_ENABLE_ZMQ
     case TransportType::kZeroMq:
@@ -84,9 +110,17 @@ inline Bulk Transport::Expose(const hipc::FullPtr<char>& ptr, size_t data_size, 
     default:
       return Bulk{};
   }
+#else
+  // Lightbeam disabled: no transport available
+  (void)ptr;
+  (void)data_size;
+  (void)flags;
+  return Bulk{};
+#endif
 }
 
 inline std::string Transport::GetAddress() const {
+#if HSHM_ENABLE_LIGHTBEAM
   switch (type_) {
 #if HSHM_ENABLE_ZMQ
     case TransportType::kZeroMq:
@@ -99,9 +133,14 @@ inline std::string Transport::GetAddress() const {
     default:
       return "";
   }
+#else
+  // Lightbeam disabled: no transport available
+  return "";
+#endif
 }
 
 inline void Transport::ClearRecvHandles(LbmMeta<>& meta) {
+#if HSHM_ENABLE_LIGHTBEAM
   switch (type_) {
 #if HSHM_ENABLE_ZMQ
     case TransportType::kZeroMq:
@@ -117,9 +156,14 @@ inline void Transport::ClearRecvHandles(LbmMeta<>& meta) {
     default:
       break;
   }
+#else
+  // Lightbeam disabled: no transport available
+  (void)meta;
+#endif
 }
 
-inline void Transport::RegisterEventManager(EventManager &em) {
+inline void Transport::RegisterEventManager(EventManager& em) {
+#if HSHM_ENABLE_LIGHTBEAM
   switch (type_) {
 #if HSHM_ENABLE_ZMQ
     case TransportType::kZeroMq:
@@ -135,9 +179,14 @@ inline void Transport::RegisterEventManager(EventManager &em) {
     default:
       break;
   }
+#else
+  // Lightbeam disabled: no transport available
+  (void)em;
+#endif
 }
 
 inline bool Transport::IsServerAlive(const LbmContext& ctx) const {
+#if HSHM_ENABLE_LIGHTBEAM
   switch (type_) {
 #if HSHM_ENABLE_ZMQ
     case TransportType::kZeroMq:
@@ -150,8 +199,24 @@ inline bool Transport::IsServerAlive(const LbmContext& ctx) const {
     default:
       return false;
   }
+#else
+  // Lightbeam disabled: no transport available
+  (void)ctx;
+  return false;
+#endif
 }
+
+}  // namespace hshm::lbm
+
 #endif  // HSHM_IS_HOST
+
+// --- Lightbeam-specific template implementations ---
+// The following template methods are only compiled when used, so guard
+// placement is less critical. They are kept under HSHM_ENABLE_LIGHTBEAM for
+// efficiency.
+#if HSHM_ENABLE_LIGHTBEAM
+
+namespace hshm::lbm {
 
 #if HSHM_IS_HOST
 // --- Unified Transport Template Dispatch ---
@@ -188,20 +253,21 @@ ClientInfo Transport::Recv(MetaT& meta, const LbmContext& ctx) {
 }
 
 // --- TransportFactory Implementations ---
-inline TransportPtr TransportFactory::Get(
-    const std::string& addr, TransportType t, TransportMode mode,
-    const std::string& protocol, int port) {
+inline TransportPtr TransportFactory::Get(const std::string& addr,
+                                          TransportType t, TransportMode mode,
+                                          const std::string& protocol,
+                                          int port) {
   switch (t) {
 #if HSHM_ENABLE_ZMQ
     case TransportType::kZeroMq:
-      return TransportPtr(new ZeroMqTransport(
-          mode, addr, protocol.empty() ? "tcp" : protocol,
-          port == 0 ? 8192 : port));
+      return TransportPtr(
+          new ZeroMqTransport(mode, addr, protocol.empty() ? "tcp" : protocol,
+                              port == 0 ? 8192 : port));
 #endif
     case TransportType::kSocket:
-      return TransportPtr(new SocketTransport(
-          mode, addr, protocol.empty() ? "tcp" : protocol,
-          port == 0 ? 8193 : port));
+      return TransportPtr(
+          new SocketTransport(mode, addr, protocol.empty() ? "tcp" : protocol,
+                              port == 0 ? 8193 : port));
     case TransportType::kShm:
       return TransportPtr(new ShmTransport(mode));
     default:
@@ -209,21 +275,22 @@ inline TransportPtr TransportFactory::Get(
   }
 }
 
-inline TransportPtr TransportFactory::Get(
-    const std::string& addr, TransportType t, TransportMode mode,
-    const std::string& protocol, int port, const std::string& domain) {
+inline TransportPtr TransportFactory::Get(const std::string& addr,
+                                          TransportType t, TransportMode mode,
+                                          const std::string& protocol, int port,
+                                          const std::string& domain) {
   (void)domain;
   switch (t) {
 #if HSHM_ENABLE_ZMQ
     case TransportType::kZeroMq:
-      return TransportPtr(new ZeroMqTransport(
-          mode, addr, protocol.empty() ? "tcp" : protocol,
-          port == 0 ? 8192 : port));
+      return TransportPtr(
+          new ZeroMqTransport(mode, addr, protocol.empty() ? "tcp" : protocol,
+                              port == 0 ? 8192 : port));
 #endif
     case TransportType::kSocket:
-      return TransportPtr(new SocketTransport(
-          mode, addr, protocol.empty() ? "tcp" : protocol,
-          port == 0 ? 8193 : port));
+      return TransportPtr(
+          new SocketTransport(mode, addr, protocol.empty() ? "tcp" : protocol,
+                              port == 0 ? 8193 : port));
     case TransportType::kShm:
       return TransportPtr(new ShmTransport(mode));
     default:

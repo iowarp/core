@@ -9,6 +9,8 @@ context-transfer-engine/compressor/test/results
 context-transfer-engine/compressor/results
 .claude/worktrees/
 
+**/target
+
 # CMake generated files (only in build directories)
 # Build directories already ignored above, but add specific patterns for safety
 compile_commands.json
