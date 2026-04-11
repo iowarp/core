@@ -75,19 +75,13 @@ struct RrPartitionBlock {
     return true;
   }
 
-  /** Acquire the spinlock (busy-wait with nanosleep on GPU) */
+  /** Acquire the spinlock (busy-wait with threadfence on GPU) */
   HSHM_INLINE_CROSS_FUN void Lock() {
     int expected = 0;
-#if HSHM_IS_GPU
     while (!lock_.compare_exchange_strong(expected, 1)) {
       expected = 0;
-      __nanosleep(50);
+      hshm::ipc::threadfence();
     }
-#else
-    while (!lock_.compare_exchange_strong(expected, 1)) {
-      expected = 0;
-    }
-#endif
   }
 
   /** Release the spinlock */
@@ -366,9 +360,9 @@ class _RoundRobinAllocator : public Allocator {
   HSHM_CROSS_FUN void WaitReady() {
 #if !HSHM_IS_HOST
     while (heap_ready_.load_device() != 1) {
-      __nanosleep(100);
+      hshm::ipc::threadfence();
     }
-    __threadfence_system();
+    hshm::ipc::threadfence_system();
 #endif
   }
 };

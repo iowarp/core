@@ -55,7 +55,7 @@
                 "WRP_CORE_ENABLE_CUDA": "ON",
                 "WRP_CORE_ENABLE_GPU_RUNTIME": "ON",
                 "WRP_CORE_ENABLE_BAM": "ON",
-                "CMAKE_CUDA_ARCHITECTURES": "80-real",
+                "CMAKE_CUDA_ARCHITECTURES": "61-real",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "WRP_CORE_ENABLE_ASAN": "OFF",
                 "WRP_CORE_ENABLE_IO_URING": "ON"

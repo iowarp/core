@@ -338,9 +338,9 @@ class _PartitionedAllocator : public Allocator {
 #if !HSHM_IS_HOST
     // Use load_device() (atomicAdd-based) to bypass per-SM L1 cache.
     while (heap_ready_.load_device() != 1) {
-      __nanosleep(100);
+      hshm::ipc::threadfence();
     }
-    __threadfence_system();
+    hshm::ipc::threadfence_system();
 #endif
   }
 };

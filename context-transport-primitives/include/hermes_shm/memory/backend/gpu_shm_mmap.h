@@ -129,10 +129,10 @@ class GpuShmMmap : public MemoryBackend, public UrlMemoryBackend {
     // Zero-initialize so offset-based allocators start from a clean state.
     memset(pinned_ptr, 0, backend_size);
 
-    // Layout: [kBackendHeaderSize header] [kBackendHeaderSize reserved] [data]
+    // Layout: [kBackendHeaderSize header] [data]
     region_ = reinterpret_cast<char*>(pinned_ptr);
     header_ = reinterpret_cast<MemoryBackendHeader *>(region_);
-    data_ = region_ + 2 * kBackendHeaderSize;
+    data_ = region_ + kBackendHeaderSize;
 
     // Initialize backend header fields
     id_ = backend_id;
