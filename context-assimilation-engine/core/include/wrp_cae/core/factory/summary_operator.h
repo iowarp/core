@@ -82,7 +82,15 @@ class SummaryOperator : public BaseOperator {
    * @param description The description text to summarize
    * @return Summary string (4-8 words), or empty string on failure
    */
-  std::string CallLlm(const std::string& description);
+  /**
+   * Call LLM to generate a summary.
+   * @param description The description text or raw metadata
+   * @param has_description_text If true, the description contains human-readable
+   *        text (use summarization prompt). If false, it contains only raw
+   *        metadata (use interpretation prompt).
+   */
+  std::string CallLlm(const std::string& description,
+                       bool has_description_text = true);
 
   /**
    * Write the "summary" blob to a CTE tag

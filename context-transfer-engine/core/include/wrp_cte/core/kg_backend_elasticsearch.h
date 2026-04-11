@@ -38,23 +38,30 @@ class ElasticsearchBackend : public KGBackend {
       }
     }
 
-    client_ = std::make_unique<httplib::Client>(endpoint_, port_);
-    client_->set_connection_timeout(5);
-    client_->set_read_timeout(10);
+    try {
+      client_ = std::make_unique<httplib::Client>(endpoint_, port_);
+      client_->set_connection_timeout(5);
+      client_->set_read_timeout(10);
 
-    // Delete index if exists, then create fresh
-    client_->Delete("/" + index_);
-
-    nlohmann::json settings = {
-        {"settings", {{"number_of_shards", 1}, {"number_of_replicas", 0}}},
-        {"mappings", {{"properties", {
-            {"text", {{"type", "text"}, {"analyzer", "standard"}}},
-            {"tag_major", {{"type", "long"}}},
-            {"tag_minor", {{"type", "long"}}}
-        }}}}
-    };
-    client_->Put("/" + index_, settings.dump(), "application/json");
-    size_ = 0;
+      // Check if index exists; create only if not
+      auto check = client_->Get("/" + index_);
+      if (!check || check->status == 404) {
+        nlohmann::json settings = {
+            {"settings", {{"number_of_shards", 1}, {"number_of_replicas", 0}}},
+            {"mappings", {{"properties", {
+                {"text", {{"type", "text"}, {"analyzer", "standard"}}},
+                {"tag_major", {{"type", "long"}}},
+                {"tag_minor", {{"type", "long"}}}
+            }}}}
+        };
+        client_->Put("/" + index_, settings.dump(), "application/json");
+      }
+      size_ = 0;
+    } catch (...) {
+      // Backend unavailable — Add/Search will be no-ops
+      client_.reset();
+      size_ = 0;
+    }
   }
 
   void Destroy() override {

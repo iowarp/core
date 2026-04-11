@@ -333,6 +333,72 @@ if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
   )
   install(TARGETS cae_hdf5_discovery_bench DESTINATION bin)
 
+  # WRF weather simulation discovery test (end-to-end with real HDF5)
+  add_executable(test_wrf_discovery
+    ${CMAKE_CURRENT_SOURCE_DIR}/hdf5_assim/test_wrf_discovery.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../core/src/factory/summary_operator.cc
+  )
+  target_link_libraries(test_wrf_discovery
+    PRIVATE
+      wrp_cae_core_client
+      wrp_cte_core_client
+      chimaera::cxx
+      hshm::configure
+      ${HDF5_LIBRARIES}
+      nlohmann_json::nlohmann_json
+      CURL::libcurl
+  )
+  target_compile_definitions(test_wrf_discovery PRIVATE
+    WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+    WRP_CAE_ENABLE_SUMMARY_OP
+  )
+  target_include_directories(test_wrf_discovery PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${HDF5_INCLUDE_DIRS}
+  )
+  install(TARGETS test_wrf_discovery DESTINATION bin)
+
+  # GADGET-2 discovery test
+  add_executable(test_gadget2_discovery
+    ${CMAKE_CURRENT_SOURCE_DIR}/hdf5_assim/test_gadget2_discovery.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../core/src/factory/summary_operator.cc
+  )
+  target_link_libraries(test_gadget2_discovery
+    PRIVATE
+      wrp_cae_core_client
+      wrp_cte_core_client
+      chimaera::cxx
+      hshm::configure
+      ${HDF5_LIBRARIES}
+      nlohmann_json::nlohmann_json
+  )
+  if(CURL_FOUND)
+    target_link_libraries(test_gadget2_discovery PRIVATE CURL::libcurl)
+    target_compile_definitions(test_gadget2_discovery PRIVATE WRP_CAE_ENABLE_SUMMARY_OP)
+  endif()
+  target_compile_definitions(test_gadget2_discovery PRIVATE
+    WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+  )
+  target_include_directories(test_gadget2_discovery PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${HDF5_INCLUDE_DIRS}
+  )
+  install(TARGETS test_gadget2_discovery DESTINATION bin)
+
+  # Competitor benchmark: CTE vs Graphiti vs Hindsight (standalone, uses httplib)
+  add_executable(bench_gadget2_competitors
+    ${CMAKE_CURRENT_SOURCE_DIR}/hdf5_assim/bench_gadget2_competitors.cc
+  )
+  target_link_libraries(bench_gadget2_competitors
+    PRIVATE
+      nlohmann_json::nlohmann_json
+      pthread
+  )
+  target_include_directories(bench_gadget2_competitors PRIVATE
+    ${CMAKE_SOURCE_DIR}/external/httplib
+  )
+  install(TARGETS bench_gadget2_competitors DESTINATION bin)
+
   # KG Backend comparison test (standalone, no CTE runtime needed)
   add_executable(test_kg_backends
     ${CMAKE_CURRENT_SOURCE_DIR}/hdf5_assim/test_kg_backends.cc

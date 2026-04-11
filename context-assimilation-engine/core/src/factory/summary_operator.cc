@@ -84,7 +84,14 @@ int SummaryOperator::Execute(const std::string& tag_name) {
   HLOG(kInfo, "SummaryOperator: Read description: '{}'", description);
 
   // Step 2: Call LLM to summarize
-  std::string summary = CallLlm(description);
+  // Check if the description contains a human-written description field.
+  // If yes, use the summarization prompt. If no (only raw metadata like
+  // key=value pairs, numeric fields), use the interpretation prompt.
+  bool has_description_text =
+      description.find("description:") != std::string::npos ||
+      description.find("description=") != std::string::npos ||
+      description.find("long_name:") != std::string::npos;
+  std::string summary = CallLlm(description, has_description_text);
   if (summary.empty()) {
     HLOG(kError, "SummaryOperator: LLM call failed for tag '{}'", tag_name);
     return -4;
@@ -138,16 +145,30 @@ static size_t CurlWriteCallback(void* contents, size_t size, size_t nmemb,
   return total_size;
 }
 
-std::string SummaryOperator::CallLlm(const std::string& description) {
-  // Build the OpenAI-compatible request
+std::string SummaryOperator::CallLlm(const std::string& description,
+                                      bool has_description_text) {
+  // Two prompts:
+  // 1. Description available: summarize the human-readable text
+  // 2. Raw metadata only: interpret the metadata and generate a description
+  std::string system_prompt;
+  if (has_description_text) {
+    system_prompt =
+        "You are a scientific data analyst. Given a dataset description from "
+        "a simulation output file, summarize it in exactly 4 to 8 words. "
+        "Keep domain-specific terms. Return ONLY the summary, nothing else.";
+  } else {
+    system_prompt =
+        "You are a scientific data analyst for HPC simulations. Given raw "
+        "metadata from a simulation output file, write a concise 4-8 word "
+        "searchable description. Identify the simulation type and key "
+        "properties. Translate numeric codes and flags to their scientific "
+        "meaning. Return ONLY the description, nothing else.";
+  }
+
   nlohmann::json request_body;
   request_body["model"] = model_;
   request_body["messages"] = nlohmann::json::array({
-      {{"role", "system"},
-       {"content",
-        "Summarize the following dataset description in exactly one sentence "
-        "of 4 to 8 words. Keep domain-specific terms. Return only the "
-        "summary, nothing else."}},
+      {{"role", "system"}, {"content", system_prompt}},
       {{"role", "user"}, {"content", description}},
   });
   request_body["max_tokens"] = 64;
@@ -222,7 +243,8 @@ std::string SummaryOperator::CallLlm(const std::string& description) {
 
 #else  // !WRP_CAE_ENABLE_SUMMARY_OP
 
-std::string SummaryOperator::CallLlm(const std::string& description) {
+std::string SummaryOperator::CallLlm(const std::string& description,
+                                      bool has_description_text) {
   HLOG(kError,
        "SummaryOperator: Summary operator not compiled in. "
        "Rebuild with -DWRP_CAE_ENABLE_SUMMARY_OP=ON");

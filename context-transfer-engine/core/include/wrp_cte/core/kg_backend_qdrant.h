@@ -25,42 +25,65 @@ class QdrantBackend : public KGBackend {
     qdrant_host_ = "localhost";
     qdrant_port_ = 6333;
     collection_ = "cte_kg_bench";
-    embedding_dim_ = 1024;
+    embedding_dim_ = 384;
 
-    // Parse qdrant host:port from config
+    // Parse config: "host:port/collection embedding_endpoint"
+    // e.g., "localhost:6333/cte_wrf_bench http://localhost:8090/v1/embeddings"
     if (!config.empty()) {
-      auto colon = config.find(':');
+      // Split by space: first part is qdrant address, second is embedding endpoint
+      auto space = config.find(' ');
+      std::string qdrant_part = (space != std::string::npos) ? config.substr(0, space) : config;
+      if (space != std::string::npos) {
+        embedding_endpoint_ = config.substr(space + 1);
+      }
+
+      // Parse host:port/collection
+      auto colon = qdrant_part.find(':');
       if (colon != std::string::npos) {
-        qdrant_host_ = config.substr(0, colon);
-        qdrant_port_ = std::stoi(config.substr(colon + 1));
+        qdrant_host_ = qdrant_part.substr(0, colon);
+        std::string rest = qdrant_part.substr(colon + 1);
+        auto slash = rest.find('/');
+        if (slash != std::string::npos) {
+          qdrant_port_ = std::stoi(rest.substr(0, slash));
+          collection_ = rest.substr(slash + 1);
+        } else {
+          qdrant_port_ = std::stoi(rest);
+        }
       }
     }
 
-    // Embedding endpoint from env
+    // Override from env vars if set
     const char *emb_endpoint = std::getenv("QDRANT_EMBEDDING_ENDPOINT");
     const char *emb_model = std::getenv("QDRANT_EMBEDDING_MODEL");
     if (emb_endpoint) embedding_endpoint_ = emb_endpoint;
     if (emb_model) embedding_model_ = emb_model;
 
-    qdrant_client_ = std::make_unique<httplib::Client>(qdrant_host_, qdrant_port_);
-    qdrant_client_->set_connection_timeout(5);
-    qdrant_client_->set_read_timeout(30);
+    try {
+      qdrant_client_ = std::make_unique<httplib::Client>(qdrant_host_, qdrant_port_);
+      qdrant_client_->set_connection_timeout(5);
+      qdrant_client_->set_read_timeout(30);
 
-    // Auto-detect embedding dimension with a test embedding
-    if (!embedding_endpoint_.empty()) {
-      auto test_emb = GetEmbedding("test");
-      if (!test_emb.empty()) {
-        embedding_dim_ = static_cast<int>(test_emb.size());
+      // Auto-detect embedding dimension with a test embedding
+      if (!embedding_endpoint_.empty()) {
+        auto test_emb = GetEmbedding("test");
+        if (!test_emb.empty()) {
+          embedding_dim_ = static_cast<int>(test_emb.size());
+        }
       }
-    }
 
-    // Delete collection if exists, create fresh
-    qdrant_client_->Delete("/collections/" + collection_);
-    nlohmann::json create_body = {
-        {"vectors", {{"size", embedding_dim_}, {"distance", "Cosine"}}}
-    };
-    qdrant_client_->Put("/collections/" + collection_,
-                        create_body.dump(), "application/json");
+      // Check if collection exists; create only if not
+      auto check = qdrant_client_->Get("/collections/" + collection_);
+      if (!check || check->status == 404 ||
+          check->body.find("\"status\":\"ok\"") == std::string::npos) {
+        nlohmann::json create_body = {
+            {"vectors", {{"size", embedding_dim_}, {"distance", "Cosine"}}}
+        };
+        qdrant_client_->Put("/collections/" + collection_,
+                            create_body.dump(), "application/json");
+      }
+    } catch (...) {
+      qdrant_client_.reset();
+    }
     size_ = 0;
   }
 
@@ -153,10 +176,10 @@ class QdrantBackend : public KGBackend {
   std::vector<float> GetEmbedding(const std::string &text) {
     if (embedding_endpoint_.empty()) return {};
 
-    // Parse host:port from endpoint URL
-    // e.g., "http://localhost:8081/v1"
+    // Parse host:port and path from endpoint URL
+    // e.g., "http://localhost:8090/v1/embeddings"
     std::string host = "localhost";
-    int port = 8081;
+    int port = 8090;
     std::string path = "/v1/embeddings";
 
     auto proto_end = embedding_endpoint_.find("://");
@@ -165,7 +188,7 @@ class QdrantBackend : public KGBackend {
         : embedding_endpoint_;
     auto slash = rest.find('/');
     if (slash != std::string::npos) {
-      path = rest.substr(slash) + "/embeddings";
+      path = rest.substr(slash);  // Use path as-is (already includes /embeddings)
       rest = rest.substr(0, slash);
     }
     auto colon = rest.find(':');
