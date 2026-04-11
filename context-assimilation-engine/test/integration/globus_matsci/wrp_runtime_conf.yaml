@@ -3,9 +3,9 @@
 
 # Memory segment configuration
 memory:
-  main_segment_size: auto
-  client_data_segment_size: 2GB
-  runtime_data_segment_size: 2GB
+  main_segment_size: 256MB
+  client_data_segment_size: 256MB
+  runtime_data_segment_size: 256MB
 
 # Network configuration
 networking:
@@ -26,6 +26,14 @@ runtime:
 
 # Compose section - creates CTE and CAE pools automatically
 compose:
+  # Block Device (required by CTE and CAE)
+  - mod_name: chimaera_bdev
+    pool_name: "ram::chi_default_bdev"
+    pool_query: local
+    pool_id: "301.0"
+    bdev_type: ram
+    capacity: "64MB"
+
   # CTE Core module with RAM storage
   - mod_name: wrp_cte_core
     pool_name: cte_main
@@ -40,7 +48,7 @@ compose:
     storage:
       - path: "ram::cte_ram_tier1"
         bdev_type: "ram"
-        capacity_limit: "1GB"
+        capacity_limit: "256MB"
         score: 0.0
 
     dpe:

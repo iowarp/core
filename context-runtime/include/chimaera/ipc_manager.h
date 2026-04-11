@@ -45,34 +45,47 @@
 #include <unordered_map>
 #include <vector>
 
+#include "hermes_shm/data_structures/priv/array_vector.h"
+#include "hermes_shm/memory/allocator/round_robin_allocator.h"
 #include "chimaera/chimaera_manager.h"
 #include "chimaera/corwlock.h"
-#include "chimaera/local_task_archives.h"
 #include "chimaera/scheduler/scheduler.h"
 #include "chimaera/task.h"
 #include "chimaera/task_archives.h"
 #include "chimaera/types.h"
 #include "chimaera/worker.h"
+#include "chimaera/ipc/ipc_cpu2self.h"
+#include "chimaera/ipc/ipc_cpu2cpu.h"
+#include "chimaera/ipc/ipc_cpu2cpu_zmq.h"
+#include "chimaera/ipc/ipc_cpu2gpu.h"
+#include "chimaera/ipc/ipc_gpu2cpu.h"
 #include "hermes_shm/data_structures/serialization/serialize_common.h"
 #include "hermes_shm/lightbeam/transport_factory_impl.h"
 #include "hermes_shm/memory/backend/posix_shm_mmap.h"
+#include "chimaera/gpu/gpu_info.h"
 
 #if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
-#include "hermes_shm/memory/allocator/buddy_allocator.h"
+#include "chimaera/gpu/gpu_ipc_manager.h"
+#include "hermes_shm/memory/allocator/arena_allocator.h"
 #include "hermes_shm/memory/backend/gpu_malloc.h"
 #include "hermes_shm/memory/backend/gpu_shm_mmap.h"
+#if defined(__x86_64__) || defined(__i386__)
+#include <immintrin.h>
+#endif
 #endif
 
 namespace chi {
 
-/**
- * IPC transport mode for client-to-runtime communication
- */
-enum class IpcMode : u32 {
-  kTcp = 0,  ///< ZMQ tcp:// (default, always available)
-  kIpc = 1,  ///< ZMQ ipc:// (Unix Domain Socket)
-  kShm = 2,  ///< Shared memory (existing behavior)
-};
+// Forward declaration of gpu::IpcManager
+namespace gpu { class IpcManager; }
+
+// Forward declarations — full definitions in local_task_archives.h,
+// included after CHI_IPC is defined at the bottom of this header.
+template <typename BufferT> class LocalSaveTaskArchive;
+template <typename BufferT> class LocalLoadTaskArchive;
+using DefaultSaveArchive = LocalSaveTaskArchive<chi::priv::vector<char>>;
+using DefaultLoadArchive = LocalLoadTaskArchive<chi::priv::vector<char>>;
+enum class LocalMsgType : uint8_t;
 
 /**
  * Network queue priority levels for send operations
@@ -88,7 +101,7 @@ enum class NetQueuePriority : u32 {
  * Network queue for storing Future<SendTask> objects
  * One lane with two priorities (SendIn and SendOut)
  */
-using NetQueue = hipc::multi_mpsc_ring_buffer<Future<Task>, CHI_MAIN_ALLOC_T>;
+using NetQueue = hipc::multi_mpsc_ring_buffer<Future<Task>, CHI_QUEUE_ALLOC_T>;
 
 /**
  * Typedef for worker queue type to simplify usage
@@ -111,20 +124,6 @@ struct ClientTaskMeta {
   void serialize(Archive &ar) {
     ar(send, recv, send_bulks, recv_bulks, wire_data);
   }
-};
-
-/**
- * Custom header structure for shared memory allocator
- * Contains shared data structures
- */
-struct IpcSharedHeader {
-  TaskQueue worker_queues;  // Multi-lane worker task queue in shared memory
-  u32 num_workers;          // Number of workers for which queues are allocated
-  u32 num_sched_queues;     // Number of scheduling queues for task distribution
-  u64 node_id;        // 64-bit hash of the hostname for node identification
-  pid_t runtime_pid;  // PID of the runtime process (for tgkill)
-  std::atomic<u64>
-      server_generation;  // Monotonic counter, set from epoch nanos at init
 };
 
 /**
@@ -157,6 +156,8 @@ struct ClientShmInfo {
   }
 };
 
+// IpcManagerGpuInfo and IpcManagerGpu are defined in gpu_info.h
+
 /**
  * IPC Manager singleton for inter-process communication
  *
@@ -165,6 +166,14 @@ struct ClientShmInfo {
  * Uses HSHM global cross pointer variable singleton pattern.
  */
 class IpcManager {
+  friend struct IpcCpu2Self;
+  friend struct IpcCpu2Cpu;
+  friend struct IpcCpu2CpuZmq;
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  friend struct IpcGpu2Cpu;
+  friend struct IpcCpu2Gpu;
+#endif
+
  public:
   /**
    * Initialize client components
@@ -188,75 +197,97 @@ class IpcManager {
    */
   void ServerFinalize();
 
-  /**
-   * Initialize GPU client components
-   * Sets up GPU-specific fields without calling constructor
-   * @param backend GPU memory backend
-   * @param allocator Pre-initialized GPU allocator
-   * @param worker_queue Pointer to worker queue for task submission
-   */
-  HSHM_CROSS_FUN
-  void ClientGpuInit(hipc::MemoryBackend &backend,
-                     TaskQueue *worker_queue = nullptr) {
-    gpu_backend_ = backend;
-    gpu_backend_initialized_ = true;
-    gpu_thread_allocator_ =
-        backend.MakeAlloc<hipc::ArenaAllocator<false>>(backend.data_capacity_);
-    gpu_worker_queue_ = worker_queue;
-  }
+
+
 
   /**
-   * Create a new task in private memory
-   * Host: uses standard new
-   * GPU: uses AllocateBuffer from shared memory
-   * @param args Constructor arguments for the task
-   * @return FullPtr wrapping the task with null allocator
+   * Returns the per-thread task allocator (CHI_TASK_ALLOC_T*).
+   * Host: main_allocator_ (MultiProcessAllocator)
+   */
+  CHI_TASK_ALLOC_T *GetMainAllocator() {
+    return main_allocator_;
+  }
+
+#if HSHM_IS_HOST
+  /**
+   * Pack current GPU orchestrator info into an IpcManagerGpuInfo struct.
+   * @return IpcManagerGpuInfo for passing to orchestrator kernel
+   */
+  IpcManagerGpuInfo GetIpcManagerGpuInfo() { return gpu_orchestrator_info_; }
+
+  /** Backward-compatible alias */
+  IpcManagerGpuInfo GetIpcManagerGpu() { return GetIpcManagerGpuInfo(); }
+#endif
+
+
+  /**
+   * Host-side stubs for GPU warp utilities (always lane 0 / warp 0)
+   * These are used by host code that still references these methods
+   * (e.g., Future templates). GPU code uses gpu::IpcManager versions.
+   */
+  static inline u32 GetWarpId() { return 0; }
+  static inline u32 GetLaneId() { return 0; }
+  static inline bool IsWarpScheduler() { return true; }
+
+  /**
+   * Base task allocation: Task + append_size extra bytes.
+   * The caller is responsible for constructing any co-located objects
+   * (FutureShm, RunContext, etc.) in the appended region.
    */
   template <typename TaskT, typename... Args>
-  HSHM_CROSS_FUN hipc::FullPtr<TaskT> NewTask(Args &&...args) {
-#if HSHM_IS_HOST
-    // Host path: use standard new
+  hipc::FullPtr<TaskT> NewTaskBase(size_t append_size,
+                                   Args &&...args) {
+    (void)append_size;
     TaskT *ptr = new TaskT(std::forward<Args>(args)...);
-    hipc::FullPtr<TaskT> result(ptr);
-    return result;
-#else
-    // GPU path: allocate from shared memory buffer and construct task
-    auto result = NewObj<TaskT>(std::forward<Args>(args)...);
-    printf("NewTask: result.ptr_=%p result.shm_.off_=%lu\n", result.ptr_,
-           result.shm_.off_.load());
-    printf("NewTask: &result=%p sizeof(result)=%lu\n", &result, sizeof(result));
-    printf("NewTask: about to return\n");
-    return result;
-#endif
+    return hipc::FullPtr<TaskT>(ptr);
   }
 
   /**
-   * Delete a task from private memory
-   * Host: uses standard delete
-   * GPU: uses FreeBuffer
-   * @param task_ptr FullPtr to task to delete
+   * Create a task for client or orchestrator use.
+   */
+  template <typename TaskT, typename... Args>
+  hipc::FullPtr<TaskT> NewTask(Args &&...args) {
+    TaskT *ptr = new TaskT(std::forward<Args>(args)...);
+    ptr->pod_size_ = static_cast<u32>(sizeof(TaskT));
+    hipc::FullPtr<TaskT> result(ptr);
+    return result;
+  }
+
+  /**
+   * Allocate a task for orchestrator-side execution (copy path).
+   * Same as NewTask, but with explicit stack_size parameter.
+   * Called by autogenerated AllocTaskImpl in LocalAllocLoadDeser.
+   */
+  template <typename TaskT, typename... Args>
+  hipc::FullPtr<TaskT> NewTaskExec(size_t stack_size,
+                                   Args &&...args) {
+    (void)stack_size;
+    return NewTask<TaskT>(std::forward<Args>(args)...);
+  }
+
+  /**
+   * Delete a task
+   * Destructor + operator delete
    */
   template <typename TaskT>
-  HSHM_CROSS_FUN void DelTask(hipc::FullPtr<TaskT> task_ptr) {
+  void DelTask(hipc::FullPtr<TaskT> task_ptr) {
     if (task_ptr.IsNull()) return;
-#if HSHM_IS_HOST
-    // Host path: explicitly call destructor then use unsized operator delete.
-    // Sized delete (generated by plain "delete ptr") fails ASan's
-    // new-delete-type-mismatch check when TaskT is a base class but the
-    // actual allocation was for a larger derived type. Unsized ::operator delete
-    // avoids the size validation while still freeing the correct allocation.
-    // IMPORTANT: cast to void* first so the compiler cannot infer the type size
-    // and generate a C++14 globally-sized deallocation call (operator delete
-    // (void*, size_t)) — which would still trigger the ASan mismatch when the
-    // object is a larger derived type.
     task_ptr.ptr_->~TaskT();
-    void* raw = static_cast<void*>(task_ptr.ptr_);
+    void *raw = static_cast<void *>(task_ptr.ptr_);
     ::operator delete(raw);
-#else
-    // GPU path: call destructor and free buffer
-    task_ptr.ptr_->~TaskT();
-    FreeBuffer(hipc::FullPtr<char>(reinterpret_cast<char *>(task_ptr.ptr_)));
-#endif
+  }
+
+  /**
+   * Delete a heap-allocated object.
+   * Destructor + operator delete.
+   * @param obj_ptr FullPtr to object to delete
+   */
+  template <typename T>
+  void DelObj(hipc::FullPtr<T> obj_ptr) {
+    if (obj_ptr.IsNull()) return;
+    obj_ptr.ptr_->~T();
+    void *raw = static_cast<void *>(obj_ptr.ptr_);
+    ::operator delete(raw);
   }
 
   /**
@@ -266,15 +297,39 @@ class IpcManager {
    * @param size Size in bytes to allocate
    * @return FullPtr<char> to allocated memory
    */
-  HSHM_CROSS_FUN FullPtr<char> AllocateBuffer(size_t size);
+  FullPtr<char> AllocateBuffer(size_t size);
+
+  /**
+   * Push a bump arena for fast allocation.
+   * All subsequent AllocateBuffer/NewObj/NewTask calls will bump-allocate
+   * from this arena until it is popped (RAII).
+   *
+   * @param size Arena size in bytes
+   * @return Arena RAII handle
+   */
+  hipc::Arena<hipc::RoundRobinAllocator> PushArena(size_t size);
+
+  /**
+   * Allocate GPU device data from the client's GpuMalloc backend.
+   * Uses AllocateGpuBuffer from the GPU queue backend.
+   * The resulting ShmPtrs are resolvable server-side via gpu_alloc_map_.
+   *
+   * @param size Number of bytes to allocate
+   * @param gpu_id GPU device ID
+   * @return FullPtr<char> to allocated GPU memory
+   */
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  hipc::FullPtr<char> AllocateDeviceData(size_t size, u32 gpu_id = 0) {
+    return AllocateGpuBuffer(size, gpu_id);
+  }
+#endif
 
   /**
    * Free buffer from appropriate memory segment
-   * Host: uses allocator's Free method
-   * GPU: uses ArenaAllocator's Free method
+   * Uses allocator's Free method
    * @param buffer_ptr FullPtr to buffer to free
    */
-  HSHM_CROSS_FUN void FreeBuffer(FullPtr<char> buffer_ptr);
+  void FreeBuffer(FullPtr<char> buffer_ptr);
 
   /**
    * Free buffer from appropriate memory segment (hipc::ShmPtr<> overload)
@@ -299,31 +354,26 @@ class IpcManager {
    * @return FullPtr<T> to constructed object
    */
   template <typename T, typename... Args>
-  HSHM_CROSS_FUN hipc::FullPtr<T> NewObj(Args &&...args) {
-    // Allocate buffer for the object
+  hipc::FullPtr<T> NewObj(Args &&...args) {
+    // Allocate from bulk buffer
     hipc::FullPtr<char> buffer = AllocateBuffer(sizeof(T));
     if (buffer.IsNull()) {
       return hipc::FullPtr<T>();
     }
-
-    // Construct object using placement new
     T *obj = new (buffer.ptr_) T(std::forward<Args>(args)...);
-
-    // Return FullPtr<T> by reinterpreting the buffer's ptr and shm
     return buffer.Cast<T>();
   }
 
   /**
-   * Create Future by copying/serializing task (GPU-compatible)
-   * Always serializes the task into FutureShm's copy_space
-   * Used by clients and GPU kernels
+   * Create Future by copying/serializing task
+   * Serializes the task into FutureShm's copy_space
    *
    * @tparam TaskT Task type (must derive from Task)
    * @param task_ptr Task to serialize into Future
    * @return Future<TaskT> with serialized task data
    */
   template <typename TaskT>
-  HSHM_CROSS_FUN Future<TaskT> MakeCopyFuture(hipc::FullPtr<TaskT> task_ptr) {
+  Future<TaskT> MakeCopyFuture(hipc::FullPtr<TaskT> task_ptr) {
     if (task_ptr.IsNull()) {
       return Future<TaskT>();
     }
@@ -353,86 +403,9 @@ class IpcManager {
     return Future<TaskT>(future_shm_shmptr, task_ptr);
   }
 
-  /**
-   * Create Future by copying/serializing task (GPU-specific, simplified)
-   * Mirrors the pattern from test_gpu_serialize_for_cpu_kernel which works
-   * Uses SerializeIn() directly instead of archive operator<<
-   * GPU-ONLY - use MakeCopyFuture on host
-   *
-   * @tparam TaskT Task type (must derive from Task)
-   * @param task_ptr Task to serialize into Future
-   * @return Future<TaskT> with serialized task data
-   */
-#if HSHM_IS_GPU_COMPILER
-  template <typename TaskT>
-  HSHM_GPU_FUN Future<TaskT> MakeCopyFutureGpu(
-      const hipc::FullPtr<TaskT> &task_ptr) {
-    // Check shm_ instead of IsNull() - workaround for FullPtr copy bug on GPU
-    if (task_ptr.shm_.IsNull()) {
-      return Future<TaskT>();
-    }
 
-    // Serialize task inputs into a temporary buffer
-    size_t temp_buffer_size = 4096;
-    hipc::FullPtr<char> temp_buffer = AllocateBuffer(temp_buffer_size);
-    if (temp_buffer.IsNull()) {
-      return Future<TaskT>();
-    }
-    LocalSaveTaskArchive save_ar(LocalMsgType::kSerializeIn, temp_buffer.ptr_,
-                                 temp_buffer_size);
-    task_ptr->SerializeIn(save_ar);
-    size_t serialized_size = save_ar.GetSize();
 
-    // Allocate FutureShm with copy_space large enough for serialized data
-    size_t recommended_size = task_ptr->GetCopySpaceSize();
-    size_t copy_space_size = (recommended_size > serialized_size)
-                                 ? recommended_size
-                                 : serialized_size;
-    size_t alloc_size = sizeof(FutureShm) + copy_space_size;
-    hipc::FullPtr<char> buffer = AllocateBuffer(alloc_size);
-    if (buffer.IsNull()) {
-      return Future<TaskT>();
-    }
 
-    // Construct FutureShm in-place and populate fields
-    FutureShm *future_shm_ptr = new (buffer.ptr_) FutureShm();
-    future_shm_ptr->pool_id_ = task_ptr->pool_id_;
-    future_shm_ptr->method_id_ = task_ptr->method_;
-    future_shm_ptr->origin_ = FutureShm::FUTURE_CLIENT_SHM;
-    future_shm_ptr->client_task_vaddr_ = 0;
-    future_shm_ptr->input_.copy_space_size_ = copy_space_size;
-
-    // Copy serialized data into copy_space
-    memcpy(future_shm_ptr->copy_space, temp_buffer.ptr_, serialized_size);
-    future_shm_ptr->input_.total_written_.store(serialized_size,
-                                                std::memory_order_release);
-
-    // Memory fence before setting flag
-    hipc::threadfence();
-
-    // Set FUTURE_COPY_FROM_CLIENT
-    future_shm_ptr->flags_.SetBits(FutureShm::FUTURE_COPY_FROM_CLIENT);
-
-    // Build Future from ShmPtr and original task pointer
-    hipc::ShmPtr<FutureShm> future_shm_shmptr =
-        buffer.shm_.template Cast<FutureShm>();
-    return Future<TaskT>(future_shm_shmptr, task_ptr);
-  }
-#endif  // HSHM_IS_GPU_COMPILER
-
-#if HSHM_IS_GPU_COMPILER
-  /**
-   * Per-block IpcManager singleton in __shared__ memory.
-   * __noinline__ ensures a single __shared__ variable instance per block,
-   * making this a per-block singleton accessible from any device function.
-   * The object is NOT constructed — use ClientGpuInit to set up fields.
-   * @return Pointer to the per-block IpcManager
-   */
-  static HSHM_GPU_FUN __noinline__ IpcManager *GetBlockIpcManager() {
-    __shared__ IpcManager s_ipc;
-    return &s_ipc;
-  }
-#endif  // HSHM_IS_GPU_COMPILER
 
   /**
    * Create Future by wrapping task pointer (runtime-only, no serialization)
@@ -482,11 +455,6 @@ class IpcManager {
    */
   template <typename TaskT>
   Future<TaskT> MakeFuture(const hipc::FullPtr<TaskT> &task_ptr) {
-#if HSHM_IS_GPU
-    // GPU PATH: Always use MakeCopyFutureGpu to serialize the task
-    printf("MakeFuture GPU: calling MakeCopyFutureGpu\n");
-    return MakeCopyFutureGpu(task_ptr);
-#else
     bool is_runtime = CHI_CHIMAERA_MANAGER->IsRuntime();
     Worker *worker = CHI_CUR_WORKER;
 
@@ -501,7 +469,6 @@ class IpcManager {
       // serialization
       return MakePointerFuture(task_ptr);
     }
-#endif
   }
 
   /**
@@ -518,55 +485,70 @@ class IpcManager {
    * @param awake_event Whether to awaken worker after enqueueing
    * @return Future<TaskT> for polling completion and retrieving results
    */
+
   template <typename TaskT>
-  HSHM_CROSS_FUN Future<TaskT> Send(const hipc::FullPtr<TaskT> &task_ptr,
-                                    bool awake_event = true) {
-#if HSHM_IS_GPU
-    printf("Send GPU ENTRY: task_ptr.ptr_=%p off=%lu\n", task_ptr.ptr_,
-           task_ptr.shm_.off_.load());
-
-    // GPU PATH: Return directly from MakeCopyFutureGpu
-    printf("Send GPU: Calling MakeCopyFutureGpu\n");
-    if (task_ptr.IsNull()) {
-      printf("Send GPU: task_ptr is null, returning empty future\n");
-      return Future<TaskT>();
+  Future<TaskT> Send(const hipc::FullPtr<TaskT> &task_ptr,
+                     bool awake_event = true) {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+    {
+      RoutingMode mode = task_ptr->pool_query_.GetRoutingMode();
+      if (mode == RoutingMode::LocalGpuBcast ||
+          mode == RoutingMode::ToLocalGpu) {
+        u32 gpu_id = (mode == RoutingMode::ToLocalGpu)
+                         ? task_ptr->pool_query_.GetNodeId()
+                         : 0;
+        if (gpu_ipc_) return IpcCpu2Gpu::ClientSend(gpu_ipc_.get(), task_ptr, gpu_id);
+        return Future<TaskT>();
+      }
     }
-
-    // Create future but don't use it yet - will handle queue submission
-    // differently
-    return MakeCopyFutureGpu(task_ptr);
-#else  // HOST PATH
+#endif
     bool is_runtime = CHI_CHIMAERA_MANAGER->IsRuntime();
     Worker *worker = CHI_CUR_WORKER;
 
-    // Client TCP/IPC path: serialize and send via ZMQ
-    // Runtime always uses SHM path internally, even from the main thread
+    // Client TCP/IPC path
     if (!is_runtime && ipc_mode_ != IpcMode::kShm) {
-      return SendZmq(task_ptr, ipc_mode_);
+      return IpcCpu2CpuZmq::ClientSend(this, task_ptr, ipc_mode_);
     }
 
-    // Client SHM path: use SendShm (lightbeam transport)
+    // Client SHM path
     if (!is_runtime) {
-      return SendShm(task_ptr);
+      return IpcCpu2Cpu::ClientSend(this, task_ptr);
     }
 
-    // Runtime SHM path: worker threads use SendRuntimeClient (simple
-    // ClientMapTask path), non-worker threads use SendRuntime.
-    Future<Task> base_future;
-    if (worker != nullptr) {
-      base_future = SendRuntimeClient(task_ptr.template Cast<Task>());
-    } else {
-      base_future = SendRuntime(task_ptr.template Cast<Task>());
-    }
+    // Runtime self-send: enqueue task by pointer (no serialization)
+    Future<Task> base_future =
+        IpcCpu2Self::ClientSend(this, task_ptr.template Cast<Task>());
     return base_future.Cast<TaskT>();
-#endif
   }
 
-  /** Send from a worker thread: creates pointer future, uses ClientMapTask */
-  Future<Task> SendRuntimeClient(const hipc::FullPtr<Task> &task_ptr);
 
-  /** Send from non-worker thread: full routing (pool query, local/global) */
-  Future<Task> SendRuntime(const hipc::FullPtr<Task> &task_ptr);
+  /**
+   * Receive a task on the runtime side: deserialize from Future if needed.
+   * Handles origin-based dispatch (SHM, GPU2CPU, CPU2GPU, etc.).
+   *
+   * @param future Future containing the task
+   * @param container Container for deserialization
+   * @param method_id Method ID for task allocation
+   * @param recv_transport SHM transport for receiving serialized data
+   * @return FullPtr to the deserialized/retrieved task
+   */
+  hipc::FullPtr<Task> RecvRuntime(
+      Future<Task> &future, Container *container, u32 method_id,
+      hshm::lbm::Transport *recv_transport);
+
+  /**
+   * Send the runtime response back to the client after task execution.
+   * Serializes outputs, completes futures, and handles cleanup for each
+   * origin transport mode (SHM, TCP, IPC, GPU2CPU, CPU2GPU).
+   *
+   * @param task_ptr Executed task
+   * @param run_ctx RunContext with future and execution state
+   * @param container Container for serialization
+   * @param send_transport SHM transport for sending serialized data
+   */
+  void SendRuntime(const FullPtr<Task> &task_ptr, RunContext *run_ctx,
+                   Container *container,
+                   hshm::lbm::Transport *send_transport);
 
   /**
    * Initialize RunContext for a task before routing.
@@ -578,8 +560,8 @@ class IpcManager {
 
   /** Route a task: resolve pool query, determine local vs global.
    * If force_enqueue is true, always enqueue to the destination worker's lane
-   * (used by SendRuntime which cannot execute tasks directly). */
-  bool RouteTask(Future<Task> &future, bool force_enqueue = false);
+   * (used by EnqueueRuntime which cannot execute tasks directly). */
+  RouteResult RouteTask(Future<Task> &future, bool force_enqueue = false);
 
   /** Resolve a pool query into concrete physical addresses */
   std::vector<PoolQuery> ResolvePoolQuery(const PoolQuery &query,
@@ -592,135 +574,22 @@ class IpcManager {
 
   /** Route task locally.
    * If force_enqueue is true, always enqueue even if dest == current worker. */
-  bool RouteLocal(Future<Task> &future, bool force_enqueue = false);
+  RouteResult RouteLocal(Future<Task> &future, bool force_enqueue = false);
 
   /** Route task globally via network */
-  bool RouteGlobal(Future<Task> &future,
-                   const std::vector<PoolQuery> &pool_queries);
+  RouteResult RouteGlobal(Future<Task> &future,
+                          const std::vector<PoolQuery> &pool_queries);
+
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  /** Route a task from CPU to GPU orchestrator (non-template, type-erased).
+   * Uses Container::LocalSaveTask for serialization. */
+  void RouteToGpu(const hipc::FullPtr<Task> &task_ptr, Container *container,
+                  u32 gpu_id = 0);
+#endif
 
   /**
-   * Send a task via SHM lightbeam transport
-   * Allocates FutureShm with copy_space, enqueues to worker lane,
-   * then streams task data through shared memory using lightbeam protocol
-   * @param task_ptr Task to send
-   * @return Future for polling completion
-   */
-  template <typename TaskT>
-  Future<TaskT> SendShm(const hipc::FullPtr<TaskT> &task_ptr) {
-    if (task_ptr.IsNull()) return Future<TaskT>();
-
-    // Allocate FutureShm with copy_space
-    size_t copy_space_size = task_ptr->GetCopySpaceSize();
-    if (copy_space_size == 0) copy_space_size = KILOBYTES(4);
-    size_t alloc_size = sizeof(FutureShm) + copy_space_size;
-    auto buffer = AllocateBuffer(alloc_size);
-    if (buffer.IsNull()) return Future<TaskT>();
-
-    FutureShm *future_shm = new (buffer.ptr_) FutureShm();
-    future_shm->pool_id_ = task_ptr->pool_id_;
-    future_shm->method_id_ = task_ptr->method_;
-    future_shm->origin_ = FutureShm::FUTURE_CLIENT_SHM;
-    future_shm->client_task_vaddr_ = reinterpret_cast<uintptr_t>(task_ptr.ptr_);
-    future_shm->input_.copy_space_size_ = copy_space_size;
-    future_shm->flags_.SetBits(FutureShm::FUTURE_COPY_FROM_CLIENT);
-
-    // Create Future
-    auto future_shm_shmptr = buffer.shm_.template Cast<FutureShm>();
-    Future<TaskT> future(future_shm_shmptr, task_ptr);
-
-    // Build SHM context for transfer
-    hshm::lbm::LbmContext ctx;
-    ctx.copy_space = future_shm->copy_space;
-    ctx.shm_info_ = &future_shm->input_;
-
-    // Enqueue BEFORE sending (worker must start RecvMetadata concurrently)
-    LaneId lane_id =
-        scheduler_->ClientMapTask(this, future.template Cast<Task>());
-    auto &lane = worker_queues_->GetLane(lane_id, 0);
-    bool was_empty = lane.Empty();
-    lane.Push(future.template Cast<Task>());
-    if (was_empty) {
-      AwakenWorker(&lane);
-    }
-
-    SaveTaskArchive archive(MsgType::kSerializeIn, shm_send_transport_.get());
-    archive << (*task_ptr.ptr_);
-    shm_send_transport_->Send(archive, ctx);
-
-    return future;
-  }
-
-  /**
-   * Send a task via lightbeam transport (TCP or IPC)
-   * Serializes the task, creates a private-memory FutureShm, sends via
-   * lightbeam PUSH/PULL
-   * @param task_ptr Task to send
-   * @param mode Transport mode (kTcp or kIpc)
-   * @return Future for polling completion
-   */
-  template <typename TaskT>
-  Future<TaskT> SendZmq(const hipc::FullPtr<TaskT> &task_ptr, IpcMode mode) {
-    if (task_ptr.IsNull()) {
-      return Future<TaskT>();
-    }
-
-    // Set net_key for response routing (use task's address as unique key)
-    size_t net_key = reinterpret_cast<size_t>(task_ptr.ptr_);
-    task_ptr->task_id_.net_key_ = net_key;
-
-    // Serialize the task inputs using network archive
-    SaveTaskArchive archive(MsgType::kSerializeIn, zmq_transport_.get());
-    archive << (*task_ptr.ptr_);
-
-    // Allocate FutureShm via HSHM_MALLOC (no copy_space needed)
-    size_t alloc_size = sizeof(FutureShm);
-    hipc::FullPtr<char> buffer = HSHM_MALLOC->AllocateObjs<char>(alloc_size);
-    if (buffer.IsNull()) {
-      HLOG(kError, "SendZmq: Failed to allocate FutureShm ({} bytes)",
-           alloc_size);
-      return Future<TaskT>();
-    }
-    FutureShm *future_shm = new (buffer.ptr_) FutureShm();
-
-    // Initialize FutureShm fields
-    future_shm->pool_id_ = task_ptr->pool_id_;
-    future_shm->method_id_ = task_ptr->method_;
-    future_shm->origin_ = (mode == IpcMode::kTcp)
-                              ? FutureShm::FUTURE_CLIENT_TCP
-                              : FutureShm::FUTURE_CLIENT_IPC;
-    future_shm->client_task_vaddr_ = net_key;
-    // No copy_space for ZMQ path — ShmTransferInfo defaults are fine
-
-    // Register in pending futures map keyed by net_key
-    {
-      std::lock_guard<std::mutex> lock(pending_futures_mutex_);
-      pending_zmq_futures_[net_key] = future_shm;
-    }
-
-    // Send via lightbeam PUSH client
-    {
-      std::lock_guard<std::mutex> lock(zmq_client_send_mutex_);
-      zmq_transport_->Send(archive, hshm::lbm::LbmContext());
-    }
-
-    // Create Future wrapping the HSHM_MALLOC-allocated FutureShm
-    hipc::ShmPtr<FutureShm> future_shm_shmptr =
-        buffer.shm_.template Cast<FutureShm>();
-
-    return Future<TaskT>(future_shm_shmptr, task_ptr);
-  }
-
-  /**
-   * Receive task results (deserializes from completed Future)
-   * Called after Future::Wait() has confirmed task completion
-   *
-   * Two execution paths:
-   * - Path 1 (fits): Data fits in serialized_task_capacity, deserialize
-   * directly
-   * - Path 2 (streaming): Data larger than capacity, assemble from stream
-   * - Runtime mode (IsRuntime): No-op (task already has correct outputs)
-   *
-   * @param future Future containing completed task
+   * Receive task results on the client side.
+   * Dispatches to the appropriate transport class based on origin.
    */
   template <typename TaskT>
   bool Recv(Future<TaskT> &future, float max_sec = 0) {
@@ -728,165 +597,12 @@ class IpcManager {
     if (is_runtime) return true;
 
     auto future_shm = future.GetFutureShm();
-    TaskT *task_ptr = future.get();
     u32 origin = future_shm->origin_;
 
-    // === SHM path: server must be alive to use ring buffer ===
     if (origin == FutureShm::FUTURE_CLIENT_SHM && server_alive_.load()) {
-      // Normal SHM path: server is alive, use ring buffer recv
-      hshm::lbm::LbmContext ctx;
-      ctx.copy_space = future_shm->copy_space;
-      ctx.shm_info_ = &future_shm->output_;
-
-      LoadTaskArchive archive;
-      auto info = shm_recv_transport_->Recv(archive, ctx);
-      (void)info;
-
-      // Wait for FUTURE_COMPLETE, but bail if the server dies or times out
-      hshm::abitfield32_t &flags = future_shm->flags_;
-      auto shm_start = std::chrono::steady_clock::now();
-      while (!flags.Any(FutureShm::FUTURE_COMPLETE)) {
-        HSHM_THREAD_MODEL->Yield();
-        if (!server_alive_.load()) {
-          HLOG(kWarning, "Recv(SHM): Server died while waiting for response");
-          break;
-        }
-        if (max_sec > 0) {
-          float elapsed = std::chrono::duration<float>(
-                              std::chrono::steady_clock::now() - shm_start)
-                              .count();
-          if (elapsed >= max_sec) {
-            HLOG(kWarning, "Recv(SHM): Timeout after {:.1f}s", elapsed);
-            return false;
-          }
-        }
-      }
-
-      if (flags.Any(FutureShm::FUTURE_COMPLETE)) {
-        // Deserialize outputs
-        archive.ResetBulkIndex();
-        archive.msg_type_ = MsgType::kSerializeOut;
-        archive >> (*task_ptr);
-        return true;
-      }
-      // Server died — fall through to reconnection path below
+      return IpcCpu2Cpu::ClientRecv(this, future, max_sec);
     }
-
-    // === ZMQ path: covers TCP, IPC, and SHM-with-dead-server ===
-    // If origin was SHM but server is dead, reconnect and resend via ZMQ
-    if (origin == FutureShm::FUTURE_CLIENT_SHM) {
-      if (client_retry_timeout_ == 0 && client_try_new_servers_ <= 0) {
-        HLOG(kError, "Recv(SHM): Server dead, no retry/failover configured, failing");
-        return false;
-      }
-      HLOG(kWarning, "Recv(SHM): Server dead, attempting reconnect...");
-      auto start = std::chrono::steady_clock::now();
-      if (!WaitForServerAndReconnect(start)) return false;
-      ResendTask(future);
-      // Refresh future_shm after resend (origin now TCP/IPC)
-      future_shm = future.GetFutureShm();
-    }
-
-    // ZMQ wait loop: spin until FUTURE_COMPLETE
-    auto start = std::chrono::steady_clock::now();
-    while (!future_shm->flags_.Any(FutureShm::FUTURE_COMPLETE)) {
-      HSHM_THREAD_MODEL->Yield();
-      float elapsed = std::chrono::duration<float>(
-                          std::chrono::steady_clock::now() - start)
-                          .count();
-
-      // User-specified max timeout
-      if (max_sec > 0 && elapsed >= max_sec) return false;
-
-      // Check heartbeat-cached server liveness
-      // Skip if already inside a reconnect attempt (prevents recursion from
-      // WaitForLocalServer → Recv → WaitForServerAndReconnect)
-      if (!server_alive_.load() && !reconnecting_.load()) {
-        if (client_retry_timeout_ == 0 && client_try_new_servers_ <= 0) {
-          HLOG(kError, "Recv: Server dead, retry_timeout=0, no failover configured, failing");
-          return false;
-        }
-        HLOG(kWarning, "Recv: Server unreachable, reconnecting...");
-        if (!WaitForServerAndReconnect(start)) return false;
-        ResendTask(future);
-        future_shm = future.GetFutureShm();
-        start = std::chrono::steady_clock::now();
-        continue;
-      }
-    }
-
-    // Memory fence
-    std::atomic_thread_fence(std::memory_order_acquire);
-
-    // Deserialize from pending_response_archives_
-    size_t net_key = future_shm->client_task_vaddr_;
-    {
-      std::lock_guard<std::mutex> lock(pending_futures_mutex_);
-      auto it = pending_response_archives_.find(net_key);
-      if (it != pending_response_archives_.end()) {
-        LoadTaskArchive *archive = it->second.get();
-        archive->ResetBulkIndex();
-        archive->msg_type_ = MsgType::kSerializeOut;
-        *archive >> (*task_ptr);
-      }
-    }
-    return true;
-  }
-
-  /**
-   * Re-send a task via ZMQ after server restart
-   * Works for all origin types (TCP, IPC, SHM)
-   * After reconnect, always uses ZMQ transport
-   * Updates FutureShm origin to match current ipc_mode_
-   * @param future Future containing the task to re-send
-   */
-  template <typename TaskT>
-  void ResendTask(Future<TaskT> &future) {
-    auto future_shm = future.GetFutureShm();
-    TaskT *task_ptr = future.get();
-    size_t old_net_key = future_shm->client_task_vaddr_;
-
-    // Remove old pending entries
-    {
-      std::lock_guard<std::mutex> lock(pending_futures_mutex_);
-      pending_zmq_futures_.erase(old_net_key);
-      auto it = pending_response_archives_.find(old_net_key);
-      if (it != pending_response_archives_.end()) {
-        zmq_transport_->ClearRecvHandles(*(it->second));
-        pending_response_archives_.erase(it);
-      }
-    }
-
-    // Use task pointer address as net_key
-    size_t net_key = reinterpret_cast<size_t>(task_ptr);
-    task_ptr->task_id_.net_key_ = net_key;
-
-    // Re-serialize task inputs
-    SaveTaskArchive archive(MsgType::kSerializeIn, zmq_transport_.get());
-    archive << (*task_ptr);
-
-    // Clear completion flag
-    future_shm->flags_.UnsetBits(FutureShm::FUTURE_COMPLETE);
-
-    // Update origin to current IPC mode (SHM falls back to TCP/IPC)
-    future_shm->origin_ = (ipc_mode_ == IpcMode::kIpc)
-                               ? FutureShm::FUTURE_CLIENT_IPC
-                               : FutureShm::FUTURE_CLIENT_TCP;
-
-    // Update client_task_vaddr_ for response routing
-    future_shm->client_task_vaddr_ = net_key;
-
-    // Re-register in pending futures
-    {
-      std::lock_guard<std::mutex> lock(pending_futures_mutex_);
-      pending_zmq_futures_[net_key] = future_shm.ptr_;
-    }
-
-    // Re-send
-    {
-      std::lock_guard<std::mutex> lock(zmq_client_send_mutex_);
-      zmq_transport_->Send(archive, hshm::lbm::LbmContext());
-    }
+    return IpcCpu2CpuZmq::ClientRecv(this, future, max_sec);
   }
 
   /**
@@ -921,14 +637,14 @@ class IpcManager {
   IpcMode GetIpcMode() const { return ipc_mode_; }
 
   /**
-   * Get the server's generation counter from shared memory
+   * Get the server's generation counter
    * @return Server generation value, 0 if not available
    */
   u64 GetServerGeneration() const {
-    return shared_header_ ? shared_header_->server_generation.load(
-                                std::memory_order_acquire)
-                          : 0;
+    return server_generation_.load(std::memory_order_acquire);
   }
+
+  u64 GetWorkerQueuesOffset() const { return worker_queues_off_; }
 
   /**
    * Check if the runtime server process is alive
@@ -939,7 +655,9 @@ class IpcManager {
   bool IsServerAlive() const;
 
   /** Check cached server liveness (set by heartbeat thread) */
-  bool IsServerAliveCache() const { return server_alive_.load(std::memory_order_acquire); }
+  bool IsServerAliveCache() const {
+    return server_alive_.load(std::memory_order_acquire);
+  }
 
   /** Background heartbeat thread function */
   void HeartbeatThread();
@@ -1188,17 +906,8 @@ class IpcManager {
    * match
    */
   template <typename T>
-  HSHM_CROSS_FUN hipc::FullPtr<T> ToFullPtr(const hipc::ShmPtr<T> &shm_ptr) {
-#if HSHM_IS_GPU
-    // GPU PATH: Simple conversion using the warp allocator
-    if (shm_ptr.IsNull()) {
-      return hipc::FullPtr<T>();
-    }
-    // Convert ShmPtr offset to pointer (assumes GPU path uses simple offset
-    // scheme)
-    return hipc::FullPtr<T>(gpu_thread_allocator_, shm_ptr);
-#else
-    // HOST PATH: Full allocator lookup implementation
+  hipc::FullPtr<T> ToFullPtr(const hipc::ShmPtr<T> &shm_ptr) {
+    // Full allocator lookup implementation
     // Case 1: AllocatorId is null - offset IS the raw memory address
     // This is used for private memory allocations (new/delete)
     if (shm_ptr.alloc_id_ == hipc::AllocatorId::GetNull()) {
@@ -1223,13 +932,26 @@ class IpcManager {
     hipc::FullPtr<T> result;
     if (it != alloc_map_.end()) {
       result = hipc::FullPtr<T>(it->second, shm_ptr);
+    } else {
+      // Case 4: Check GPU backend memory registrations
+#if HSHM_IS_HOST && (HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM)
+      if (gpu_ipc_) {
+        auto git = gpu_ipc_->gpu_alloc_map_.find(alloc_key);
+        if (git != gpu_ipc_->gpu_alloc_map_.end()) {
+          size_t off = shm_ptr.off_.load();
+          if (off < git->second.capacity) {
+            result.ptr_ = reinterpret_cast<T *>(git->second.base + off);
+            result.shm_ = shm_ptr;
+          }
+        }
+      }
+#endif
     }
 
     // Release the lock before returning
     allocator_map_lock_.ReadUnlock();
 
     return result;
-#endif
   }
 
   /**
@@ -1244,15 +966,8 @@ class IpcManager {
    * allocator if no match (private memory)
    */
   template <typename T>
-  HSHM_CROSS_FUN hipc::FullPtr<T> ToFullPtr(T *ptr) {
-#if HSHM_IS_GPU
-    // GPU PATH: Wrap raw pointer with warp allocator
-    if (ptr == nullptr) {
-      return hipc::FullPtr<T>();
-    }
-    return hipc::FullPtr<T>(gpu_thread_allocator_, ptr);
-#else
-    // HOST PATH: Full allocator lookup implementation
+  hipc::FullPtr<T> ToFullPtr(T *ptr) {
+    // Full allocator lookup implementation
     if (ptr == nullptr) {
       return hipc::FullPtr<T>();
     }
@@ -1281,7 +996,6 @@ class IpcManager {
     // No matching allocator found - treat as private memory
     // Return FullPtr with the raw pointer (null allocator ID)
     return hipc::FullPtr<T>(ptr);
-#endif
   }
 
   /**
@@ -1328,25 +1042,50 @@ class IpcManager {
    */
   NetQueue *GetNetQueue() { return net_queue_.ptr_; }
 
-#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
   /**
-   * Get number of GPU queues
-   * @return Number of GPU queues (one per GPU device)
+   * Get number of GPU→CPU queues (one per GPU device).
+   * Delegates to gpu_ipc_ when CUDA/ROCm is enabled.
    */
-  size_t GetGpuQueueCount() const { return gpu_queues_.size(); }
+  size_t GetGpuQueueCount() const {
+#if HSHM_IS_HOST && (HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM)
+    if (gpu_ipc_) return gpu_ipc_->gpu_devices_.size();
+#endif
+    return gpu_queues_.size();
+  }
 
   /**
-   * Get GPU queue by index
+   * Get GPU→CPU queue by index (CPU worker polls this).
    * @param gpu_id GPU device ID (0-based)
-   * @return Pointer to GPU TaskQueue or nullptr if invalid gpu_id
    */
-  TaskQueue *GetGpuQueue(size_t gpu_id) {
-    if (gpu_id < gpu_queues_.size()) {
-      return gpu_queues_[gpu_id].ptr_;
+  GpuTaskQueue *GetGpuQueue(size_t gpu_id) {
+#if HSHM_IS_HOST && (HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM)
+    if (gpu_ipc_ && gpu_id < gpu_ipc_->gpu_devices_.size()) {
+      return gpu_ipc_->gpu_devices_[gpu_id].gpu2cpu_queue.ptr_;
     }
+#endif
+    if (gpu_id < gpu_queues_.size()) return gpu_queues_[gpu_id].ptr_;
     return nullptr;
   }
-#endif
+
+  /**
+   * Register a GPU queue (non-CUDA fallback path).
+   * @param queue FullPtr to a TaskQueue in GPU-accessible shared memory
+   */
+  void RegisterGpuQueue(hipc::FullPtr<GpuTaskQueue> queue) {
+    gpu_queues_.push_back(queue);
+  }
+
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  /** Get the GPU IPC manager for direct access to GPU operations. */
+  gpu::IpcManager *GetGpuIpcManager() { return gpu_ipc_.get(); }
+  const gpu::IpcManager *GetGpuIpcManager() const { return gpu_ipc_.get(); }
+#endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+
+  /**
+   * Assign all registered GPU queue lanes to the GPU worker.
+   * Call after RegisterGpuQueue to make the worker poll GPU lanes.
+   */
+  void AssignGpuLanesToWorker();
 
   /**
    * Get the scheduler instance
@@ -1411,7 +1150,7 @@ class IpcManager {
   size_t ClearUserIpcs();
 
   /**
-   * Register GPU accelerator memory backend (GPU kernel use only)
+   * Register GPU accelerator memory backend
    *
    * Called from GPU kernels to store GPU memory backend reference.
    * Per-thread BuddyAllocators are initialized in CHIMAERA_GPU_INIT macro.
@@ -1419,7 +1158,6 @@ class IpcManager {
    * @param backend GPU memory backend to register
    * @return true on success, false on failure
    */
-  HSHM_CROSS_FUN
   bool RegisterAcceleratorMemory(const hipc::MemoryBackend &backend);
 
  private:
@@ -1467,8 +1205,71 @@ class IpcManager {
    * @return true if successful, false otherwise
    */
   bool ServerInitGpuQueues();
+  bool InitGpuBackendsForDevice(int gpu_id, u32 queue_depth);
+  void BuildOrchestratorInfo(u32 gpu_id, u32 queue_depth);
+
+ public:
+  /**
+   * Launch the persistent GPU work orchestrator
+   * Must be called after ServerInitGpuQueues and pool manager init
+   * @return true if successful or no GPUs available
+   */
+  bool LaunchGpuOrchestrator();
+
+  /**
+   * Allocate a GPU container via the work orchestrator.
+   * @param pool_id Pool identifier
+   * @param container_id Container ID (typically node_id)
+   * @param chimod_name Name of the ChiMod
+   * @return Device pointer to allocated gpu::Container, or nullptr
+   */
+  void *AllocGpuContainer(const PoolId &pool_id, u32 container_id,
+                          const std::string &chimod_name);
+
+  /**
+   * Allocate GPU buffer from the cpu2gpu copy backend.
+   * @param size Number of bytes to allocate
+   * @param gpu_id GPU device ID
+   * @return FullPtr<char> to allocated GPU-accessible memory
+   */
+  hipc::FullPtr<char> AllocateGpuBuffer(size_t size, u32 gpu_id = 0);
+
+ private:
+  /**
+   * Stop the GPU work orchestrator and free resources
+   */
+  void FinalizeGpuOrchestrator();
+
 #endif
 
+ public:
+  /**
+   * Thin forwarding methods for GPU orchestrator lifecycle.
+   * Safe to call even when CUDA/ROCm is disabled (no-ops).
+   */
+  bool PauseGpuOrchestrator() {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+    if (auto *g = GetGpuIpcManager()) return g->PauseGpuOrchestrator();
+#endif
+    return false;
+  }
+  void ResumeGpuOrchestrator() {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+    if (auto *g = GetGpuIpcManager()) g->ResumeGpuOrchestrator();
+#endif
+  }
+  void SetGpuOrchestratorBlocks(u32 blocks, u32 threads_per_block = 0) {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+    if (auto *g = GetGpuIpcManager()) g->SetGpuOrchestratorBlocks(blocks, threads_per_block);
+#endif
+  }
+  void PrintGpuOrchestratorProfile() {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+    if (auto *g = GetGpuIpcManager()) g->PrintGpuOrchestratorProfile();
+#endif
+  }
+
+ private:
   /**
    * Initialize priority queues for client
    * @return true if successful, false otherwise
@@ -1494,21 +1295,44 @@ class IpcManager {
 
   bool is_initialized_ = false;
 
-  // Shared memory backend for main segment (contains IpcSharedHeader,
-  // TaskQueue)
+  // Shared memory backend for main segment (task data, FutureShm)
   hipc::PosixShmMmap main_backend_;
 
   // Allocator ID for main segment
   hipc::AllocatorId main_allocator_id_;
 
-  // Main allocator pointer for runtime shared memory (queues, FutureShm)
-  CHI_MAIN_ALLOC_T *main_allocator_ = nullptr;
+  // Main allocator pointer for runtime shared memory (task data, FutureShm)
+  // CPU: MultiProcessAllocator — shared across runtime + client processes
+  // GPU: unused (gpu_alloc_table_ provides per-thread BuddyAllocator)
+  CHI_TASK_ALLOC_T *main_allocator_ = nullptr;
 
-  // Pointer to shared header containing the task queue pointer
-  IpcSharedHeader *shared_header_ = nullptr;
+  // Shared memory backend for queue segment (TaskQueue ring buffers)
+  hipc::PosixShmMmap queue_backend_;
+
+  // Allocator ID for queue segment
+  hipc::AllocatorId queue_allocator_id_;
+
+  // Queue allocator pointer — ArenaAllocator for all TaskQueue structures
+  CHI_QUEUE_ALLOC_T *queue_allocator_ = nullptr;
+
+  // Number of workers for which queues are allocated
+  u32 num_workers_ = 0;
+
+  // Number of scheduling queues for task distribution
+  u32 num_sched_queues_ = 0;
+
+  // PID of the runtime process (for tgkill)
+  pid_t runtime_pid_ = 0;
+
+  // Monotonic counter, set from epoch nanos at init
+  std::atomic<u64> server_generation_{0};
 
   // The worker task queues (multi-lane queue)
   hipc::FullPtr<TaskQueue> worker_queues_;
+  // SHM offset of worker_queues_ within queue_allocator_ (server sets it;
+  // client receives it via ClientConnectTask and stores here for
+  // ClientInitQueues)
+  u64 worker_queues_off_ = 0;
 
   // Network queue for send operations (one lane, two priorities)
   hipc::FullPtr<NetQueue> net_queue_;
@@ -1516,13 +1340,8 @@ class IpcManager {
   // Net worker's lane pointer for signaling on EnqueueNetTask
   TaskLane *net_lane_ = nullptr;
 
-#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
-  // GPU memory backends (one per GPU device, using pinned host memory)
-  std::vector<std::unique_ptr<hipc::GpuShmMmap>> gpu_backends_;
-
-  // GPU task queues (one ring buffer per GPU device)
-  std::vector<hipc::FullPtr<TaskQueue>> gpu_queues_;
-#endif
+  // GPU task queues (one ring buffer per GPU device, empty when no GPU)
+  std::vector<hipc::FullPtr<GpuTaskQueue>> gpu_queues_;
 
   // Local ZeroMQ transport (server mode, using lightbeam)
   hshm::lbm::TransportPtr local_transport_;
@@ -1590,7 +1409,7 @@ class IpcManager {
   // Semantics: 0 = fail immediately, -1 = wait forever, >0 = timeout in seconds
   u64 client_generation_ = 0;  // Cached server generation at connect time
   float client_retry_timeout_ =
-      60.0f;  // CHI_CLIENT_RETRY_TIMEOUT (default 60s)
+      60.0f;                        // CHI_CLIENT_RETRY_TIMEOUT (default 60s)
   int client_try_new_servers_ = 0;  // CHI_CLIENT_TRY_NEW_SERVERS (default 0)
   std::atomic<bool> reconnecting_{false};  // Guards against recursive reconnect
 
@@ -1618,11 +1437,17 @@ class IpcManager {
    */
   std::unordered_map<u64, hipc::MultiProcessAllocator *> alloc_map_;
 
+  /**
+   * Map of AllocatorId -> {data_ptr, capacity} for GPU backend memory
+   * Used by ToFullPtr to resolve ShmPtrs allocated by GPU kernels.
+   * GPU backends use pinned host memory, so data_ptr is CPU-accessible.
+   */
  public:
   /**
    * Wait for local server to stop by polling with ClientConnectTask.
    * Sends repeated ClientConnectTask probes with a short timeout.
-   * Returns true once the runtime stops responding (connection fails/times out).
+   * Returns true once the runtime stops responding (connection fails/times
+   * out).
    * @param timeout_sec Maximum time to wait for the runtime to stop
    * @return true if runtime stopped, false if still running after timeout
    */
@@ -1635,21 +1460,20 @@ class IpcManager {
    */
   chi::CoRwLock allocator_map_lock_;
 
-  //============================================================================
-  // GPU Memory Management (public for CHIMAERA_GPU_INIT macro access)
-  //============================================================================
 
-  /** GPU memory backend for device memory (GPU kernels only) */
-  hipc::MemoryBackend gpu_backend_;
+  /** Stored IpcManagerGpuInfo for GPU orchestrator launch */
+  IpcManagerGpuInfo gpu_orchestrator_info_;
 
-  /** Pointer to current thread's GPU ArenaAllocator (GPU kernel only) */
-  hipc::ArenaAllocator<false> *gpu_thread_allocator_ = nullptr;
-
-  /** Pointer to GPU worker queue for task submission (GPU kernel only) */
-  TaskQueue *gpu_worker_queue_ = nullptr;
-
-  /** Flag indicating if GPU backend is initialized */
-  bool gpu_backend_initialized_ = false;
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  /** GPU IPC manager: owns all host-side GPU infrastructure.
+   *  CPU-side IpcManager delegates GPU operations through this. */
+  std::unique_ptr<gpu::IpcManager> gpu_ipc_;
+#else
+  /** Layout placeholder — keeps struct size/offsets identical whether
+   *  CUDA is enabled or not, preventing ODR violations when test binaries
+   *  link chimaera_cxx without HSHM_ENABLE_CUDA. */
+  void *gpu_ipc_placeholder_ = nullptr;
+#endif
 
  private:
 #if HSHM_IS_HOST
@@ -1696,210 +1520,560 @@ class IpcManager {
 // Global pointer variable declaration for IPC manager singleton
 HSHM_DEFINE_GLOBAL_PTR_VAR_H(chi::IpcManager, g_ipc_manager);
 
+#define CHI_IPC HSHM_GET_GLOBAL_PTR_VAR(::chi::IpcManager, g_ipc_manager)
+#define CHI_CPU_IPC CHI_IPC
+
+// Include local_task_archives after CHI_IPC is defined, since on GPU
+// CHI_PRIV_ALLOC expands to chi::GetPrivAllocGpu() (defined below)
+#include "chimaera/local_task_archives.h"
+
+// ================================================================
+// GPU translation unit support: override CHI_IPC for device code
+// ================================================================
 #if HSHM_IS_GPU_COMPILER
+
 namespace chi {
-HSHM_CROSS_FUN inline IpcManager *GetIpcManager() {
+namespace gpu {
+HSHM_CROSS_FUN inline IpcManager *GetGpuIpcManager() {
 #if HSHM_IS_GPU
   return IpcManager::GetBlockIpcManager();
 #else
-  return HSHM_GET_GLOBAL_PTR_VAR(::chi::IpcManager, g_ipc_manager);
+  return nullptr;
 #endif
 }
+}  // namespace gpu
 }  // namespace chi
-#define CHI_IPC ::chi::GetIpcManager()
-#else
-#define CHI_IPC HSHM_GET_GLOBAL_PTR_VAR(::chi::IpcManager, g_ipc_manager)
-#endif
 
-// GPU kernel initialization macro
-// Creates a shared IPC manager instance in GPU __shared__ memory
-// Each thread has its own ArenaAllocator for memory allocation
-// Supports 1D, 2D, and 3D thread blocks (max 1024 threads per block)
-//
-// Usage in GPU kernel:
-//   __global__ void my_kernel(const hipc::MemoryBackend* backend) {
-//     CHIMAERA_GPU_INIT(*backend);
-//     // Now CHI_IPC->AllocateBuffer() works for this thread
-//   }
-#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
-#define CHIMAERA_GPU_INIT(backend, worker_queue)                              \
-  chi::IpcManager *g_ipc_manager_ptr = chi::IpcManager::GetBlockIpcManager(); \
-  /* Compute linear thread ID for 1D/2D/3D blocks */                          \
-  int thread_id = threadIdx.x + threadIdx.y * blockDim.x +                    \
-                  threadIdx.z * blockDim.x * blockDim.y;                      \
-  if (thread_id == 0) {                                                       \
-    hipc::MemoryBackend g_backend_ = backend;                                 \
-    g_ipc_manager_ptr->ClientGpuInit(g_backend_, worker_queue);               \
-  }                                                                           \
-  __syncthreads();                                                            \
-  chi::IpcManager &g_ipc_manager = *g_ipc_manager_ptr
-#endif
+// CHI_IPC returns gpu::IpcManager* in GPU compiler TUs.
+// On device: GetBlockIpcManager() (__shared__ singleton)
+// On host: nullptr (used only for name resolution, never called at runtime)
+// Use CHI_CPU_IPC for host-side operations in nvcc TUs.
+#undef CHI_IPC
+#define CHI_IPC (::chi::gpu::GetGpuIpcManager())
+#undef CHI_CPU_IPC
+#define CHI_CPU_IPC HSHM_GET_GLOBAL_PTR_VAR(::chi::IpcManager, g_ipc_manager)
 
-// Define Future methods after IpcManager and CHI_IPC are fully defined
-// This avoids circular dependency issues between task.h and ipc_manager.h
+namespace chi {
+// GPU allocator getters: accessible after CHI_IPC override above
+#if !HSHM_IS_HOST
+HSHM_GPU_FUN inline hipc::PrivateBuddyAllocator *GetPrivAllocGpu() {
+  // WarpIpcManager removed; private alloc not available on GPU.
+  // TODO(gpu-alloc): Provide a proper per-warp allocator if needed.
+  return nullptr;
+}
+HSHM_GPU_FUN inline hipc::RoundRobinAllocator *GetSharedAllocGpu() {
+  return CHI_IPC->gpu_alloc_;
+}
+#endif
+}  // namespace chi
+
+#endif  // HSHM_IS_GPU_COMPILER
+
+// ================================================================
+// Future method implementations (unified for CPU and GPU TUs)
+// ================================================================
 namespace chi {
 
-// Unified AllocateBuffer implementation for GPU (host version is in
-// ipc_manager.cc)
-#if !HSHM_IS_HOST
-inline HSHM_CROSS_FUN hipc::FullPtr<char> IpcManager::AllocateBuffer(
-    size_t size) {
-  // GPU PATH: Use per-warp ArenaAllocator
-  printf("AllocateBuffer called: init=%d, allocator=%p\n",
-         (int)gpu_backend_initialized_, gpu_thread_allocator_);
-  if (gpu_backend_initialized_ && gpu_thread_allocator_ != nullptr) {
-    printf("AllocateBuffer: backend.data_=%p\n", gpu_backend_.data_);
-    return gpu_thread_allocator_->AllocateObjs<char>(size);
-  }
-  return hipc::FullPtr<char>::GetNull();
-}
-
-// Unified FreeBuffer implementation for GPU (host version is in ipc_manager.cc)
-inline HSHM_CROSS_FUN void IpcManager::FreeBuffer(FullPtr<char> buffer_ptr) {
-  // GPU PATH: Use per-warp ArenaAllocator to free
-  if (buffer_ptr.IsNull()) {
-    return;
-  }
-  if (gpu_backend_initialized_ && gpu_thread_allocator_ != nullptr) {
-    gpu_thread_allocator_->Free(buffer_ptr);
-  }
-}
-#endif  // !HSHM_IS_HOST
-
-// ~Future() implementation - frees resources if consumed (via
-// Wait/await_resume)
+// ~Future() - frees resources if consumed (via Wait/await_resume)
 template <typename TaskT, typename AllocT>
 HSHM_CROSS_FUN Future<TaskT, AllocT>::~Future() {
-#if HSHM_IS_HOST
-  // Only clean up if Destroy(true) was called (from Wait/await_resume)
   if (consumed_) {
-    // Clean up zero-copy response archive (frees zmq_msg_t handles)
+    // Clean up zero-copy response archive (TCP/IPC only, never used on GPU)
     if (!future_shm_.IsNull()) {
-      hipc::FullPtr<FutureShm> fs = CHI_IPC->ToFullPtr(future_shm_);
+#if HSHM_IS_HOST
+      hipc::FullPtr<FutureShm> fs = CHI_CPU_IPC->ToFullPtr(future_shm_);
       if (!fs.IsNull() && (fs->origin_ == FutureShm::FUTURE_CLIENT_TCP ||
                            fs->origin_ == FutureShm::FUTURE_CLIENT_IPC)) {
-        CHI_IPC->CleanupResponseArchive(fs->client_task_vaddr_);
+        CHI_CPU_IPC->CleanupResponseArchive(fs->client_task_vaddr_);
       }
-    }
-    // Free FutureShm
-    if (!future_shm_.IsNull()) {
+      // Free FutureShm (host only)
       hipc::ShmPtr<char> buffer_shm = future_shm_.template Cast<char>();
-      CHI_IPC->FreeBuffer(buffer_shm);
+      CHI_CPU_IPC->FreeBuffer(buffer_shm);
       future_shm_.SetNull();
+#endif
     }
     // Auto-free the task (only when consumed to avoid double-free
     // from runtime-internal Future copies in event queues / RunContext)
     DelTask();
   }
-#endif
 }
 
-// GetFutureShm() implementation - converts internal ShmPtr to FullPtr
-// GPU-compatible: uses CHI_IPC macro which works on both CPU and GPU
+// GetFutureShm() - converts internal ShmPtr to FullPtr
 template <typename TaskT, typename AllocT>
 HSHM_CROSS_FUN hipc::FullPtr<typename Future<TaskT, AllocT>::FutureT>
 Future<TaskT, AllocT>::GetFutureShm() const {
   if (future_shm_.IsNull()) {
     return hipc::FullPtr<FutureT>();
   }
+#if HSHM_IS_GPU
   return CHI_IPC->ToFullPtr(future_shm_);
+#else
+  return CHI_CPU_IPC->ToFullPtr(future_shm_);
+#endif
+}
+
+// ----------------------------------------------------------------
+// IsComplete variants
+// ----------------------------------------------------------------
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN bool Future<TaskT, AllocT>::IsComplete() const {
+  if (future_shm_.IsNull()) {
+    return false;
+  }
+#if HSHM_IS_GPU
+  return IsCompleteGpu2Gpu();
+#else
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  if (future_shm_.alloc_id_ == FutureShm::GetCpu2GpuAllocId()) {
+    return IsCompleteCpu2Gpu();
+  }
+#endif
+  auto future_shm = GetFutureShm();
+  if (future_shm.IsNull()) {
+    return false;
+  }
+  bool is_gpu_future =
+      future_shm->flags_.Any(FutureShm::FUTURE_COPY_FROM_CLIENT) &&
+      (future_shm->client_task_vaddr_ == 0);
+  if (is_gpu_future) {
+    return IsCompleteGpu2Cpu();
+  }
+  return IsCompleteCpu2Cpu();
+#endif
 }
 
 template <typename TaskT, typename AllocT>
-bool Future<TaskT, AllocT>::Wait(float max_sec) {
-#if HSHM_IS_GPU
-  // GPU PATH: Simple polling loop checking FUTURE_COMPLETE flag
-  if (future_shm_.IsNull()) {
-    return true;  // Nothing to wait for
-  }
-
-  // Poll the complete flag until task finishes
+HSHM_HOST_FUN bool Future<TaskT, AllocT>::IsCompleteCpu2Cpu() const {
   auto future_shm = GetFutureShm();
   if (future_shm.IsNull()) {
+    return false;
+  }
+  return future_shm->flags_.Any(FutureShm::FUTURE_COMPLETE);
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_HOST_FUN bool Future<TaskT, AllocT>::IsCompleteGpu2Cpu() const {
+  auto future_shm = GetFutureShm();
+  if (future_shm.IsNull()) {
+    return false;
+  }
+  return future_shm->flags_.AnySystem(FutureShm::FUTURE_COMPLETE);
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_HOST_FUN bool Future<TaskT, AllocT>::IsCompleteCpu2Gpu() const {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  // ShmPtr offset points to pinned-host gpu::FutureShm
+  void *host_fshm = reinterpret_cast<void *>(future_shm_.off_.load());
+  u32 flags_val = 0;
+  size_t flags_offset = offsetof(gpu::FutureShm, flags_);
+  hshm::GpuApi::Memcpy(
+      &flags_val,
+      reinterpret_cast<u32 *>(
+          static_cast<char *>(host_fshm) + flags_offset),
+      sizeof(u32));
+  return (flags_val & gpu::FutureShm::FUTURE_COMPLETE) != 0;
+#else
+  return false;
+#endif
+}
+
+#if HSHM_IS_GPU_COMPILER
+template <typename TaskT, typename AllocT>
+HSHM_GPU_FUN bool Future<TaskT, AllocT>::IsCompleteGpu2Gpu() const {
+  auto future_shm = GetFutureShm();
+  if (future_shm.IsNull()) {
+    return false;
+  }
+  return future_shm->flags_.AnyDevice(FutureShm::FUTURE_COMPLETE);
+}
+#endif
+
+// ----------------------------------------------------------------
+// Wait dispatcher
+// ----------------------------------------------------------------
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN bool Future<TaskT, AllocT>::Wait(float max_sec,
+                                                 bool reuse_task) {
+#if HSHM_IS_GPU
+  return WaitGpu2Gpu(max_sec, reuse_task);
+#else
+  if (task_ptr_.IsNull() || future_shm_.IsNull()) {
+    return true;
+  }
+  // Fire-and-forget: return immediately without waiting.
+  if (task_ptr_->task_flags_.Any(TASK_FIRE_AND_FORGET)) {
+    task_ptr_.SetNull();
+    future_shm_.SetNull();
     return true;
   }
 
-  // Busy-wait polling the complete flag
-  while (!future_shm->flags_.Any(FutureT::FUTURE_COMPLETE)) {
-    // Yield to other threads on GPU
-    __threadfence();
-    __nanosleep(5);
+  bool is_runtime = CHI_CHIMAERA_MANAGER->IsRuntime();
+
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  // CPU→GPU POD path: sentinel allocator ID marks device pointers.
+  if (is_runtime &&
+      future_shm_.alloc_id_ == FutureShm::GetCpu2GpuAllocId()) {
+    return WaitCpu2Gpu(max_sec, reuse_task);
   }
+#endif
+
+  // Resolve FutureShm for non-GPU paths
+  hipc::FullPtr<FutureShm> future_full = CHI_CPU_IPC->ToFullPtr(future_shm_);
+  if (future_full.IsNull()) {
+    HLOG(kError, "Future::Wait: ToFullPtr returned null");
+    return false;
+  }
+
+  if (is_runtime) {
+    return WaitCpu2Cpu(max_sec, reuse_task);
+  }
+
+  // Client path: detect GPU-originated futures
+  bool is_gpu_future =
+      future_full->flags_.Any(FutureShm::FUTURE_COPY_FROM_CLIENT) &&
+      (future_full->client_task_vaddr_ == 0);
+  if (is_gpu_future) {
+    return WaitGpu2Cpu(max_sec, reuse_task);
+  }
+  return WaitCpu2Cpu(max_sec, reuse_task);
+#endif
+}
+
+// ----------------------------------------------------------------
+// GPU Wait paths (HSHM_GPU_FUN)
+// ----------------------------------------------------------------
+
+#if HSHM_IS_GPU_COMPILER
+template <typename TaskT, typename AllocT>
+HSHM_GPU_FUN bool Future<TaskT, AllocT>::WaitGpu2Gpu(float max_sec,
+                                                      bool reuse_task) {
+  // chi::Future should not be used for GPU-to-GPU paths.
+  // Use gpu::Future::WaitGpu2Gpu instead.
+  (void)max_sec; (void)reuse_task;
   return true;
+}
+#endif
+
+// ----------------------------------------------------------------
+// Host Wait paths (HSHM_HOST_FUN)
+// ----------------------------------------------------------------
+
+template <typename TaskT, typename AllocT>
+HSHM_HOST_FUN bool Future<TaskT, AllocT>::WaitCpu2Gpu(float max_sec,
+                                                       bool reuse_task) {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  bool ok = IpcCpu2Gpu::ClientRecv(*this, max_sec);
+  if (reuse_task) task_ptr_.SetNull();
+  Destroy(true);
+  return ok;
 #else
-  if (!task_ptr_.IsNull() && !future_shm_.IsNull()) {
-    // Fire-and-forget: return immediately without waiting.
-    // Detach so ~Future() won't free the in-flight task.
-    if (task_ptr_->task_flags_.Any(TASK_FIRE_AND_FORGET)) {
-      task_ptr_.SetNull();
-      future_shm_.SetNull();
-      return true;
-    }
-
-    // Convert ShmPtr to FullPtr to access flags_
-    hipc::FullPtr<FutureShm> future_full = CHI_IPC->ToFullPtr(future_shm_);
-    if (future_full.IsNull()) {
-      HLOG(kError, "Future::Wait: ToFullPtr returned null for future_shm_");
-      return false;
-    }
-
-    // Determine path: client vs runtime
-    bool is_runtime = CHI_CHIMAERA_MANAGER->IsRuntime();
-
-    if (is_runtime) {
-      // RUNTIME PATH: Wait for FUTURE_COMPLETE (task outputs are direct,
-      // no deserialization needed). Covers both worker threads and main thread.
-      hshm::abitfield32_t &flags = future_full->flags_;
-      auto start = std::chrono::steady_clock::now();
-      while (!flags.Any(FutureShm::FUTURE_COMPLETE)) {
-        HSHM_THREAD_MODEL->Yield();
-        if (max_sec > 0) {
-          float elapsed = std::chrono::duration<float>(
-                              std::chrono::steady_clock::now() - start)
-                              .count();
-          if (elapsed >= max_sec) return false;
-        }
-      }
-    } else {
-      // CLIENT PATH: Call Recv() to handle SHM lightbeam or ZMQ streaming
-      // FUTURE_COMPLETE will be set by worker after all data is sent
-      // Don't wait for FUTURE_COMPLETE first - that causes deadlock for
-      // streaming
-      if (!CHI_IPC->Recv(*this, max_sec)) {
-        task_ptr_->SetReturnCode(static_cast<u32>(-1));
-        return false;
-      }
-    }
-
-    // PostWait + free FutureShm; task freed by ~Future()
-    Destroy(true);
-  }
+  (void)max_sec; (void)reuse_task;
   return true;
 #endif
 }
 
 template <typename TaskT, typename AllocT>
-void Future<TaskT, AllocT>::Destroy(bool post_wait) {
-#if HSHM_IS_HOST
-  // Call PostWait if requested
+HSHM_HOST_FUN bool Future<TaskT, AllocT>::WaitCpu2Cpu(float max_sec,
+                                                       bool reuse_task) {
+  bool is_runtime = CHI_CHIMAERA_MANAGER->IsRuntime();
+  if (is_runtime) {
+    // Runtime self-send: poll FUTURE_COMPLETE in SHM
+    hipc::FullPtr<FutureShm> future_full =
+        CHI_CPU_IPC->ToFullPtr(future_shm_);
+    if (future_full.IsNull()) return false;
+    bool ok = IpcCpu2Self::ClientRecv(*this, max_sec, future_full);
+    if (!ok) return false;
+  } else {
+    // Client: SHM or ZMQ recv path
+    if (!CHI_CPU_IPC->Recv(*this, max_sec)) {
+      task_ptr_->SetReturnCode(static_cast<u32>(-1));
+      return false;
+    }
+  }
+  if (reuse_task) task_ptr_.SetNull();
+  Destroy(true);
+  return true;
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_HOST_FUN bool Future<TaskT, AllocT>::WaitGpu2Cpu(float max_sec,
+                                                       bool reuse_task) {
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+  // Host-side polling path (test harness): polls chi::FutureShm with
+  // system-scope atomics. The GPU kernel uses IpcGpu2Cpu::ClientRecv
+  // (device-side) which polls gpu::FutureShm instead.
+  hipc::FullPtr<FutureShm> future_full =
+      CHI_CPU_IPC->ToFullPtr(future_shm_);
+  if (future_full.IsNull()) {
+    HLOG(kError, "Future::WaitGpu2Cpu: ToFullPtr returned null");
+    return false;
+  }
+  hshm::abitfield32_t &flags = future_full->flags_;
+  auto start = std::chrono::steady_clock::now();
+  while (!flags.AnySystem(FutureShm::FUTURE_COMPLETE)) {
+    HSHM_THREAD_MODEL->Yield();
+    if (max_sec > 0) {
+      float elapsed = std::chrono::duration<float>(
+                          std::chrono::steady_clock::now() - start)
+                          .count();
+      if (elapsed >= max_sec) {
+        task_ptr_->SetReturnCode(static_cast<u32>(-3));
+        return false;
+      }
+    }
+  }
+
+  // Deserialize output from ring buffer if present
+  if (future_full->output_.total_written_.load() > 0) {
+    hshm::lbm::LbmContext ctx;
+    ctx.copy_space = future_full->copy_space;
+    ctx.shm_info_ = &future_full->output_;
+    chi::priv::vector<char> load_buf(CHI_PRIV_ALLOC);
+    load_buf.reserve(256);
+    DefaultLoadArchive load_ar(load_buf);
+    load_ar.SetMsgType(LocalMsgType::kSerializeOut);
+    hshm::lbm::ShmTransport::Recv(load_ar, ctx);
+    task_ptr_->SerializeOut(load_ar);
+  }
+
+  if (reuse_task) task_ptr_.SetNull();
+  Destroy(true);
+  return true;
+#else
+  (void)max_sec; (void)reuse_task;
+  return true;
+#endif
+}
+
+// ----------------------------------------------------------------
+// Shared helpers (HSHM_CROSS_FUN)
+// ----------------------------------------------------------------
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN void Future<TaskT, AllocT>::Destroy(bool post_wait) {
   if (post_wait && !task_ptr_.IsNull()) {
     task_ptr_->PostWait();
   }
-  // Mark as consumed — all resource cleanup deferred to ~Future()
   consumed_ = true;
-#else
-  (void)post_wait;
-#endif
 }
 
 template <typename TaskT, typename AllocT>
 HSHM_CROSS_FUN void Future<TaskT, AllocT>::DelTask() {
+#if HSHM_IS_GPU
   if (!task_ptr_.IsNull()) {
     CHI_IPC->DelTask(task_ptr_);
     task_ptr_.SetNull();
   }
+#else
+  if (!task_ptr_.IsNull()) {
+    CHI_CPU_IPC->DelTask(task_ptr_);
+    task_ptr_.SetNull();
+  }
+#endif
 }
 
+// ----------------------------------------------------------------
+// WaitPoll / WaitRecv (GPU-only, stubs on host)
+// ----------------------------------------------------------------
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN void Future<TaskT, AllocT>::WaitPoll(float max_sec,
+                                                     bool reuse_task) {
+  (void)max_sec; (void)reuse_task;
+#if HSHM_IS_GPU
+  if (threadIdx.x != 0) return;
+  auto fshm_full = GetFutureShm();
+  if (fshm_full.IsNull()) return;
+  auto *fshm = fshm_full.ptr_;
+
+  // Spin-wait on FUTURE_COMPLETE (device-scope atomics)
+  while (!fshm->flags_.AnyDevice(FutureShm::FUTURE_COMPLETE)) {
+    HSHM_THREAD_MODEL->Yield();
+  }
+  hipc::threadfence();
+#endif
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN void Future<TaskT, AllocT>::WaitRecv(float max_sec,
+                                                     bool reuse_task) {
+  (void)max_sec; (void)reuse_task;
+#if HSHM_IS_GPU
+  if (threadIdx.x != 0) return;
+  auto fshm_full = GetFutureShm();
+  if (fshm_full.IsNull()) return;
+  auto *fshm = fshm_full.ptr_;
+
+  // Read output if any was written
+  size_t output_written = fshm->output_.total_written_.load_device();
+  if (output_written > 0) {
+    hipc::threadfence();
+
+    // Inline deserialization: create local buffer + archive
+    hipc::FullPtr<char> fp;
+    fp.ptr_ = fshm->copy_space;
+    fp.shm_.alloc_id_.SetNull();
+    fp.shm_.off_ = reinterpret_cast<size_t>(fp.ptr_);
+    hshm::priv::wrap_vector buffer;
+    buffer.set(fp, output_written);
+    buffer.resize(output_written);
+    GpuLoadTaskArchive load_ar(buffer);
+    load_ar.SetMsgType(LocalMsgType::kSerializeOut);
+    task_ptr_.ptr_->SerializeOut(load_ar);
+  }
+
+  // Cleanup
+  Destroy(true);
+  if (reuse_task) {
+    task_ptr_.SetNull();
+  }
+#endif
+}
+
+// ================================================================
+// gpu::Future method implementations
+// ================================================================
+
+namespace gpu {
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN Future<TaskT, AllocT>::~Future() {
+  if (consumed_) {
+    DelTask();
+  }
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN hipc::FullPtr<typename Future<TaskT, AllocT>::FutureT>
+Future<TaskT, AllocT>::GetFutureShm() const {
+  if (future_shm_.IsNull()) {
+    return hipc::FullPtr<FutureT>();
+  }
+#if HSHM_IS_GPU
+  return CHI_IPC->ToFullPtr(future_shm_);
+#else
+  // Host stub — gpu::Future is not used for host-side resolution
+  return hipc::FullPtr<FutureT>();
+#endif
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN bool Future<TaskT, AllocT>::IsComplete() const {
+  if (future_shm_.IsNull()) {
+    return false;
+  }
+#if HSHM_IS_GPU
+  return IsCompleteGpu2Gpu();
+#else
+  return false;
+#endif
+}
+
+#if HSHM_IS_GPU_COMPILER
+template <typename TaskT, typename AllocT>
+HSHM_GPU_FUN bool Future<TaskT, AllocT>::IsCompleteGpu2Gpu() const {
+  auto future_shm = GetFutureShm();
+  if (future_shm.IsNull()) {
+    return false;
+  }
+  return future_shm->flags_.AnyDevice(FutureShm::FUTURE_COMPLETE);
+}
+#endif
+
+template <typename TaskT, typename AllocT>
+HSHM_HOST_FUN bool Future<TaskT, AllocT>::IsCompleteCpu2Gpu() const {
+  return false;  // Host uses chi::Future::IsCompleteCpu2Gpu
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_HOST_FUN bool Future<TaskT, AllocT>::IsCompleteGpu2Cpu() const {
+  return false;  // Host uses chi::Future::IsCompleteGpu2Cpu
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN bool Future<TaskT, AllocT>::Wait(float max_sec,
+                                                  bool reuse_task) {
+#if HSHM_IS_GPU
+  return WaitGpu2Gpu(max_sec, reuse_task);
+#else
+  (void)max_sec; (void)reuse_task;
+  return true;
+#endif
+}
+
+#if HSHM_IS_GPU_COMPILER
+template <typename TaskT, typename AllocT>
+HSHM_GPU_FUN bool Future<TaskT, AllocT>::WaitGpu2Gpu(float max_sec,
+                                                      bool reuse_task) {
+  (void)max_sec;
+  CHI_IPC->Recv(*this, task_ptr_.ptr_);
+  if (gpu::IpcManager::IsWarpScheduler()) {
+    if (reuse_task) {
+      task_ptr_.SetNull();
+    }
+  }
+  return true;
+}
+#endif
+
+template <typename TaskT, typename AllocT>
+HSHM_HOST_FUN bool Future<TaskT, AllocT>::WaitCpu2Gpu(float max_sec,
+                                                       bool reuse_task) {
+  (void)max_sec; (void)reuse_task;
+  return true;  // Host uses chi::Future::WaitCpu2Gpu
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_HOST_FUN bool Future<TaskT, AllocT>::WaitGpu2Cpu(float max_sec,
+                                                       bool reuse_task) {
+  (void)max_sec; (void)reuse_task;
+  return true;  // Host uses chi::Future::WaitGpu2Cpu
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN void Future<TaskT, AllocT>::WaitPoll(float max_sec,
+                                                     bool reuse_task) {
+  (void)max_sec; (void)reuse_task;
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN void Future<TaskT, AllocT>::WaitRecv(float max_sec,
+                                                     bool reuse_task) {
+  (void)max_sec; (void)reuse_task;
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN void Future<TaskT, AllocT>::Destroy(bool post_wait) {
+  if (post_wait && !task_ptr_.IsNull()) {
+    task_ptr_->PostWait();
+  }
+  consumed_ = true;
+}
+
+template <typename TaskT, typename AllocT>
+HSHM_CROSS_FUN void Future<TaskT, AllocT>::DelTask() {
+#if HSHM_IS_GPU
+  if (!task_ptr_.IsNull()) {
+    CHI_IPC->DelTask(task_ptr_);
+    task_ptr_.SetNull();
+  }
+#else
+  if (!task_ptr_.IsNull()) {
+    task_ptr_.SetNull();
+  }
+#endif
+}
+
+}  // namespace gpu
+
 }  // namespace chi
+
+// Template implementations for transport classes (need full IpcManager definition)
+#include "chimaera/ipc/ipc_cpu2cpu_impl.h"
+#include "chimaera/ipc/ipc_cpu2cpu_zmq_impl.h"
+#include "chimaera/ipc/ipc_cpu2gpu_impl.h"
 
 #endif  // CHIMAERA_INCLUDE_CHIMAERA_MANAGERS_IPC_MANAGER_H_

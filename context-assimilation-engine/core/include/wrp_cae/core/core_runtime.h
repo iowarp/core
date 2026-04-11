@@ -61,10 +61,10 @@ class Runtime : public chi::Container {
   void LoadTask(chi::u32 method, chi::LoadTaskArchive& archive,
                 hipc::FullPtr<chi::Task> task_ptr) override;
   hipc::FullPtr<chi::Task> AllocLoadTask(chi::u32 method, chi::LoadTaskArchive& archive) override;
-  void LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
+  void LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive,
                      hipc::FullPtr<chi::Task> task_ptr) override;
-  hipc::FullPtr<chi::Task> LocalAllocLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive) override;
-  void LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive, hipc::FullPtr<chi::Task> task_ptr) override;
+  hipc::FullPtr<chi::Task> LocalAllocLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive) override;
+  void LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive& archive, hipc::FullPtr<chi::Task> task_ptr) override;
   hipc::FullPtr<chi::Task> NewCopyTask(chi::u32 method, hipc::FullPtr<chi::Task> orig_task_ptr, bool deep) override;
   hipc::FullPtr<chi::Task> NewTask(chi::u32 method) override;
   void Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> orig_task,
@@ -96,7 +96,12 @@ class Runtime : public chi::Container {
   chi::TaskResume Destroy(hipc::FullPtr<DestroyTask> task, chi::RunContext& ctx) {
     HLOG(kInfo, "Core container destroyed for pool: {} (ID: {})",
           pool_name_, pool_id_);
-    co_return;
+#ifdef __NVCOMPILER
+    chi::RunContext& rctx = ctx;
+#endif
+    CHI_TASK_BODY_BEGIN
+    CHI_CO_RETURN;
+    CHI_TASK_BODY_END
   }
 
   /**

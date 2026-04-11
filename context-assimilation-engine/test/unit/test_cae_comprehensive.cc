@@ -404,17 +404,18 @@ TEST_CASE("CAE - AssimilationCtx Serialization", "[cae][ctx][serialization]") {
   ctx.include_patterns.push_back("*.dat");
   ctx.exclude_patterns.push_back("*.tmp");
 
-  // Serialize using cereal (stringstream as archive)
-  std::stringstream ss;
+  // Serialize using GlobalSerialize
+  std::vector<char> buf;
   {
-    cereal::BinaryOutputArchive oarchive(ss);
+    hshm::ipc::GlobalSerialize<std::vector<char>> oarchive(buf);
     oarchive(ctx);
+    oarchive.Finalize();
   }
 
   // Deserialize
   AssimilationCtx ctx_restored;
   {
-    cereal::BinaryInputArchive iarchive(ss);
+    hshm::ipc::GlobalDeserialize<std::vector<char>> iarchive(buf);
     iarchive(ctx_restored);
   }
 

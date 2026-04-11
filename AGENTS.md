@@ -52,6 +52,20 @@ If you add new methods to a chimod, please edit chimaera_mod.yaml and use the ch
 2. Remove ALL CMakeFiles, CMakeCache.txt, cmake_install.cmake, Makefile from source tree
 3. Rebuild properly from `/workspace/build`
 
+## GPU Memory and Pointer Rules
+
+### FutureShm Allocation on GPU
+Allocate `FutureShm` from the per-thread `BuddyAllocator` via `AllocateBuffer()` in GPU send paths (`SendGpuForward`, `SendGpuLocal`, etc.).
+
+**Key rules:**
+- Always store the **real ShmPtr** (with non-null `alloc_id_`) using `buffer.Cast<FutureShm>().shm_`. Never store an absolute UVA pointer with null `alloc_id_`.
+- The null `alloc_id_` convention causes `FreeBuffer(ShmPtr)` to silently skip the free, causing allocator exhaustion after N tasks.
+- `Future::~Future()` automatically frees the `FutureShm` via `FreeBuffer(ShmPtr)` when consumed — this only works if `alloc_id_` is non-null.
+- Do NOT pre-allocate FutureShm slots. Do NOT use `ArenaAllocator` for this purpose.
+
+### FullPtr Casting
+**Always** use `FullPtr::Cast<T>()` to change the type of a `FullPtr`. **Never** manually cast a raw pointer that was previously wrapped in a `FullPtr` (e.g., `reinterpret_cast<FutureShm*>(buffer.ptr_)`). Use `buffer.Cast<FutureShm>()` instead. This preserves the allocator ID and offset metadata needed for correct `ShmPtr` resolution and `FreeBuffer` calls.
+
 ## Code Style
 
 Keeep code simple. Do not allow functions to be more than 100 lines of code. Make helper functions logically.
@@ -549,6 +563,19 @@ HSHM (HermesShm/context-transport-primitives) provides modular INTERFACE library
   - Use for: HIP kernel code and GPU device functions
   - Compile definitions: `HSHM_ENABLE_ROCM=1`, `HSHM_ENABLE_CUDA=0`
   - Note: Only available when `HSHM_ENABLE_ROCM=ON` at build time
+
+- **`hshm::nixl`** - NIXL (NVIDIA Inference Xfer Library) transport
+  - Provides: NIXL-backed data movement (DRAM→FILE via POSIX, DRAM→DRAM via memcpy)
+  - Use for: High-performance CPU→storage transfers and future GPU→storage (GDS)
+  - Compile definitions: `HSHM_ENABLE_NIXL=1`
+  - Build option: `WRP_CORE_ENABLE_NIXL=ON`
+  - Note: Requires NIXL installed at `/usr/local` (built with POSIX backend)
+
+- **`hshm::nvshmem`** - NVSHMEM GPU-to-GPU communication
+  - Provides: NVSHMEM compile definitions for GPU peer-to-peer communication
+  - Compile definitions: `HSHM_ENABLE_NVSHMEM=1`
+  - Build option: `WRP_CORE_ENABLE_NVSHMEM=ON`
+  - Note: Requires NVSHMEM from NVIDIA developer portal
 
 **Linking Guidelines:**
 

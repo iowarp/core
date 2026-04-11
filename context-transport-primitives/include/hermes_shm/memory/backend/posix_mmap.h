@@ -73,37 +73,24 @@ class PosixMmap : public MemoryBackend {
       backend_size = kMinBackendSize;
     }
 
-    // Total layout: [backend header] [private header] [shared header] [data]
-
-    // Map memory
     char *ptr = _Map(backend_size);
     if (!ptr) {
       return false;
     }
 
     region_ = ptr;
-    char *priv_header_ptr = ptr + kBackendHeaderSize;
-    char *shared_header_ptr = priv_header_ptr + kBackendHeaderSize;
-
-    // Initialize header at shared header location
-    header_ = reinterpret_cast<MemoryBackendHeader *>(shared_header_ptr +
-                                                      kBackendHeaderSize);
+    header_ = reinterpret_cast<MemoryBackendHeader *>(region_);
+    data_ = region_ + kBackendHeaderSize;
 
     id_ = backend_id;
     backend_size_ = backend_size;
-    data_capacity_ = backend_size - 3 * kBackendHeaderSize;
+    data_capacity_ = backend_size - kBackendHeaderSize;
     data_id_ = -1;
-    priv_header_off_ = static_cast<size_t>(priv_header_ptr - ptr);
     flags_.Clear();
 
-    // data_ starts after shared header
-    data_ = shared_header_ptr + kBackendHeaderSize;
-
-    // Copy all header fields to shared header
     new (header_) MemoryBackendHeader();
-    (*header_) = (const MemoryBackendHeader&)*this;
+    (*header_) = (const MemoryBackendHeader &)*this;
 
-    // Mark this process as the owner of the backend
     SetOwner();
 
     return true;

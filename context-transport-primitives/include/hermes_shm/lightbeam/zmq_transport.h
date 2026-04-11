@@ -79,7 +79,7 @@ class ZmqFiredAction : public EventAction {
   void Run(const EventInfo &event) override {
     (void)event;
     int zmq_events = 0;
-    size_t opt_len = sizeof(zmq_events);
+    ::size_t opt_len = sizeof(zmq_events);  // LCOV_EXCL_LINE
     zmq_getsockopt(socket_, ZMQ_EVENTS, &zmq_events, &opt_len);
   }
 };
@@ -270,15 +270,17 @@ class ZeroMqTransport : public Transport {
       }
     }
 
-    std::ostringstream oss(std::ios::binary);
+    std::vector<char> meta_buf;
     {
-      cereal::BinaryOutputArchive ar(oss);
+      hshm::ipc::GlobalSerialize<std::vector<char>> ar(meta_buf);
       ar(meta);
+      ar.Finalize();
     }
-    std::string meta_str = oss.str();
+    std::string meta_str(meta_buf.begin(), meta_buf.end());
     size_t write_bulk_count = meta.send_bulks;
 
     // ROUTER mode: prepend identity frame + empty delimiter
+#if !HSHM_IS_GPU
     if (IsServer() && !meta.client_info_.identity_.empty()) {
       // Send identity frame
       int rc = zmq_send(socket_, meta.client_info_.identity_.data(),
@@ -295,7 +297,9 @@ class ZeroMqTransport : public Transport {
              zmq_strerror(zmq_errno()));
         return zmq_errno();
       }
-    } else if (IsClient()) {
+    } else
+#endif
+    if (IsClient()) {
       // DEALER mode: send empty delimiter frame
       int rc = zmq_send(socket_, "", 0, ZMQ_SNDMORE);
       if (rc == -1) {
@@ -349,8 +353,10 @@ class ZeroMqTransport : public Transport {
     ClientInfo info;
     info.rc = RecvMetadata(meta, ctx);
     if (info.rc != 0) return info;
+#if !HSHM_IS_GPU
     // Copy identity from recv into ClientInfo
     info.identity_ = meta.client_info_.identity_;
+#endif
     // Set up recv entries from send descriptors
     for (const auto& send_bulk : meta.send) {
       Bulk recv_bulk;
@@ -379,9 +385,11 @@ class ZeroMqTransport : public Transport {
         return err;
       }
       // Store identity in meta for targeted Send responses
+#if !HSHM_IS_GPU
       meta.client_info_.identity_ = std::string(
           static_cast<char*>(zmq_msg_data(&identity_msg)),
           zmq_msg_size(&identity_msg));
+#endif
       zmq_msg_close(&identity_msg);
 
       // Receive and discard empty delimiter frame
@@ -418,9 +426,9 @@ class ZeroMqTransport : public Transport {
 
     size_t msg_size = zmq_msg_size(&msg);
     try {
-      std::string meta_str(static_cast<char*>(zmq_msg_data(&msg)), msg_size);
-      std::istringstream iss(meta_str, std::ios::binary);
-      cereal::BinaryInputArchive ar(iss);
+      std::vector<char> meta_buf(static_cast<char*>(zmq_msg_data(&msg)),
+                                  static_cast<char*>(zmq_msg_data(&msg)) + msg_size);
+      hshm::ipc::GlobalDeserialize<std::vector<char>> ar(meta_buf);
       ar(meta);
     } catch (const std::exception& e) {
       HLOG(kFatal,

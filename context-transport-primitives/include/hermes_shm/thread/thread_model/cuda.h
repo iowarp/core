@@ -39,6 +39,7 @@
 #include <errno.h>
 
 #include "hermes_shm/introspect/system_info.h"
+#include "hermes_shm/types/atomic.h"
 #include "hermes_shm/util/errors.h"
 #include "thread_model.h"
 
@@ -61,9 +62,7 @@ class Cuda : public ThreadModel {
   /** Yield thread time slice */
   HSHM_CROSS_FUN
   void Yield() {
-#if HSHM_IS_GPU
-    __nanosleep(100);
-#endif
+    hshm::ipc::threadfence();
   }
 
   /** Create thread-local storage */

@@ -36,7 +36,19 @@
  */
 
 #include "chimaera/task.h"
+#include "chimaera/ipc_manager.h"
 
 namespace chi {
+
+void Task::DestroyRunCtx() {
+  if (host_run_ctx_) {
+    delete reinterpret_cast<RunContext *>(host_run_ctx_);
+    host_run_ctx_ = 0;
+  }
+}
+
+Task::~Task() {
+  DestroyRunCtx();
+}
 
 }  // namespace chi

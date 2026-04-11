@@ -47,6 +47,14 @@ __global__ void AllocateSumKernel(Container *c) {
   new (c) Sum();
 }
 
+// RunKernel is defined here (same TU as Sum) so that the device-side vtable
+// for Sum::Run is in the same linked device image as the call site. CUDA's
+// separate-compilation device linker does not reliably resolve virtual dispatch
+// when the vtable owning TU and the call-site TU are different.
+__global__ void RunKernel(Container *c, int *ret) {
+  *ret = c->Run();
+}
+
 extern "C" Container* Allocate() {
   Container *d_obj = nullptr;
   cudaError_t err = cudaMalloc(&d_obj, sizeof(Sum));
@@ -62,4 +70,25 @@ extern "C" Container* Allocate() {
     return nullptr;
   }
   return d_obj;
+}
+
+extern "C" int RunAndGetResult(Container *d_obj) {
+  int *d_ret = nullptr;
+  cudaError_t err = cudaMalloc(&d_ret, sizeof(int));
+  if (err != cudaSuccess) {
+    fprintf(stderr, "cudaMalloc d_ret failed: %s\n", cudaGetErrorString(err));
+    return -1;
+  }
+  cudaMemset(d_ret, 0, sizeof(int));
+  RunKernel<<<1, 1>>>(d_obj, d_ret);
+  err = cudaDeviceSynchronize();
+  if (err != cudaSuccess) {
+    fprintf(stderr, "RunKernel failed: %s\n", cudaGetErrorString(err));
+    cudaFree(d_ret);
+    return -1;
+  }
+  int result = 0;
+  cudaMemcpy(&result, d_ret, sizeof(int), cudaMemcpyDeviceToHost);
+  cudaFree(d_ret);
+  return result;
 }

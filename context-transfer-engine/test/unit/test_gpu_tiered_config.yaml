@@ -1,0 +1,46 @@
+# CTE GPU Unit Test: Two-tier storage (HBM 50MB + Pinned 400MB)
+networking:
+  port: 9413
+  neighborhood_size: 32
+
+runtime:
+  num_threads: 4
+  queue_depth: 1024
+  first_busy_wait: 10000
+  max_sleep: 50000
+
+gpu:
+  blocks: 1
+  threads_per_block: 32
+  queue_depth: 256
+
+compose:
+  - mod_name: chimaera_bdev
+    pool_name: "ram::chi_default_bdev"
+    pool_query: local
+    pool_id: "301.0"
+    bdev_type: ram
+    capacity: "512MB"
+
+  - mod_name: wrp_cte_core
+    pool_name: cte_main
+    pool_query: local
+    pool_id: 512.0
+    targets:
+      neighborhood: 1
+      default_target_timeout_ms: 30000
+      poll_period_ms: 5000
+    storage:
+      # HBM tier: 50MB (higher priority, fills first)
+      - path: "hbm::cte_hbm_tier"
+        bdev_type: "hbm"
+        capacity_limit: "50MB"
+        score: 1.0
+
+      # Pinned host DRAM tier: 400MB (lower priority, overflow)
+      - path: "pinned::cte_pinned_tier"
+        bdev_type: "pinned"
+        capacity_limit: "400MB"
+        score: 0.5
+    dpe:
+      dpe_type: "max_bw"

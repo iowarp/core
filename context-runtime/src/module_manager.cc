@@ -299,8 +299,8 @@ bool ModuleManager::IsSharedLibrary(const std::string &file_path) const {
 
 bool ModuleManager::HasModuleNamingConvention(
     const std::string &file_path) const {
-  // ChiMod libraries must contain "_runtime" in their name
-  return file_path.find("_runtime") != std::string::npos;
+  // ChiMod libraries must end with "_runtime.so" (not "_runtime_gpu.so")
+  return file_path.find("_runtime.so") != std::string::npos;
 }
 
 bool ModuleManager::ValidateChiMod(hshm::SharedLibrary &lib) const {

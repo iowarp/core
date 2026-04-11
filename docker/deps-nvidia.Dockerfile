@@ -47,6 +47,20 @@ RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86
     && rm -rf /var/lib/apt/lists/*
 
 #------------------------------------------------------------
+# Clang (CUDA-capable) Installation
+#------------------------------------------------------------
+
+# Install Clang 18 (Ubuntu 24.04 native) for compiling CUDA kernels via
+# clang -x cuda --cuda-gpu-arch=sm_XX.  Clang 18 uses the stable legacy
+# CUDA offload driver; clang 20+ has a new offload driver that segfaults
+# on some device code in this project.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends clang-18 \
+    && update-alternatives --install /usr/bin/clang   clang   /usr/bin/clang-18   100 \
+    && update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100 \
+    && rm -rf /var/lib/apt/lists/*
+
+#------------------------------------------------------------
 # CUDA Environment Configuration
 #------------------------------------------------------------
 
@@ -57,6 +71,38 @@ ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=/usr/local/lib:${CUDA_HOME}/lib64:${CUDA_HOME}/lib64/stubs:/usr/lib/x86_64-linux-gnu
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+#------------------------------------------------------------
+# NIXL (NVIDIA Inference Xfer Library) Installation
+#------------------------------------------------------------
+
+USER root
+
+# Install build dependencies for NIXL
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnuma-dev \
+    ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install meson and pybind11 in the iowarp venv
+RUN /bin/bash -c "source /home/iowarp/venv/bin/activate && \
+    pip install meson pybind11"
+
+# Build and install NIXL (POSIX backend only; GDS/UCX optional)
+RUN mkdir -p /tmp/nixl_src /tmp/nixl_build && \
+    git clone https://github.com/ai-dynamo/nixl.git --depth=1 /tmp/nixl_src && \
+    cd /tmp/nixl_build && \
+    /bin/bash -c "source /home/iowarp/venv/bin/activate && \
+        meson setup /tmp/nixl_src \
+            --prefix=/usr/local \
+            -Ddisable_gds_backend=true \
+            -Dbuild_tests=false \
+            -Dbuild_examples=false \
+            -Denable_plugins=POSIX \
+            -Drust=false && \
+        ninja -j$(nproc) && \
+        ninja install" && \
+    rm -rf /tmp/nixl_src /tmp/nixl_build
 
 #------------------------------------------------------------
 # User Configuration

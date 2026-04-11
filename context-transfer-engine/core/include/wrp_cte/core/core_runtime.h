@@ -180,11 +180,11 @@ public:
   void Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> orig_task,
                  const hipc::FullPtr<chi::Task>& replica_task) override;
   void DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) override;
-  void LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive &archive,
+  void LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive &archive,
                      hipc::FullPtr<chi::Task> task_ptr) override;
   hipc::FullPtr<chi::Task> LocalAllocLoadTask(chi::u32 method,
-                                               chi::LocalLoadTaskArchive &archive) override;
-  void LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive &archive,
+                                               chi::DefaultLoadArchive &archive) override;
+  void LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive &archive,
                      hipc::FullPtr<chi::Task> task_ptr) override;
 
 private:
@@ -370,7 +370,7 @@ private:
    * @param error_code Output: 0 for success, 1 for failure
    * Returns TaskResume for coroutine-based async operations
    */
-  chi::TaskResume ModifyExistingData(const std::vector<BlobBlock> &blocks,
+  chi::TaskResume ModifyExistingData(const chi::priv::vector<BlobBlock> &blocks,
                                      hipc::ShmPtr<> data, size_t data_size,
                                      size_t data_offset_in_blob, chi::u32 &error_code);
 
@@ -383,7 +383,7 @@ private:
    * @param error_code Output: 0 for success, 1 for failure
    * Returns TaskResume for coroutine-based async operations
    */
-  chi::TaskResume ReadData(const std::vector<BlobBlock> &blocks, hipc::ShmPtr<> data,
+  chi::TaskResume ReadData(const chi::priv::vector<BlobBlock> &blocks, hipc::ShmPtr<> data,
                            size_t data_size, size_t data_offset_in_blob, chi::u32 &error_code);
 
   /**

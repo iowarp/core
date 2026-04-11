@@ -151,7 +151,7 @@ add_executable(test_cae_comprehensive
 target_include_directories(test_cae_comprehensive
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/test  # For simple_test.h
+
 )
 
 target_link_libraries(test_cae_comprehensive
@@ -262,7 +262,7 @@ add_executable(test_export_data
 target_include_directories(test_export_data
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/test  # For simple_test.h
+
 )
 
 target_link_libraries(test_export_data

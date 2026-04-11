@@ -63,12 +63,26 @@ struct Mutex {
   HSHM_INLINE_CROSS_FUN
   void Lock(u32 owner) {
     min_u64 tkt = lock_.fetch_add(1);
+    u32 spin_count = 0;
     do {
       for (int i = 0; i < 1; ++i) {
-        if (tkt == head_.load()) {
+        // Use load_device() for cross-SM L2 visibility on GPU.
+        // Unlock() advances head_ via fetch_add (L2 atomic), but
+        // a volatile load() on a different SM reads stale L1 data.
+        if (tkt == head_.load_device()) {
           return;
         }
       }
+#if HSHM_IS_GPU
+      ++spin_count;
+      if (spin_count == 5000000) {
+        printf("[MUTEX] STUCK: tkt=%llu head=%llu this=%p\n",
+               (unsigned long long)tkt,
+               (unsigned long long)head_.load_device(),
+               (void*)this);
+        spin_count = 0;
+      }
+#endif
       HSHM_THREAD_MODEL->Yield();
     } while (true);
   }
@@ -76,7 +90,7 @@ struct Mutex {
   /** Try to acquire the lock */
   HSHM_INLINE_CROSS_FUN
   bool TryLock(u32 owner) {
-    if (try_lock_.fetch_add(1) > 0 || lock_.load() > head_.load()) {
+    if (try_lock_.fetch_add(1) > 0 || lock_.load_device() > head_.load_device()) {
       try_lock_.fetch_sub(1);
       return false;
     }

@@ -47,6 +47,11 @@ echo "Globus Materials Science Integration Test"
 echo "========================================="
 echo ""
 
+# Source saved tokens if not already set
+if [ -z "${GLOBUS_ACCESS_TOKEN}" ] && [ -f /tmp/globus_tokens.sh ]; then
+    source /tmp/globus_tokens.sh
+fi
+
 # Check for Globus access token
 if [ -z "${GLOBUS_ACCESS_TOKEN}" ]; then
     echo "ERROR: GLOBUS_ACCESS_TOKEN environment variable is not set"

@@ -40,27 +40,13 @@
 #include <type_traits>
 #include <vector>
 
-// Include cereal for serialization
-#include <cereal/archives/binary.hpp>
-#include <cereal/cereal.hpp>
+// Include GlobalSerialize for architecture-portable serialization
+#include <hermes_shm/data_structures/serialization/global_serialize.h>
 
 // Include Lightbeam for networking
 #include <hermes_shm/lightbeam/lightbeam.h>
 
 #include "chimaera/types.h"
-
-// Type trait to detect types convertible to std::string but not std::string itself
-// Used to handle hshm::priv::basic_string which has an implicit operator std::string()
-// that conflicts with cereal's serialization detection
-template <typename T, typename = void>
-struct is_string_convertible_non_std : std::false_type {};
-template <typename T>
-struct is_string_convertible_non_std<T,
-    std::enable_if_t<
-        std::is_convertible_v<T, std::string> &&
-        !std::is_same_v<std::decay_t<T>, std::string> &&
-        !std::is_base_of_v<std::string, std::decay_t<T>>
-    >> : std::true_type {};
 
 namespace chi {
 
@@ -181,164 +167,105 @@ public:
  * Inherits from NetTaskArchive to integrate with Lightbeam networking
  */
 class SaveTaskArchive : public NetTaskArchive {
+public:
+  using is_saving = std::true_type;
+  using is_loading = std::false_type;
+  using supports_range_ops = std::true_type;
 private:
-  friend class cereal::access;
-
-  std::ostringstream stream_;
-  std::unique_ptr<cereal::BinaryOutputArchive> archive_;
-  hshm::lbm::Transport *lbm_transport_; /**< Lightbeam transport for Expose calls */
+  std::vector<char> buffer_;
+  hshm::ipc::GlobalSerialize<std::vector<char>> serializer_;
+  hshm::lbm::Transport *lbm_transport_;
+  bool is_pod_ = false;
 
 public:
-  /**
-   * Constructor with message type and optional Lightbeam client
-   * @param msg_type The type of message (SerializeIn, SerializeOut, Heartbeat)
-   * @param lbm_transport Optional Lightbeam transport for bulk transfer Expose calls
-   */
+  void PushPod(bool val) { is_pod_ = val; }
+  void PopPod() { is_pod_ = false; }
+
   explicit SaveTaskArchive(MsgType msg_type,
                            hshm::lbm::Transport *lbm_transport = nullptr)
       : NetTaskArchive(msg_type),
-        archive_(std::make_unique<cereal::BinaryOutputArchive>(stream_)),
-        lbm_transport_(lbm_transport) {}
+        serializer_(buffer_),
+        lbm_transport_(lbm_transport) {
+    buffer_.reserve(256);
+  }
 
-  /**
-   * Move constructor
-   */
   SaveTaskArchive(SaveTaskArchive &&other) noexcept
       : NetTaskArchive(std::move(other)),
-        stream_(std::move(other.stream_)),
-        archive_(std::move(other.archive_)),
+        buffer_(std::move(other.buffer_)),
+        serializer_(buffer_, true),
         lbm_transport_(other.lbm_transport_) {
     other.lbm_transport_ = nullptr;
   }
 
-  /**
-   * Move assignment operator
-   */
-  SaveTaskArchive &operator=(SaveTaskArchive &&other) noexcept {
-    if (this != &other) {
-      NetTaskArchive::operator=(std::move(other));
-      stream_ = std::move(other.stream_);
-      archive_ = std::move(other.archive_);
-      lbm_transport_ = other.lbm_transport_;
-      other.lbm_transport_ = nullptr;
-    }
-    return *this;
-  }
-
-  /**
-   * Delete copy constructor and assignment
-   */
+  SaveTaskArchive &operator=(SaveTaskArchive &&other) noexcept = delete;
   SaveTaskArchive(const SaveTaskArchive &) = delete;
   SaveTaskArchive &operator=(const SaveTaskArchive &) = delete;
 
-  /**
-   * Serialize operator - handles Task-derived types specially
-   * For Task types, records task info and calls SerializeIn or SerializeOut
-   * @param value The value to serialize
-   * @return Reference to this archive
-   */
   template <typename T> SaveTaskArchive &operator<<(T &value) {
     if constexpr (std::is_base_of_v<Task, T>) {
-      // Record task information
       TaskInfo info{value.task_id_, value.pool_id_, value.method_};
       task_infos_.push_back(info);
-
-      // Serialize task based on mode
       if (msg_type_ == MsgType::kSerializeIn) {
         value.SerializeIn(*this);
       } else if (msg_type_ == MsgType::kSerializeOut) {
         value.SerializeOut(*this);
       }
-      // kHeartbeat has no task data to serialize
     } else {
-      (*archive_)(value);
+      serializer_ << value;
     }
     return *this;
   }
 
-  /**
-   * Bidirectional serialization - acts as output for this archive type
-   * @param args Values to serialize
-   */
   template <typename... Args> void operator()(Args &...args) {
-    (SerializeArg(args), ...);
+    if (is_pod_) {
+      range(args...);
+    } else {
+      (SerializeArg(args), ...);
+    }
   }
 
 private:
-  /**
-   * Helper to serialize individual arguments - handles Tasks specially
-   * @param arg The argument to serialize
-   */
   template <typename T> void SerializeArg(T &arg) {
     if constexpr (std::is_base_of_v<Task, std::remove_pointer_t<std::decay_t<T>>>) {
       *this << arg;
-    } else if constexpr (is_string_convertible_non_std<std::decay_t<T>>::value) {
-      std::string tmp(arg);
-      (*archive_)(tmp);
     } else {
-      (*archive_)(arg);
+      serializer_ << arg;
     }
   }
 
 public:
-  /**
-   * Bulk transfer support - adds bulk descriptor to send vector
-   * Uses Lightbeam's Expose if lbm_client is provided
-   * @param ptr Shared memory pointer to the data
-   * @param size Size of the data in bytes
-   * @param flags Transfer flags (BULK_XFER or BULK_EXPOSE)
-   */
   void bulk(hipc::ShmPtr<> ptr, size_t size, uint32_t flags);
 
-  /**
-   * Get serialized data as string
-   * @return The serialized data
-   */
-  std::string GetData() const { return stream_.str(); }
+  void write_binary(const char *data, size_t size) {
+    serializer_.write_binary(data, size);
+  }
 
-  /**
-   * Access underlying cereal archive
-   * @return Reference to the cereal archive
-   */
-  cereal::BinaryOutputArchive &GetArchive() { return *archive_; }
+  /** range() — per-field serialization (architecture-portable) */
+  template <typename... Args>
+  void range(Args &...args) {
+    serializer_.range(args...);
+  }
 
-  /**
-   * Set the Lightbeam client for bulk transfers
-   * @param lbm_client Pointer to the Lightbeam client
-   */
+  std::string GetData() {
+    serializer_.Finalize();
+    return std::string(buffer_.begin(), buffer_.end());
+  }
+
+  const std::vector<char> &GetBuffer() {
+    serializer_.Finalize();
+    return buffer_;
+  }
+
   void SetTransport(hshm::lbm::Transport *lbm_transport) { lbm_transport_ = lbm_transport; }
 
-  /**
-   * Serialize for LocalSerialize (SHM transport).
-   * Shadows LbmMeta::serialize so that the cereal stream data
-   * and task_infos_ are included when sending through the ring buffer.
-   */
   template <typename Ar>
   void serialize(Ar &ar) {
     ar(send, recv, send_bulks, recv_bulks);
     ar(task_infos_, msg_type_);
-    archive_.reset();
-    std::string stream_data = stream_.str();
-    ar(stream_data);
+    serializer_.Finalize();
+    ar(buffer_);
   }
 
-  /**
-   * Cereal save function - serializes archive contents
-   * @param ar The cereal archive
-   */
-  template <class Archive> void save(Archive &ar) const {
-    std::string stream_data = stream_.str();
-    ar(send, recv, task_infos_, msg_type_, stream_data);
-  }
-
-  /**
-   * Cereal load function - not applicable for output archive
-   * @param ar The cereal archive
-   */
-  template <class Archive> void load(Archive &ar) {
-    throw std::runtime_error(
-        "SaveTaskArchive::load should not be called - use LoadTaskArchive instead");
-  }
 };
 
 /**
@@ -347,98 +274,72 @@ public:
  * Inherits from NetTaskArchive to integrate with Lightbeam networking
  */
 class LoadTaskArchive : public NetTaskArchive {
+public:
+  using is_saving = std::false_type;
+  using is_loading = std::true_type;
+  using supports_range_ops = std::true_type;
 private:
-  friend class cereal::access;
+  std::vector<char> data_;
+  hshm::ipc::GlobalDeserialize<std::vector<char>> deserializer_;
+  size_t current_task_index_;
+  size_t current_bulk_index_;
+  hshm::lbm::Transport *lbm_transport_;
+  bool is_pod_ = false;
 
-  std::string data_;
-  std::unique_ptr<std::istringstream> stream_;
-  std::unique_ptr<cereal::BinaryInputArchive> archive_;
-  size_t current_task_index_;   /**< Index of current task being deserialized */
-  size_t current_bulk_index_;   /**< Index of current bulk transfer in recv vector */
-  hshm::lbm::Transport *lbm_transport_; /**< Lightbeam transport for output mode bulk transfers */
+  static const std::vector<char> &GetEmptyBuffer() {
+    static const std::vector<char> empty;
+    return empty;
+  }
 
 public:
-  /**
-   * Default constructor
-   */
   LoadTaskArchive()
       : NetTaskArchive(MsgType::kSerializeIn),
-        stream_(std::make_unique<std::istringstream>("")),
-        archive_(std::make_unique<cereal::BinaryInputArchive>(*stream_)),
+        deserializer_(GetEmptyBuffer()),
         current_task_index_(0),
         current_bulk_index_(0),
         lbm_transport_(nullptr) {}
 
-  /**
-   * Constructor from serialized data
-   * @param data The serialized data string
-   */
   explicit LoadTaskArchive(const std::string &data)
       : NetTaskArchive(MsgType::kSerializeIn),
-        data_(data),
-        stream_(std::make_unique<std::istringstream>(data_)),
-        archive_(std::make_unique<cereal::BinaryInputArchive>(*stream_)),
+        data_(data.begin(), data.end()),
+        deserializer_(data_),
         current_task_index_(0),
         current_bulk_index_(0),
         lbm_transport_(nullptr) {}
 
-  /**
-   * Constructor from const char* and size
-   * @param data Pointer to the serialized data
-   * @param size Size of the data in bytes
-   */
   LoadTaskArchive(const char *data, size_t size)
       : NetTaskArchive(MsgType::kSerializeIn),
-        data_(data, size),
-        stream_(std::make_unique<std::istringstream>(data_)),
-        archive_(std::make_unique<cereal::BinaryInputArchive>(*stream_)),
+        data_(data, data + size),
+        deserializer_(data_),
         current_task_index_(0),
         current_bulk_index_(0),
         lbm_transport_(nullptr) {}
 
-  /**
-   * Move constructor
-   */
+  explicit LoadTaskArchive(std::vector<char> &&data)
+      : NetTaskArchive(MsgType::kSerializeIn),
+        data_(std::move(data)),
+        deserializer_(data_),
+        current_task_index_(0),
+        current_bulk_index_(0),
+        lbm_transport_(nullptr) {}
+
   LoadTaskArchive(LoadTaskArchive &&other) noexcept
       : NetTaskArchive(std::move(other)),
         data_(std::move(other.data_)),
-        stream_(std::move(other.stream_)),
-        archive_(std::move(other.archive_)),
+        deserializer_(data_),
         current_task_index_(other.current_task_index_),
         current_bulk_index_(other.current_bulk_index_),
         lbm_transport_(other.lbm_transport_) {
     other.lbm_transport_ = nullptr;
   }
 
-  /**
-   * Move assignment operator
-   */
-  LoadTaskArchive &operator=(LoadTaskArchive &&other) noexcept {
-    if (this != &other) {
-      NetTaskArchive::operator=(std::move(other));
-      data_ = std::move(other.data_);
-      stream_ = std::move(other.stream_);
-      archive_ = std::move(other.archive_);
-      current_task_index_ = other.current_task_index_;
-      current_bulk_index_ = other.current_bulk_index_;
-      lbm_transport_ = other.lbm_transport_;
-      other.lbm_transport_ = nullptr;
-    }
-    return *this;
-  }
-
-  /**
-   * Delete copy constructor and assignment
-   */
+  LoadTaskArchive &operator=(LoadTaskArchive &&other) noexcept = delete;
   LoadTaskArchive(const LoadTaskArchive &) = delete;
   LoadTaskArchive &operator=(const LoadTaskArchive &) = delete;
 
-  /**
-   * Deserialize operator - handles Task-derived types specially
-   * For regular (non-pointer) types
-   * @param value The value to deserialize into
-   * @return Reference to this archive
-   */
+  void PushPod(bool val) { is_pod_ = val; }
+  void PopPod() { is_pod_ = false; }
+
   template <typename T> LoadTaskArchive &operator>>(T &value) {
     if constexpr (std::is_base_of_v<Task, T>) {
       if (msg_type_ == MsgType::kSerializeIn) {
@@ -446,151 +347,77 @@ public:
       } else if (msg_type_ == MsgType::kSerializeOut) {
         value.SerializeOut(*this);
       }
-      // kHeartbeat has no task data to deserialize
     } else {
-      (*archive_)(value);
+      deserializer_ >> value;
     }
     return *this;
   }
 
-  /**
-   * Deserialize task pointers
-   * @param value The task pointer to deserialize into
-   * @return Reference to this archive
-   */
   template <typename T> LoadTaskArchive &operator>>(T *&value) {
     if constexpr (std::is_base_of_v<Task, T>) {
-      // value must be pre-allocated by caller using CHI_IPC->NewTask
       if (msg_type_ == MsgType::kSerializeIn) {
         value->SerializeIn(*this);
       } else if (msg_type_ == MsgType::kSerializeOut) {
         value->SerializeOut(*this);
       }
-      // kHeartbeat has no task data to deserialize
       current_task_index_++;
     } else {
-      (*archive_)(value);
+      deserializer_ >> value;
     }
     return *this;
   }
 
-  /**
-   * Bidirectional serialization - acts as input for this archive type
-   * @param args Values to deserialize
-   */
   template <typename... Args> void operator()(Args &...args) {
-    (DeserializeArg(args), ...);
+    if (is_pod_) {
+      range(args...);
+    } else {
+      (DeserializeArg(args), ...);
+    }
   }
 
 private:
-  /**
-   * Helper to deserialize individual arguments - handles Tasks specially
-   * @param arg The argument to deserialize
-   */
   template <typename T> void DeserializeArg(T &arg) {
     if constexpr (std::is_base_of_v<Task, std::remove_pointer_t<std::decay_t<T>>>) {
       *this >> arg;
-    } else if constexpr (is_string_convertible_non_std<std::decay_t<T>>::value) {
-      std::string tmp;
-      (*archive_)(tmp);
-      arg = tmp;
     } else {
-      (*archive_)(arg);
+      deserializer_ >> arg;
     }
   }
 
 public:
-  /**
-   * Bulk transfer support - handles both input and output modes
-   * For SerializeIn mode: gets pointer from recv vector at current index
-   * For SerializeOut mode: exposes pointer using lbm_server and adds to recv
-   * @param ptr Reference to shared memory pointer (output parameter for SerializeIn)
-   * @param size Size of the data in bytes
-   * @param flags Transfer flags (BULK_XFER or BULK_EXPOSE)
-   */
   void bulk(hipc::ShmPtr<> &ptr, size_t size, uint32_t flags);
 
-  /**
-   * Get current task info
-   * @return Reference to the current TaskInfo
-   */
   const TaskInfo &GetCurrentTaskInfo() const {
     return task_infos_[current_task_index_];
   }
 
-  /**
-   * Reset task index for iteration
-   */
   void ResetTaskIndex() { current_task_index_ = 0; }
-
-  /**
-   * Reset bulk index for iteration
-   */
   void ResetBulkIndex() { current_bulk_index_ = 0; }
 
-  /**
-   * Set Lightbeam server for output mode bulk transfers
-   * @param lbm_server Pointer to the Lightbeam server
-   */
   void SetTransport(hshm::lbm::Transport *lbm_transport) { lbm_transport_ = lbm_transport; }
 
-  /**
-   * Access underlying cereal archive
-   * @return Reference to the cereal archive
-   */
-  cereal::BinaryInputArchive &GetArchive() { return *archive_; }
+  void read_binary(char *data, size_t size) {
+    deserializer_.read_binary(data, size);
+  }
 
-  /**
-   * Deserialize for LocalDeserialize (SHM transport).
-   * Shadows LbmMeta::serialize so that the cereal stream data
-   * and task_infos_ are recovered from the ring buffer.
-   */
+  /** range() — per-field deserialization (architecture-portable) */
+  template <typename... Args>
+  void range(Args &...args) {
+    deserializer_.range(args...);
+  }
+
   template <typename Ar>
   void serialize(Ar &ar) {
     ar(send, recv, send_bulks, recv_bulks);
     ar(task_infos_, msg_type_);
-    std::string stream_data;
-    ar(stream_data);
-    data_ = std::move(stream_data);
-    stream_ = std::make_unique<std::istringstream>(data_);
-    archive_ = std::make_unique<cereal::BinaryInputArchive>(*stream_);
+    ar(data_);
+    // Reinitialize deserializer with new data
+    new (&deserializer_)
+        hshm::ipc::GlobalDeserialize<std::vector<char>>(data_);
   }
 
-  /**
-   * Cereal save function - not applicable for input archive
-   * @param ar The cereal archive
-   */
-  template <class Archive> void save(Archive &ar) const {
-    throw std::runtime_error(
-        "LoadTaskArchive::save should not be called - use SaveTaskArchive instead");
-  }
-
-  /**
-   * Cereal load function - deserializes archive contents
-   * @param ar The cereal archive
-   */
-  template <class Archive> void load(Archive &ar) {
-    std::string stream_data;
-    ar(send, recv, task_infos_, msg_type_, stream_data);
-
-    // Reinitialize stream with deserialized data
-    data_ = stream_data;
-    stream_ = std::make_unique<std::istringstream>(data_);
-    archive_ = std::make_unique<cereal::BinaryInputArchive>(*stream_);
-  }
 };
 
 } // namespace chi
-
-// Cereal specialization to disable inherited serialize function from LbmMeta
-namespace cereal {
-template <class Archive>
-struct specialize<Archive, chi::SaveTaskArchive,
-                  cereal::specialization::member_load_save> {};
-
-template <class Archive>
-struct specialize<Archive, chi::LoadTaskArchive,
-                  cereal::specialization::member_load_save> {};
-} // namespace cereal
 
 #endif // CHIMAERA_INCLUDE_CHIMAERA_TASK_ARCHIVES_H_

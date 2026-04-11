@@ -4,10 +4,6 @@ cmake_minimum_required(VERSION 3.10)
 # Restart test executable (two-mode: --put-blobs / --verify-blobs)
 add_executable(test_restart test_restart.cc)
 
-target_include_directories(test_restart PRIVATE
-  ${CMAKE_SOURCE_DIR}/test
-)
-
 target_link_libraries(test_restart
     wrp_cte_core_runtime
     wrp_cte_core_client

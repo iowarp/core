@@ -42,14 +42,6 @@
 
 namespace wrp_cte::uvm {
 
-/** Kernel to fill a GPU memory region with a repeated int value */
-__global__ void fillKernel(int *ptr, int value, size_t count) {
-  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx < count) {
-    ptr[idx] = value;
-  }
-}
-
 GpuVirtualMemoryManager::GpuVirtualMemoryManager() = default;
 
 GpuVirtualMemoryManager::~GpuVirtualMemoryManager() { destroy(); }
@@ -184,6 +176,9 @@ void GpuVirtualMemoryManager::destroy() {
   va_size_ = 0;
   total_pages_ = 0;
   page_table_.clear();
+
+  // Release our reference to the primary context
+  cuDevicePrimaryCtxRelease(device_);
 }
 
 size_t GpuVirtualMemoryManager::getMappedPageCount() const {
@@ -278,13 +273,13 @@ CUresult GpuVirtualMemoryManager::touchPage(size_t page_index) {
     if (use_cte_ && entry.evicted_to_host) {
       // Restore from CTE: AsyncGetBlob → SHM → cudaMemcpy → GPU
       std::string blob_name = "page_" + std::to_string(page_index);
-      hipc::FullPtr<char> shm = CHI_IPC->AllocateBuffer(page_size_);
+      hipc::FullPtr<char> shm = CHI_CPU_IPC->AllocateBuffer(page_size_);
       auto future = WRP_CTE_CLIENT->AsyncGetBlob(
           cte_tag_->GetTagId(), blob_name, 0, page_size_, 0, shm.shm_);
       future.Wait();
       cudaMemcpy((void *)page_addr, shm.ptr_, page_size_,
                  cudaMemcpyHostToDevice);
-      CHI_IPC->FreeBuffer(shm);
+      CHI_CPU_IPC->FreeBuffer(shm);
       entry.evicted_to_host = false;
       restored = true;
     }
@@ -300,12 +295,19 @@ CUresult GpuVirtualMemoryManager::touchPage(size_t page_index) {
         host_backing_store_.erase(it);
         entry.evicted_to_host = false;
       } else {
-        // Fresh page: fill with configured value
+        // Fresh page: fill with configured value using driver API memset.
+        // cuMemsetD32 uses the same driver API context as cuMemMap/cuMemSetAccess,
+        // avoiding the runtime/driver context mismatch that causes fillKernel
+        // writes to appear as 0 when read back (A100 / Polaris).
         size_t num_ints = page_size_ / sizeof(int);
-        int threads = 256;
-        int blocks = (int)((num_ints + threads - 1) / threads);
-        fillKernel<<<blocks, threads>>>((int *)page_addr, fill_value_, num_ints);
-        cudaDeviceSynchronize();
+        CUresult fill_res = cuMemsetD32(page_addr, (unsigned int)fill_value_, num_ints);
+        if (fill_res != CUDA_SUCCESS) {
+          fprintf(stderr,
+                  "GpuVmm: cuMemsetD32 failed for page %zu: %d "
+                  "(page_addr=0x%llx, fill_value=%d)\n",
+                  page_index, fill_res,
+                  (unsigned long long)page_addr, fill_value_);
+        }
         entry.evicted_to_host = false;
       }
     }
@@ -340,14 +342,14 @@ CUresult GpuVirtualMemoryManager::touchPageAsync(size_t page_index) {
   if (use_cte_ && entry.evicted_to_host) {
     // Restore from CTE (sync get, then async H2D)
     std::string blob_name = "page_" + std::to_string(page_index);
-    hipc::FullPtr<char> shm = CHI_IPC->AllocateBuffer(page_size_);
+    hipc::FullPtr<char> shm = CHI_CPU_IPC->AllocateBuffer(page_size_);
     auto future = WRP_CTE_CLIENT->AsyncGetBlob(
         cte_tag_->GetTagId(), blob_name, 0, page_size_, 0, shm.shm_);
     future.Wait();
     cudaMemcpyAsync((void *)page_addr, shm.ptr_, page_size_,
                     cudaMemcpyHostToDevice, transfer_stream_);
     // SHM freed after transfer completes (caller must syncTransfer)
-    CHI_IPC->FreeBuffer(shm);
+    CHI_CPU_IPC->FreeBuffer(shm);
     entry.evicted_to_host = false;
     restored = true;
   }
@@ -362,12 +364,17 @@ CUresult GpuVirtualMemoryManager::touchPageAsync(size_t page_index) {
       // Note: host buffer freed after sync (kept alive for async safety)
       entry.evicted_to_host = false;
     } else {
-      // Async fill
+      // Async fill using driver API for context consistency with cuMemMap
       size_t num_ints = page_size_ / sizeof(int);
-      int threads = 256;
-      int blocks = (int)((num_ints + threads - 1) / threads);
-      fillKernel<<<blocks, threads, 0, transfer_stream_>>>(
-          (int *)page_addr, fill_value_, num_ints);
+      CUresult fill_res = cuMemsetD32Async(page_addr, (unsigned int)fill_value_,
+                                           num_ints, transfer_stream_);
+      if (fill_res != CUDA_SUCCESS) {
+        fprintf(stderr,
+                "GpuVmm: cuMemsetD32Async failed for page %zu: %d "
+                "(page_addr=0x%llx, fill_value=%d)\n",
+                page_index, fill_res,
+                (unsigned long long)page_addr, fill_value_);
+      }
       entry.evicted_to_host = false;
     }
   }
@@ -435,11 +442,11 @@ CUresult GpuVirtualMemoryManager::evictPage(size_t page_index) {
   if (use_cte_) {
     // Copy pinned host → SHM → AsyncPutBlob → Wait → free both
     std::string blob_name = "page_" + std::to_string(page_index);
-    hipc::FullPtr<char> shm = CHI_IPC->AllocateBuffer(page_size_);
+    hipc::FullPtr<char> shm = CHI_CPU_IPC->AllocateBuffer(page_size_);
     memcpy(shm.ptr_, host_buf, page_size_);
     auto future = cte_tag_->AsyncPutBlob(blob_name, shm.shm_, page_size_);
     future.Wait();
-    CHI_IPC->FreeBuffer(shm);
+    CHI_CPU_IPC->FreeBuffer(shm);
     cudaFreeHost(host_buf);
   } else
 #endif
@@ -508,11 +515,11 @@ CUresult GpuVirtualMemoryManager::evictPageAsync(size_t page_index) {
 #ifdef WRP_CTE_AVAILABLE
   if (use_cte_) {
     std::string blob_name = "page_" + std::to_string(page_index);
-    hipc::FullPtr<char> shm = CHI_IPC->AllocateBuffer(page_size_);
+    hipc::FullPtr<char> shm = CHI_CPU_IPC->AllocateBuffer(page_size_);
     memcpy(shm.ptr_, host_buf, page_size_);
     auto future = cte_tag_->AsyncPutBlob(blob_name, shm.shm_, page_size_);
     future.Wait();
-    CHI_IPC->FreeBuffer(shm);
+    CHI_CPU_IPC->FreeBuffer(shm);
     cudaFreeHost(host_buf);
   } else
 #endif

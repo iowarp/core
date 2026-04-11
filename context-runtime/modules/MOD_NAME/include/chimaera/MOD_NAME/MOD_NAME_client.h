@@ -51,10 +51,10 @@ namespace chimaera::MOD_NAME {
 class Client : public chi::ContainerClient {
  public:
   /** Default constructor */
-  Client() = default;
+  HSHM_CROSS_FUN Client() = default;
 
   /** Constructor with pool ID */
-  explicit Client(const chi::PoolId& pool_id) { Init(pool_id); }
+  HSHM_CROSS_FUN explicit Client(const chi::PoolId& pool_id) { Init(pool_id); }
 
   /**
    * Create the container (asynchronous)
@@ -192,13 +192,28 @@ class Client : public chi::ContainerClient {
    * @param test_value Test value to verify correct execution
    * @return Future for the GpuSubmitTask
    */
+  /**
+   * Submit SubtaskTest task (asynchronous)
+   * GPU implementation co_awaits GpuSubmit on itself to test coroutine yielding.
+   */
+  chi::Future<SubtaskTestTask> AsyncSubtaskTest(const chi::PoolQuery& pool_query,
+                                                chi::u32 test_value,
+                                                chi::u32 num_subtasks = 1) {
+    auto* ipc_manager = CHI_IPC;
+    auto task = ipc_manager->NewTask<SubtaskTestTask>(
+        chi::CreateTaskId(), pool_id_, pool_query, test_value, num_subtasks);
+    return ipc_manager->Send(task);
+  }
+
   chi::Future<GpuSubmitTask> AsyncGpuSubmit(const chi::PoolQuery& pool_query,
                                             chi::u32 gpu_id,
-                                            chi::u32 test_value) {
+                                            chi::u32 test_value,
+                                            chi::u64 counter_addr = 0) {
     auto* ipc_manager = CHI_IPC;
 
     auto task = ipc_manager->NewTask<GpuSubmitTask>(
-        chi::CreateTaskId(), pool_id_, pool_query, gpu_id, test_value);
+        chi::CreateTaskId(), pool_id_, pool_query, gpu_id, test_value,
+        counter_addr);
 
     return ipc_manager->Send(task);
   }

@@ -11,7 +11,6 @@ add_executable(test_fuse_adapter
 )
 
 target_include_directories(test_fuse_adapter PRIVATE
-    ${CMAKE_SOURCE_DIR}/test
     ${WRP_CTE_ROOT}
 )
 

@@ -14,7 +14,7 @@
 services:
   # Node 1 - Test coordinator that runs the test binary
   iowarp-node1:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     init: true
     stop_grace_period: 5s
     security_opt:
@@ -24,19 +24,19 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-cluster:
-        ipv4_address: 172.25.0.10
+        ipv4_address: 172.21.0.10
     volumes:
       # Mount the entire workspace for coverage support
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
     environment:
       - NODE_ID=1
-      - NODE_IP=172.25.0.10
+      - NODE_IP=172.21.0.10
       - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/distributed/wrp_conf.yaml
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/distributed/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -51,7 +51,7 @@ services:
 
   # Node 2
   iowarp-node2:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     init: true
     stop_grace_period: 5s
     security_opt:
@@ -61,18 +61,18 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-cluster:
-        ipv4_address: 172.25.0.11
+        ipv4_address: 172.21.0.11
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
     environment:
       - NODE_ID=2
-      - NODE_IP=172.25.0.11
+      - NODE_IP=172.21.0.11
       - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/distributed/wrp_conf.yaml
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/distributed/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -84,7 +84,7 @@ services:
 
   # Node 3
   iowarp-node3:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     init: true
     stop_grace_period: 5s
     security_opt:
@@ -94,18 +94,18 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-cluster:
-        ipv4_address: 172.25.0.12
+        ipv4_address: 172.21.0.12
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
     environment:
       - NODE_ID=3
-      - NODE_IP=172.25.0.12
+      - NODE_IP=172.21.0.12
       - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/distributed/wrp_conf.yaml
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/distributed/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -117,7 +117,7 @@ services:
 
   # Node 4
   iowarp-node4:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     init: true
     stop_grace_period: 5s
     security_opt:
@@ -127,18 +127,18 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-cluster:
-        ipv4_address: 172.25.0.13
+        ipv4_address: 172.21.0.13
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
     environment:
       - NODE_ID=4
-      - NODE_IP=172.25.0.13
+      - NODE_IP=172.21.0.13
       - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/distributed/wrp_conf.yaml
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/distributed/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -153,4 +153,4 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.25.0.0/16
+        - subnet: 172.21.0.0/24

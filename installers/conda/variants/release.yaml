@@ -1,7 +1,7 @@
 # IOWarp Core - Release Variant
 # Standard release build using CMakePresets.json "release" preset
 #
-# Usage: rattler-build build --recipe recipe/ --variant-config variants/release.yaml
+# Usage: IOWARP_PRESET=release conda build installers/conda/ -c conda-forge
 
 preset:
   - release

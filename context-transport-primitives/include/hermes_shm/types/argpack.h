@@ -55,7 +55,7 @@ struct ArgPackRecur {
   ArgPackRecur<idx + 1, Args...> recur_; /**< Remaining args */
 
   /** Default constructor */
-  HSHM_INLINE_CROSS_FUN ArgPackRecur() = default;
+  HSHM_INLINE_CROSS_FUN ArgPackRecur() {}
 
   /** Constructor. Rvalue reference. */
   HSHM_INLINE_CROSS_FUN explicit ArgPackRecur(T arg, Args &&...args)
@@ -76,7 +76,7 @@ struct ArgPackRecur {
 template <size_t idx>
 struct ArgPackRecur<idx, EndTemplateRecurrence> {
   /** Default constructor */
-  HSHM_INLINE_CROSS_FUN ArgPackRecur() = default;
+  HSHM_INLINE_CROSS_FUN ArgPackRecur() {}
 
   /** Forward an rvalue reference (only if argpack) */
   template <size_t i>

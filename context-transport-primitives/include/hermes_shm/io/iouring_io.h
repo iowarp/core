@@ -68,7 +68,9 @@ class IoUringAsyncIO : public AsyncIO {
     int base_flags = flags & ~O_DIRECT;
 
     regular_fd_ = open(path.c_str(), base_flags, mode);
-    if (regular_fd_ < 0) return false;
+    if (regular_fd_ < 0) {
+      return false;
+    }
 
     direct_fd_ = open(path.c_str(), base_flags | O_DIRECT, mode);
 

@@ -62,36 +62,23 @@ class ArrayBackend : public MemoryBackend {
    * @param region Pointer to the BEGINNING of the array
    * @return true on success
    *
-   * Memory layout in the region:
-   * - Bytes 0 to kBackendHeaderSize-1: Private header
-   * - Bytes kBackendHeaderSize to 2*kBackendHeaderSize-1: Shared header
-   * - Bytes 2*kBackendHeaderSize onwards: Custom header and data
+   * The entire region is available as data.
    */
   HSHM_CROSS_FUN
   bool shm_init(const MemoryBackendId &backend_id, size_t size, char *region) {
-    // Headers are at the beginning of the region
     region_ = region;
-    char *priv_header_ptr = region + kBackendHeaderSize;
-    char *shared_header_ptr = priv_header_ptr + kBackendHeaderSize;
+    header_ = reinterpret_cast<MemoryBackendHeader *>(region_);
+    data_ = region_ + kBackendHeaderSize;
 
-    // Store backend metadata header
-    header_ = reinterpret_cast<MemoryBackendHeader *>(shared_header_ptr +
-                                                      kBackendHeaderSize);
-    data_capacity_ = size - 3 * kBackendHeaderSize;
     id_ = backend_id;
     backend_size_ = size;
+    data_capacity_ = size - kBackendHeaderSize;
     data_id_ = -1;
-    priv_header_off_ = static_cast<size_t>(priv_header_ptr - region);
     flags_.Clear();
 
-    // data_ points to start of data region (after shared header)
-    data_ = shared_header_ptr + kBackendHeaderSize;
-
-    // Copy all header fields to shared header
     new (header_) MemoryBackendHeader();
-    (*header_) = (const MemoryBackendHeader&)*this;
+    (*header_) = (const MemoryBackendHeader &)*this;
 
-    // Mark this process as the owner of the backend
     SetOwner();
 
     return true;

@@ -185,8 +185,8 @@ class GpuVirtualMemoryManager {
   cudaStream_t compute_stream_ = nullptr;
 
   // CTE backing store (optional, compile-time gated)
-  bool use_cte_ = false;
 #ifdef WRP_CTE_AVAILABLE
+  bool use_cte_ = false;
   std::unique_ptr<wrp_cte::core::Tag> cte_tag_;
 #endif
 

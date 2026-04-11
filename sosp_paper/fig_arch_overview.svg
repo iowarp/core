@@ -1,0 +1,310 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 680" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#555"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#dc2626"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrow-purple-rev" markerWidth="10" markerHeight="7" refX="1" refY="3.5" orient="auto">
+      <polygon points="10 0, 0 3.5, 10 7" fill="#7c3aed"/>
+    </marker>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="104%">
+      <feDropShadow dx="1" dy="1" stdDeviation="2" flood-opacity="0.1"/>
+    </filter>
+  </defs>
+
+  <!-- =============== GPU RUNTIME BOX =============== -->
+  <rect x="20" y="50" width="680" height="360" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="2" filter="url(#shadow)"/>
+  <text x="360" y="42" text-anchor="middle" font-size="15" font-weight="bold" fill="#1e40af">GPU Runtime</text>
+
+  <!-- Warp Group 0 -->
+  <rect x="35" y="70" width="280" height="155" rx="5" fill="#dbeafe" stroke="#93c5fd" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="45" y="88" font-size="11" fill="#1e40af" font-weight="600">Warp Group 0</text>
+
+  <!-- Workers row -->
+  <g transform="translate(45, 98)">
+    <!-- W0 -->
+    <rect x="0" y="0" width="48" height="32" rx="4" fill="#bfdbfe" stroke="#60a5fa" stroke-width="1"/>
+    <text x="24" y="20" text-anchor="middle" font-size="10" fill="#1e3a8a">W&#x2080;</text>
+    <rect x="4" y="36" width="40" height="18" rx="2" fill="#fed7aa" stroke="#fb923c" stroke-width="0.8"/>
+    <text x="24" y="49" text-anchor="middle" font-size="8" fill="#9a3412">Queue</text>
+    <text x="24" y="68" text-anchor="middle" font-size="8" fill="#3b82f6" font-style="italic">coro</text>
+
+    <!-- W1 -->
+    <rect x="58" y="0" width="48" height="32" rx="4" fill="#bfdbfe" stroke="#60a5fa" stroke-width="1"/>
+    <text x="82" y="20" text-anchor="middle" font-size="10" fill="#1e3a8a">W&#x2081;</text>
+    <rect x="62" y="36" width="40" height="18" rx="2" fill="#fed7aa" stroke="#fb923c" stroke-width="0.8"/>
+    <text x="82" y="49" text-anchor="middle" font-size="8" fill="#9a3412">Queue</text>
+    <text x="82" y="68" text-anchor="middle" font-size="8" fill="#3b82f6" font-style="italic">coro</text>
+
+    <!-- W2 -->
+    <rect x="116" y="0" width="48" height="32" rx="4" fill="#bfdbfe" stroke="#60a5fa" stroke-width="1"/>
+    <text x="140" y="20" text-anchor="middle" font-size="10" fill="#1e3a8a">W&#x2082;</text>
+    <rect x="120" y="36" width="40" height="18" rx="2" fill="#fed7aa" stroke="#fb923c" stroke-width="0.8"/>
+    <text x="140" y="49" text-anchor="middle" font-size="8" fill="#9a3412">Queue</text>
+    <text x="140" y="68" text-anchor="middle" font-size="8" fill="#3b82f6" font-style="italic">coro</text>
+
+    <!-- dots -->
+    <text x="180" y="18" font-size="14" fill="#6b7280">...</text>
+
+    <!-- WG -->
+    <rect x="200" y="0" width="48" height="32" rx="4" fill="#bfdbfe" stroke="#60a5fa" stroke-width="1"/>
+    <text x="224" y="20" text-anchor="middle" font-size="10" fill="#1e3a8a">W&#x1d4a2;</text>
+    <rect x="204" y="36" width="40" height="18" rx="2" fill="#fed7aa" stroke="#fb923c" stroke-width="0.8"/>
+    <text x="224" y="49" text-anchor="middle" font-size="8" fill="#9a3412">Queue</text>
+    <text x="224" y="68" text-anchor="middle" font-size="8" fill="#3b82f6" font-style="italic">coro</text>
+  </g>
+
+  <!-- Warp Group 1 -->
+  <rect x="330" y="70" width="220" height="155" rx="5" fill="#dbeafe" stroke="#93c5fd" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="340" y="88" font-size="11" fill="#1e40af" font-weight="600">Warp Group 1</text>
+
+  <g transform="translate(340, 98)">
+    <rect x="0" y="0" width="48" height="32" rx="4" fill="#bfdbfe" stroke="#60a5fa" stroke-width="1"/>
+    <text x="24" y="20" text-anchor="middle" font-size="10" fill="#1e3a8a">W&#x2080;</text>
+    <rect x="4" y="36" width="40" height="18" rx="2" fill="#fed7aa" stroke="#fb923c" stroke-width="0.8"/>
+    <text x="24" y="49" text-anchor="middle" font-size="8" fill="#9a3412">Queue</text>
+    <text x="24" y="68" text-anchor="middle" font-size="8" fill="#3b82f6" font-style="italic">coro</text>
+
+    <rect x="58" y="0" width="48" height="32" rx="4" fill="#bfdbfe" stroke="#60a5fa" stroke-width="1"/>
+    <text x="82" y="20" text-anchor="middle" font-size="10" fill="#1e3a8a">W&#x2081;</text>
+    <rect x="62" y="36" width="40" height="18" rx="2" fill="#fed7aa" stroke="#fb923c" stroke-width="0.8"/>
+    <text x="82" y="49" text-anchor="middle" font-size="8" fill="#9a3412">Queue</text>
+    <text x="82" y="68" text-anchor="middle" font-size="8" fill="#3b82f6" font-style="italic">coro</text>
+
+    <text x="122" y="18" font-size="14" fill="#6b7280">...</text>
+
+    <rect x="142" y="0" width="48" height="32" rx="4" fill="#bfdbfe" stroke="#60a5fa" stroke-width="1"/>
+    <text x="166" y="20" text-anchor="middle" font-size="10" fill="#1e3a8a">W&#x1d4a2;</text>
+    <rect x="146" y="36" width="40" height="18" rx="2" fill="#fed7aa" stroke="#fb923c" stroke-width="0.8"/>
+    <text x="166" y="49" text-anchor="middle" font-size="8" fill="#9a3412">Queue</text>
+    <text x="166" y="68" text-anchor="middle" font-size="8" fill="#3b82f6" font-style="italic">coro</text>
+  </g>
+
+  <!-- More groups dots -->
+  <text x="565" y="140" font-size="18" fill="#6b7280" font-weight="bold">...</text>
+
+  <!-- =============== LOAD TABLES =============== -->
+  <rect x="40" y="240" width="210" height="28" rx="4" fill="#fef9c3" stroke="#eab308" stroke-width="1"/>
+  <text x="145" y="258" text-anchor="middle" font-size="9" fill="#854d0e" font-family="monospace">warp_group_load_[G]</text>
+
+  <rect x="260" y="240" width="210" height="28" rx="4" fill="#fef9c3" stroke="#eab308" stroke-width="1"/>
+  <text x="365" y="258" text-anchor="middle" font-size="9" fill="#854d0e" font-family="monospace">warp_load_[G][G]</text>
+
+  <text x="40" y="237" font-size="9" fill="#a16207" font-weight="600">Load Tracking (Global Memory)</text>
+
+  <!-- =============== MODULES ROW =============== -->
+  <text x="40" y="290" font-size="9" fill="#166534" font-weight="600">Modules</text>
+  <rect x="40" y="296" width="90" height="30" rx="4" fill="#dcfce7" stroke="#4ade80" stroke-width="1"/>
+  <text x="85" y="315" text-anchor="middle" font-size="11" fill="#166534">AggroFS</text>
+
+  <rect x="140" y="296" width="72" height="30" rx="4" fill="#dcfce7" stroke="#4ade80" stroke-width="1"/>
+  <text x="176" y="315" text-anchor="middle" font-size="11" fill="#166534">BDEV</text>
+
+  <rect x="222" y="296" width="72" height="30" rx="4" fill="#dcfce7" stroke="#4ade80" stroke-width="1"/>
+  <text x="258" y="315" text-anchor="middle" font-size="11" fill="#166534">NVMe</text>
+
+  <text x="306" y="315" font-size="14" fill="#6b7280">...</text>
+
+  <!-- Fn pointer table annotation -->
+  <rect x="345" y="296" width="140" height="30" rx="4" fill="#f0fdf4" stroke="#86efac" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="415" y="309" text-anchor="middle" font-size="8" fill="#166534">Inline fn-ptr table</text>
+  <text x="415" y="320" text-anchor="middle" font-size="8" fill="#166534">(no vtable indirection)</text>
+
+  <!-- Group queue annotation -->
+  <rect x="500" y="240" width="180" height="28" rx="4" fill="#fed7aa" stroke="#fb923c" stroke-width="1"/>
+  <text x="590" y="258" text-anchor="middle" font-size="9" fill="#9a3412" font-family="monospace">warp_group_queue_[G]</text>
+
+  <!-- =============== WARP DETAIL INSET =============== -->
+  <rect x="600" y="70" width="90" height="155" rx="6" fill="white" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="645" y="86" text-anchor="middle" font-size="9" font-weight="bold" fill="#374151">Warp Detail</text>
+  <text x="645" y="97" text-anchor="middle" font-size="8" fill="#6b7280">(32 SIMT lanes)</text>
+
+  <!-- Lane grid 4x8 -->
+  <g transform="translate(610, 104)">
+    <rect x="0" y="0" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <text x="4.5" y="7" text-anchor="middle" font-size="5" fill="#1e3a8a">0</text>
+    <rect x="11" y="0" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <text x="15.5" y="7" text-anchor="middle" font-size="5" fill="#1e3a8a">1</text>
+    <rect x="22" y="0" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <text x="26.5" y="7" text-anchor="middle" font-size="5" fill="#1e3a8a">2</text>
+    <rect x="33" y="0" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <text x="37.5" y="7" text-anchor="middle" font-size="5" fill="#1e3a8a">3</text>
+    <rect x="44" y="0" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <text x="48.5" y="7" text-anchor="middle" font-size="5" fill="#1e3a8a">4</text>
+    <rect x="55" y="0" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <text x="59.5" y="7" text-anchor="middle" font-size="5" fill="#1e3a8a">5</text>
+    <rect x="66" y="0" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <text x="70.5" y="7" text-anchor="middle" font-size="5" fill="#1e3a8a">6</text>
+
+    <rect x="0" y="11" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="11" y="11" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="22" y="11" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="33" y="11" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="44" y="11" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="55" y="11" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="66" y="11" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+
+    <rect x="0" y="22" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="11" y="22" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="22" y="22" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="33" y="22" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="44" y="22" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="55" y="22" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="66" y="22" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+
+    <rect x="0" y="33" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="11" y="33" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="22" y="33" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="33" y="33" width="9" height="9" rx="1" fill="#93c5fd" stroke="#3b82f6" stroke-width="0.5"/>
+    <rect x="44" y="33" width="9" height="9" rx="1" fill="#bfdbfe" stroke="#60a5fa" stroke-width="0.5"/>
+    <rect x="55" y="33" width="9" height="9" rx="1" fill="#bfdbfe" stroke="#60a5fa" stroke-width="0.5"/>
+    <rect x="66" y="33" width="9" height="9" rx="1" fill="#bfdbfe" stroke="#60a5fa" stroke-width="0.5"/>
+
+    <!-- Row of darker ones = lane 0 scheduler -->
+    <rect x="-4" y="-3" width="3" height="45" rx="1" fill="#3b82f6"/>
+    <text x="-2.5" y="23" text-anchor="middle" font-size="4" fill="white" transform="rotate(-90, -2.5, 23)">Lane 0</text>
+  </g>
+
+  <!-- Coroutine stack in warp detail -->
+  <rect x="608" y="155" width="75" height="20" rx="3" fill="#dbeafe" stroke="#60a5fa" stroke-width="0.8"/>
+  <text x="645" y="168" text-anchor="middle" font-size="7" fill="#1e40af">Coro Stack</text>
+  <text x="645" y="178" font-size="6" text-anchor="middle" fill="#6b7280">(bump alloc)</text>
+
+  <!-- Suspended queue -->
+  <rect x="608" y="186" width="75" height="20" rx="3" fill="#fde68a" stroke="#f59e0b" stroke-width="0.8"/>
+  <text x="645" y="199" text-anchor="middle" font-size="7" fill="#92400e">Suspended Q</text>
+
+  <!-- RunContext -->
+  <rect x="608" y="210" width="75" height="14" rx="2" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.8"/>
+  <text x="645" y="220" text-anchor="middle" font-size="6.5" fill="#4338ca">RunContext[32]</text>
+
+  <!-- =============== CPU RUNTIME BOX =============== -->
+  <rect x="20" y="450" width="680" height="80" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="2" filter="url(#shadow)"/>
+  <text x="360" y="443" text-anchor="middle" font-size="15" font-weight="bold" fill="#991b1b">CPU Runtime</text>
+
+  <rect x="40" y="466" width="95" height="34" rx="4" fill="#fecaca" stroke="#f87171" stroke-width="1"/>
+  <text x="87" y="487" text-anchor="middle" font-size="10" fill="#991b1b">NVMe Driver</text>
+
+  <rect x="145" y="466" width="80" height="34" rx="4" fill="#fecaca" stroke="#f87171" stroke-width="1"/>
+  <text x="185" y="487" text-anchor="middle" font-size="10" fill="#991b1b">Network</text>
+
+  <rect x="235" y="466" width="80" height="34" rx="4" fill="#fecaca" stroke="#f87171" stroke-width="1"/>
+  <text x="275" y="487" text-anchor="middle" font-size="10" fill="#991b1b">Flush Svc</text>
+
+  <rect x="330" y="466" width="80" height="34" rx="4" fill="#fecaca" stroke="#f87171" stroke-width="1"/>
+  <text x="370" y="487" text-anchor="middle" font-size="10" fill="#991b1b">Monitor</text>
+
+  <text x="420" y="487" font-size="14" fill="#6b7280">...</text>
+
+  <rect x="460" y="462" width="120" height="42" rx="5" fill="#fed7aa" stroke="#f97316" stroke-width="1.5"/>
+  <text x="520" y="480" text-anchor="middle" font-size="10" font-weight="bold" fill="#9a3412">IPC Manager</text>
+  <text x="520" y="494" text-anchor="middle" font-size="7.5" fill="#9a3412">SHM / IPC / TCP</text>
+
+  <!-- =============== CLIENTS =============== -->
+  <rect x="730" y="60" width="160" height="50" rx="6" fill="#e0e7ff" stroke="#6366f1" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="810" y="82" text-anchor="middle" font-size="12" font-weight="bold" fill="#4338ca">GPU Client</text>
+  <text x="810" y="96" text-anchor="middle" font-size="8" fill="#6366f1">device memory alloc</text>
+
+  <rect x="730" y="130" width="160" height="50" rx="6" fill="#fae8ff" stroke="#a855f7" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="810" y="152" text-anchor="middle" font-size="12" font-weight="bold" fill="#7e22ce">CPU Client</text>
+  <text x="810" y="166" text-anchor="middle" font-size="8" fill="#a855f7">pinned host alloc</text>
+
+  <!-- =============== STORAGE TIERS =============== -->
+  <rect x="20" y="570" width="680" height="50" rx="8" fill="#f9fafb" stroke="#9ca3af" stroke-width="1.5"/>
+  <text x="360" y="564" text-anchor="middle" font-size="13" font-weight="bold" fill="#374151">Storage Tiers</text>
+
+  <rect x="35" y="580" width="100" height="30" rx="4" fill="#dbeafe" stroke="#60a5fa" stroke-width="1"/>
+  <text x="85" y="599" text-anchor="middle" font-size="10" fill="#1e40af">GPU HBM</text>
+
+  <rect x="150" y="580" width="110" height="30" rx="4" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+  <text x="205" y="599" text-anchor="middle" font-size="10" fill="#92400e">Pinned RAM</text>
+
+  <rect x="275" y="580" width="110" height="30" rx="4" fill="#dcfce7" stroke="#4ade80" stroke-width="1"/>
+  <text x="330" y="599" text-anchor="middle" font-size="10" fill="#166534">RAM Disk</text>
+
+  <rect x="400" y="580" width="110" height="30" rx="4" fill="#e5e7eb" stroke="#9ca3af" stroke-width="1"/>
+  <text x="455" y="599" text-anchor="middle" font-size="10" fill="#374151">NVMe SSD</text>
+
+  <rect x="525" y="580" width="100" height="30" rx="4" fill="#fce7f3" stroke="#ec4899" stroke-width="1"/>
+  <text x="575" y="599" text-anchor="middle" font-size="10" fill="#9d174d">Remote</text>
+
+  <!-- Speed labels -->
+  <text x="85" y="620" text-anchor="middle" font-size="7" fill="#6b7280">~3 TB/s</text>
+  <text x="205" y="620" text-anchor="middle" font-size="7" fill="#6b7280">~25 GB/s</text>
+  <text x="330" y="620" text-anchor="middle" font-size="7" fill="#6b7280">~50 GB/s</text>
+  <text x="455" y="620" text-anchor="middle" font-size="7" fill="#6b7280">~7 GB/s</text>
+  <text x="575" y="620" text-anchor="middle" font-size="7" fill="#6b7280">~25 GB/s</text>
+
+  <!-- =============== ARROWS =============== -->
+
+  <!-- GPU Client -> GPU Runtime (device memory path) -->
+  <line x1="730" y1="85" x2="700" y2="85" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow-blue)"/>
+  <text x="715" y="79" text-anchor="middle" font-size="8" fill="#3b82f6">dev mem</text>
+
+  <!-- CPU Client -> IPC Manager (through CPU runtime) -->
+  <path d="M 730 155 L 640 155 L 640 483 L 580 483" fill="none" stroke="#dc2626" stroke-width="2" marker-end="url(#arrow-red)"/>
+  <text x="650" y="310" font-size="8" fill="#dc2626" transform="rotate(-90, 650, 310)">SHM / TCP / IPC</text>
+
+  <!-- GPU <-> CPU bidirectional (pinned host queues) -->
+  <line x1="180" y1="410" x2="180" y2="450" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arrow-purple)" marker-start="url(#arrow-purple-rev)"/>
+  <text x="130" y="435" font-size="8" fill="#7c3aed">Pinned host queues</text>
+
+  <!-- GPU -> CPU (ToLocalCpu) -->
+  <line x1="380" y1="410" x2="380" y2="450" stroke="#dc2626" stroke-width="2" marker-end="url(#arrow-red)"/>
+  <text x="396" y="435" font-size="8" fill="#dc2626" font-family="monospace">ToLocalCpu</text>
+
+  <!-- CPU -> GPU (ToLocalGpu) -->
+  <line x1="480" y1="450" x2="480" y2="410" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow-blue)"/>
+  <text x="496" y="435" font-size="8" fill="#3b82f6" font-family="monospace">ToLocalGpu</text>
+
+  <!-- CPU Runtime -> Storage -->
+  <line x1="360" y1="530" x2="360" y2="570" stroke="#555" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- GPU Runtime direct to HBM -->
+  <path d="M 60 410 L 60 435 L 20 435 L 20 595 L 35 595" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrow-blue)"/>
+  <text x="12" y="520" font-size="7" fill="#3b82f6" transform="rotate(-90, 12, 520)">GPU direct</text>
+
+  <!-- =============== LEGEND =============== -->
+  <rect x="730" y="220" width="170" height="200" rx="6" fill="white" stroke="#d1d5db" stroke-width="1"/>
+  <text x="815" y="240" text-anchor="middle" font-size="10" font-weight="bold" fill="#374151">Legend</text>
+
+  <rect x="742" y="252" width="14" height="14" rx="2" fill="#bfdbfe" stroke="#60a5fa" stroke-width="1"/>
+  <text x="764" y="263" font-size="9" fill="#374151">Warp worker</text>
+
+  <rect x="742" y="274" width="14" height="14" rx="2" fill="#fed7aa" stroke="#fb923c" stroke-width="1"/>
+  <text x="764" y="285" font-size="9" fill="#374151">Task queue</text>
+
+  <rect x="742" y="296" width="14" height="14" rx="2" fill="#dcfce7" stroke="#4ade80" stroke-width="1"/>
+  <text x="764" y="307" font-size="9" fill="#374151">Module</text>
+
+  <rect x="742" y="318" width="14" height="14" rx="2" fill="#fef9c3" stroke="#eab308" stroke-width="1"/>
+  <text x="764" y="329" font-size="9" fill="#374151">Load counter</text>
+
+  <line x1="742" y1="348" x2="756" y2="348" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow-blue)"/>
+  <text x="764" y="352" font-size="9" fill="#374151">GPU path</text>
+
+  <line x1="742" y1="370" x2="756" y2="370" stroke="#dc2626" stroke-width="2" marker-end="url(#arrow-red)"/>
+  <text x="764" y="374" font-size="9" fill="#374151">CPU path</text>
+
+  <line x1="742" y1="392" x2="756" y2="392" stroke="#7c3aed" stroke-width="2.5"/>
+  <text x="764" y="396" font-size="9" fill="#374151">Bidirectional</text>
+
+  <!-- FutureShm annotation -->
+  <rect x="730" y="440" width="170" height="70" rx="6" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+  <text x="815" y="458" text-anchor="middle" font-size="9" font-weight="bold" fill="#92400e">FutureShm</text>
+  <text x="740" y="472" font-size="7.5" fill="#78350f">pool_id, method_id, origin</text>
+  <text x="740" y="484" font-size="7.5" fill="#78350f">completion_counter (atomic)</text>
+  <text x="740" y="496" font-size="7.5" fill="#78350f">copy_space[] (return vals)</text>
+
+  <!-- G = ceil(sqrt(W)) annotation -->
+  <text x="815" y="540" text-anchor="middle" font-size="10" fill="#374151" font-style="italic">G = &#x2308;&#x221a;W&#x2309; warps/group</text>
+  <text x="815" y="555" text-anchor="middle" font-size="9" fill="#6b7280">W = total GPU warps</text>
+</svg>

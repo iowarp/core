@@ -42,13 +42,28 @@ namespace chi {
  * Routing algorithm modes for PoolQuery
  */
 enum class RoutingMode {
-  Local,      /**< Route to local node only */
-  DirectId,   /**< Route to specific container by ID */
-  DirectHash, /**< Route using hash-based load balancing */
-  Range,      /**< Route to range of containers */
-  Broadcast,  /**< Broadcast to all containers */
-  Physical,   /**< Route to specific physical node by ID */
-  Dynamic     /**< Dynamic routing with cache optimization (routes to Monitor) */
+  Local,          /**< Route to local node only */
+  DirectId,       /**< Route to specific container by ID */
+  DirectHash,     /**< Route using hash-based load balancing */
+  Range,          /**< Route to range of containers */
+  Broadcast,      /**< Broadcast to all containers */
+  Physical,       /**< Route to specific physical node by ID */
+  Dynamic,        /**< Dynamic routing with cache optimization (routes to Monitor) */
+  LocalGpuBcast,  /**< Broadcast to every GPU on this node */
+  ToLocalGpu,     /**< Send to specific GPU (reuse node_id_ for gpu_id) */
+  ToLocalCpu,     /**< GPU → CPU direction */
+  Null            /**< Do nothing */
+};
+
+/**
+ * Result of routing a task via RouteTask / RouteLocal / RouteGlobal
+ */
+enum class RouteResult {
+  ExecHere,  /**< Execute on this worker directly (caller runs ExecTask) */
+  Local,     /**< Enqueued to a different local worker */
+  Network,   /**< Enqueued to net_queue_ for remote dispatch */
+  Retry,     /**< Container is plugged — caller should add to retry queue */
+  Dne        /**< Container doesn't exist (pool not found) */
 };
 
 /**
@@ -66,7 +81,7 @@ class PoolQuery {
       : routing_mode_(RoutingMode::Local), hash_value_(0),
         container_id_(kInvalidContainerId),
         range_offset_(0), range_count_(0), node_id_(0), ret_node_(0),
-        net_timeout_(-1.0f) {}
+        net_timeout_(-1.0f), parallelism_(32) {}
 
   /**
    * Copy constructor
@@ -79,7 +94,8 @@ class PoolQuery {
         range_count_(other.range_count_),
         node_id_(other.node_id_),
         ret_node_(other.ret_node_),
-        net_timeout_(other.net_timeout_) {}
+        net_timeout_(other.net_timeout_),
+        parallelism_(other.parallelism_) {}
 
   /**
    * Assignment operator
@@ -94,6 +110,7 @@ class PoolQuery {
       node_id_ = other.node_id_;
       ret_node_ = other.ret_node_;
       net_timeout_ = other.net_timeout_;
+      parallelism_ = other.parallelism_;
     }
     return *this;
   }
@@ -109,12 +126,13 @@ class PoolQuery {
    * Create a local routing pool query
    * @return PoolQuery configured for local container routing
    */
-  static HSHM_CROSS_FUN PoolQuery Local() {
+  static HSHM_CROSS_FUN PoolQuery Local(u32 parallelism = 32) {
     PoolQuery query;
     query.routing_mode_ = RoutingMode::Local;
     query.hash_value_ = 0;
     query.container_id_ = kInvalidContainerId;
     query.range_offset_ = 0;
+    query.parallelism_ = parallelism;
     return query;
   }
 
@@ -164,6 +182,50 @@ class PoolQuery {
    * @return PoolQuery configured for dynamic routing with cache optimization
    */
   static PoolQuery Dynamic(float net_timeout = -1);
+
+  /**
+   * Create a local GPU broadcast pool query
+   * @return PoolQuery configured for broadcasting to all GPUs on this node
+   */
+  static HSHM_CROSS_FUN PoolQuery LocalGpuBcast() {
+    PoolQuery query;
+    query.routing_mode_ = RoutingMode::LocalGpuBcast;
+    return query;
+  }
+
+  /**
+   * Create a pool query targeting a specific local GPU
+   * @param gpu_id GPU device ID on this node
+   * @return PoolQuery configured for routing to a specific GPU
+   */
+  static HSHM_CROSS_FUN PoolQuery ToLocalGpu(u32 gpu_id, u32 parallelism = 32) {
+    PoolQuery query;
+    query.routing_mode_ = RoutingMode::ToLocalGpu;
+    query.node_id_ = gpu_id;
+    query.parallelism_ = parallelism;
+    return query;
+  }
+
+  /**
+   * Create a pool query for GPU → CPU direction
+   * @return PoolQuery configured for routing from GPU back to CPU
+   */
+  static HSHM_CROSS_FUN PoolQuery ToLocalCpu(u32 parallelism = 32) {
+    PoolQuery query;
+    query.routing_mode_ = RoutingMode::ToLocalCpu;
+    query.parallelism_ = parallelism;
+    return query;
+  }
+
+  /**
+   * Create a null pool query (do nothing)
+   * @return PoolQuery configured to skip execution
+   */
+  static HSHM_CROSS_FUN PoolQuery Null() {
+    PoolQuery query;
+    query.routing_mode_ = RoutingMode::Null;
+    return query;
+  }
 
   /**
    * Parse PoolQuery from string (supports "local" and "dynamic")
@@ -281,6 +343,38 @@ class PoolQuery {
   }
 
   /**
+   * Check if pool query is in LocalGpuBcast routing mode
+   * @return true if routing mode is LocalGpuBcast
+   */
+  HSHM_CROSS_FUN bool IsLocalGpuBcastMode() const {
+    return routing_mode_ == RoutingMode::LocalGpuBcast;
+  }
+
+  /**
+   * Check if pool query is in ToLocalGpu routing mode
+   * @return true if routing mode is ToLocalGpu
+   */
+  HSHM_CROSS_FUN bool IsToLocalGpuMode() const {
+    return routing_mode_ == RoutingMode::ToLocalGpu;
+  }
+
+  /**
+   * Check if pool query is in ToLocalCpu routing mode
+   * @return true if routing mode is ToLocalCpu
+   */
+  HSHM_CROSS_FUN bool IsToLocalCpuMode() const {
+    return routing_mode_ == RoutingMode::ToLocalCpu;
+  }
+
+  /**
+   * Check if pool query is in Null routing mode
+   * @return true if routing mode is Null
+   */
+  HSHM_CROSS_FUN bool IsNullMode() const {
+    return routing_mode_ == RoutingMode::Null;
+  }
+
+  /**
    * Set the return node ID for distributed task responses
    * @param ret_node Node ID where task results should be returned
    */
@@ -309,12 +403,22 @@ class PoolQuery {
   HSHM_CROSS_FUN void SetNetTimeout(float t) { net_timeout_ = t; }
 
   /**
+   * Get the parallelism level for GPU task dispatch
+   * @return Number of threads (1 = lane 0 only, 32 = full warp, >32 = multi-warp)
+   */
+  HSHM_CROSS_FUN u32 GetParallelism() const { return parallelism_; }
+
+  /** Set the parallelism level for GPU task dispatch */
+  HSHM_CROSS_FUN void SetParallelism(u32 parallelism) { parallelism_ = parallelism; }
+
+  /**
    * Serialization support for any archive type
    * @param ar Archive for serialization
    */
   template <class Archive>
   HSHM_CROSS_FUN void serialize(Archive& ar) {
-    ar(routing_mode_, hash_value_, container_id_, range_offset_, range_count_, node_id_, ret_node_, net_timeout_);
+    ar.range(routing_mode_, hash_value_, container_id_, range_offset_,
+             range_count_, node_id_, ret_node_, net_timeout_, parallelism_);
   }
 
  private:
@@ -326,6 +430,7 @@ class PoolQuery {
   u32 node_id_;              /**< Node ID for physical routing */
   u32 ret_node_;             /**< Return node ID for distributed responses */
   float net_timeout_;        /**< Per-task network timeout in seconds (-1 = use default) */
+  u32 parallelism_;          /**< GPU parallelism: 1 (lane 0), 32 (full warp), >32 (multi-warp) */
 };
 
 

@@ -1,0 +1,101 @@
+# BaM vs CTE GPU Benchmark — Cache Size Comparison
+#
+# Compares BaM page cache against CTE (Local + ToLocalCpu) with:
+#   - Varying HBM cache ratios: 100%, 50%, 20%
+#   - Warp I/O sizes: 16KB, 128KB, 16MB
+#   - Runtime blocks: 1, 32
+#   - Client blocks: 1, 16
+#
+# For CTE: cache ratio is controlled via bdev_type (hbm = 100% HBM, pinned = host)
+# For BaM: cache ratio is controlled via bam_cache_pages
+#
+# The "synthetic" workload in workload_synthetic.cc supports all modes:
+#   cte, bam, direct, hbm
+#
+# Requirements:
+#   - wrp_cte_gpu_bench in PATH
+#   - CUDA-capable GPU
+#   - BaM tests require -DWRP_CORE_ENABLE_BAM=ON
+#
+# Usage:
+#   jarvis pipeline test gpu/bam_vs_cte_cache_comparison.yaml
+
+config:
+  name: bam_vs_cte_cache
+  pkgs:
+    - pkg_type: jarvis_iowarp.wrp_cte_gpu_bench
+      pkg_name: bench
+      test_case: "synthetic"
+      workload_mode: "hbm"
+      client_blocks: 1
+      client_threads: 32
+      rt_blocks: 1
+      rt_threads: 32
+      io_size: "16k"
+      iterations: 16
+      bdev_type: "hbm"
+      bam_page_size: 65536
+      bam_cache_pages: 256
+      timeout: 120
+
+# ============================================================
+# Test matrix:
+#
+# 1. Workload mode x routing:
+#    - synthetic/cte (Local)       → CTE GPU-local path
+#    - synthetic/cte (to_cpu)      → CTE ToLocalCpu path
+#    - synthetic/bam               → BaM page cache
+#    - synthetic/hbm               → HBM baseline (100% in GPU memory)
+#    - synthetic/direct            → Pinned DRAM direct access baseline
+#
+# 2. Cache ratio (% of data in HBM):
+#    - 100%: CTE bdev_type=hbm; BaM cache_pages = total_pages
+#    - 50%:  CTE bdev_type=pinned; BaM cache_pages = total_pages/2
+#    - 20%:  CTE bdev_type=pinned; BaM cache_pages = total_pages/5
+#
+# 3. I/O sizes: 16KB, 128KB, 16MB
+# 4. Runtime blocks: 1, 32
+# 5. Client blocks: 1, 16
+# ============================================================
+
+vars:
+  # --- Workload modes ---
+  bench.workload_mode:
+    - "cte"
+    - "cte"
+    - "bam"
+    - "hbm"
+    - "direct"
+
+  # Routing for CTE (ignored for non-CTE modes)
+  bench.routing:
+    - "local"
+    - "to_cpu"
+    - "local"
+    - "local"
+    - "local"
+
+  # --- I/O sizes ---
+  bench.io_size:    ["16k",  "128k", "16m"]
+  bench.iterations: [1024,   128,    1   ]
+
+  # --- Runtime blocks ---
+  bench.rt_blocks: [1, 32]
+
+  # --- Client blocks ---
+  bench.client_blocks: [1, 16]
+
+  # --- Cache ratio (bdev_type for CTE, bam_cache_pages for BaM) ---
+  # 100% HBM
+  bench.bdev_type:      ["hbm",    "pinned", "pinned"]
+  bench.bam_cache_pages: [65536,   32768,    13107   ]
+
+loop:
+  - [bench.workload_mode, bench.routing]
+  - [bench.io_size, bench.iterations]
+  - [bench.rt_blocks]
+  - [bench.client_blocks]
+  - [bench.bdev_type, bench.bam_cache_pages]
+
+repeat: 3
+output: "${HOME}/bam_vs_cte_cache_results"

@@ -13,19 +13,20 @@ namespace chimaera::MOD_NAME {
 
 namespace Method {
 // Inherited methods
-GLOBAL_CONST chi::u32 kCreate = 0;
-GLOBAL_CONST chi::u32 kDestroy = 1;
-GLOBAL_CONST chi::u32 kMonitor = 9;
+GLOBAL_CROSS_CONST chi::u32 kCreate = 0;
+GLOBAL_CROSS_CONST chi::u32 kDestroy = 1;
+GLOBAL_CROSS_CONST chi::u32 kMonitor = 9;
 
 // MOD_NAME-specific methods
-GLOBAL_CONST chi::u32 kCustom = 10;
-GLOBAL_CONST chi::u32 kCoMutexTest = 20;
-GLOBAL_CONST chi::u32 kCoRwLockTest = 21;
-GLOBAL_CONST chi::u32 kWaitTest = 23;
-GLOBAL_CONST chi::u32 kTestLargeOutput = 24;
-GLOBAL_CONST chi::u32 kGpuSubmit = 25;
+GLOBAL_CROSS_CONST chi::u32 kCustom = 10;
+GLOBAL_CROSS_CONST chi::u32 kCoMutexTest = 20;
+GLOBAL_CROSS_CONST chi::u32 kCoRwLockTest = 21;
+GLOBAL_CROSS_CONST chi::u32 kWaitTest = 23;
+GLOBAL_CROSS_CONST chi::u32 kTestLargeOutput = 24;
+GLOBAL_CROSS_CONST chi::u32 kGpuSubmit = 25;
+GLOBAL_CROSS_CONST chi::u32 kSubtaskTest = 26;
 
-GLOBAL_CONST chi::u32 kMaxMethodId = 26;
+GLOBAL_CROSS_CONST chi::u32 kMaxMethodId = 27;
 
 inline const std::vector<std::string>& GetMethodNames() {
   static const std::vector<std::string> names = [] {
@@ -39,6 +40,7 @@ inline const std::vector<std::string>& GetMethodNames() {
     v[23] = "WaitTest";
     v[24] = "TestLargeOutput";
     v[25] = "GpuSubmit";
+    v[26] = "SubtaskTest";
     return v;
   }();
   return names;

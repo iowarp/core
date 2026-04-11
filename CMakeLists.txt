@@ -111,7 +111,10 @@ option(WRP_CORE_ENABLE_HDF5 "Enable HDF5 support in CAE" ON)
 option(WRP_CORE_ENABLE_ELF "Enable ELF support (required for CTE adapters)" OFF)
 option(WRP_CORE_ENABLE_OPENMP "Enable the use of OpenMP" OFF)
 option(WRP_CORE_ENABLE_CUDA "Enable CUDA support" OFF)
+option(WRP_CORE_ENABLE_GPU_RUNTIME "Enable GPU runtime (CDP-based parallelism)" OFF)
 option(WRP_CORE_ENABLE_ROCM "Enable ROCm support" OFF)
+option(WRP_CORE_ENABLE_NIXL "Enable NIXL (NVIDIA Inference Xfer Library) transport" OFF)
+option(WRP_CORE_ENABLE_NVSHMEM "Enable NVSHMEM GPU-to-GPU communication library" OFF)
 option(WRP_CORE_ENABLE_JARVIS "Enable Jarvis CI infrastructure installation" OFF)
 
 #------------------------------------------------------------------------------
@@ -148,7 +151,7 @@ option(CAE_ENABLE_GLOBUS "Enable Globus transfer support in CAE" OFF)
 # External Examples and Applications
 #------------------------------------------------------------------------------
 option(WRP_CORE_ENABLE_GRAY_SCOTT "Enable Gray-Scott ADIOS2 example (requires ADIOS2)" OFF)
-option(WRP_CORE_ENABLE_LLAMA "Enable llama.cpp LLM inference integration (iowarp-llm)" OFF)
+option(WRP_CORE_ENABLE_LLAMA "Enable llama.cpp LLM inference integration (llm-hooks)" OFF)
 option(WRP_CORE_ENABLE_LLAMA_SERVER "Add external/llama.cpp to the build (requires WRP_CORE_ENABLE_LLAMA=ON)" OFF)
 
 #==============================================================================
@@ -182,6 +185,8 @@ set(HSHM_ENABLE_ELF ${WRP_CORE_ENABLE_ELF} CACHE BOOL "Enable ELF (controlled by
 set(HSHM_ENABLE_CUDA ${WRP_CORE_ENABLE_CUDA} CACHE BOOL "Enable CUDA (controlled by WRP_CORE_ENABLE_CUDA)" FORCE)
 set(HSHM_ENABLE_ROCM ${WRP_CORE_ENABLE_ROCM} CACHE BOOL "Enable ROCm (controlled by WRP_CORE_ENABLE_ROCM)" FORCE)
 set(HSHM_ENABLE_IO_URING ${WRP_CORE_ENABLE_IO_URING} CACHE BOOL "Enable io_uring (controlled by WRP_CORE_ENABLE_IO_URING)" FORCE)
+set(HSHM_ENABLE_NIXL ${WRP_CORE_ENABLE_NIXL} CACHE BOOL "Enable NIXL (controlled by WRP_CORE_ENABLE_NIXL)" FORCE)
+set(HSHM_ENABLE_NVSHMEM ${WRP_CORE_ENABLE_NVSHMEM} CACHE BOOL "Enable NVSHMEM (controlled by WRP_CORE_ENABLE_NVSHMEM)" FORCE)
 # Note: Coverage is handled globally via add_compile_options when WRP_CORE_ENABLE_COVERAGE=ON
 # No need for component-level HSHM_ENABLE_COVERAGE
 
@@ -663,16 +668,20 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   add_compile_options(-fcoroutines)
   message(STATUS "GCC detected - enabling coroutines with -fcoroutines")
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
+  # NVHPC 25.5 crashes (ICE in llc) when compiling GCC 14 libstdc++ coroutines.
+  # Chimaera uses ucontext_t fibers via CHI_CO_AWAIT/CHI_CO_RETURN macros instead.
+  # No __cpp_impl_coroutine needed - we do not include <coroutine> for NVHPC.
+  message(STATUS "NVHPC detected - using ucontext_t fiber fallback for C++20 coroutines")
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  # GCC's libstdc++ <coroutine> header guards itself with __cpp_impl_coroutine,
-  # which GCC sets via -fcoroutines. Clang does not pass that flag automatically.
-  # Clang 16+ accepts -fcoroutines as an alias; older clang needs a -D instead.
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16")
-    add_compile_options(-fcoroutines)
-    message(STATUS "Clang ${CMAKE_CXX_COMPILER_VERSION} detected - enabling coroutines with -fcoroutines")
+  # Clang 16+ enables C++20 coroutines natively (no flags needed for CXX).
+  # NVCC host compilation uses GCC which needs -fcoroutines for the builtins.
+  add_compile_options($<$<COMPILE_LANGUAGE:CUDA>:-fcoroutines>)
+  if(CMAKE_CXX_COMPILER_VERSION VERSION_LESS "16")
+    add_compile_definitions(__cpp_impl_coroutine=201902L)
+    message(STATUS "Clang ${CMAKE_CXX_COMPILER_VERSION} detected - enabling coroutines with -D__cpp_impl_coroutine (libstdc++ compat)")
   else()
-    add_compile_definitions(__cpp_impl_coroutine=1)
-    message(STATUS "Clang ${CMAKE_CXX_COMPILER_VERSION} detected - enabling coroutines with -D__cpp_impl_coroutine=1 (libstdc++ compat)")
+    message(STATUS "Clang ${CMAKE_CXX_COMPILER_VERSION} detected - C++20 coroutines enabled natively")
   endif()
 endif()
 
@@ -721,24 +730,41 @@ endif()
 # Compiler Flags
 #------------------------------------------------------------------------------
 if(NOT MSVC)
-    # Add compiler flags following Google C++ style guide
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
-    # Disable warnings that are false positives or from external dependencies
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-parameter -Wno-unused-variable -Wno-reorder")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-pedantic -Wno-sign-compare -Wno-missing-field-initializers")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-but-set-variable -Wno-unused-function -Wno-cast-function-type")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-self-move -Wno-format")
-    # Suppress GCC false positives in template-heavy shared memory code (Release -O3)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-array-bounds -Wno-stringop-overflow")
-    # Suppress unused-result warnings (freopen/system in test code)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-result")
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
+        # Add compiler flags following Google C++ style guide
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -pedantic")
+        # Disable warnings that are false positives or from external dependencies
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-parameter -Wno-unused-variable -Wno-reorder")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-pedantic -Wno-sign-compare -Wno-missing-field-initializers")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-but-set-variable -Wno-unused-function -Wno-cast-function-type")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-self-move -Wno-format")
+        # Suppress false positives in template-heavy shared memory code (Release -O3)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-array-bounds")
+        # -Wno-stringop-overflow/-overread are GCC-only; check before adding
+        include(CheckCXXCompilerFlag)
+        check_cxx_compiler_flag(-Wno-stringop-overflow HAS_WNO_STRINGOP_OVERFLOW)
+        if(HAS_WNO_STRINGOP_OVERFLOW)
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-stringop-overflow")
+        endif()
+        check_cxx_compiler_flag(-Wno-stringop-overread HAS_WNO_STRINGOP_OVERREAD)
+        if(HAS_WNO_STRINGOP_OVERREAD)
+            set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-stringop-overread")
+        endif()
+        # Suppress unused-result warnings (freopen/system in test code)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-result")
+    endif()
 
     # Debug configuration
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -DDEBUG")
 
     # Release configuration
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG")
+
+    # CUDA: allow constexpr __host__ functions in __host__ __device__ contexts
+    if(WRP_CORE_ENABLE_CUDA)
+        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr -diag-suppress=20011,20012,20013")
+    endif()
 
     # AddressSanitizer + LeakSanitizer configuration
     if(WRP_CORE_ENABLE_ASAN)
@@ -768,9 +794,13 @@ if(NOT MSVC)
     endif()
 
     # Code Coverage configuration
+    # Exclude CUDA: NVCC passes --coverage through to device code, generating
+    # __gcov_* symbols in device stubs that the host linker can't resolve.
     if(WRP_CORE_ENABLE_COVERAGE)
         message(STATUS "Code coverage instrumentation enabled for iowarp-core")
-        add_compile_options(--coverage -fprofile-arcs -ftest-coverage)
+        add_compile_options($<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:--coverage>
+                            $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-fprofile-arcs>
+                            $<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:-ftest-coverage>)
         add_link_options(--coverage)
     endif()
 else()
@@ -778,6 +808,9 @@ else()
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /Zi /Od /DDEBUG")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /DNDEBUG")
 endif()
+
+# Global include path for simple_test.h test framework
+include_directories(${CMAKE_SOURCE_DIR}/context-runtime/test)
 
 # When building for Python wheels on x86_64, restrict to baseline x86_64 ISA
 # so the wheel runs on any x86_64 CPU. AlmaLinux 9 (manylinux_2_34) defaults
@@ -866,7 +899,22 @@ if(WRP_CORE_ENABLE_ELF)
     set(ELF_LIB_DIRS ${libelf_LIBRARY_DIRS})
 endif()
 
+# BaM (Big Accelerator Memory) — GPU page cache with optional NVMe
+option(WRP_CORE_ENABLE_BAM "Enable BaM GPU page cache module" OFF)
+option(WRP_CORE_ENABLE_BAM_NVME "Enable NVMe backend for BaM (requires gpu-nvme-bridge)" OFF)
+if(WRP_CORE_ENABLE_BAM)
+    message(STATUS "Building BaM GPU page cache module")
+    set(BAM_ENABLE_NVME ${WRP_CORE_ENABLE_BAM_NVME} CACHE BOOL "NVMe for BaM" FORCE)
+    set(BAM_ENABLE_TESTS ${WRP_CORE_ENABLE_TESTS} CACHE BOOL "BaM tests" FORCE)
+    add_subdirectory(external/bam)
+else()
+    message(STATUS "BaM module disabled")
+endif()
+
+set(_WRP_ENABLED_COMPONENT_DIRS "")
+
 add_subdirectory(context-transport-primitives)
+list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-transport-primitives")
 # Set HSHM_ROOT for cross-component access
 set(HSHM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/context-transport-primitives" CACHE PATH "Root directory for context-transport-primitives")
 
@@ -874,6 +922,7 @@ set(HSHM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/context-transport-primitives" CACHE P
 if(WRP_CORE_ENABLE_RUNTIME)
     message(STATUS "Building runtime component")
     add_subdirectory(context-runtime)
+    list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-runtime")
     # Set CHIMAERA_ROOT for cross-component access (e.g., CTE needs bdev includes)
     set(CHIMAERA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/context-runtime" CACHE PATH "Root directory for runtime component")
 else()
@@ -884,6 +933,7 @@ endif()
 if(WRP_CORE_ENABLE_CTE)
     message(STATUS "Building context-transfer-engine component")
     add_subdirectory(context-transfer-engine)
+    list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-transfer-engine")
 else()
     message(STATUS "Context-transfer-engine component disabled")
 endif()
@@ -892,6 +942,7 @@ endif()
 if(WRP_CORE_ENABLE_CAE)
     message(STATUS "Building context-assimilation-engine component")
     add_subdirectory(context-assimilation-engine)
+    list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-assimilation-engine")
 else()
     message(STATUS "Context-assimilation-engine component disabled")
 endif()
@@ -900,6 +951,7 @@ endif()
 if(WRP_CORE_ENABLE_CEE)
     message(STATUS "Building context-exploration-engine component")
     add_subdirectory(context-exploration-engine)
+    list(APPEND _WRP_ENABLED_COMPONENT_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/context-exploration-engine")
 else()
     message(STATUS "Context-exploration-engine component disabled")
 endif()
@@ -961,12 +1013,15 @@ if(WRP_CORE_ENABLE_TESTS)
         endforeach()
     endfunction()
 
-    foreach(_component_dir
-            context-runtime
-            context-transfer-engine
-            context-assimilation-engine
-            context-exploration-engine)
-        if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${_component_dir}")
+    foreach(_component_dir_pair
+            "context-runtime:WRP_CORE_ENABLE_RUNTIME"
+            "context-transfer-engine:WRP_CORE_ENABLE_CTE"
+            "context-assimilation-engine:WRP_CORE_ENABLE_CAE"
+            "context-exploration-engine:WRP_CORE_ENABLE_CEE")
+        string(REPLACE ":" ";" _pair "${_component_dir_pair}")
+        list(GET _pair 0 _component_dir)
+        list(GET _pair 1 _component_flag)
+        if(${_component_flag} AND IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${_component_dir}")
             _chimaera_lock_tests_recursive(
                 "${CMAKE_CURRENT_SOURCE_DIR}/${_component_dir}"
                 "${_lsan_opts}")
@@ -982,8 +1037,8 @@ if(WRP_CORE_ENABLE_LLAMA)
     if(NOT WRP_CORE_ENABLE_CTE)
         message(FATAL_ERROR "WRP_CORE_ENABLE_LLAMA requires WRP_CORE_ENABLE_CTE=ON")
     endif()
-    message(STATUS "Building iowarp-llm KV cache + weight offload libraries")
-    add_subdirectory(iowarp-llm)
+    message(STATUS "Building llm-hooks KV cache + weight offload libraries")
+    add_subdirectory(context-transfer-engine/llm-hooks)
 
     # llama.cpp full integration: add the llama.cpp subdirectory so that the
     # server patches and ggml backend are available for linking.
@@ -1007,18 +1062,18 @@ if(WRP_CORE_ENABLE_LLAMA)
 
         # Patch llama.cpp targets with IOWarp KV-cache definitions NOW — after
         # add_subdirectory(external/llama.cpp) so that server-context and llama
-        # targets actually exist.  The if(TARGET ...) guards in iowarp-llm/
+        # targets actually exist.  The if(TARGET ...) guards in llm-hooks/
         # CMakeLists.txt run before this point (ordering issue), so we do the
         # patching here instead.
         if(TARGET server-context)
             target_compile_definitions(server-context PRIVATE IOWARP_LLM_KVCACHE)
             target_link_libraries(server-context PRIVATE wrp_llm_kvcache)
-            message(STATUS "iowarp-llm: patched server-context with IOWARP_LLM_KVCACHE")
+            message(STATUS "llm-hooks: patched server-context with IOWARP_LLM_KVCACHE")
         endif()
         if(TARGET llama)
             target_compile_definitions(llama PRIVATE IOWARP_LLM_KVCACHE)
             target_link_libraries(llama PRIVATE wrp_llm_kvcache)
-            message(STATUS "iowarp-llm: patched llama with IOWARP_LLM_KVCACHE")
+            message(STATUS "llm-hooks: patched llama with IOWARP_LLM_KVCACHE")
         endif()
 
         # IOWarp weight offloading via GpuVmm — requires CUDA and wrp_llm_weights.
@@ -1028,19 +1083,19 @@ if(WRP_CORE_ENABLE_LLAMA)
             if(TARGET server-context)
                 target_compile_definitions(server-context PRIVATE IOWARP_LLM_WEIGHTS)
                 target_link_libraries(server-context PRIVATE wrp_llm_weights)
-                message(STATUS "iowarp-llm: patched server-context with IOWARP_LLM_WEIGHTS")
+                message(STATUS "llm-hooks: patched server-context with IOWARP_LLM_WEIGHTS")
             endif()
             if(TARGET llama)
                 target_compile_definitions(llama PRIVATE IOWARP_LLM_WEIGHTS)
                 target_link_libraries(llama PRIVATE wrp_llm_weights)
-                message(STATUS "iowarp-llm: patched llama with IOWARP_LLM_WEIGHTS")
+                message(STATUS "llm-hooks: patched llama with IOWARP_LLM_WEIGHTS")
             endif()
         endif()
     else()
         message(STATUS "llama.cpp server integration skipped (set WRP_CORE_ENABLE_LLAMA_SERVER=ON)")
     endif()
 else()
-    message(STATUS "iowarp-llm disabled (set WRP_CORE_ENABLE_LLAMA=ON to enable)")
+    message(STATUS "llm-hooks disabled (set WRP_CORE_ENABLE_LLAMA=ON to enable)")
 endif()
 
 #------------------------------------------------------------------------------
