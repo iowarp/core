@@ -326,7 +326,7 @@ __global__ void gpu_bench_alloc_kernel(
     fp->gpu_id_ = 0;
     fp->test_value_ = i;
     fp->result_value_ = 0;
-    fp->counter_addr_ = 0;
+    fp->counter_value_ = 0;
     t_ser_in += clock64() - tc;
 
     // 4. "Run" the task (trivial — what GpuSubmit does)
