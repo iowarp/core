@@ -172,7 +172,7 @@ private:
 #endif
 
   // Compression telemetry ring buffer for performance monitoring
-  using CompressionTelemetryLog = hipc::ring_buffer<CompressionTelemetry, CHI_MAIN_ALLOC_T>;
+  using CompressionTelemetryLog = hipc::ring_buffer<CompressionTelemetry, CHI_TASK_ALLOC_T>;
   hipc::ShmPtr<CompressionTelemetryLog> compression_telemetry_log_;
   std::atomic<std::uint64_t> compression_logical_time_;
 

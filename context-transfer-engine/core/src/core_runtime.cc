@@ -941,7 +941,7 @@ chi::TaskResume Runtime::PutBlob(hipc::FullPtr<PutBlobTask> task,
       CHI_CO_RETURN;
     }
 
-#ifdef WRP_CTE_ENABLE_COMPRESSION
+#if HSHM_ENABLE_COMPRESS
     // Update compression metadata
     Context &context = task->context_;
     blob_info_ptr->compress_lib_ = context.compress_lib_;

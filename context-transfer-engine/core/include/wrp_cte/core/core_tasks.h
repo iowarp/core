@@ -795,7 +795,7 @@ struct Context {
   chi::u64 preallocate_;  // Preallocate this many bytes for GPU block storage
                           // (0 = disabled)
 
-#ifdef WRP_CTE_ENABLE_COMPRESSION
+#if HSHM_ENABLE_COMPRESS
   int dynamic_compress_;  // 0 - skip, 1 - static, 2 - dynamic
   int compress_lib_;      // The compression library to apply (0-10)
   int compress_preset_;   // Compression preset: 1=FAST, 2=BALANCED, 3=BEST
@@ -825,7 +825,7 @@ struct Context {
       : persistence_target_(-1),
         min_persistence_level_(0),
         preallocate_(0)
-#ifdef WRP_CTE_ENABLE_COMPRESSION
+#if HSHM_ENABLE_COMPRESS
         ,
         dynamic_compress_(0),
         compress_lib_(0),
@@ -850,7 +850,7 @@ struct Context {
   template <class Archive>
   HSHM_CROSS_FUN void serialize(Archive &ar) {
     ar.range(persistence_target_, min_persistence_level_, preallocate_);
-#ifdef WRP_CTE_ENABLE_COMPRESSION
+#if HSHM_ENABLE_COMPRESS
     ar.range(dynamic_compress_, compress_lib_, compress_preset_, target_psnr_,
              psnr_chance_, max_performance_, consumer_node_, data_type_,
              trace_, trace_key_, trace_node_, actual_original_size_,
