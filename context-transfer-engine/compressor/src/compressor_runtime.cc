@@ -175,7 +175,7 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
        "CTE Compressor container created and initialized for pool: {} (ID: {})",
        pool_name_, pool_id_);
 
-  co_return;
+  CHI_CO_RETURN;
 }
 
 chi::TaskResume Runtime::Destroy(hipc::FullPtr<DestroyTask> task,
@@ -197,7 +197,7 @@ chi::TaskResume Runtime::Destroy(hipc::FullPtr<DestroyTask> task,
   } catch (const std::exception& e) {
     HLOG(kError, "Exception during compressor destroy: {}", e.what());
   }
-  co_return;
+  CHI_CO_RETURN;
 }
 
 chi::PoolQuery Runtime::ScheduleTask(const hipc::FullPtr<chi::Task> &task) {
@@ -207,9 +207,15 @@ chi::PoolQuery Runtime::ScheduleTask(const hipc::FullPtr<chi::Task> &task) {
 
 chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
                                  chi::RunContext &ctx) {
+#ifdef __NVCOMPILER
+  chi::RunContext& rctx = ctx;
+#else
+  (void)ctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   if (!core_client_) {
     task->SetReturnCode(0);
-    co_return;
+    CHI_CO_RETURN;
   }
   // Poll target states
   try {
@@ -246,7 +252,8 @@ chi::TaskResume Runtime::Monitor(hipc::FullPtr<MonitorTask> task,
     HLOG(kError, "Compressor::Monitor failed: {}", e.what());
   }
   task->SetReturnCode(0);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 // ==============================================================================
@@ -538,7 +545,7 @@ chi::TaskResume Runtime::DynamicSchedule(
       context.compress_lib_ = 0;
       context.dynamic_compress_ = 0;
       task->return_code_ = 1;
-      co_return;
+      CHI_CO_RETURN;
     }
 
     // Get compression stats
@@ -549,7 +556,7 @@ chi::TaskResume Runtime::DynamicSchedule(
       context.compress_lib_ = 0;
       context.dynamic_compress_ = 0;
       task->return_code_ = 0;
-      co_return;
+      CHI_CO_RETURN;
     }
 
     // Log predicted compression stats if tracing enabled
@@ -604,7 +611,7 @@ chi::TaskResume Runtime::DynamicSchedule(
     task->return_code_ = 1;
   }
 
-  co_return;
+  CHI_CO_RETURN;
 }
 
 chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
@@ -617,7 +624,7 @@ chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
     // Validate inputs
     if (task->blob_data_.IsNull() || input_size == 0) {
       task->return_code_ = 1;  // Invalid input
-      co_return;
+      CHI_CO_RETURN;
     }
 
     // Initialize core client if needed
@@ -647,7 +654,7 @@ chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
       put_task.Wait();
       task->context_ = put_task->context_;
       task->return_code_ = put_task->return_code_;
-      co_return;
+      CHI_CO_RETURN;
     }
 
     // Map compress_lib_ ID to library name
@@ -674,7 +681,7 @@ chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
       HLOG(kWarning, "Failed to create compressor for library: {}",
            library_name);
       task->return_code_ = 3;  // Compressor creation failed
-      co_return;
+      CHI_CO_RETURN;
     }
 
     auto compress_start = std::chrono::high_resolution_clock::now();
@@ -719,7 +726,7 @@ chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
       if (compressed_shm.IsNull()) {
         HLOG(kError, "Failed to allocate shared memory for compressed data");
         task->return_code_ = 4;  // Memory allocation failed
-        co_return;
+        CHI_CO_RETURN;
       }
 
       // Write compression header
@@ -779,7 +786,7 @@ chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
     task->return_code_ = 6;  // Exception occurred
   }
 
-  co_return;
+  CHI_CO_RETURN;
 }
 
 chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
@@ -791,7 +798,7 @@ chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
     // Validate output buffer
     if (task->blob_data_.IsNull()) {
       task->return_code_ = 1;  // Invalid output buffer
-      co_return;
+      CHI_CO_RETURN;
     }
 
     // Initialize core client if needed
@@ -806,7 +813,7 @@ chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
     auto temp_buffer = CHI_IPC->AllocateBuffer(expected_size);
     if (temp_buffer.IsNull()) {
       task->return_code_ = 2;  // Memory allocation failed
-      co_return;
+      CHI_CO_RETURN;
     }
     hipc::ShmPtr<> temp_buffer_ptr = temp_buffer.shm_.template Cast<void>();
 
@@ -819,7 +826,7 @@ chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
     if (get_task->return_code_ != 0) {
       CHI_IPC->FreeBuffer(temp_buffer);
       task->return_code_ = 10 + get_task->return_code_;  // GetBlob failed
-      co_return;
+      CHI_CO_RETURN;
     }
 
     // Check for compression header
@@ -856,7 +863,7 @@ chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
         HLOG(kWarning, "Failed to create decompressor for library: {}",
              library_name);
         task->return_code_ = 3;  // Decompressor creation failed
-        co_return;
+        CHI_CO_RETURN;
       }
 
       auto decompress_start = std::chrono::high_resolution_clock::now();
@@ -921,7 +928,7 @@ chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
     task->return_code_ = 6;  // Exception occurred
   }
 
-  co_return;
+  CHI_CO_RETURN;
 }
 
 void Runtime::LogCompressionTelemetry(const CompressionTelemetry& telemetry) {

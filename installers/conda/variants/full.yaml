@@ -1,7 +1,7 @@
 # IOWarp Core - Full Variant (Source Build)
 # Custom build with all optional features enabled (CUDA + MPI)
 #
-# Usage: rattler-build build --recipe recipe/ --variant-config variants/full.yaml
+# Usage: IOWARP_PRESET=custom conda build installers/conda/ -c conda-forge
 
 preset:
   - custom

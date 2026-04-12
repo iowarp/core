@@ -3,26 +3,23 @@
 # This OMNI file demonstrates transferring data from a Globus endpoint to the local filesystem
 # using the Content Assimilation Engine (CAE).
 #
-# Dataset: Materials Science Data Collection (SEM_103)
-# Endpoint ID: e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae
-# Browse: https://app.globus.org/file-manager?origin_id=e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae&origin_path=%2FSEM_103%2F
+# Dataset: AFRL Challenge Data - Publication 1151 Input Data
+# Endpoint ID: 82f1b5c6-6e9b-11e5-ba47-22000b92c6ec
+# Browse: https://app.globus.org/file-manager?origin_id=82f1b5c6-6e9b-11e5-ba47-22000b92c6ec&origin_path=%2Fafrl-challenge-data%2Fpublished%2Fpublication_1151%2Fdata%2FInput+Data%2F
 #
 # Prerequisites:
-# - Valid GLOBUS_ACCESS_TOKEN and GLOBUS_HTTPS_ACCESS_TOKEN environment variables
-# - Globus endpoint must have HTTPS access enabled for local transfers
+# - Valid GLOBUS_ACCESS_TOKEN environment variable
 # - Network connectivity to Globus services
 
 version: "1.0"
 
 transfers:
-  # Transfer a small file from the SEM_103 dataset using globus:// URI
-  - src: "globus://e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae/SEM_103/PRISTINE/SEM_103_pristine_MASTER_650_MPa_loads.inp"
-    dst: "file::/tmp/globus_matsci/SEM_103_pristine_MASTER_650_MPa_loads.inp"
+  - src: "globus://82f1b5c6-6e9b-11e5-ba47-22000b92c6ec/afrl-challenge-data/published/publication_1151/data/Input Data/HomeIn-Build B.csv"
+    dst: "file::/tmp/globus_matsci/HomeIn-Build_B.csv"
     format: "binary"
     src_token: "${GLOBUS_ACCESS_TOKEN}"
 
-  # Transfer a second file using Globus web URL format
-  - src: "https://app.globus.org/file-manager?origin_id=e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae&origin_path=%2FSEM_103%2FPRISTINE%2FSEM_103_pristine_MASTER_0.0055_strain_loads.inp"
-    dst: "file::/tmp/globus_matsci/SEM_103_pristine_MASTER_0.0055_strain_loads.inp"
+  - src: "globus://82f1b5c6-6e9b-11e5-ba47-22000b92c6ec/afrl-challenge-data/published/publication_1151/data/Input Data/Build B Question Item Conditions.xlsx"
+    dst: "file::/tmp/globus_matsci/Build_B_Question_Item_Conditions.xlsx"
     format: "binary"
     src_token: "${GLOBUS_ACCESS_TOKEN}"

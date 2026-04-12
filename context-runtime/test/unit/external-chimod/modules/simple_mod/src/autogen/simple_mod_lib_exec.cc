@@ -28,14 +28,15 @@ void Runtime::Init(const chi::PoolId &pool_id, const std::string &pool_name,
 }
 
 chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr, chi::RunContext& rctx) {
+  CHI_TASK_BODY_BEGIN
   switch (method) {
     default: {
       // Unknown method - do nothing
       break;
     }
   }
-  // co_return makes this a coroutine returning TaskResume
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 void Runtime::SaveTask(chi::u32 method, chi::SaveTaskArchive& archive, 
@@ -66,7 +67,7 @@ hipc::FullPtr<chi::Task> Runtime::AllocLoadTask(chi::u32 method, chi::LoadTaskAr
   return task_ptr;
 }
 
-void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
+void Runtime::LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive,
                             hipc::FullPtr<chi::Task> task_ptr) {
   switch (method) {
     default: {
@@ -76,7 +77,7 @@ void Runtime::LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive,
   }
 }
 
-hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::LocalLoadTaskArchive& archive) {
+hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::DefaultLoadArchive& archive) {
   hipc::FullPtr<chi::Task> task_ptr = NewTask(method);
   if (!task_ptr.IsNull()) {
     LocalLoadTask(method, archive, task_ptr);
@@ -84,7 +85,7 @@ hipc::FullPtr<chi::Task> Runtime::LocalAllocLoadTask(chi::u32 method, chi::Local
   return task_ptr;
 }
 
-void Runtime::LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive& archive, 
+void Runtime::LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive& archive, 
                              hipc::FullPtr<chi::Task> task_ptr) {
   switch (method) {
     default: {

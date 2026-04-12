@@ -64,7 +64,7 @@ template<bool ATOMIC>
 class _ArenaAllocator : public Allocator {
  private:
   Heap<ATOMIC> heap_;  /**< Heap for bump-pointer allocation */
-  hipc::atomic<hshm::size_t> total_alloc_;  /**< Total allocated size tracking */
+  hipc::atomic<hshm::big_uint> total_alloc_;  /**< Total allocated size tracking */
   size_t heap_begin_;  /**< Initial heap offset (for reset) */
   size_t heap_max_;    /**< Maximum heap size (for reset) */
 
@@ -211,6 +211,17 @@ class _ArenaAllocator : public Allocator {
   HSHM_CROSS_FUN
   void FreeTls() {
     // No TLS needed for arena allocator
+  }
+
+  /** Arena allocator is already a bump allocator — PushArena is a no-op */
+  HSHM_CROSS_FUN bool PushArenaState(ArenaState &prior, OffsetPtr<> &block, size_t size) {
+    (void)prior; (void)block; (void)size;
+    return false;
+  }
+
+  /** No-op */
+  HSHM_CROSS_FUN void PopArenaState(const ArenaState &prior, OffsetPtr<> block) {
+    (void)prior; (void)block;
   }
 
   /**

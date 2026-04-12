@@ -60,10 +60,16 @@ GlobusFileAssimilator::GlobusFileAssimilator(
 
 chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
                                                 int& error_code) {
+#ifdef __NVCOMPILER
+  thread_local chi::RunContext _fb_rctx;
+  chi::RunContext* _fp = chi::GetCurrentRunContextFromWorker();
+  chi::RunContext& rctx = _fp ? *_fp : _fb_rctx;
+#endif
+  CHI_TASK_BODY_BEGIN
 #ifndef CAE_ENABLE_GLOBUS
   HLOG(kError, "GlobusFileAssimilator: Globus support not compiled in");
   error_code = -20;
-  co_return;
+  CHI_CO_RETURN;
 #else
   error_code = 0;
   // Validate source is a Globus URL (either web URL or globus:// URI)
@@ -76,7 +82,7 @@ chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
          "URI, got: '{}'",
          ctx.src);
     error_code = -2;
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Validate destination protocol
@@ -92,7 +98,7 @@ chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
          "Globus web URL, got: '{}'",
          ctx.dst);
     error_code = -3;
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Get access token from context or environment variable
@@ -107,7 +113,7 @@ chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
            "GlobusFileAssimilator: No access token provided. Set src_token in "
            "OMNI file or GLOBUS_ACCESS_TOKEN environment variable");
       error_code = -1;
-      co_return;
+      CHI_CO_RETURN;
     }
     access_token = access_token_env;
     HLOG(kDebug,
@@ -127,7 +133,7 @@ chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
            "GlobusFileAssimilator: Failed to parse Globus web URL: '{}'",
            ctx.src);
       error_code = -4;
-      co_return;
+      CHI_CO_RETURN;
     }
   } else {
     // Parse as standard globus:// URI
@@ -135,7 +141,7 @@ chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
       HLOG(kError, "GlobusFileAssimilator: Failed to parse source URI: '{}'",
            ctx.src);
       error_code = -4;
-      co_return;
+      CHI_CO_RETURN;
     }
   }
 
@@ -157,7 +163,7 @@ chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
           kError,
           "GlobusFileAssimilator: Invalid destination URL, no file path found");
       error_code = -5;
-      co_return;
+      CHI_CO_RETURN;
     }
 
     HLOG(kInfo, "Source:       {}", ctx.src);
@@ -197,14 +203,14 @@ chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
            "GlobusFileAssimilator: Failed to download file from Globus (error code: {})",
            download_result);
       error_code = download_result;
-      co_return;
+      CHI_CO_RETURN;
     }
 
     HLOG(kInfo, "Transfer completed successfully!");
     HLOG(kDebug,
          "GlobusFileAssimilator: Successfully downloaded file to local "
          "filesystem");
-    co_return;
+    CHI_CO_RETURN;
 
   } else {
     // Globus to Globus transfer
@@ -223,7 +229,7 @@ chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
              "URL: '{}'",
              ctx.dst);
         error_code = -5;
-        co_return;
+        CHI_CO_RETURN;
       }
     } else {
       // Parse as standard globus:// URI
@@ -232,7 +238,7 @@ chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
              "GlobusFileAssimilator: Failed to parse destination URI: '{}'",
              ctx.dst);
         error_code = -5;
-        co_return;
+        CHI_CO_RETURN;
       }
     }
 
@@ -246,7 +252,7 @@ chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
           kError,
           "GlobusFileAssimilator: Failed to get submission ID from Globus API");
       error_code = -6;
-      co_return;
+      CHI_CO_RETURN;
     }
 
     HLOG(kDebug, "GlobusFileAssimilator: Obtained submission ID: '{}'",
@@ -259,7 +265,7 @@ chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
       HLOG(kError,
            "GlobusFileAssimilator: Failed to submit transfer to Globus API");
       error_code = -7;
-      co_return;
+      CHI_CO_RETURN;
     }
 
     HLOG(
@@ -272,13 +278,14 @@ chi::TaskResume GlobusFileAssimilator::Schedule(const AssimilationCtx& ctx,
     if (poll_result != 0) {
       HLOG(kError, "GlobusFileAssimilator: Transfer failed or timed out");
       error_code = poll_result;
-      co_return;
+      CHI_CO_RETURN;
     }
 
     HLOG(kDebug, "GlobusFileAssimilator: Transfer completed successfully");
-    co_return;
+    CHI_CO_RETURN;
   }
 #endif
+  CHI_TASK_BODY_END
 }
 
 std::string GlobusFileAssimilator::GetUrlProtocol(const std::string& url) {

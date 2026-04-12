@@ -74,11 +74,12 @@ TEST_CASE("LocalTaskArchive: Serialize and deserialize basic types", "[local_tas
   std::string str_val = "hello world";
 
   // Serialize
-  LocalSaveTaskArchive save_archive(LocalMsgType::kSerializeIn);
+  chi::priv::vector<char> save_buf;
+  DefaultSaveArchive save_archive(LocalMsgType::kSerializeIn, save_buf);
   save_archive << int_val << double_val << str_val;
 
   // Deserialize
-  LocalLoadTaskArchive load_archive(save_archive.GetData());
+  DefaultLoadArchive load_archive(save_buf);
   int restored_int = 0;
   double restored_double = 0.0;
   std::string restored_str;
@@ -100,11 +101,12 @@ TEST_CASE("LocalTaskArchive: Serialize ShmPtr with bulk()", "[local_task_archive
   uint32_t flags = 0;
 
   // Serialize with bulk
-  LocalSaveTaskArchive save_archive(LocalMsgType::kSerializeIn);
+  chi::priv::vector<char> save_buf;
+  DefaultSaveArchive save_archive(LocalMsgType::kSerializeIn, save_buf);
   save_archive.bulk(shm_ptr, data_size, flags);
 
   // Deserialize with bulk
-  LocalLoadTaskArchive load_archive(save_archive.GetData());
+  DefaultLoadArchive load_archive(save_buf);
   hipc::ShmPtr<char> restored_ptr;
   load_archive.bulk(restored_ptr, data_size, flags);
 
@@ -125,11 +127,12 @@ TEST_CASE("LocalTaskArchive: Serialize FullPtr with bulk()", "[local_task_archiv
   uint32_t flags = 1;
 
   // Serialize with bulk
-  LocalSaveTaskArchive save_archive(LocalMsgType::kSerializeIn);
+  chi::priv::vector<char> save_buf;
+  DefaultSaveArchive save_archive(LocalMsgType::kSerializeIn, save_buf);
   save_archive.bulk(full_ptr, data_size, flags);
 
   // Deserialize with bulk (only shm_ part is serialized)
-  LocalLoadTaskArchive load_archive(save_archive.GetData());
+  DefaultLoadArchive load_archive(save_buf);
   hipc::FullPtr<char> restored_ptr;
   load_archive.bulk(restored_ptr, data_size, flags);
 
@@ -150,11 +153,12 @@ TEST_CASE("LocalTaskArchive: Serialize raw pointer with bulk()", "[local_task_ar
   uint32_t flags = 2;
 
   // Serialize with bulk (full memory copy)
-  LocalSaveTaskArchive save_archive(LocalMsgType::kSerializeIn);
+  chi::priv::vector<char> save_buf;
+  DefaultSaveArchive save_archive(LocalMsgType::kSerializeIn, save_buf);
   save_archive.bulk(original_data, data_size, flags);
 
   // Deserialize with bulk (full memory copy)
-  LocalLoadTaskArchive load_archive(save_archive.GetData());
+  DefaultLoadArchive load_archive(save_buf);
   char restored_data[data_size];
   load_archive.bulk(restored_data, data_size, flags);
 
@@ -170,11 +174,12 @@ TEST_CASE("LocalTaskArchive: Mixed serialization with operator()", "[local_task_
   double val3 = 2.71828;
 
   // Serialize using operator()
-  LocalSaveTaskArchive save_archive(LocalMsgType::kSerializeIn);
+  chi::priv::vector<char> save_buf;
+  DefaultSaveArchive save_archive(LocalMsgType::kSerializeIn, save_buf);
   save_archive(val1, val2, val3);
 
   // Deserialize using operator()
-  LocalLoadTaskArchive load_archive(save_archive.GetData());
+  DefaultLoadArchive load_archive(save_buf);
   int restored1 = 0;
   std::string restored2;
   double restored3 = 0.0;
@@ -193,11 +198,12 @@ TEST_CASE("LocalTaskArchive: Serialize and deserialize multiple values", "[local
   int num = 999;
 
   // Serialize
-  LocalSaveTaskArchive save_archive(LocalMsgType::kSerializeIn);
+  chi::priv::vector<char> save_buf;
+  DefaultSaveArchive save_archive(LocalMsgType::kSerializeIn, save_buf);
   save_archive << vec << str1 << str2 << num;
 
   // Deserialize
-  LocalLoadTaskArchive load_archive(save_archive.GetData());
+  DefaultLoadArchive load_archive(save_buf);
   std::vector<int> restored_vec;
   std::string restored_str1;
   std::string restored_str2;
@@ -216,11 +222,13 @@ TEST_CASE("LocalTaskArchive: Serialize and deserialize multiple values", "[local
 
 TEST_CASE("LocalTaskArchive: Message types", "[local_task_archive]") {
   // Test kSerializeIn
-  LocalSaveTaskArchive save_in(LocalMsgType::kSerializeIn);
+  chi::priv::vector<char> buf_in;
+  DefaultSaveArchive save_in(LocalMsgType::kSerializeIn, buf_in);
   REQUIRE(save_in.GetMsgType() == LocalMsgType::kSerializeIn);
 
   // Test kSerializeOut
-  LocalSaveTaskArchive save_out(LocalMsgType::kSerializeOut);
+  chi::priv::vector<char> buf_out;
+  DefaultSaveArchive save_out(LocalMsgType::kSerializeOut, buf_out);
   REQUIRE(save_out.GetMsgType() == LocalMsgType::kSerializeOut);
 }
 
@@ -241,14 +249,15 @@ TEST_CASE("LocalTaskArchive: Multiple bulk transfers", "[local_task_archive][bul
   shm_ptr2.alloc_id_ = hipc::AllocatorId(3, 3);
 
   // Serialize all bulk transfers
-  LocalSaveTaskArchive save_archive(LocalMsgType::kSerializeIn);
+  chi::priv::vector<char> save_buf;
+  DefaultSaveArchive save_archive(LocalMsgType::kSerializeIn, save_buf);
   save_archive.bulk(shm_ptr1, 10, 0);
   save_archive.bulk(full_ptr, 20, 1);
   save_archive.bulk(raw_data, 8, 2);
   save_archive.bulk(shm_ptr2, 30, 3);
 
   // Deserialize all bulk transfers
-  LocalLoadTaskArchive load_archive(save_archive.GetData());
+  DefaultLoadArchive load_archive(save_buf);
   hipc::ShmPtr<char> restored_shm1;
   hipc::FullPtr<char> restored_full;
   char restored_raw[8];

@@ -1,7 +1,7 @@
 # IOWarp Core - ROCm Variant
 # ROCm-enabled debug build using CMakePresets.json "rocm-debug" preset
 #
-# Usage: rattler-build build --recipe recipe/ --variant-config variants/rocm.yaml
+# Usage: IOWARP_PRESET=rocm-debug conda build installers/conda/ -c conda-forge
 
 preset:
   - rocm-debug

@@ -178,6 +178,15 @@ if [ "$DO_BUILD" = true ]; then
         print_info "Using conda prefix: $CONDA_PREFIX"
     fi
 
+    # Ensure build dependencies are available in conda env (coverage does a
+    # fresh from-source build which needs development headers / cmake configs)
+    if [ -n "$CONDA_PREFIX" ]; then
+        print_info "Installing build dependencies into conda env..."
+        conda install -y -c conda-forge \
+            cmake make pkg-config cereal yaml-cpp zeromq \
+            msgpack-c hdf5 catch2 libaio liburing 2>&1 | tail -3
+    fi
+
     print_info "Configuring build with coverage enabled..."
     cmake --preset=debug \
         -DWRP_CORE_ENABLE_COVERAGE=ON \

@@ -42,11 +42,7 @@
 #include <vector>
 #include <sstream>
 
-#if HSHM_ENABLE_CEREAL
-#include <cereal/archives/binary.hpp>
-#include <cereal/types/string.hpp>
-#include <cereal/types/vector.hpp>
-#endif
+#include "hermes_shm/data_structures/serialization/global_serialize.h"
 
 #include "hermes_shm/data_structures/priv/vector.h"
 #include "hermes_shm/lightbeam/event_manager.h"
@@ -114,9 +110,13 @@ class LbmMeta {
   ClientInfo client_info_;  // Client routing info (not serialized, host-only)
 #endif
 
-  /** Default constructor (uses HSHM_MALLOC allocator) */
+  /** Default constructor (uses HSHM_MALLOC on host, nullptr on GPU) */
   HSHM_CROSS_FUN LbmMeta()
+#if HSHM_IS_HOST
       : send(HSHM_MALLOC), recv(HSHM_MALLOC), alloc_(HSHM_MALLOC) {}
+#else
+      : send(nullptr), recv(nullptr), alloc_(nullptr) {}
+#endif
 
   /** Constructor with custom allocator */
   HSHM_CROSS_FUN explicit LbmMeta(AllocT* alloc)
@@ -158,7 +158,12 @@ struct LbmContext {
   int timeout_ms;      /**< Timeout in milliseconds (0 = no timeout) */
   char* copy_space = nullptr;                      /**< Shared buffer for chunked transfer */
   ShmTransferInfo* shm_info_ = nullptr;            /**< Transfer info in shared memory */
+  char* meta_buf_ = nullptr;                       /**< Pre-allocated buffer for ShmTransport framing (avoids heap alloc) */
+  size_t meta_buf_size_ = 0;                       /**< Capacity of meta_buf_ */
+  bool warp_parallel_ = false;                     /**< True = all 32 lanes participate in copy */
   int server_pid_ = 0;                             /**< Server PID for SHM liveness check */
+  int dst_fd_ = -1;                                /**< Destination file descriptor for CPU→storage (-1 = none) */
+  size_t dst_offset_ = 0;                          /**< Offset within destination file for CPU→storage */
 
   HSHM_CROSS_FUN LbmContext() : flags(0), timeout_ms(0) {}
 
@@ -166,12 +171,18 @@ struct LbmContext {
 
   HSHM_CROSS_FUN LbmContext(uint32_t f, int timeout) : flags(f), timeout_ms(timeout) {}
 
+  /** Construct context for CPU→storage transfers via file descriptor. */
+  HSHM_CROSS_FUN LbmContext(uint32_t f, int timeout, int dst_fd, size_t dst_offset)
+      : flags(f), timeout_ms(timeout), dst_fd_(dst_fd), dst_offset_(dst_offset) {}
+
   HSHM_CROSS_FUN bool IsSync() const { return (flags & LBM_SYNC) != 0; }
   HSHM_CROSS_FUN bool HasTimeout() const { return timeout_ms > 0; }
+  /** Returns true if this context targets a file descriptor destination. */
+  HSHM_CROSS_FUN bool HasFileDst() const { return dst_fd_ >= 0; }
 };
 
 // --- Transport Type Enum ---
-enum class TransportType { kZeroMq, kSocket, kShm };
+enum class TransportType { kZeroMq, kSocket, kShm, kNixl };
 
 // --- Transport Mode Enum ---
 enum class TransportMode { kClient, kServer };
@@ -211,7 +222,7 @@ class Transport {
 
 // --- Transport custom deleter (dispatches via type_ instead of vtable) ---
 struct TransportDeleter {
-  inline void operator()(Transport* t) const;
+  void operator()(Transport* t) const;
 };
 using TransportPtr = std::unique_ptr<Transport, TransportDeleter>;
 

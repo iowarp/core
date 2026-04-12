@@ -20,3 +20,14 @@ kFreeBlocks: 11         # Free data blocks
 kWrite: 12              # Write data with libaio
 kRead: 13               # Read data with libaio
 kGetStats: 14           # Get performance statistics
+kUpdate: 15             # Update GPU container with device pointers
+
+has_gpu: true
+
+# GPU Methods (subset that run on GPU orchestrator)
+gpu_methods:
+  - kUpdate
+  - kAllocateBlocks
+  - kFreeBlocks
+  - kWrite
+  - kRead

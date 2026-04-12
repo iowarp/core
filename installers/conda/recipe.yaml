@@ -1,13 +1,10 @@
-# IOWarp Core - Conda Recipe (rattler-build format)
+# IOWarp Core - Conda Recipe (rattler-build format, DEPRECATED)
 #
-# This recipe supports two modes:
-#   1. Preset mode: Uses CMakePresets.json directly for reproducible binary builds
-#   2. Custom mode: Allows individual cmake flag overrides for source builds
+# NOTE: This project now uses conda-build (meta.yaml) instead of rattler-build.
+# This file is kept for reference only. The active recipe is meta.yaml.
 #
-# Usage:
-#   rattler-build build --recipe installers/conda/ --variant-config installers/conda/variants/release.yaml
-#   rattler-build build --recipe installers/conda/ --variant-config installers/conda/variants/cuda.yaml
-#   rattler-build build --recipe installers/conda/ --variant-config installers/conda/variants/custom.yaml
+# The CI workflow and install.sh both use conda-build:
+#   conda build installers/conda/ -c conda-forge --no-anaconda-upload
 
 context:
   version: "1.0.0"
@@ -36,8 +33,8 @@ build:
       CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: ONLY
       CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: ONLY
     content:
-      - cmake --preset=${{ preset }} -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_PREFIX_PATH=${PREFIX} -DCMAKE_FIND_ROOT_PATH=${PREFIX} -DWRP_CORE_ENABLE_CONDA=ON
-      - cmake --build build --parallel
+      - cmake --preset=${{ preset }} -DCMAKE_INSTALL_PREFIX=${PREFIX} -DCMAKE_PREFIX_PATH=${PREFIX} -DCMAKE_FIND_ROOT_PATH=${PREFIX} -DWRP_CORE_ENABLE_CONDA=ON -DCMAKE_CUDA_ARCHITECTURES=native
+      - "cmake --build build --parallel $(( $(nproc) > 32 ? 32 : $(nproc) ))"
       - cmake --install build
 
 requirements:

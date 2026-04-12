@@ -22,7 +22,6 @@ add_executable(test_adios2_adapter
 
 # Include directories
 target_include_directories(test_adios2_adapter PRIVATE
-  ${CMAKE_SOURCE_DIR}/test  # For unified simple_test.h
   ${CMAKE_SOURCE_DIR}/context-transfer-engine/adapter/adios2  # For iowarp_engine.h
   ${ADIOS2_INCLUDE_DIR}
 )

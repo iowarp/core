@@ -1,5 +1,19 @@
 cmake_minimum_required(VERSION 3.10)
 
+# Collect optional NIXL dependency
+set(BDEV_OPTIONAL_LIBS "")
+if(WRP_CORE_ENABLE_NIXL)
+  list(APPEND BDEV_OPTIONAL_LIBS hshm::nixl)
+endif()
+
+# Collect optional CUDA dependency for kHbm/kPinned bdev types
+set(BDEV_GPU_LIBS "")
+if(WRP_CORE_ENABLE_CUDA)
+  list(APPEND BDEV_GPU_LIBS hshm::cuda_cxx)
+elseif(WRP_CORE_ENABLE_ROCM)
+  list(APPEND BDEV_GPU_LIBS hshm::rocm_cxx)
+endif()
+
 # Client library — hshm::aio provides async I/O headers via its INTERFACE includes
 add_chimod_client(
   SOURCES
@@ -7,6 +21,7 @@ add_chimod_client(
   LINK_LIBRARIES
     chimaera_admin_client
     hshm::aio
+    ${BDEV_OPTIONAL_LIBS}
 )
 
 # Runtime library
@@ -17,6 +32,8 @@ add_chimod_runtime(
   LINK_LIBRARIES
     chimaera_admin_runtime
     hshm::aio
+    ${BDEV_OPTIONAL_LIBS}
+    ${BDEV_GPU_LIBS}
 )
 
 # Unit tests

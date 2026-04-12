@@ -49,10 +49,6 @@ add_executable(test_compressor_functional
   test_compressor_functional.cc
 )
 
-# Include simple_test.h framework
-target_include_directories(test_compressor_functional PRIVATE
-  ${CMAKE_SOURCE_DIR}/test  # For unified simple_test.h
-)
 
 # Link against compressor runtime and dependencies
 target_link_libraries(test_compressor_functional

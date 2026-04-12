@@ -47,6 +47,20 @@
 
 namespace hshm::priv {
 
+/** GPU-compatible hshm_memcmp: character-by-character on GPU, memcmp on CPU */
+HSHM_INLINE_CROSS_FUN int hshm_memcmp(const void *a, const void *b, size_t n) {
+#if HSHM_IS_HOST
+  return ::memcmp(a, b, n);
+#else
+  const unsigned char *pa = static_cast<const unsigned char*>(a);
+  const unsigned char *pb = static_cast<const unsigned char*>(b);
+  for (size_t i = 0; i < n; ++i) {
+    if (pa[i] != pb[i]) return (pa[i] < pb[i]) ? -1 : 1;
+  }
+  return 0;
+#endif
+}
+
 /**
  * Private-memory string container with Short String Optimization (SSO)
  *
@@ -559,18 +573,29 @@ class basic_string {
 
  private:
   /**
-   * SSO storage union containing either inline buffer or vector pointer
+   * Heap metadata stored in the union when not using SSO.
+   * Replaces the vector pointer to avoid GPU device malloc.
+   */
+  struct HeapInfo {
+    size_type capacity_;  /**< Allocated capacity (in elements, including null) */
+    size_type off_;       /**< Allocator offset for freeing */
+  };
+
+  /**
+   * SSO storage union containing either inline buffer or heap metadata
    */
   union SsoStorage {
     T buffer_[SSOSize];  /**< Inline SSO buffer */
-    vector<T, AllocT>* vec_;  /**< Pointer to vector for large strings */
+    HeapInfo heap_;       /**< Heap metadata for large strings */
   };
 
   SsoStorage storage_;  /**< Storage union for SSO */
   size_type size_;      /**< Current string length (not including null terminator) */
   bool using_sso_;      /**< Flag to track if using SSO or vector */
   AllocT* alloc_;       /**< Pointer to allocator for memory management */
+  T* data_;             /**< Cached data pointer (avoids branch + pointer chase) */
 
+ public:
   /**
    * Check if current string is using SSO buffer
    *
@@ -582,39 +607,150 @@ class basic_string {
   }
 
   /**
-   * Get pointer to current string data (SSO or vector)
+   * Fix up the data_ pointer after a bulk memcpy.
+   * After memcpy, data_ still points to the source object's buffer.
+   * This repoints it to this object's own SSO buffer.
+   * Only valid when UsingSso() is true.
+   */
+  HSHM_INLINE_CROSS_FUN
+  void FixupSsoPointer() {
+    data_ = storage_.buffer_;
+  }
+
+  /**
+   * Initialize this string by copying SSO data from another string.
+   * No allocator needed — copies the inline buffer directly.
+   * Only valid when the source is using SSO (size <= SSOSize).
+   */
+  HSHM_INLINE_CROSS_FUN
+  void InitFromSso(const basic_string &other) {
+    size_ = other.size_;
+    using_sso_ = true;
+    alloc_ = nullptr;
+    for (size_type i = 0; i <= size_ && i < SSOSize; ++i) {
+      storage_.buffer_[i] = other.storage_.buffer_[i];
+    }
+    data_ = storage_.buffer_;
+  }
+
+  /**
+   * POD-safe state for SSO strings (no pointers).
+   * Serialized as a flat memcpy-able struct via ar.range().
+   */
+  struct SsoState {
+    T buffer_[SSOSize];
+    size_type size_;
+  };
+
+  /** Export SSO state for bulk serialization. */
+  HSHM_INLINE_CROSS_FUN SsoState GetSsoState() const {
+    SsoState s;
+    memcpy(s.buffer_, storage_.buffer_, SSOSize * sizeof(T));
+    s.size_ = size_;
+    return s;
+  }
+
+  /** Import SSO state after bulk deserialization. */
+  HSHM_INLINE_CROSS_FUN void SetSsoState(const SsoState &s) {
+    memcpy(storage_.buffer_, s.buffer_, SSOSize * sizeof(T));
+    size_ = s.size_;
+    using_sso_ = true;
+    alloc_ = nullptr;
+    data_ = storage_.buffer_;
+  }
+
+ private:
+
+  /**
+   * Get pointer to current string data (SSO or heap)
    *
    * @return Pointer to string data
    */
   HSHM_INLINE_CROSS_FUN
   T* GetData() {
-    if (UsingSso()) {
-      return storage_.buffer_;
-    } else {
-      return storage_.vec_->data();
-    }
+    return data_;
   }
 
   /**
-   * Get const pointer to current string data (SSO or vector)
+   * Get const pointer to current string data (SSO or heap)
    *
    * @return Const pointer to string data
    */
   HSHM_INLINE_CROSS_FUN
   const T* GetData() const {
-    if (UsingSso()) {
-      return storage_.buffer_;
-    } else {
-      return storage_.vec_->data();
-    }
+    return data_;
   }
 
+  /**
+   * Allocate a heap buffer of the given capacity (in elements) from the
+   * custom allocator. Sets data_, storage_.heap_.capacity_, and
+   * storage_.heap_.off_. Does NOT set using_sso_ or size_.
+   */
+  HSHM_CROSS_FUN
+  void HeapAlloc(size_type capacity) {
+    auto p = alloc_->template AllocateObjs<T>(capacity);
+    data_ = p.ptr_;
+    storage_.heap_.capacity_ = capacity;
+    storage_.heap_.off_ = p.shm_.off_.load();
+  }
 
   /**
-   * Helper to append from C-style string
-   *
-   * @param s The C-style string pointer
-   * @param len The length of the string
+   * Build a FullPtr from the current heap state for freeing.
+   */
+  HSHM_INLINE_CROSS_FUN
+  hshm::ipc::FullPtr<T> HeapFullPtr() const {
+    hshm::ipc::FullPtr<T> p;
+    p.ptr_ = data_;
+    p.shm_.off_ = storage_.heap_.off_;
+    return p;
+  }
+
+  /**
+   * Free the current heap buffer via the custom allocator.
+   * Caller must ensure using_sso_ == false.
+   */
+  HSHM_CROSS_FUN
+  void HeapFree() {
+    auto p = HeapFullPtr();
+    alloc_->Free(p);
+  }
+
+  /**
+   * Ensure the heap buffer has at least new_cap elements of capacity.
+   * If already large enough, does nothing. Otherwise reallocates and
+   * copies existing data.
+   */
+  HSHM_CROSS_FUN
+  void HeapReserve(size_type new_cap) {
+    if (new_cap <= storage_.heap_.capacity_) {
+      return;
+    }
+    // Grow by at least 2x to amortize
+    size_type grow_cap = storage_.heap_.capacity_ * 2;
+    if (new_cap > grow_cap) {
+      grow_cap = new_cap;
+    }
+    auto old_p = HeapFullPtr();
+    HeapAlloc(grow_cap);
+    memcpy(data_, old_p.ptr_, size_ * sizeof(T));
+    alloc_->Free(old_p);
+  }
+
+  /**
+   * Transition from SSO to heap, copying existing SSO data and
+   * allocating for total_capacity elements.
+   */
+  HSHM_CROSS_FUN
+  void TransitionToHeap(size_type total_capacity) {
+    T sso_copy[SSOSize];
+    memcpy(sso_copy, storage_.buffer_, size_ * sizeof(T));
+    HeapAlloc(total_capacity);
+    memcpy(data_, sso_copy, size_ * sizeof(T));
+    using_sso_ = false;
+  }
+
+  /**
+   * Append from C-style string (bulk memcpy path).
    */
   void AppendCStr(const T* s, size_type len) {
     if (len == 0) {
@@ -623,50 +759,49 @@ class basic_string {
 
     if (UsingSso() && size_ + len <= SSOSize - 1) {
       // Still fits in SSO
-      std::memcpy(&storage_.buffer_[size_], s, len * sizeof(T));
+      memcpy(&storage_.buffer_[size_], s, len * sizeof(T));
       size_ += len;
       storage_.buffer_[size_] = T();
     } else {
-      // Need to transition to vector
       if (UsingSso()) {
-        storage_.vec_ = new vector<T, AllocT>(alloc_);
-        // Reserve enough space upfront to avoid re-allocations
-        storage_.vec_->reserve(size_ + len + 1);
-        for (size_type i = 0; i < size_; ++i) {
-          storage_.vec_->push_back(storage_.buffer_[i]);
-        }
-        using_sso_ = false;
+        TransitionToHeap(size_ + len + 1);
       } else {
-        // Already in vector mode: ensure capacity for data + null terminator
-        storage_.vec_->reserve(size_ + len + 1);
+        HeapReserve(size_ + len + 1);
       }
-      for (size_type i = 0; i < len; ++i) {
-        storage_.vec_->push_back(s[i]);
-      }
+      memcpy(data_ + size_, s, len * sizeof(T));
       size_ += len;
     }
   }
 
  public:
   /**
-   * Default constructor.
+   * Default constructor (no allocator).
+   * Creates an empty SSO string. Allocator is set via copy/move assignment.
+   */
+  HSHM_CROSS_FUN basic_string()
+    : size_(0), using_sso_(true), alloc_(nullptr), data_(storage_.buffer_) {
+    storage_.buffer_[0] = T();
+  }
+
+  /**
+   * Constructor with allocator.
    * Creates an empty string with SSO buffer initialized.
    *
    * @param alloc Pointer to allocator instance for memory management
    */
-  explicit basic_string(AllocT* alloc)
-    : size_(0), using_sso_(true), alloc_(alloc) {
+  HSHM_CROSS_FUN explicit basic_string(AllocT* alloc)
+    : size_(0), using_sso_(true), alloc_(alloc), data_(storage_.buffer_) {
     storage_.buffer_[0] = T();
   }
 
   /**
    * Destructor.
-   * Frees vector memory if using vector storage. Does not deallocate the allocator.
+   * Frees heap memory if not using SSO. Does not deallocate the allocator.
    */
   HSHM_CROSS_FUN
   ~basic_string() {
     if (!UsingSso()) {
-      delete storage_.vec_;
+      HeapFree();
     }
   }
 
@@ -677,21 +812,18 @@ class basic_string {
    * @param alloc Pointer to allocator instance
    * @param s The C-style string (null-terminated)
    */
-  basic_string(AllocT* alloc, const T* s)
-    : size_(0), using_sso_(true), alloc_(alloc) {
+  HSHM_CROSS_FUN basic_string(AllocT* alloc, const T* s)
+    : size_(0), using_sso_(true), alloc_(alloc), data_(storage_.buffer_) {
     if (s != nullptr) {
       size_type len = 0;
       while (s[len] != T()) ++len;
       if (len < SSOSize - 1) {
-        std::memcpy(storage_.buffer_, s, len * sizeof(T));
+        memcpy(storage_.buffer_, s, len * sizeof(T));
         storage_.buffer_[len] = T();
         size_ = len;
       } else {
-        storage_.vec_ = new vector<T, AllocT>(alloc_);
-        storage_.vec_->reserve(len + 1);
-        for (size_type i = 0; i < len; ++i) {
-          storage_.vec_->push_back(s[i]);
-        }
+        HeapAlloc(len + 1);
+        memcpy(data_, s, len * sizeof(T));
         size_ = len;
         using_sso_ = false;
       }
@@ -719,19 +851,14 @@ class basic_string {
    * @param alloc Pointer to allocator instance
    */
   basic_string(size_type count, T c, AllocT* alloc)
-    : size_(0), using_sso_(true), alloc_(alloc) {
+    : size_(0), using_sso_(true), alloc_(alloc), data_(storage_.buffer_) {
     if (count < SSOSize - 1) {
-      for (size_type i = 0; i < count; ++i) {
-        storage_.buffer_[i] = c;
-      }
+      memset(storage_.buffer_, c, count * sizeof(T));
       storage_.buffer_[count] = T();
       size_ = count;
     } else {
-      storage_.vec_ = new vector<T, AllocT>(alloc_);
-      storage_.vec_->reserve(count + 1);
-      for (size_type i = 0; i < count; ++i) {
-        storage_.vec_->push_back(c);
-      }
+      HeapAlloc(count + 1);
+      memset(data_, c, count * sizeof(T));
       size_ = count;
       using_sso_ = false;
     }
@@ -748,7 +875,7 @@ class basic_string {
    */
   basic_string(const basic_string& other, size_type pos, size_type count,
                AllocT* alloc)
-    : size_(0), using_sso_(true), alloc_(alloc) {
+    : size_(0), using_sso_(true), alloc_(alloc), data_(storage_.buffer_) {
     if (pos > other.size_) {
       throw std::out_of_range("Substring position out of range");
     }
@@ -757,15 +884,12 @@ class basic_string {
 
     const T* other_data = other.GetData();
     if (copy_count < SSOSize - 1) {
-      std::memcpy(storage_.buffer_, &other_data[pos], copy_count * sizeof(T));
+      memcpy(storage_.buffer_, &other_data[pos], copy_count * sizeof(T));
       storage_.buffer_[copy_count] = T();
       size_ = copy_count;
     } else {
-      storage_.vec_ = new vector<T, AllocT>(alloc_);
-      storage_.vec_->reserve(copy_count + 1);
-      for (size_type i = 0; i < copy_count; ++i) {
-        storage_.vec_->push_back(other_data[pos + i]);
-      }
+      HeapAlloc(copy_count + 1);
+      memcpy(data_, &other_data[pos], copy_count * sizeof(T));
       size_ = copy_count;
       using_sso_ = false;
     }
@@ -777,21 +901,27 @@ class basic_string {
    *
    * @param other String to copy from
    */
-  basic_string(const basic_string& other)
-    : size_(0), using_sso_(true), alloc_(other.alloc_) {
+  HSHM_CROSS_FUN basic_string(const basic_string& other)
+    : size_(0), using_sso_(true), alloc_(other.alloc_), data_(storage_.buffer_) {
     const T* other_data = other.GetData();
     if (other.size_ < SSOSize - 1) {
-      std::memcpy(storage_.buffer_, other_data, other.size_ * sizeof(T));
+      memcpy(storage_.buffer_, other_data, other.size_ * sizeof(T));
       storage_.buffer_[other.size_] = T();
       size_ = other.size_;
     } else {
-      storage_.vec_ = new vector<T, AllocT>(alloc_);
-      storage_.vec_->reserve(other.size_ + 1);
-      for (size_type i = 0; i < other.size_; ++i) {
-        storage_.vec_->push_back(other_data[i]);
-      }
+#if HSHM_IS_HOST
+      HeapAlloc(other.size_ + 1);
+      memcpy(data_, other_data, other.size_ * sizeof(T));
       size_ = other.size_;
       using_sso_ = false;
+#else
+      // GPU: only SSO strings (< SSOSize chars) supported for copy
+      // Long strings are truncated to SSO capacity
+      size_type copy_count = SSOSize - 1;
+      memcpy(storage_.buffer_, other_data, copy_count * sizeof(T));
+      storage_.buffer_[copy_count] = T();
+      size_ = copy_count;
+#endif
     }
   }
 
@@ -801,17 +931,20 @@ class basic_string {
    *
    * @param other String to move from
    */
-  basic_string(basic_string&& other) noexcept
+  HSHM_CROSS_FUN basic_string(basic_string&& other) noexcept
     : size_(other.size_), using_sso_(other.using_sso_), alloc_(other.alloc_) {
     if (other.UsingSso()) {
-      std::memcpy(storage_.buffer_, other.storage_.buffer_,
+      memcpy(storage_.buffer_, other.storage_.buffer_,
                   other.size_ * sizeof(T));
       storage_.buffer_[other.size_] = T();
+      data_ = storage_.buffer_;
     } else {
-      storage_.vec_ = other.storage_.vec_;
+      storage_.heap_ = other.storage_.heap_;
+      data_ = other.data_;
     }
     other.size_ = 0;
     other.using_sso_ = true;
+    other.data_ = other.storage_.buffer_;
     other.alloc_ = nullptr;
   }
 
@@ -823,7 +956,7 @@ class basic_string {
    * @param alloc Pointer to allocator instance
    */
   basic_string(std::initializer_list<T> init, AllocT* alloc)
-    : size_(0), using_sso_(true), alloc_(alloc) {
+    : size_(0), using_sso_(true), alloc_(alloc), data_(storage_.buffer_) {
     if (init.size() < SSOSize - 1) {
       size_type i = 0;
       for (const T& c : init) {
@@ -832,10 +965,10 @@ class basic_string {
       storage_.buffer_[init.size()] = T();
       size_ = init.size();
     } else {
-      storage_.vec_ = new vector<T, AllocT>(alloc_);
-      storage_.vec_->reserve(init.size() + 1);
+      HeapAlloc(init.size() + 1);
+      size_type i = 0;
       for (const T& c : init) {
-        storage_.vec_->push_back(c);
+        data_[i++] = c;
       }
       size_ = init.size();
       using_sso_ = false;
@@ -852,18 +985,15 @@ class basic_string {
    */
   template<typename U>
   basic_string(AllocT* alloc, const std::basic_string<T, U>& str)
-    : size_(0), using_sso_(true), alloc_(alloc) {
+    : size_(0), using_sso_(true), alloc_(alloc), data_(storage_.buffer_) {
     size_type len = str.size();
     if (len < SSOSize - 1) {
-      std::memcpy(storage_.buffer_, str.data(), len * sizeof(T));
+      memcpy(storage_.buffer_, str.data(), len * sizeof(T));
       storage_.buffer_[len] = T();
       size_ = len;
     } else {
-      storage_.vec_ = new vector<T, AllocT>(alloc_);
-      storage_.vec_->reserve(len + 1);
-      for (size_type i = 0; i < len; ++i) {
-        storage_.vec_->push_back(str[i]);
-      }
+      HeapAlloc(len + 1);
+      memcpy(data_, str.data(), len * sizeof(T));
       size_ = len;
       using_sso_ = false;
     }
@@ -880,7 +1010,7 @@ class basic_string {
   basic_string& operator=(const basic_string& other) {
     if (this != &other) {
       if (!UsingSso()) {
-        delete storage_.vec_;
+        HeapFree();
       }
       size_ = 0;
       using_sso_ = true;
@@ -888,15 +1018,13 @@ class basic_string {
 
       const T* other_data = other.GetData();
       if (other.size_ < SSOSize - 1) {
-        std::memcpy(storage_.buffer_, other_data, other.size_ * sizeof(T));
+        memcpy(storage_.buffer_, other_data, other.size_ * sizeof(T));
         storage_.buffer_[other.size_] = T();
         size_ = other.size_;
+        data_ = storage_.buffer_;
       } else {
-        storage_.vec_ = new vector<T, AllocT>(alloc_);
-        storage_.vec_->reserve(other.size_ + 1);
-        for (size_type i = 0; i < other.size_; ++i) {
-          storage_.vec_->push_back(other_data[i]);
-        }
+        HeapAlloc(other.size_ + 1);
+        memcpy(data_, other_data, other.size_ * sizeof(T));
         size_ = other.size_;
         using_sso_ = false;
       }
@@ -915,22 +1043,25 @@ class basic_string {
   basic_string& operator=(basic_string&& other) noexcept {
     if (this != &other) {
       if (!UsingSso()) {
-        delete storage_.vec_;
+        HeapFree();
       }
       size_ = other.size_;
       using_sso_ = other.using_sso_;
       alloc_ = other.alloc_;
 
       if (other.UsingSso()) {
-        std::memcpy(storage_.buffer_, other.storage_.buffer_,
+        memcpy(storage_.buffer_, other.storage_.buffer_,
                     other.size_ * sizeof(T));
         storage_.buffer_[other.size_] = T();
+        data_ = storage_.buffer_;
       } else {
-        storage_.vec_ = other.storage_.vec_;
+        storage_.heap_ = other.storage_.heap_;
+        data_ = other.data_;
       }
 
       other.size_ = 0;
       other.using_sso_ = true;
+      other.data_ = other.storage_.buffer_;
       other.alloc_ = nullptr;
     }
     return *this;
@@ -950,7 +1081,7 @@ class basic_string {
     }
 
     if (!UsingSso()) {
-      delete storage_.vec_;
+      HeapFree();
     }
     size_ = 0;
     using_sso_ = true;
@@ -959,15 +1090,13 @@ class basic_string {
     while (s[len] != T()) ++len;
 
     if (len < SSOSize - 1) {
-      std::memcpy(storage_.buffer_, s, len * sizeof(T));
+      memcpy(storage_.buffer_, s, len * sizeof(T));
       storage_.buffer_[len] = T();
       size_ = len;
+      data_ = storage_.buffer_;
     } else {
-      storage_.vec_ = new vector<T, AllocT>(alloc_);
-      storage_.vec_->reserve(len + 1);
-      for (size_type i = 0; i < len; ++i) {
-        storage_.vec_->push_back(s[i]);
-      }
+      HeapAlloc(len + 1);
+      memcpy(data_, s, len * sizeof(T));
       size_ = len;
       using_sso_ = false;
     }
@@ -983,7 +1112,7 @@ class basic_string {
   HSHM_CROSS_FUN
   basic_string& operator=(std::initializer_list<T> init) {
     if (!UsingSso()) {
-      delete storage_.vec_;
+      HeapFree();
     }
     size_ = 0;
     using_sso_ = true;
@@ -995,11 +1124,12 @@ class basic_string {
       }
       storage_.buffer_[init.size()] = T();
       size_ = init.size();
+      data_ = storage_.buffer_;
     } else {
-      storage_.vec_ = new vector<T, AllocT>(alloc_);
-      storage_.vec_->reserve(init.size() + 1);
+      HeapAlloc(init.size() + 1);
+      size_type i = 0;
       for (const T& c : init) {
-        storage_.vec_->push_back(c);
+        data_[i++] = c;
       }
       size_ = init.size();
       using_sso_ = false;
@@ -1018,22 +1148,20 @@ class basic_string {
   HSHM_CROSS_FUN
   basic_string& operator=(const std::basic_string<T, U>& str) {
     if (!UsingSso()) {
-      delete storage_.vec_;
+      HeapFree();
     }
     size_ = 0;
     using_sso_ = true;
 
     size_type len = str.size();
     if (len < SSOSize - 1) {
-      std::memcpy(storage_.buffer_, str.data(), len * sizeof(T));
+      memcpy(storage_.buffer_, str.data(), len * sizeof(T));
       storage_.buffer_[len] = T();
       size_ = len;
+      data_ = storage_.buffer_;
     } else {
-      storage_.vec_ = new vector<T, AllocT>(alloc_);
-      storage_.vec_->reserve(len + 1);
-      for (size_type i = 0; i < len; ++i) {
-        storage_.vec_->push_back(str[i]);
-      }
+      HeapAlloc(len + 1);
+      memcpy(data_, str.data(), len * sizeof(T));
       size_ = len;
       using_sso_ = false;
     }
@@ -1165,8 +1293,8 @@ class basic_string {
    */
   HSHM_CROSS_FUN
   const T* c_str() const {
-    if (!UsingSso() && storage_.vec_->capacity() <= size_) {
-      storage_.vec_->reserve(size_ + 1);
+    if (!UsingSso() && storage_.heap_.capacity_ <= size_) {
+      const_cast<basic_string*>(this)->HeapReserve(size_ + 1);
     }
     T* ptr = const_cast<T*>(GetData());
     ptr[size_] = T();
@@ -1333,7 +1461,7 @@ class basic_string {
     if (UsingSso()) {
       return SSOSize;
     } else {
-      return storage_.vec_->capacity();
+      return storage_.heap_.capacity_;
     }
   }
 
@@ -1350,17 +1478,9 @@ class basic_string {
     }
 
     if (UsingSso()) {
-      // Need to transition to vector
-      storage_.vec_ = new vector<T, AllocT>(alloc_);
-      storage_.vec_->reserve(new_capacity);
-
-      // Copy SSO data to vector
-      for (size_type i = 0; i < size_; ++i) {
-        storage_.vec_->push_back(storage_.buffer_[i]);
-      }
-      using_sso_ = false;
+      TransitionToHeap(new_capacity);
     } else {
-      storage_.vec_->reserve(new_capacity);
+      HeapReserve(new_capacity);
     }
   }
 
@@ -1372,16 +1492,19 @@ class basic_string {
   void shrink_to_fit() {
     if (!UsingSso() && size_ < SSOSize - 1) {
       // Can transition back to SSO
-      vector<T, AllocT>* old_vec = storage_.vec_;
-
-      for (size_type i = 0; i < size_; ++i) {
-        storage_.buffer_[i] = (*old_vec)[i];
-      }
+      T heap_copy[SSOSize];
+      memcpy(heap_copy, data_, size_ * sizeof(T));
+      HeapFree();
+      memcpy(storage_.buffer_, heap_copy, size_ * sizeof(T));
       storage_.buffer_[size_] = T();
-      delete old_vec;
       using_sso_ = true;
-    } else if (!UsingSso()) {
-      storage_.vec_->shrink_to_fit();
+      data_ = storage_.buffer_;
+    } else if (!UsingSso() && storage_.heap_.capacity_ > size_ + 1) {
+      // Reallocate to exact size
+      auto old_p = HeapFullPtr();
+      HeapAlloc(size_ + 1);
+      memcpy(data_, old_p.ptr_, size_ * sizeof(T));
+      alloc_->Free(old_p);
     }
   }
 
@@ -1398,17 +1521,13 @@ class basic_string {
         storage_.buffer_[size_ + 1] = T();
         ++size_;
       } else {
-        // Transition to vector
-        storage_.vec_ = new vector<T, AllocT>(alloc_);
-        for (size_type i = 0; i < size_; ++i) {
-          storage_.vec_->push_back(storage_.buffer_[i]);
-        }
-        storage_.vec_->push_back(c);
+        TransitionToHeap(size_ + 2);
+        data_[size_] = c;
         ++size_;
-        using_sso_ = false;
       }
     } else {
-      storage_.vec_->push_back(c);
+      HeapReserve(size_ + 2);
+      data_[size_] = c;
       ++size_;
     }
   }
@@ -1432,10 +1551,11 @@ class basic_string {
   HSHM_CROSS_FUN
   void clear() {
     if (!UsingSso()) {
-      delete storage_.vec_;
+      HeapFree();
     }
     size_ = 0;
     using_sso_ = true;
+    data_ = storage_.buffer_;
     storage_.buffer_[0] = T();
   }
 
@@ -1455,12 +1575,23 @@ class basic_string {
     } else if (count > size_) {
       // Extend
       reserve(count + 1);
-      // Fill with default-initialized characters
-      for (size_type i = size_; i < count; ++i) {
-        push_back(T());
-      }
+      T* d = GetData();
+      memset(&d[size_], 0, (count - size_) * sizeof(T));
+      size_ = count;
     }
     // If count == size_, do nothing
+  }
+
+  /**
+   * Resize without initializing new elements.
+   * Caller must immediately overwrite the new region.
+   *
+   * @param count New size of the string
+   */
+  HSHM_CROSS_FUN
+  void resize_no_init(size_type count) {
+    reserve(count + 1);
+    size_ = count;
   }
 
   /**
@@ -1533,8 +1664,20 @@ class basic_string {
    */
   HSHM_CROSS_FUN
   basic_string& append(size_type count, T c) {
-    for (size_type i = 0; i < count; ++i) {
-      push_back(c);
+    if (count == 0) return *this;
+    size_type new_size = size_ + count;
+    if (UsingSso() && new_size <= SSOSize - 1) {
+      memset(&storage_.buffer_[size_], (int)c, count * sizeof(T));
+      size_ = new_size;
+      storage_.buffer_[size_] = T();
+    } else {
+      if (UsingSso()) {
+        TransitionToHeap(new_size + 1);
+      } else {
+        HeapReserve(new_size + 1);
+      }
+      memset(data_ + size_, (int)c, count * sizeof(T));
+      size_ = new_size;
     }
     return *this;
   }
@@ -1547,9 +1690,7 @@ class basic_string {
    */
   HSHM_CROSS_FUN
   basic_string& append(std::initializer_list<T> init) {
-    for (const T& c : init) {
-      push_back(c);
-    }
+    AppendCStr(init.begin(), init.size());
     return *this;
   }
 
@@ -1609,7 +1750,7 @@ class basic_string {
     if (size_ != str.size_) {
       return false;
     }
-    return std::memcmp(GetData(), str.GetData(), size_ * sizeof(T)) == 0;
+    return hshm_memcmp(GetData(), str.GetData(), size_ * sizeof(T)) == 0;
   }
 
   /**
@@ -1628,7 +1769,7 @@ class basic_string {
     if (size_ != s_len) {
       return false;
     }
-    return std::memcmp(GetData(), s, size_ * sizeof(T)) == 0;
+    return hshm_memcmp(GetData(), s, size_ * sizeof(T)) == 0;
   }
 
   /**
@@ -1662,7 +1803,7 @@ class basic_string {
   HSHM_CROSS_FUN
   int compare(const basic_string& str) const {
     size_type cmp_len = std::min(size_, str.size_);
-    int result = std::memcmp(GetData(), str.GetData(), cmp_len * sizeof(T));
+    int result = hshm_memcmp(GetData(), str.GetData(), cmp_len * sizeof(T));
     if (result != 0) {
       return result;
     }
@@ -1689,7 +1830,7 @@ class basic_string {
     while (s[s_len] != T()) ++s_len;
 
     size_type cmp_len = std::min(size_, s_len);
-    int result = std::memcmp(GetData(), s, cmp_len * sizeof(T));
+    int result = hshm_memcmp(GetData(), s, cmp_len * sizeof(T));
     if (result != 0) {
       return result;
     }
@@ -1712,7 +1853,7 @@ class basic_string {
     if (str.size_ > size_) {
       return false;
     }
-    return std::memcmp(GetData(), str.GetData(), str.size_ * sizeof(T)) == 0;
+    return hshm_memcmp(GetData(), str.GetData(), str.size_ * sizeof(T)) == 0;
   }
 
   /**
@@ -1742,7 +1883,7 @@ class basic_string {
     if (s_len > size_) {
       return false;
     }
-    return std::memcmp(GetData(), s, s_len * sizeof(T)) == 0;
+    return hshm_memcmp(GetData(), s, s_len * sizeof(T)) == 0;
   }
 
   /**
@@ -1756,7 +1897,7 @@ class basic_string {
     if (str.size_ > size_) {
       return false;
     }
-    return std::memcmp(&GetData()[size_ - str.size_], str.GetData(),
+    return hshm_memcmp(&GetData()[size_ - str.size_], str.GetData(),
                       str.size_ * sizeof(T)) == 0;
   }
 
@@ -1787,7 +1928,7 @@ class basic_string {
     if (s_len > size_) {
       return false;
     }
-    return std::memcmp(&GetData()[size_ - s_len], s, s_len * sizeof(T)) == 0;
+    return hshm_memcmp(&GetData()[size_ - s_len], s, s_len * sizeof(T)) == 0;
   }
 
   /**
@@ -1808,7 +1949,7 @@ class basic_string {
 
     const T* data = GetData();
     for (size_type i = pos; i <= size_ - str.size_; ++i) {
-      if (std::memcmp(&data[i], str.GetData(), str.size_ * sizeof(T)) == 0) {
+      if (hshm_memcmp(&data[i], str.GetData(), str.size_ * sizeof(T)) == 0) {
         return i;
       }
     }
@@ -1860,7 +2001,7 @@ class basic_string {
 
     const T* data = GetData();
     for (size_type i = pos; i <= size_ - s_len; ++i) {
-      if (std::memcmp(&data[i], s, s_len * sizeof(T)) == 0) {
+      if (hshm_memcmp(&data[i], s, s_len * sizeof(T)) == 0) {
         return i;
       }
     }
@@ -1903,51 +2044,25 @@ class basic_string {
 
     if (UsingSso() && new_size <= SSOSize - 1) {
       // Can do in-place with SSO
-      std::memmove(&storage_.buffer_[pos + str.size_],
+      memmove(&storage_.buffer_[pos + str.size_],
                    &storage_.buffer_[pos + rep_count],
                    (size_ - pos - rep_count) * sizeof(T));
-      std::memcpy(&storage_.buffer_[pos], str.GetData(),
+      memcpy(&storage_.buffer_[pos], str.GetData(),
                   str.size_ * sizeof(T));
       size_ = new_size;
       storage_.buffer_[size_] = T();
     } else {
-      // Use vector for large replacement
       if (UsingSso()) {
-        storage_.vec_ = new vector<T, AllocT>(alloc_);
-        storage_.vec_->reserve(new_size + 1);
-        for (size_type i = 0; i < size_; ++i) {
-          storage_.vec_->push_back(storage_.buffer_[i]);
-        }
-        using_sso_ = false;
+        TransitionToHeap(new_size + 1);
+      } else {
+        HeapReserve(new_size + 1);
       }
-
-      // Create new vector with replaced content
-      vector<T, AllocT> new_vec(alloc_);
-      T* data = GetData();
-
-      // Copy before replacement
-      for (size_type i = 0; i < pos; ++i) {
-        new_vec.push_back(data[i]);
-      }
-
-      // Copy replacement
-      for (size_type i = 0; i < str.size_; ++i) {
-        new_vec.push_back(str.GetData()[i]);
-      }
-
-      // Copy after replacement
-      for (size_type i = pos + rep_count; i < size_; ++i) {
-        new_vec.push_back(data[i]);
-      }
-
-      // Swap with old vector
-      storage_.vec_->clear();
-      delete storage_.vec_;
-      storage_.vec_ = new vector<T, AllocT>(alloc_);
-      for (size_type i = 0; i < new_vec.size(); ++i) {
-        storage_.vec_->push_back(new_vec[i]);
-      }
-      size_ = new_vec.size();
+      // Shift tail, then insert replacement
+      memmove(data_ + pos + str.size_,
+              data_ + pos + rep_count,
+              (size_ - pos - rep_count) * sizeof(T));
+      memcpy(data_ + pos, str.GetData(), str.size_ * sizeof(T));
+      size_ = new_size;
     }
 
     return *this;
@@ -1990,14 +2105,14 @@ class basic_string {
     erase_count = std::min(erase_count, size_ - pos);
 
     if (UsingSso()) {
-      std::memmove(&storage_.buffer_[pos],
+      memmove(&storage_.buffer_[pos],
                    &storage_.buffer_[pos + erase_count],
                    (size_ - pos - erase_count) * sizeof(T));
       size_ -= erase_count;
       storage_.buffer_[size_] = T();
     } else {
       T* data = GetData();
-      std::memmove(&data[pos], &data[pos + erase_count],
+      memmove(&data[pos], &data[pos + erase_count],
                    (size_ - pos - erase_count) * sizeof(T));
       size_ -= erase_count;
     }
@@ -2014,7 +2129,12 @@ class basic_string {
   void swap(basic_string& other) noexcept {
     std::swap(storage_, other.storage_);
     std::swap(size_, other.size_);
+    std::swap(using_sso_, other.using_sso_);
     std::swap(alloc_, other.alloc_);
+    std::swap(data_, other.data_);
+    // Fix data_ for SSO strings (buffer address changed)
+    if (using_sso_) data_ = storage_.buffer_;
+    if (other.using_sso_) other.data_ = other.storage_.buffer_;
   }
 
   /**
@@ -2057,7 +2177,7 @@ class basic_string {
    * @param ar Archive to save to
    */
   template<class Archive>
-  void save(Archive& ar) const {
+  HSHM_INLINE_CROSS_FUN void save(Archive& ar) const {
     hshm::ipc::save_string(ar, *this);
   }
 
@@ -2069,8 +2189,146 @@ class basic_string {
    * @param ar Archive to load from
    */
   template<class Archive>
-  void load(Archive& ar) {
+  HSHM_INLINE_CROSS_FUN void load(Archive& ar) {
     hshm::ipc::load_string(ar, *this);
+  }
+  /**
+   * Convert an integer to a string.
+   *
+   * @param alloc Allocator to use
+   * @param val Integer value to convert
+   * @return basic_string containing the decimal representation
+   */
+  template <typename IntT,
+            typename = std::enable_if_t<std::is_integral_v<IntT>>>
+  HSHM_CROSS_FUN
+  static basic_string FromNumber(AllocT *alloc, IntT val) {
+    T buf[32];
+    size_type len = NumberToStr(buf, sizeof(buf), val);
+    return basic_string(alloc, buf, len);
+  }
+
+  /**
+   * Convert a floating-point number to a string.
+   *
+   * @param alloc Allocator to use
+   * @param val Float/double value to convert
+   * @param precision Number of decimal digits (default: 6)
+   * @return basic_string containing the decimal representation
+   */
+  template <typename FloatT,
+            typename = std::enable_if_t<std::is_floating_point_v<FloatT>>,
+            typename = void>
+  HSHM_CROSS_FUN
+  static basic_string FromNumber(AllocT *alloc, FloatT val,
+                                 int precision = 6) {
+    T buf[64];
+    size_type len = NumberToStr(buf, sizeof(buf), val, precision);
+    return basic_string(alloc, buf, len);
+  }
+
+ private:
+  /**
+   * Convert an unsigned integer to a char buffer (GPU-compatible).
+   * Returns the number of characters written (excluding null terminator).
+   */
+  template <typename UIntT>
+  HSHM_CROSS_FUN
+  static size_type UintToStr(T *buf, size_type buf_size, UIntT val) {
+    if (buf_size == 0) return 0;
+    if (val == 0) {
+      buf[0] = '0';
+      if (buf_size > 1) buf[1] = T();
+      return 1;
+    }
+    // Write digits in reverse
+    T tmp[32];
+    size_type nd = 0;
+    while (val > 0 && nd < 32) {
+      tmp[nd++] = '0' + static_cast<T>(val % 10);
+      val /= 10;
+    }
+    size_type len = (nd < buf_size) ? nd : buf_size - 1;
+    for (size_type i = 0; i < len; ++i) {
+      buf[i] = tmp[nd - 1 - i];
+    }
+    if (len < buf_size) buf[len] = T();
+    return len;
+  }
+
+ public:
+  /**
+   * Convert an integer to a char buffer (GPU-compatible).
+   * Handles signed and unsigned types.
+   *
+   * @param buf Output buffer
+   * @param buf_size Size of output buffer
+   * @param val Integer value
+   * @return Number of characters written (excluding null terminator)
+   */
+  template <typename IntT,
+            typename = std::enable_if_t<std::is_integral_v<IntT>>>
+  HSHM_CROSS_FUN
+  static size_type NumberToStr(T *buf, size_type buf_size, IntT val) {
+    if (buf_size == 0) return 0;
+    if constexpr (std::is_signed_v<IntT>) {
+      if (val < 0) {
+        buf[0] = '-';
+        using UIntT = std::make_unsigned_t<IntT>;
+        // Handle INT_MIN: cast to unsigned first to avoid UB
+        UIntT uval = static_cast<UIntT>(0) - static_cast<UIntT>(val);
+        size_type len = UintToStr(buf + 1, buf_size - 1, uval);
+        return 1 + len;
+      }
+    }
+    using UIntT = std::make_unsigned_t<IntT>;
+    return UintToStr(buf, buf_size, static_cast<UIntT>(val));
+  }
+
+  /**
+   * Convert a floating-point number to a char buffer (GPU-compatible).
+   *
+   * @param buf Output buffer
+   * @param buf_size Size of output buffer
+   * @param val Float/double value
+   * @param precision Number of decimal digits (default: 6)
+   * @return Number of characters written (excluding null terminator)
+   */
+  template <typename FloatT,
+            typename = std::enable_if_t<std::is_floating_point_v<FloatT>>,
+            typename = void>
+  HSHM_CROSS_FUN
+  static size_type NumberToStr(T *buf, size_type buf_size, FloatT val,
+                               int precision = 6) {
+    if (buf_size == 0) return 0;
+    size_type pos = 0;
+
+    // Handle negative
+    if (val < 0) {
+      buf[pos++] = '-';
+      val = -val;
+    }
+
+    // Integer part
+    auto int_part = static_cast<unsigned long long>(val);
+    size_type int_len = UintToStr(buf + pos, buf_size - pos, int_part);
+    pos += int_len;
+
+    if (precision > 0 && pos + 1 < buf_size) {
+      buf[pos++] = '.';
+
+      // Fractional part
+      FloatT frac = val - static_cast<FloatT>(int_part);
+      for (int d = 0; d < precision && pos < buf_size - 1; ++d) {
+        frac *= 10;
+        int digit = static_cast<int>(frac);
+        buf[pos++] = '0' + static_cast<T>(digit);
+        frac -= digit;
+      }
+    }
+
+    if (pos < buf_size) buf[pos] = T();
+    return pos;
   }
 };
 
@@ -2081,5 +2339,27 @@ template<typename AllocT, size_t SSOSize = 32>
 using string = basic_string<char, AllocT, SSOSize>;
 
 }  // namespace hshm::priv
+
+#include "hermes_shm/types/hash.h"
+
+namespace hshm {
+
+/** FNV-1a hash specialization for priv::string */
+template <typename AllocT, size_t SSOSize>
+struct hash<hshm::priv::basic_string<char, AllocT, SSOSize>> {
+  HSHM_INLINE_CROSS_FUN
+  std::size_t operator()(
+      const hshm::priv::basic_string<char, AllocT, SSOSize> &s) const {
+    std::size_t h = 14695981039346656037ULL;
+    const char *data = s.data();
+    for (std::size_t i = 0; i < s.size(); ++i) {
+      h ^= static_cast<std::size_t>(static_cast<unsigned char>(data[i]));
+      h *= 1099511628211ULL;
+    }
+    return h;
+  }
+};
+
+}  // namespace hshm
 
 #endif  // HSHM_DATA_STRUCTURES_PRIV_STRING_H_

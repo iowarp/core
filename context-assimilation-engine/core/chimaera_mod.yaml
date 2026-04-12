@@ -15,3 +15,4 @@ kMonitor: 9       # 9 - Monitor container state
 # Custom Methods (start from 10, use sequential IDs)
 kParseOmni: 10               # Parse OMNI YAML file and schedule assimilation tasks
 kProcessHdf5Dataset: 11      # Process HDF5 dataset
+kExportData: 12              # Export all blobs in a CTE tag to a file

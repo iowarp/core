@@ -1,10 +1,10 @@
 #!/bin/bash
-# install.sh - Install IOWarp Core using rattler-build + conda
+# install.sh - Install IOWarp Core using conda-build
 # This script builds and installs IOWarp Core from source
 # It will automatically install Miniconda if conda is not detected
 #
 # Usage:
-#   ./install.sh              # Build with default (release) variant
+#   ./install.sh              # Build with default (release) preset
 #   ./install.sh release      # Build with release preset
 #   ./install.sh debug        # Build with debug preset
 #   ./install.sh conda        # Build with conda-optimized preset
@@ -17,8 +17,8 @@ set -e  # Exit on error
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Parse variant argument (default to release)
-VARIANT="${1:-release}"
+# Parse preset argument (default to release)
+PRESET="${1:-release}"
 
 # Color codes for output
 RED='\033[0;31m'
@@ -31,7 +31,7 @@ echo -e "${BLUE}================================================================
 echo -e "IOWarp Core - Installation"
 echo -e "======================================================================${NC}"
 echo ""
-echo -e "${BLUE}Variant: ${YELLOW}$VARIANT${NC}"
+echo -e "${BLUE}Preset: ${YELLOW}$PRESET${NC}"
 echo ""
 
 # Function to install Miniconda
@@ -43,7 +43,7 @@ install_miniconda() {
     MINICONDA_DIR="$HOME/miniconda3"
 
     # Detect platform
-    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    if [[ "$OSTYPE" == "linux"* ]]; then
         PLATFORM="Linux"
         ARCH=$(uname -m)
         if [[ "$ARCH" == "x86_64" ]]; then
@@ -92,7 +92,7 @@ install_miniconda() {
     source "$MINICONDA_DIR/etc/profile.d/conda.sh"
 
     echo ""
-    echo -e "${GREEN}✓ Miniconda installed successfully!${NC}"
+    echo -e "${GREEN}Miniconda installed successfully!${NC}"
     echo ""
 }
 
@@ -112,7 +112,7 @@ ensure_conda() {
             install_miniconda
         fi
     else
-        echo -e "${GREEN}✓ Conda detected: $(conda --version)${NC}"
+        echo -e "${GREEN}Conda detected: $(conda --version)${NC}"
     fi
     echo ""
 }
@@ -124,14 +124,14 @@ ensure_conda
 echo -e "${BLUE}Accepting Conda Terms of Service...${NC}"
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main 2>/dev/null || true
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
-echo -e "${GREEN}✓ Conda ToS accepted${NC}"
+echo -e "${GREEN}Conda ToS accepted${NC}"
 echo ""
 
 # Configure conda channels (add conda-forge if not already present)
 echo -e "${BLUE}Configuring conda channels...${NC}"
 conda config --add channels conda-forge 2>/dev/null || true
 conda config --set channel_priority flexible 2>/dev/null || true
-echo -e "${GREEN}✓ Conda channels configured${NC}"
+echo -e "${GREEN}Conda channels configured${NC}"
 echo ""
 
 # Create and activate environment if not already in one
@@ -144,7 +144,7 @@ if [ -z "$CONDA_PREFIX" ]; then
         echo -e "${YELLOW}Environment '$ENV_NAME' already exists. Using existing environment.${NC}"
     else
         conda create -n "$ENV_NAME" -y python
-        echo -e "${GREEN}✓ Environment created${NC}"
+        echo -e "${GREEN}Environment created${NC}"
     fi
 
     echo -e "${BLUE}Activating environment: $ENV_NAME${NC}"
@@ -153,23 +153,25 @@ if [ -z "$CONDA_PREFIX" ]; then
     echo ""
 fi
 
-echo -e "${GREEN}✓ Active conda environment: $CONDA_PREFIX${NC}"
+echo -e "${GREEN}Active conda environment: $CONDA_PREFIX${NC}"
 echo ""
 
-# Check if rattler-build is installed
-if ! command -v rattler-build &> /dev/null; then
-    echo -e "${YELLOW}Installing rattler-build...${NC}"
-    conda install -y rattler-build -c conda-forge
+# Check if conda-build is installed
+if ! conda build --version &> /dev/null; then
+    echo -e "${YELLOW}Installing conda-build...${NC}"
+    conda install -y conda-build -c conda-forge
     echo ""
 else
-    echo -e "${GREEN}✓ rattler-build detected: $(rattler-build --version)${NC}"
+    echo -e "${GREEN}conda-build detected: $(conda build --version)${NC}"
     echo ""
 fi
 
 # Initialize and update git submodules recursively (if in a git repository)
 if [ -d ".git" ]; then
     echo -e "${BLUE}>>> Initializing git submodules...${NC}"
-    git submodule update --init --recursive
+    git submodule update --init --recursive 2>/dev/null || {
+        echo -e "${YELLOW}Some submodules failed to update (worktrees or optional repos). Continuing...${NC}"
+    }
     echo ""
 elif [ -d "context-transport-primitives" ] && [ "$(ls -A context-transport-primitives 2>/dev/null)" ]; then
     echo -e "${GREEN}>>> Submodules already present${NC}"
@@ -181,45 +183,28 @@ else
     exit 1
 fi
 
-# Verify variant file exists
+# Build the conda package
 RECIPE_DIR="$SCRIPT_DIR/installers/conda"
-VARIANT_FILE="$RECIPE_DIR/variants/${VARIANT}.yaml"
 
-if [ ! -f "$VARIANT_FILE" ]; then
-    echo -e "${RED}Error: Variant '$VARIANT' not found${NC}"
-    echo ""
-    echo -e "${YELLOW}Available variants:${NC}"
-    for f in "$RECIPE_DIR/variants"/*.yaml; do
-        basename "$f" .yaml
-    done
-    echo ""
-    exit 1
-fi
-
-echo -e "${BLUE}Using variant file: $VARIANT_FILE${NC}"
-echo ""
-
-# Detect Python version from current environment
-PYTHON_VERSION=$(python --version 2>&1 | grep -oP '\d+\.\d+' | head -1)
-if [ -z "$PYTHON_VERSION" ]; then
-    PYTHON_VERSION="3.12"  # Default fallback
-fi
-echo -e "${BLUE}Detected Python version: ${YELLOW}$PYTHON_VERSION${NC}"
-
-# Build the conda package with rattler-build
-echo -e "${BLUE}>>> Building conda package with rattler-build...${NC}"
+echo -e "${BLUE}>>> Building conda package with conda-build...${NC}"
 echo -e "${YELLOW}This may take 10-30 minutes depending on your system${NC}"
 echo ""
 
 OUTPUT_DIR="$SCRIPT_DIR/build/conda-output"
 mkdir -p "$OUTPUT_DIR"
 
-if rattler-build build \
-    --recipe "$RECIPE_DIR" \
-    --variant-config "$VARIANT_FILE" \
-    --output-dir "$OUTPUT_DIR" \
-    --variant "python=${PYTHON_VERSION}.*" \
-    -c conda-forge; then
+export IOWARP_PRESET="$PRESET"
+
+# Match the build Python version to the target environment so that
+# the built package's python pin is satisfiable at install time.
+TARGET_PYTHON="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+echo -e "${BLUE}Target Python version: $TARGET_PYTHON${NC}"
+
+if conda build "$RECIPE_DIR" \
+    --output-folder "$OUTPUT_DIR" \
+    -c conda-forge \
+    --python="$TARGET_PYTHON" \
+    --no-anaconda-upload; then
     BUILD_SUCCESS=true
 else
     BUILD_SUCCESS=false
@@ -229,7 +214,7 @@ echo ""
 
 if [ "$BUILD_SUCCESS" = true ]; then
     # Find the built package
-    PACKAGE_PATH=$(find "$OUTPUT_DIR" -name "iowarp-core-*.conda" -o -name "iowarp-core-*.tar.bz2" | head -1)
+    PACKAGE_PATH=$(find "$OUTPUT_DIR" -name "iowarp-core-*.tar.bz2" -o -name "iowarp-core-*.conda" | head -1)
 
     if [ -z "$PACKAGE_PATH" ]; then
         echo -e "${RED}Error: Could not find built package in $OUTPUT_DIR${NC}"
@@ -244,17 +229,13 @@ if [ "$BUILD_SUCCESS" = true ]; then
     echo "  $PACKAGE_PATH"
     echo ""
 
-    # Install directly into current environment
-    # Index the local channel so conda can read package metadata
-    echo -e "${BLUE}>>> Indexing local channel...${NC}"
-    conda index "$OUTPUT_DIR" 2>/dev/null || python -m conda_index "$OUTPUT_DIR" 2>/dev/null || true
-
-    # Use local channel so conda properly resolves dependencies from conda-forge
+    # Install using local output directory as a channel so that conda
+    # resolves run dependencies (installing by file path skips dep resolution).
     echo -e "${BLUE}>>> Installing iowarp-core into current environment...${NC}"
-    if conda install -c "$OUTPUT_DIR" -c conda-forge iowarp-core -y; then
+    if conda install -y -c "$OUTPUT_DIR" -c conda-forge iowarp-core; then
         echo ""
         echo -e "${GREEN}======================================================================"
-        echo -e "✓ IOWarp Core installed successfully!"
+        echo -e "IOWarp Core installed successfully!"
         echo -e "======================================================================${NC}"
         echo ""
         echo -e "${BLUE}Installation prefix: $CONDA_PREFIX${NC}"
@@ -288,10 +269,7 @@ else
     echo "   conda config --show channels"
     echo ""
     echo "3. Try building with verbose output:"
-    echo "   rattler-build build --recipe $RECIPE_DIR --variant-config $VARIANT_FILE --verbose"
-    echo ""
-    echo "4. Check available variants:"
-    echo "   ls $RECIPE_DIR/variants/"
+    echo "   IOWARP_PRESET=$PRESET conda build $RECIPE_DIR -c conda-forge --no-anaconda-upload"
     echo ""
     exit 1
 fi

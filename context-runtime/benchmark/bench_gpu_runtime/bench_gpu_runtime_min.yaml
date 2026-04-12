@@ -1,0 +1,15 @@
+# Minimal configuration for GPU runtime benchmarks.
+#
+# This avoids heavy compose defaults (e.g., large RAM bdev tiers) that can
+# allocate significant memory and distort microbenchmarks.
+
+networking:
+  port: 9413
+
+runtime:
+  num_threads: 4
+  queue_depth: 1024
+  local_sched: "default"
+
+compose: []
+

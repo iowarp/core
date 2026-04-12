@@ -78,13 +78,12 @@ class TagTestFixture {
     REQUIRE(!home_dir.empty());
     test_storage_path_ = home_dir + "/cte_tag_test.dat";
 
-    // Clean up existing test file
-    if (fs::exists(test_storage_path_)) {
-      fs::remove(test_storage_path_);
-    }
-
     // Initialize Chimaera and CTE client once
     if (!g_cte_initialized) {
+      // Clean up existing test file only on first init
+      if (fs::exists(test_storage_path_)) {
+        fs::remove(test_storage_path_);
+      }
       bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
       REQUIRE(success);
 
@@ -126,9 +125,9 @@ class TagTestFixture {
 
   ~TagTestFixture() {
     INFO("=== Cleaning up Tag Test Environment ===");
-    if (fs::exists(test_storage_path_)) {
-      fs::remove(test_storage_path_);
-    }
+    // Don't delete the test file here — it's shared across test cases via
+    // the bdev pool. Deleting it invalidates the bdev's file descriptor,
+    // causing subsequent reads to return 0 bytes.
   }
 
   /**
@@ -279,6 +278,7 @@ TEST_CASE("Tag - PutBlob with Custom Score", "[cte][tag][putblob]") {
   REQUIRE(score == 0.9f);
 }
 
+#ifdef WRP_CTE_ENABLE_COMPRESSION
 TEST_CASE("Tag - PutBlob with Context", "[cte][tag][putblob]") {
   TagTestFixture fixture;
   fixture.SetupCTEWithTarget();
@@ -296,6 +296,7 @@ TEST_CASE("Tag - PutBlob with Context", "[cte][tag][putblob]") {
 
   INFO("PutBlob with context completed");
 }
+#endif
 
 TEST_CASE("Tag - PutBlob SHM Version", "[cte][tag][putblob]") {
   TagTestFixture fixture;

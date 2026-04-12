@@ -1,0 +1,35 @@
+# CTE GPU Benchmark — single quick run
+#
+# Available test cases:
+#   client_overhead      -- Measure AsyncPutBlob GPU-side submit cost (Local)
+#   client_overhead_cpu  -- Same but via ToLocalCpu routing
+#   synthetic            -- Synthetic I/O (modes: hbm, direct, bam, cte)
+#   pagerank             -- PageRank workload
+#   gnn                  -- GNN feature gather workload
+#   gray_scott           -- Gray-Scott stencil simulation
+#   llm_kvcache          -- LLM KV cache offloading
+#
+# Usage:
+#   jarvis pipeline create gpu/cte_gpu_bench.yaml
+#   jarvis pipeline run cte_gpu_bench
+
+name: cte_gpu_bench
+
+pkgs:
+  - pkg_type: jarvis_iowarp.wrp_cte_gpu_bench
+    pkg_name: gpu_local
+    test_case: "synthetic"
+    workload_mode: "cte"
+    routing: "local"
+    rt_blocks: 32
+    rt_threads: 32
+    client_blocks: 16
+    client_threads: 32
+    io_size: "128k"
+    iterations: 16
+    timeout: 120
+    # Storage targets for CTE mode (type:size pairs)
+    # If empty, defaults to single hbm:256m target
+    targets:
+      - ["hbm", "256m"]
+      - ["pinned", "256m"]

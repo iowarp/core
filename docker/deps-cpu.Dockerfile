@@ -137,6 +137,10 @@ RUN echo '#!/bin/bash\n\
     if [ -S /var/run/docker.sock ]; then\n\
     sudo chmod 666 /var/run/docker.sock\n\
     fi\n\
+    # Register jarvis_iowarp repo if workspace is mounted and not already added\n\
+    if [ -d /workspace/jarvis_iowarp ]; then\n\
+    jarvis repo add /workspace/jarvis_iowarp --force 2>/dev/null\n\
+    fi\n\
     exec "$@"' > /usr/local/bin/docker-entrypoint.sh \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
 
@@ -410,6 +414,9 @@ RUN cd /home/iowarp \
     && cd jarvis-cd \
     && pip install -r requirements.txt \
     && pip install -e .
+
+# Initialize Jarvis configuration directories
+RUN jarvis init
 
 # Configure Spack to use system packages
 RUN mkdir -p ~/.spack && \

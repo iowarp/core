@@ -40,6 +40,7 @@
 #include "chimaera/admin/admin_tasks.h"
 #include "chimaera/config_manager.h"
 #include "chimaera/container.h"
+#include "chimaera/module_manager.h"
 #include "chimaera/task.h"
 
 #include <chrono>
@@ -422,9 +423,15 @@ void PoolManager::InitAddressMap(PoolId pool_id, u32 num_containers) {
 }
 
 TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
+  // For NVHPC: create a RunContext reference alias so CHI_TASK_BODY_BEGIN
+  // lambda can capture it by reference (the macro uses [=, &rctx])
+#ifdef __NVCOMPILER
+  RunContext& rctx = *run_ctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   if (!is_initialized_) {
     HLOG(kError, "PoolManager: Not initialized for pool creation");
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Cast generic Task to BaseCreateTask to access pool operation parameters
@@ -455,7 +462,7 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
 
   // Validate pool parameters
   if (!ValidatePoolParams(chimod_name, pool_name)) {
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Check if pool already exists by name (get-or-create semantics)
@@ -468,7 +475,7 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
          "PoolManager: Pool with name '{}' for ChiMod '{}' already exists "
          "with PoolId {}, returning existing pool",
          pool_name, chimod_name, existing_pool_id);
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Get the target pool ID from the task
@@ -479,7 +486,7 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
     HLOG(kError,
          "PoolManager: Cannot create pool with null PoolId. Users must provide "
          "explicit pool ID.");
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Check if pool already exists by ID (should not happen with proper
@@ -490,7 +497,7 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
     HLOG(kInfo,
          "PoolManager: Pool {} already exists by ID, returning existing pool",
          target_pool_id);
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Create pool metadata
@@ -509,7 +516,7 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
   if (!module_manager) {
     HLOG(kError, "PoolManager: Module manager not available");
     pool_metadata_.erase(target_pool_id);
-    co_return;
+    CHI_CO_RETURN;
   }
 
   Container* container = nullptr;
@@ -523,7 +530,7 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
       HLOG(kError, "PoolManager: Failed to create container for ChiMod: {}",
            chimod_name);
       pool_metadata_.erase(target_pool_id);
-      co_return;
+      CHI_CO_RETURN;
     }
 
     // node_id already obtained above try block
@@ -557,7 +564,7 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
       HLOG(kError, "PoolManager: Failed to register container");
       module_manager->DestroyContainer(chimod_name, container);
       pool_metadata_.erase(target_pool_id);
-      co_return;
+      CHI_CO_RETURN;
     }
 
     // Run create method on container as a coroutine
@@ -565,7 +572,9 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
     // nested pool creation (e.g., CTE Create calling bdev Create).
     // By using co_await, we properly suspend and resume, allowing the worker
     // to process nested tasks while we wait.
-    co_await container->Run(0, task, *run_ctx);  // Method::kCreate = 0
+    HLOG(kInfo, "CreatePool: Running Create method for pool {}", target_pool_id);
+    CHI_CO_AWAIT(container->Run(0, task, *run_ctx));  // Method::kCreate = 0
+    HLOG(kInfo, "CreatePool: Create method completed for pool {}", target_pool_id);
 
     if (task->GetReturnCode() != 0) {
       HLOG(kError, "PoolManager: Failed to create container for ChiMod: {}",
@@ -574,8 +583,37 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
       UnregisterContainer(target_pool_id, node_id);
       module_manager->DestroyContainer(chimod_name, container);
       pool_metadata_.erase(target_pool_id);
-      co_return;
+      CHI_CO_RETURN;
     }
+
+    // Create GPU container via the work orchestrator.
+    // Skip when orchestrator is already paused by an external caller
+    // (e.g., a GPU test kernel is running) — cudaMalloc is a device-
+    // synchronizing call that would deadlock with the busy-waiting kernel.
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+    {
+      auto *gpu_mgr = ipc_manager2->GetGpuIpcManager();
+      bool did_pause = gpu_mgr ? gpu_mgr->PauseGpuOrchestrator() : false;
+      if (did_pause) {
+        void *gpu_container_ptr = ipc_manager2->AllocGpuContainer(
+            target_pool_id, node_id, chimod_name);
+        if (gpu_container_ptr) {
+          auto it = pool_metadata_.find(target_pool_id);
+          if (it != pool_metadata_.end()) {
+            it->second.gpu_container_ptr_ = gpu_container_ptr;
+          }
+          gpu_mgr->RegisterGpuOrchestratorContainer(target_pool_id,
+                                                    gpu_container_ptr);
+        }
+        gpu_mgr->ResumeGpuOrchestrator();
+        // Allow container to send GPU-init tasks now that the GPU container
+        // is registered and the orchestrator is running.
+        if (gpu_container_ptr) {
+          container->PostGpuContainerCreate();
+        }
+      }
+    }
+#endif
 
   } catch (const std::exception& e) {
     HLOG(kError, "PoolManager: Exception during pool creation: {}", e.what());
@@ -585,7 +623,7 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
       module_manager->DestroyContainer(chimod_name, container);
     }
     pool_metadata_.erase(target_pool_id);
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Set success results
@@ -596,20 +634,28 @@ TaskResume PoolManager::CreatePool(FullPtr<Task> task, RunContext* run_ctx) {
   HLOG(kInfo,
        "PoolManager: Created complete pool {} with ChiMod {} ({} containers)",
        target_pool_id, chimod_name, num_containers);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 TaskResume PoolManager::DestroyPool(PoolId pool_id) {
+  // For NVHPC: provide a dummy RunContext reference so CHI_TASK_BODY_BEGIN
+  // lambda can compile (the macro captures rctx by ref, but we never use it).
+#ifdef __NVCOMPILER
+  chi::RunContext _dummy_rctx;
+  chi::RunContext& rctx = _dummy_rctx;
+#endif
+  CHI_TASK_BODY_BEGIN
   if (!is_initialized_) {
     HLOG(kError, "PoolManager: Not initialized for pool destruction");
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Check if pool exists in metadata
   auto metadata_it = pool_metadata_.find(pool_id);
   if (metadata_it == pool_metadata_.end()) {
     HLOG(kError, "PoolManager: Pool {} metadata not found", pool_id);
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Destroy local pool components
@@ -617,14 +663,15 @@ TaskResume PoolManager::DestroyPool(PoolId pool_id) {
     HLOG(kError,
          "PoolManager: Failed to destroy local pool components for pool {}",
          pool_id);
-    co_return;
+    CHI_CO_RETURN;
   }
 
   // Remove pool metadata
   pool_metadata_.erase(metadata_it);
 
   HLOG(kInfo, "PoolManager: Destroyed complete pool {}", pool_id);
-  co_return;
+  CHI_CO_RETURN;
+  CHI_TASK_BODY_END
 }
 
 const PoolInfo* PoolManager::GetPoolInfo(PoolId pool_id) const {

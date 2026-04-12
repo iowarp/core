@@ -267,4 +267,16 @@ TEST_CASE("TestAsyncIO") {
     REQUIRE(ok);
   }
 #endif
+
+#if HSHM_ENABLE_NIXL
+  PAGE_DIVIDE("Nixl") {
+    bool ok = RunAlignedWriteReadTest(hshm::AsyncIoBackend::kNixl);
+    REQUIRE(ok);
+  }
+
+  PAGE_DIVIDE("NixlUnaligned") {
+    bool ok = RunUnalignedWriteReadTest(hshm::AsyncIoBackend::kNixl);
+    REQUIRE(ok);
+  }
+#endif
 }
