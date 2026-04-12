@@ -21,15 +21,16 @@
 #include <chimaera/task.h>
 #include <hermes_shm/util/gpu_api.h>
 
-// Persistent device counter — allocated once, never freed, so the
-// persistent orchestrator kernel can always safely atomicAdd on it.
-static unsigned int *g_d_counter = nullptr;
-
 /**
- * Run the cross-warp parallelism test.
+ * Run the parallelism test.
+ *
+ * Submits a GpuSubmitTask with the requested parallelism. Each GPU lane
+ * atomically increments counter_value_ on the task struct. The counter
+ * is returned through the normal task output serialization path, avoiding
+ * CDP child-to-host visibility issues with device memory side-channels.
  *
  * @param pool_id       Pool ID of the MOD_NAME container
- * @param parallelism   Number of GPU threads to use (e.g., 2048)
+ * @param parallelism   Number of GPU threads to use (e.g., 32 or 2048)
  * @param out_counter   Output: number of lanes that executed the handler
  * @return 1 on success, negative on error
  */
@@ -38,26 +39,14 @@ extern "C" int run_gpu_parallelism_test(
     chi::u32 parallelism,
     chi::u32 *out_counter) {
 
-  // Allocate device counter once — never freed so the persistent
-  // orchestrator kernel can always safely access it via atomicAdd.
-  if (!g_d_counter) {
-    cudaError_t err = cudaMalloc(&g_d_counter, sizeof(unsigned int));
-    if (err != cudaSuccess) {
-      return -100;
-    }
-  }
-  cudaMemset(g_d_counter, 0, sizeof(unsigned int));
-
-  // Direct NewTask/Send — use CHI_CPU_IPC (not CHI_IPC which is nullptr in nvcc host pass)
   auto *ipc = CHI_CPU_IPC;
   chi::u32 gpu_id = 0;
   chi::u32 test_value = 42;
-  chi::u64 counter_addr = reinterpret_cast<chi::u64>(g_d_counter);
 
   auto task = ipc->NewTask<chimaera::MOD_NAME::GpuSubmitTask>(
       chi::CreateTaskId(), pool_id,
       chi::PoolQuery::ToLocalGpu(gpu_id, parallelism),
-      gpu_id, test_value, counter_addr);
+      gpu_id, test_value);
   auto future = ipc->Send(task);
 
   // Wait with timeout
@@ -66,13 +55,10 @@ extern "C" int run_gpu_parallelism_test(
     return -3;  // Timeout
   }
 
-  // Copy counter from device to host
-  unsigned int h_counter = 0;
-  cudaMemcpy(&h_counter, g_d_counter, sizeof(unsigned int),
-             cudaMemcpyDeviceToHost);
-  *out_counter = h_counter;
+  // Read counter from task output (serialized back via normal relay path)
+  *out_counter = future->counter_value_;
 
-  // Verify result_value_ is correct (last warp's output)
+  // Verify result_value_ is correct
   chi::u32 expected = (test_value * 3) + gpu_id;
   if (future->result_value_ != expected) {
     fprintf(stderr, "[PARALLELISM] result_value_=%u expected=%u\n",
