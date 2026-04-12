@@ -415,12 +415,12 @@ struct GpuSubmitTask : public chi::Task {
   IN chi::u32 gpu_id_;          // GPU ID that submitted the task
   IN chi::u32 test_value_;      // Test value to verify correct execution
   INOUT chi::u32 result_value_; // Result computed by the task
-  IN chi::u64 counter_addr_;    // Device pointer to atomic counter (0 = unused)
+  OUT chi::u32 counter_value_;  // Atomic counter: number of lanes that executed
 
   /** SHM default constructor */
   HSHM_CROSS_FUN GpuSubmitTask()
       : chi::Task(), gpu_id_(0), test_value_(0), result_value_(0),
-        counter_addr_(0) {}
+        counter_value_(0) {}
 
   /** Emplace constructor */
   HSHM_CROSS_FUN explicit GpuSubmitTask(
@@ -428,11 +428,10 @@ struct GpuSubmitTask : public chi::Task {
       const chi::PoolId &pool_id,
       const chi::PoolQuery &pool_query,
       chi::u32 gpu_id,
-      chi::u32 test_value,
-      chi::u64 counter_addr = 0)
+      chi::u32 test_value)
       : chi::Task(task_node, pool_id, pool_query, 25),
         gpu_id_(gpu_id), test_value_(test_value), result_value_(0),
-        counter_addr_(counter_addr) {
+        counter_value_(0) {
     // Initialize task
     task_id_ = task_node;
     pool_id_ = pool_id;
@@ -444,13 +443,13 @@ struct GpuSubmitTask : public chi::Task {
   template<typename Archive>
   HSHM_CROSS_FUN void SerializeIn(Archive& ar) {
     Task::SerializeIn(ar);
-    ar(gpu_id_, test_value_, result_value_, counter_addr_);
+    ar(gpu_id_, test_value_, result_value_);
   }
 
   template<typename Archive>
   HSHM_CROSS_FUN void SerializeOut(Archive& ar) {
     Task::SerializeOut(ar);
-    ar(result_value_);  // Return the computed result
+    ar(result_value_, counter_value_);
   }
 
   /**
@@ -464,7 +463,7 @@ struct GpuSubmitTask : public chi::Task {
     gpu_id_ = other->gpu_id_;
     test_value_ = other->test_value_;
     result_value_ = other->result_value_;
-    counter_addr_ = other->counter_addr_;
+    counter_value_ = other->counter_value_;
   }
 
   /**

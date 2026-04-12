@@ -25,26 +25,26 @@ class GpuRuntime : public chi::gpu::Container {
   ~GpuRuntime() = default;
 
   /**
-   * GPU handler for GpuSubmit method.
-   * @param task The GPU submit task containing test_value_ and gpu_id_ inputs
-   *             and result_value_ output.
-   * @param rctx GPU run context.
-   */
-  /**
    * GPU handler for SubtaskTest method.
    * Dispatches GpuSubmit on self and spin-polls for completion.
+   * @param task The subtask test task.
+   * @param rctx GPU run context.
    */
   HSHM_GPU_FUN void SubtaskTest(
       hipc::FullPtr<SubtaskTestTask> task,
       chi::gpu::RunContext &rctx);
 
+  /**
+   * GPU handler for GpuSubmit method.
+   * Each lane computes result_value_ and atomically increments counter_value_.
+   * @param task The GPU submit task containing inputs and outputs.
+   * @param rctx GPU run context with parallelism info.
+   */
   HSHM_GPU_FUN void GpuSubmit(hipc::FullPtr<GpuSubmitTask> task,
-                                chi::gpu::RunContext &rctx) {
+                               chi::gpu::RunContext &rctx) {
     task->result_value_ = (task->test_value_ * 3) + task->gpu_id_;
 #if !HSHM_IS_HOST
-    if (task->counter_addr_) {
-      atomicAdd(reinterpret_cast<unsigned int*>(task->counter_addr_), 1u);
-    }
+    atomicAdd(&task->counter_value_, 1u);
 #endif
   }
 

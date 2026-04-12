@@ -69,8 +69,7 @@ __global__ void VerifyGpuSubmitOnGpu(void *device_task, int *results) {
   // Check all fields match expected values
   if (task->gpu_id_ == 42 &&
       task->test_value_ == 7 &&
-      task->result_value_ == 0 &&
-      task->counter_addr_ == 0) {
+      task->result_value_ == 0) {
     // Also check FutureShm fields
     if (fshm->method_id_ == 25) {  // Method::kGpuSubmit = 25
       results[0] = 1;  // Success
@@ -136,7 +135,6 @@ __global__ void CreateGpuSubmitOnGpu(void *d_buf) {
   task->gpu_id_ = 99;
   task->test_value_ = 42;
   task->result_value_ = 0;
-  task->counter_addr_ = 0x1234567890ABCDEFULL;
   task->pool_id_ = PoolId(1, 0);
   task->method_ = 25;  // Method::kGpuSubmit
 
@@ -172,7 +170,6 @@ TEST_CASE("CPU->GPU GpuSubmitTask POD transfer", "[gpu][transfer]") {
   host_task.gpu_id_ = 42;
   host_task.test_value_ = 7;
   host_task.result_value_ = 0;
-  host_task.counter_addr_ = 0;
   host_task.pool_id_ = PoolId(1, 0);
   host_task.method_ = 25;  // Method::kGpuSubmit
 
@@ -363,7 +360,6 @@ TEST_CASE("GPU->CPU GpuSubmitTask POD transfer", "[gpu][transfer]") {
   REQUIRE(task->gpu_id_ == 99);
   REQUIRE(task->test_value_ == 42);
   REQUIRE(task->result_value_ == 0);
-  REQUIRE(task->counter_addr_ == 0x1234567890ABCDEFULL);
   REQUIRE(fshm->method_id_ == 25);
 
   // Cleanup
