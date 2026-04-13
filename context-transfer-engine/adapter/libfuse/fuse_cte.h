@@ -55,8 +55,55 @@
 
 namespace wrp::cae::fuse {
 
-/** Default page size for blob I/O */
-static constexpr size_t kDefaultPageSize = 4096;
+/**
+ * Default CTE page/blob alignment size.
+ * Changed from 4KB to 1MB to match CTE's blob-level I/O design.
+ * A 10MB write at 4KB = 2,560 CTE operations.
+ * A 10MB write at 1MB = 10 CTE operations.
+ * This is the single most impactful performance optimization.
+ */
+static constexpr size_t kDefaultPageSize = 1024 * 1024;  // 1MB
+
+/**
+ * Runtime-configurable page size.
+ * Can be overridden via FUSE_CTE_PAGE_SIZE environment variable.
+ * Defaults to kDefaultPageSize (1MB).
+ * Minimum allowed: 4096 bytes
+ *
+ * Usage:
+ *   export FUSE_CTE_PAGE_SIZE=65536    # 64KB pages
+ *   export FUSE_CTE_PAGE_SIZE=4194304  # 4MB pages
+ */
+static inline size_t GetPageSize() {
+  static size_t page_size = 0;
+  if (page_size == 0) {
+    const char* env = std::getenv("FUSE_CTE_PAGE_SIZE");
+    if (env && env[0] != '\0') {
+      try {
+        size_t val = std::stoul(env);
+        if (val >= 4096) {
+          page_size = val;
+          fprintf(stderr, "[FUSE] Using custom page size: %zu bytes\n",
+                  page_size);
+        } else {
+          fprintf(
+              stderr,
+              "[FUSE] FUSE_CTE_PAGE_SIZE must be >= 4096, using default %zu\n",
+              kDefaultPageSize);
+          page_size = kDefaultPageSize;
+        }
+      } catch (...) {
+        fprintf(stderr,
+                "[FUSE] Invalid FUSE_CTE_PAGE_SIZE, using default %zu\n",
+                kDefaultPageSize);
+        page_size = kDefaultPageSize;
+      }
+    } else {
+      page_size = kDefaultPageSize;
+    }
+  }
+  return page_size;
+}
 
 /**
  * CTE-backed filesystem helpers.

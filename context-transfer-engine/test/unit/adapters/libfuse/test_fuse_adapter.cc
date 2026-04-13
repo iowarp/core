@@ -41,8 +41,8 @@
  * 4. End-to-end integration (create file, write, read, list, delete)
  */
 
-#include <chimaera/chimaera.h>
 #include <chimaera/bdev/bdev_client.h>
+#include <chimaera/chimaera.h>
 #include <wrp_cte/core/core_client.h>
 #include <wrp_cte/core/core_tasks.h>
 
@@ -58,6 +58,12 @@
 
 namespace fs = std::filesystem;
 using namespace wrp::cae::fuse;
+
+/**
+ * Test page size - use 4KB for fast unit tests regardless of production
+ * default. Production uses 1MB (kDefaultPageSize), but tests should be quick.
+ */
+static constexpr size_t kTestPageSize = 4096;
 
 // ============================================================================
 // Test fixture
@@ -89,7 +95,7 @@ class FuseAdapterTestFixture {
       success = wrp_cte::core::WRP_CTE_CLIENT_INIT();
       REQUIRE(success);
 
-      auto *cte_client = WRP_CTE_CLIENT;
+      auto* cte_client = WRP_CTE_CLIENT;
       REQUIRE(cte_client != nullptr);
       cte_client->Init(wrp_cte::core::kCtePoolId);
 
@@ -116,7 +122,7 @@ class FuseAdapterTestFixture {
       return;
     }
 
-    auto *cte_client = WRP_CTE_CLIENT;
+    auto* cte_client = WRP_CTE_CLIENT;
 
     chi::PoolId bdev_pool_id(950, 0);
     chimaera::bdev::Client bdev_client(bdev_pool_id);
@@ -147,7 +153,7 @@ class FuseAdapterTestFixture {
     return data;
   }
 
-  bool VerifyTestData(const std::vector<char> &data, char pattern = 'F') {
+  bool VerifyTestData(const std::vector<char>& data, char pattern = 'F') {
     for (size_t i = 0; i < data.size(); ++i) {
       if (data[i] != static_cast<char>(pattern + (i % 26))) {
         return false;
@@ -157,9 +163,7 @@ class FuseAdapterTestFixture {
   }
 
   /** Helper to clean up a tag, ignoring errors */
-  void CleanupTag(const std::string &name) {
-    CteDelTag(name);
-  }
+  void CleanupTag(const std::string& name) { CteDelTag(name); }
 };
 
 // ============================================================================
@@ -167,7 +171,7 @@ class FuseAdapterTestFixture {
 // ============================================================================
 
 TEST_CASE("FUSE CTE - Tag create and exists", "[fuse][cte]") {
-  auto *fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
+  auto* fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
   fixture->SetupTarget();
 
   std::string tag_name = "/fuse_test/tag_exists";
@@ -187,7 +191,7 @@ TEST_CASE("FUSE CTE - Tag create and exists", "[fuse][cte]") {
 }
 
 TEST_CASE("FUSE CTE - Tag deletion", "[fuse][cte]") {
-  auto *fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
+  auto* fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
   fixture->SetupTarget();
 
   std::string tag_name = "/fuse_test/tag_delete";
@@ -208,7 +212,7 @@ TEST_CASE("FUSE CTE - Tag deletion", "[fuse][cte]") {
 // ============================================================================
 
 TEST_CASE("FUSE CTE - CteDirExists for implicit directories", "[fuse][cte]") {
-  auto *fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
+  auto* fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
   fixture->SetupTarget();
 
   // Create tags that imply directory structure
@@ -240,12 +244,13 @@ TEST_CASE("FUSE CTE - CteDirExists for implicit directories", "[fuse][cte]") {
 }
 
 TEST_CASE("FUSE CTE - CteListDirectChildren", "[fuse][cte]") {
-  auto *fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
+  auto* fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
   fixture->SetupTarget();
 
   std::string f1 = "/fuse_list_test/alpha.txt";
   std::string f2 = "/fuse_list_test/beta.txt";
-  std::string f3 = "/fuse_list_test/sub/gamma.txt";  // NOT a direct child of /fuse_list_test
+  std::string f3 =
+      "/fuse_list_test/sub/gamma.txt";  // NOT a direct child of /fuse_list_test
 
   auto id1 = CteGetOrCreateTag(f1);
   auto id2 = CteGetOrCreateTag(f2);
@@ -256,19 +261,23 @@ TEST_CASE("FUSE CTE - CteListDirectChildren", "[fuse][cte]") {
 
   auto children = CteListDirectChildren("/fuse_list_test");
   REQUIRE(children.size() == 2);
-  REQUIRE(std::find(children.begin(), children.end(), "alpha.txt") != children.end());
-  REQUIRE(std::find(children.begin(), children.end(), "beta.txt") != children.end());
+  REQUIRE(std::find(children.begin(), children.end(), "alpha.txt") !=
+          children.end());
+  REQUIRE(std::find(children.begin(), children.end(), "beta.txt") !=
+          children.end());
   // gamma.txt is under /fuse_list_test/sub/, not a direct child
-  REQUIRE(std::find(children.begin(), children.end(), "gamma.txt") == children.end());
+  REQUIRE(std::find(children.begin(), children.end(), "gamma.txt") ==
+          children.end());
 
-  INFO("CteListDirectChildren verified: " << children.size() << " direct children");
+  INFO("CteListDirectChildren verified: " << children.size()
+                                          << " direct children");
   fixture->CleanupTag(f1);
   fixture->CleanupTag(f2);
   fixture->CleanupTag(f3);
 }
 
 TEST_CASE("FUSE CTE - CteListSubdirs", "[fuse][cte]") {
-  auto *fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
+  auto* fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
   fixture->SetupTarget();
 
   std::string f1 = "/fuse_subdir_test/x/file1.txt";
@@ -299,7 +308,7 @@ TEST_CASE("FUSE CTE - CteListSubdirs", "[fuse][cte]") {
 // ============================================================================
 
 TEST_CASE("FUSE CTE - Small write and read round-trip", "[fuse][cte]") {
-  auto *fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
+  auto* fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
   fixture->SetupTarget();
 
   std::string tag_name = "/fuse_io_test/small_rw";
@@ -320,29 +329,28 @@ TEST_CASE("FUSE CTE - Small write and read round-trip", "[fuse][cte]") {
 }
 
 TEST_CASE("FUSE CTE - Multi-page write and read", "[fuse][cte]") {
-  auto *fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
+  auto* fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
   fixture->SetupTarget();
 
   std::string tag_name = "/fuse_io_test/multipage_rw";
   auto tag_id = CteGetOrCreateTag(tag_name);
   REQUIRE(!tag_id.IsNull());
 
-  const size_t total_size = kDefaultPageSize * 3;
+  const size_t total_size = kTestPageSize * 3;
   auto write_data = fixture->CreateTestData(total_size, 'M');
 
   // Write page by page
   for (size_t p = 0; p < 3; ++p) {
     REQUIRE(CtePutBlob(tag_id, std::to_string(p),
-                       write_data.data() + p * kDefaultPageSize,
-                       kDefaultPageSize, 0));
+                       write_data.data() + p * kTestPageSize, kTestPageSize,
+                       0));
   }
 
   // Read back page by page
   std::vector<char> read_data(total_size);
   for (size_t p = 0; p < 3; ++p) {
     REQUIRE(CteGetBlob(tag_id, std::to_string(p),
-                       read_data.data() + p * kDefaultPageSize,
-                       kDefaultPageSize, 0));
+                       read_data.data() + p * kTestPageSize, kTestPageSize, 0));
   }
 
   REQUIRE(fixture->VerifyTestData(read_data, 'M'));
@@ -356,7 +364,7 @@ TEST_CASE("FUSE CTE - Multi-page write and read", "[fuse][cte]") {
 }
 
 TEST_CASE("FUSE CTE - Partial page write with offset", "[fuse][cte]") {
-  auto *fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
+  auto* fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
   fixture->SetupTarget();
 
   std::string tag_name = "/fuse_io_test/partial_page";
@@ -378,7 +386,7 @@ TEST_CASE("FUSE CTE - Partial page write with offset", "[fuse][cte]") {
 }
 
 TEST_CASE("FUSE CTE - Cross-page write simulation", "[fuse][cte]") {
-  auto *fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
+  auto* fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
   fixture->SetupTarget();
 
   std::string tag_name = "/fuse_io_test/cross_page";
@@ -388,23 +396,26 @@ TEST_CASE("FUSE CTE - Cross-page write simulation", "[fuse][cte]") {
   // Write 200 bytes starting at offset 4000 (page boundary at 4096)
   // Page 0: 96 bytes at offset 4000, Page 1: 104 bytes at offset 0
   const size_t total_write = 200;
-  const size_t file_offset = kDefaultPageSize - 96;
+  const size_t file_offset = kTestPageSize - 96;
   auto write_data = fixture->CreateTestData(total_write, 'C');
 
-  size_t page0_offset = file_offset % kDefaultPageSize;
-  size_t page0_size = kDefaultPageSize - page0_offset;
+  size_t page0_offset = file_offset % kTestPageSize;
+  size_t page0_size = kTestPageSize - page0_offset;
   size_t page1_size = total_write - page0_size;
 
   REQUIRE(CtePutBlob(tag_id, "0", write_data.data(), page0_size, page0_offset));
-  REQUIRE(CtePutBlob(tag_id, "1", write_data.data() + page0_size, page1_size, 0));
+  REQUIRE(
+      CtePutBlob(tag_id, "1", write_data.data() + page0_size, page1_size, 0));
 
   // Read back
   std::vector<char> read_data(total_write);
   REQUIRE(CteGetBlob(tag_id, "0", read_data.data(), page0_size, page0_offset));
-  REQUIRE(CteGetBlob(tag_id, "1", read_data.data() + page0_size, page1_size, 0));
+  REQUIRE(
+      CteGetBlob(tag_id, "1", read_data.data() + page0_size, page1_size, 0));
 
   REQUIRE(fixture->VerifyTestData(read_data, 'C'));
-  INFO("Cross-page write/read verified: " << total_write << " bytes spanning pages 0-1");
+  INFO("Cross-page write/read verified: " << total_write
+                                          << " bytes spanning pages 0-1");
   fixture->CleanupTag(tag_name);
 }
 
@@ -413,7 +424,7 @@ TEST_CASE("FUSE CTE - Cross-page write simulation", "[fuse][cte]") {
 // ============================================================================
 
 TEST_CASE("FUSE Integration - Full file lifecycle", "[fuse][integration]") {
-  auto *fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
+  auto* fixture = hshm::Singleton<FuseAdapterTestFixture>::GetInstance();
   fixture->SetupTarget();
 
   // 1. Create file (tag)
@@ -432,9 +443,10 @@ TEST_CASE("FUSE Integration - Full file lifecycle", "[fuse][integration]") {
   size_t bytes_written = 0;
   size_t cur = 0;
   while (bytes_written < total_size) {
-    size_t page = cur / kDefaultPageSize;
-    size_t poff = cur % kDefaultPageSize;
-    size_t to_write = std::min(kDefaultPageSize - poff, total_size - bytes_written);
+    size_t page = cur / kTestPageSize;
+    size_t poff = cur % kTestPageSize;
+    size_t to_write =
+        std::min(kTestPageSize - poff, total_size - bytes_written);
     REQUIRE(CtePutBlob(tag_id, std::to_string(page),
                        write_data.data() + bytes_written, to_write, poff));
     bytes_written += to_write;
@@ -449,14 +461,15 @@ TEST_CASE("FUSE Integration - Full file lifecycle", "[fuse][integration]") {
   size_t bytes_read = 0;
   cur = 0;
   while (bytes_read < total_size) {
-    size_t page = cur / kDefaultPageSize;
-    size_t poff = cur % kDefaultPageSize;
-    size_t to_read = std::min(kDefaultPageSize - poff, total_size - bytes_read);
+    size_t page = cur / kTestPageSize;
+    size_t poff = cur % kTestPageSize;
+    size_t to_read = std::min(kTestPageSize - poff, total_size - bytes_read);
     REQUIRE(CteGetBlob(tag_id, std::to_string(page),
                        read_data.data() + bytes_read, to_read, poff));
     bytes_read += to_read;
     cur += to_read;
   }
+
   REQUIRE(fixture->VerifyTestData(read_data, 'E'));
 
   // 6. Verify listing
