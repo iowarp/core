@@ -1,10 +1,10 @@
 # IOWarp Core - CUDA Variant
-# CUDA-enabled release build using CMakePresets.json "cuda-release" preset
+# CUDA-enabled debug build using CMakePresets.json "cuda-debug" preset
 #
-# Usage: IOWARP_PRESET=cuda-release conda build installers/conda/ -c conda-forge
+# Usage: IOWARP_PRESET=cuda-debug conda build installers/conda/ -c conda-forge
 
 preset:
-  - cuda-release
+  - cuda-debug
 
 cuda_enabled:
   - "ON"
