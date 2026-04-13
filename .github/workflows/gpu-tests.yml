@@ -25,11 +25,8 @@ on:
 
 jobs:
   build-cuda-conda:
-    name: Build CUDA conda package & run GPU tests
-    # Self-hosted runner with NVIDIA GPU.
-    # Register: Settings > Actions > Runners > New self-hosted runner
-    # Add labels: self-hosted, gpu
-    runs-on: [self-hosted, gpu]
+    name: Build CUDA conda package (compile only)
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     steps:
@@ -37,9 +34,6 @@ jobs:
       uses: actions/checkout@v5
       with:
         submodules: recursive
-
-    - name: Verify GPU access
-      run: nvidia-smi
 
     # ── Install CUDA toolkit ──────────────────────────────────────────
     - name: Install CUDA toolkit
@@ -84,48 +78,34 @@ jobs:
         test -f "$CONDA_PREFIX/lib/libchimaera_cxx_gpu.so"
         echo "CUDA conda package installed successfully"
 
-    # ── Run GPU tests from build directory ───────────────────────────
-    - name: Run GPU unit tests
-      shell: bash -el {0}
-      working-directory: build
-      run: |
-        echo "=== GPU Unit Tests ==="
-        ctest -R "cte_gpu_tiered_test|cte_gpu_coroutine|cte_gpu_core_all|cte_gpu_create" \
-          --output-on-failure --timeout 120
-
-    - name: Run GPU runtime tests
-      shell: bash -el {0}
-      working-directory: build
-      run: |
-        echo "=== GPU Runtime Tests ==="
-        ctest -R "test_gpu_runtime|cr_gpu_client_process|cr_gpu_parallelism|cr_gpu_runtime_tests|cr_gpu_task_trace|test_gpu_pod_transfer|chimaera_bdev_gpu_kernel|cr_bdev_gpu" \
-          --output-on-failure --timeout 120
-
-    - name: Run GPU allocator tests
-      shell: bash -el {0}
-      working-directory: build
-      run: |
-        echo "=== GPU Allocator Tests ==="
-        ctest -R "test_gpu_shm_mmap|test_local_serialize_gpu|test_local_transfer_gpu|test_buddy_alloc_gpu|test_buddy_alloc_stack_gpu|test_thread_alloc_gpu|test_round_robin_alloc_gpu|test_ipc_allocate_buffer_gpu|test_buddy_benchmark_gpu" \
-          --output-on-failure --timeout 120
-
-    - name: Run GPU benchmarks (regression)
-      shell: bash -el {0}
-      working-directory: build
-      run: |
-        echo "=== GPU Benchmark Regression Tests ==="
-        ctest -R "cte_gpu_bench|cte_gpu_synthetic" \
-          --output-on-failure --timeout 120
-
-    # ── Summary ──────────────────────────────────────────────────────
-    - name: GPU test summary
-      if: always()
-      shell: bash -el {0}
-      working-directory: build
-      run: |
-        echo ""
-        echo "========================================="
-        echo "  GPU Test Summary"
-        echo "========================================="
-        ctest -R "cte_gpu|cr_gpu|chimaera_bdev_gpu|test_gpu|test_ipc_allocate|test_buddy" \
-          --timeout 120 2>&1 | tail -5 || true
+    # NOTE: GPU tests are disabled until self-hosted GPU runners are available.
+    # To re-enable, change runs-on to [self-hosted, gpu], add nvidia-smi
+    # verification step, and uncomment the test steps below.
+    #
+    # - name: Run GPU unit tests
+    #   shell: bash -el {0}
+    #   working-directory: build
+    #   run: |
+    #     ctest -R "cte_gpu_tiered_test|cte_gpu_coroutine|cte_gpu_core_all|cte_gpu_create" \
+    #       --output-on-failure --timeout 120
+    #
+    # - name: Run GPU runtime tests
+    #   shell: bash -el {0}
+    #   working-directory: build
+    #   run: |
+    #     ctest -R "test_gpu_runtime|cr_gpu_client_process|cr_gpu_parallelism|cr_gpu_runtime_tests|cr_gpu_task_trace|test_gpu_pod_transfer|chimaera_bdev_gpu_kernel|cr_bdev_gpu" \
+    #       --output-on-failure --timeout 120
+    #
+    # - name: Run GPU allocator tests
+    #   shell: bash -el {0}
+    #   working-directory: build
+    #   run: |
+    #     ctest -R "test_gpu_shm_mmap|test_local_serialize_gpu|test_local_transfer_gpu|test_buddy_alloc_gpu|test_buddy_alloc_stack_gpu|test_thread_alloc_gpu|test_round_robin_alloc_gpu|test_ipc_allocate_buffer_gpu|test_buddy_benchmark_gpu" \
+    #       --output-on-failure --timeout 120
+    #
+    # - name: Run GPU benchmarks (regression)
+    #   shell: bash -el {0}
+    #   working-directory: build
+    #   run: |
+    #     ctest -R "cte_gpu_bench|cte_gpu_synthetic" \
+    #       --output-on-failure --timeout 120
