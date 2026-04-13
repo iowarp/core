@@ -1082,6 +1082,7 @@ chi::TaskResume Runtime::ClientRecv(hipc::FullPtr<ClientRecvTask> task,
   chi::u32 tasks_received = 0;
   bool did_work = chi::IpcCpu2CpuZmq::RuntimeRecv(CHI_IPC, tasks_received);
   task->tasks_received_ = tasks_received;
+
   rctx.did_work_ = did_work;
   task->SetReturnCode(0);
   CHI_CO_RETURN;

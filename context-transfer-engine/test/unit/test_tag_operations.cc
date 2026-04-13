@@ -125,9 +125,9 @@ class TagTestFixture {
 
   ~TagTestFixture() {
     INFO("=== Cleaning up Tag Test Environment ===");
-    // Don't delete the test file here — it's shared across test cases via
-    // the bdev pool. Deleting it invalidates the bdev's file descriptor,
-    // causing subsequent reads to return 0 bytes.
+    // Don't delete the test file here -- it's shared across test cases via
+    // the bdev pool (800,0). Deleting it invalidates the bdev's file
+    // descriptor, causing subsequent reads to return 0 bytes.
   }
 
   /**
