@@ -302,7 +302,7 @@ TEST_CASE("Decompress and Retrieve", "[compressor][functional][basic]") {
 
   hipc::ShmPtr<> get_blob_data = get_buffer.shm_.template Cast<void>();
 
-  auto decompress_task = fixture.compressor_client_.AsyncDecompress(
+  auto decompress_task = fixture.compressor_client_.AsyncDecompressExplicit(
       chi::PoolQuery::Local(),
       fixture.tag_id_,
       "test_blob_roundtrip",
