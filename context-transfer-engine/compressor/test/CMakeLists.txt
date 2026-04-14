@@ -155,6 +155,49 @@ set_tests_properties(
 install(TARGETS test_transparent_compress RUNTIME DESTINATION bin)
 
 #------------------------------------------------------------------------------
+# ADIOS2-style Transparent Compression Test (direct CTE client API, no Tag)
+#------------------------------------------------------------------------------
+
+add_executable(test_adios2_transparent_compress
+  test_adios2_transparent_compress.cc
+)
+
+target_link_libraries(test_adios2_transparent_compress
+  wrp_cte::compressor_runtime
+  wrp_cte::compressor_client
+  wrp_cte::core_runtime
+  wrp_cte::core_client
+  chimaera::admin_runtime
+  chimaera::admin_client
+  chimaera::bdev_runtime
+  chimaera::bdev_client
+  hshm::compress
+  hshm::cxx
+  ${CMAKE_THREAD_LIBS_INIT}
+)
+
+add_test(NAME adios2_transparent_compress_put
+    COMMAND test_adios2_transparent_compress "ADIOS2 transparent compress - PutBlob")
+
+add_test(NAME adios2_transparent_compress_get
+    COMMAND test_adios2_transparent_compress "ADIOS2 transparent compress - GetBlob")
+
+add_test(NAME adios2_transparent_compress_multistep
+    COMMAND test_adios2_transparent_compress "ADIOS2 transparent compress - multi-step")
+
+set_tests_properties(
+    adios2_transparent_compress_put
+    adios2_transparent_compress_get
+    adios2_transparent_compress_multistep
+    PROPERTIES
+        TIMEOUT 120
+        LABELS "compressor;adios2;transparent;integration;msan_skip"
+        RESOURCE_LOCK "chimaera_runtime"
+)
+
+install(TARGETS test_adios2_transparent_compress RUNTIME DESTINATION bin)
+
+#------------------------------------------------------------------------------
 # CTE Compression Benchmark
 #------------------------------------------------------------------------------
 
