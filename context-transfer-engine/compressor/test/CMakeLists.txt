@@ -109,6 +109,52 @@ install(TARGETS test_compressor_functional
 )
 
 #------------------------------------------------------------------------------
+# Transparent Compression Integration Test
+#------------------------------------------------------------------------------
+
+add_executable(test_transparent_compress
+  test_transparent_compress.cc
+)
+
+target_link_libraries(test_transparent_compress
+  wrp_cte::compressor_runtime
+  wrp_cte::compressor_client
+  wrp_cte::core_runtime
+  wrp_cte::core_client
+  chimaera::admin_runtime
+  chimaera::admin_client
+  chimaera::bdev_runtime
+  chimaera::bdev_client
+  hshm::compress
+  hshm::cxx
+  ${CMAKE_THREAD_LIBS_INIT}
+)
+
+# Copy compose config next to binary
+add_custom_command(TARGET test_transparent_compress POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_transparent_compress_config.yaml
+    ${CMAKE_CURRENT_BINARY_DIR}/test_transparent_compress_config.yaml
+)
+
+add_test(NAME compressor_transparent_putblob
+    COMMAND test_transparent_compress "Transparent PutBlob")
+
+add_test(NAME compressor_transparent_getblob
+    COMMAND test_transparent_compress "Transparent GetBlob")
+
+set_tests_properties(
+    compressor_transparent_putblob
+    compressor_transparent_getblob
+    PROPERTIES
+        TIMEOUT 120
+        LABELS "compressor;transparent;integration;msan_skip"
+        RESOURCE_LOCK "chimaera_runtime"
+)
+
+install(TARGETS test_transparent_compress RUNTIME DESTINATION bin)
+
+#------------------------------------------------------------------------------
 # CTE Compression Benchmark
 #------------------------------------------------------------------------------
 

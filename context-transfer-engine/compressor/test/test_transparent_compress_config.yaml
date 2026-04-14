@@ -1,0 +1,39 @@
+# Compose configuration for transparent compression test.
+# The compressor sits at the CTE entrypoint (512.0) and delegates
+# to the actual CTE core (513.0) after compression.
+
+networking:
+  port: 9413
+
+runtime:
+  num_threads: 4
+  queue_depth: 1024
+
+compose:
+  # Block device (RAM tier)
+  - mod_name: chimaera_bdev
+    pool_name: "ram::chi_default_bdev"
+    pool_query: local
+    pool_id: "301.0"
+    bdev_type: ram
+    capacity: "256MB"
+
+  # Compressor at the entrypoint (512.0)
+  - mod_name: wrp_cte_compressor
+    pool_name: cte_compressor
+    pool_query: local
+    pool_id: "512.0"
+    next_pool_id: "513.0"
+
+  # CTE core behind the compressor (513.0)
+  - mod_name: wrp_cte_core
+    pool_name: cte_core
+    pool_query: local
+    pool_id: "513.0"
+    storage:
+      - path: "ram::cte_ram_tier1"
+        bdev_type: "ram"
+        capacity_limit: "128MB"
+        score: 1.0
+    dpe:
+      dpe_type: "max_bw"

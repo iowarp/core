@@ -160,7 +160,7 @@ chi::PoolId CreateCompressorPool() {
   chi::PoolId compressor_pool_id = chi::PoolId(2, 1);
   Client compressor_client;
 
-  auto create_task = compressor_client.AsyncCreate(
+  auto create_task = compressor_client.AsyncCreateCompressor(
       chi::PoolQuery::Local(),
       "test_compressor_pool",
       compressor_pool_id);

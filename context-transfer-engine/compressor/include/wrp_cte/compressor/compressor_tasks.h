@@ -59,13 +59,50 @@ struct CompressorConfig {
   std::string distribution_model_path_;
   std::string dnn_model_weights_path_;
   std::string trace_folder_path_;
+  chi::PoolId next_pool_id_;  ///< Pool ID of the next module in the pipeline
+                               ///< (e.g., CTE core at 513.0)
 
-  CompressorConfig() = default;
+  CompressorConfig() : next_pool_id_(chi::PoolId::GetNull()) {}
+
+  CompressorConfig(const chi::PoolId &pool_id, const CompressorConfig &other)
+      : qtable_model_path_(other.qtable_model_path_),
+        linreg_model_path_(other.linreg_model_path_),
+        distribution_model_path_(other.distribution_model_path_),
+        dnn_model_weights_path_(other.dnn_model_weights_path_),
+        trace_folder_path_(other.trace_folder_path_),
+        next_pool_id_(other.next_pool_id_) {
+    (void)pool_id;
+  }
 
   template <class Archive>
   void serialize(Archive &ar) {
     ar(qtable_model_path_, linreg_model_path_, distribution_model_path_,
        dnn_model_weights_path_, trace_folder_path_);
+  }
+
+  /**
+   * Load configuration from compose YAML.
+   * Reads next_pool_id from the pool config.
+   */
+  void LoadConfig(const chi::PoolConfig &pool_config) {
+    // Parse next_pool_id from compose YAML config
+    if (!pool_config.config_.empty()) {
+      try {
+        YAML::Node node = YAML::Load(pool_config.config_);
+        if (node["next_pool_id"]) {
+          std::string next_str = node["next_pool_id"].as<std::string>();
+          // Parse "major.minor" format
+          auto dot = next_str.find('.');
+          if (dot != std::string::npos) {
+            chi::u32 major = std::stoul(next_str.substr(0, dot));
+            chi::u32 minor = std::stoul(next_str.substr(dot + 1));
+            next_pool_id_ = chi::PoolId(major, minor);
+          }
+        }
+      } catch (...) {
+        // Config parsing is best-effort
+      }
+    }
   }
 };
 

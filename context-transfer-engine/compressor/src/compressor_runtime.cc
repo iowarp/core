@@ -88,9 +88,13 @@ static_assert(sizeof(CompressionHeader) == 24,
 
 chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
                                 chi::RunContext& ctx) {
-  // Note: This is a simplified Create task since we don't have a CreateTask
-  // defined In the actual implementation, you would extract config from task
-  // parameters
+  // Load configuration from compose YAML (or direct CreateParams)
+  config_ = task->GetParams();
+
+  // Initialize the core client using next_pool_id from compose
+  if (!config_.next_pool_id_.IsNull()) {
+    core_client_ = std::make_unique<wrp_cte::core::Client>(config_.next_pool_id_);
+  }
 
   // Initialize atomic counters
   compression_logical_time_ = 0;
@@ -627,10 +631,13 @@ chi::TaskResume Runtime::Compress(hipc::FullPtr<CompressTask> task,
       CHI_CO_RETURN;
     }
 
-    // Initialize core client if needed
+    // Initialize core client if needed (from compose next_pool_id or task param)
     if (!core_client_) {
-      core_client_ =
-          std::make_unique<wrp_cte::core::Client>(task->core_pool_id_);
+      chi::PoolId core_id = !config_.next_pool_id_.IsNull()
+          ? config_.next_pool_id_ : task->core_pool_id_;
+      if (!core_id.IsNull()) {
+        core_client_ = std::make_unique<wrp_cte::core::Client>(core_id);
+      }
     }
 
     // Get tier score for output
@@ -801,10 +808,13 @@ chi::TaskResume Runtime::Decompress(hipc::FullPtr<DecompressTask> task,
       CHI_CO_RETURN;
     }
 
-    // Initialize core client if needed
+    // Initialize core client if needed (from compose next_pool_id or task param)
     if (!core_client_) {
-      core_client_ =
-          std::make_unique<wrp_cte::core::Client>(task->core_pool_id_);
+      chi::PoolId core_id = !config_.next_pool_id_.IsNull()
+          ? config_.next_pool_id_ : task->core_pool_id_;
+      if (!core_id.IsNull()) {
+        core_client_ = std::make_unique<wrp_cte::core::Client>(core_id);
+      }
     }
 
     // Allocate temporary buffer to receive compressed data from GetBlob

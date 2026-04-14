@@ -102,10 +102,12 @@ class Client : public wrp_cte::core::Client {
       chi::u32 flags = 0,
       const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
     auto *ipc_manager = CHI_IPC;
+    // core_pool_id is a fallback — the runtime uses next_pool_id from
+    // compose config when available.
     auto task = ipc_manager->NewTask<DynamicScheduleTask>(
         chi::CreateTaskId(), compressor_pool_id_, pool_query, tag_id,
         blob_name, offset, size, blob_data, score, context, flags,
-        pool_id_);
+        chi::PoolId::GetNull());
     return ipc_manager->Send(task);
   }
 
@@ -133,7 +135,8 @@ class Client : public wrp_cte::core::Client {
     auto *ipc_manager = CHI_IPC;
     auto task = ipc_manager->NewTask<DecompressTask>(
         chi::CreateTaskId(), compressor_pool_id_, pool_query, tag_id,
-        blob_name, offset, size, flags, blob_data, pool_id_);
+        blob_name, offset, size, flags, blob_data,
+        chi::PoolId::GetNull());
     return ipc_manager->Send(task);
   }
 
