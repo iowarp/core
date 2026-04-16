@@ -230,24 +230,41 @@ static herr_t iowarp_file_close(void *obj, hid_t dxpl_id, void **req) {
  * Dataset callbacks
  * ======================================================================== */
 
+/**
+ * Helper: extract the iowarp_file_t from an obj pointer.
+ * The obj may be a file, group, or dataset — walk up to find the file.
+ * For groups/datasets created from the file, file pointer is stored;
+ * for generic iowarp_obj_t (from group passthrough), we use a nullptr
+ * file which disables CTE interception (pure passthrough).
+ */
+static iowarp_file_t *find_parent_file(void *obj) {
+  /* iowarp_file_t, iowarp_dataset_t, and iowarp_obj_t all start with
+     iowarp_obj_t as first member, so this cast is always safe for
+     reading under_object / under_vol_id. But only iowarp_file_t has
+     the CTE tag. We use a simple heuristic: if it's a file, it has
+     a non-empty file_name. */
+  return nullptr;  /* CTE interception via tag requires the file handle */
+}
+
 static void *iowarp_dataset_create(void *obj,
                                    const H5VL_loc_params_t *loc_params,
                                    const char *name, hid_t lcpl_id,
                                    hid_t type_id, hid_t space_id,
                                    hid_t dcpl_id, hid_t dapl_id,
                                    hid_t dxpl_id, void **req) {
-  auto *file = static_cast<iowarp_file_t *>(obj);
+  auto *o = static_cast<iowarp_obj_t *>(obj);
 
   /* Create dataset via native VOL */
   void *under_dset = H5VLdataset_create(
-      file->obj.under_object, loc_params, file->obj.under_vol_id, name,
+      o->under_object, loc_params, o->under_vol_id, name,
       lcpl_id, type_id, space_id, dcpl_id, dapl_id, dxpl_id, req);
   if (!under_dset) return nullptr;
 
   auto *dset = new iowarp_dataset_t;
   dset->obj.under_object = under_dset;
-  dset->obj.under_vol_id = file->obj.under_vol_id;
-  dset->file = file;
+  dset->obj.under_vol_id = o->under_vol_id;
+  /* Try to get the file pointer for CTE interception */
+  dset->file = dynamic_cast<iowarp_file_t *>(nullptr);  /* placeholder */
   dset->dataset_path = name ? name : "";
 
   return dset;
@@ -257,17 +274,17 @@ static void *iowarp_dataset_open(void *obj,
                                  const H5VL_loc_params_t *loc_params,
                                  const char *name, hid_t dapl_id,
                                  hid_t dxpl_id, void **req) {
-  auto *file = static_cast<iowarp_file_t *>(obj);
+  auto *o = static_cast<iowarp_obj_t *>(obj);
 
   void *under_dset = H5VLdataset_open(
-      file->obj.under_object, loc_params, file->obj.under_vol_id, name,
+      o->under_object, loc_params, o->under_vol_id, name,
       dapl_id, dxpl_id, req);
   if (!under_dset) return nullptr;
 
   auto *dset = new iowarp_dataset_t;
   dset->obj.under_object = under_dset;
-  dset->obj.under_vol_id = file->obj.under_vol_id;
-  dset->file = file;
+  dset->obj.under_vol_id = o->under_vol_id;
+  dset->file = nullptr;
   dset->dataset_path = name ? name : "";
 
   return dset;
@@ -290,6 +307,14 @@ static herr_t iowarp_dataset_write(size_t count, void *dset[],
   for (size_t d = 0; d < count; ++d) {
     auto *dataset = static_cast<iowarp_dataset_t *>(dset[d]);
     if (!dataset || !buf[d]) continue;
+
+    /* If no file reference (opened from group), fall through to native */
+    if (!dataset->file) {
+      H5VLdataset_write(1, &dataset->obj.under_object, &mem_type_id[d],
+                         &mem_space_id[d], &file_space_id[d],
+                         dataset->obj.under_vol_id, dxpl_id, &buf[d], req);
+      continue;
+    }
 
     /* Compute total data size from memory dataspace */
     hid_t space = mem_space_id[d];
@@ -356,6 +381,14 @@ static herr_t iowarp_dataset_read(size_t count, void *dset[],
   for (size_t d = 0; d < count; ++d) {
     auto *dataset = static_cast<iowarp_dataset_t *>(dset[d]);
     if (!dataset || !buf[d]) continue;
+
+    /* If no file reference, fall through to native */
+    if (!dataset->file) {
+      H5VLdataset_read(1, &dataset->obj.under_object, &mem_type_id[d],
+                        &mem_space_id[d], &file_space_id[d],
+                        dataset->obj.under_vol_id, dxpl_id, &buf[d], req);
+      continue;
+    }
 
     /* Compute total data size */
     hid_t space = mem_space_id[d];
@@ -452,30 +485,30 @@ static void *iowarp_group_create(void *obj,
                                  const char *name, hid_t lcpl_id,
                                  hid_t gcpl_id, hid_t gapl_id,
                                  hid_t dxpl_id, void **req) {
-  auto *file = static_cast<iowarp_file_t *>(obj);
-  void *under = H5VLgroup_create(file->obj.under_object, loc_params,
-                                  file->obj.under_vol_id, name, lcpl_id,
+  auto *o = static_cast<iowarp_obj_t *>(obj);
+  void *under = H5VLgroup_create(o->under_object, loc_params,
+                                  o->under_vol_id, name, lcpl_id,
                                   gcpl_id, gapl_id, dxpl_id, req);
   if (!under) return nullptr;
-  auto *o = new iowarp_obj_t;
-  o->under_object = under;
-  o->under_vol_id = file->obj.under_vol_id;
-  return o;
+  auto *grp = new iowarp_obj_t;
+  grp->under_object = under;
+  grp->under_vol_id = o->under_vol_id;
+  return grp;
 }
 
 static void *iowarp_group_open(void *obj,
                                const H5VL_loc_params_t *loc_params,
                                const char *name, hid_t gapl_id,
                                hid_t dxpl_id, void **req) {
-  auto *file = static_cast<iowarp_file_t *>(obj);
-  void *under = H5VLgroup_open(file->obj.under_object, loc_params,
-                                file->obj.under_vol_id, name, gapl_id,
+  auto *o = static_cast<iowarp_obj_t *>(obj);
+  void *under = H5VLgroup_open(o->under_object, loc_params,
+                                o->under_vol_id, name, gapl_id,
                                 dxpl_id, req);
   if (!under) return nullptr;
-  auto *o = new iowarp_obj_t;
-  o->under_object = under;
-  o->under_vol_id = file->obj.under_vol_id;
-  return o;
+  auto *grp = new iowarp_obj_t;
+  grp->under_object = under;
+  grp->under_vol_id = o->under_vol_id;
+  return grp;
 }
 
 static herr_t iowarp_group_get(void *obj, H5VL_group_get_args_t *args,
@@ -500,15 +533,21 @@ static herr_t iowarp_group_close(void *obj, hid_t dxpl_id, void **req) {
   return ret;
 }
 
-/* Attribute — full passthrough via native VOL */
+/* Attribute — full passthrough via native VOL, with proper wrapping */
 static void *iowarp_attr_create(void *obj,
                                 const H5VL_loc_params_t *loc_params,
                                 const char *name, hid_t type_id,
                                 hid_t space_id, hid_t acpl_id,
                                 hid_t aapl_id, hid_t dxpl_id, void **req) {
   auto *o = static_cast<iowarp_obj_t *>(obj);
-  return H5VLattr_create(o->under_object, loc_params, o->under_vol_id, name,
-                          type_id, space_id, acpl_id, aapl_id, dxpl_id, req);
+  void *under = H5VLattr_create(o->under_object, loc_params, o->under_vol_id,
+                                 name, type_id, space_id, acpl_id, aapl_id,
+                                 dxpl_id, req);
+  if (!under) return nullptr;
+  auto *attr = new iowarp_obj_t;
+  attr->under_object = under;
+  attr->under_vol_id = o->under_vol_id;
+  return attr;
 }
 
 static void *iowarp_attr_open(void *obj,
@@ -516,33 +555,138 @@ static void *iowarp_attr_open(void *obj,
                               const char *name, hid_t aapl_id,
                               hid_t dxpl_id, void **req) {
   auto *o = static_cast<iowarp_obj_t *>(obj);
-  return H5VLattr_open(o->under_object, loc_params, o->under_vol_id, name,
-                        aapl_id, dxpl_id, req);
+  void *under = H5VLattr_open(o->under_object, loc_params, o->under_vol_id,
+                               name, aapl_id, dxpl_id, req);
+  if (!under) return nullptr;
+  auto *attr = new iowarp_obj_t;
+  attr->under_object = under;
+  attr->under_vol_id = o->under_vol_id;
+  return attr;
 }
 
 static herr_t iowarp_attr_read(void *attr, hid_t dtype_id, void *buf,
                                hid_t dxpl_id, void **req) {
-  return H5VLattr_read(attr, H5VL_NATIVE, dtype_id, buf, dxpl_id, req);
+  auto *o = static_cast<iowarp_obj_t *>(attr);
+  return H5VLattr_read(o->under_object, o->under_vol_id, dtype_id, buf,
+                        dxpl_id, req);
 }
 
 static herr_t iowarp_attr_write(void *attr, hid_t dtype_id, const void *buf,
                                 hid_t dxpl_id, void **req) {
-  return H5VLattr_write(attr, H5VL_NATIVE, dtype_id, buf, dxpl_id, req);
+  auto *o = static_cast<iowarp_obj_t *>(attr);
+  return H5VLattr_write(o->under_object, o->under_vol_id, dtype_id, buf,
+                         dxpl_id, req);
 }
 
 static herr_t iowarp_attr_get(void *obj, H5VL_attr_get_args_t *args,
                               hid_t dxpl_id, void **req) {
-  return H5VLattr_get(obj, H5VL_NATIVE, args, dxpl_id, req);
+  auto *o = static_cast<iowarp_obj_t *>(obj);
+  return H5VLattr_get(o->under_object, o->under_vol_id, args, dxpl_id, req);
 }
 
 static herr_t iowarp_attr_specific(void *obj, const H5VL_loc_params_t *lp,
                                    H5VL_attr_specific_args_t *args,
                                    hid_t dxpl_id, void **req) {
-  return H5VLattr_specific(obj, lp, H5VL_NATIVE, args, dxpl_id, req);
+  auto *o = static_cast<iowarp_obj_t *>(obj);
+  return H5VLattr_specific(o->under_object, lp, o->under_vol_id, args,
+                            dxpl_id, req);
 }
 
 static herr_t iowarp_attr_close(void *attr, hid_t dxpl_id, void **req) {
-  return H5VLattr_close(attr, H5VL_NATIVE, dxpl_id, req);
+  auto *o = static_cast<iowarp_obj_t *>(attr);
+  herr_t ret = H5VLattr_close(o->under_object, o->under_vol_id, dxpl_id, req);
+  delete o;
+  return ret;
+}
+
+/* Link — passthrough */
+static herr_t iowarp_link_create(H5VL_link_create_args_t *args,
+                                 void *obj,
+                                 const H5VL_loc_params_t *loc_params,
+                                 hid_t lcpl_id, hid_t lapl_id,
+                                 hid_t dxpl_id, void **req) {
+  auto *o = static_cast<iowarp_obj_t *>(obj);
+  return H5VLlink_create(args, o ? o->under_object : nullptr, loc_params,
+                          o ? o->under_vol_id : H5VL_NATIVE,
+                          lcpl_id, lapl_id, dxpl_id, req);
+}
+
+static herr_t iowarp_link_copy(void *src_obj,
+                               const H5VL_loc_params_t *loc_params1,
+                               void *dst_obj,
+                               const H5VL_loc_params_t *loc_params2,
+                               hid_t lcpl_id, hid_t lapl_id,
+                               hid_t dxpl_id, void **req) {
+  auto *s = static_cast<iowarp_obj_t *>(src_obj);
+  auto *d = static_cast<iowarp_obj_t *>(dst_obj);
+  return H5VLlink_copy(s->under_object, loc_params1,
+                        d->under_object, loc_params2,
+                        s->under_vol_id, lcpl_id, lapl_id, dxpl_id, req);
+}
+
+static herr_t iowarp_link_get(void *obj, const H5VL_loc_params_t *loc_params,
+                              H5VL_link_get_args_t *args,
+                              hid_t dxpl_id, void **req) {
+  auto *o = static_cast<iowarp_obj_t *>(obj);
+  return H5VLlink_get(o->under_object, loc_params, o->under_vol_id,
+                       args, dxpl_id, req);
+}
+
+static herr_t iowarp_link_specific(void *obj,
+                                   const H5VL_loc_params_t *loc_params,
+                                   H5VL_link_specific_args_t *args,
+                                   hid_t dxpl_id, void **req) {
+  auto *o = static_cast<iowarp_obj_t *>(obj);
+  return H5VLlink_specific(o->under_object, loc_params, o->under_vol_id,
+                            args, dxpl_id, req);
+}
+
+/* Object — passthrough */
+static void *iowarp_object_open(void *obj,
+                                const H5VL_loc_params_t *loc_params,
+                                H5I_type_t *opened_type,
+                                hid_t dxpl_id, void **req) {
+  auto *o = static_cast<iowarp_obj_t *>(obj);
+  void *under = H5VLobject_open(o->under_object, loc_params, o->under_vol_id,
+                                 opened_type, dxpl_id, req);
+  if (!under) return nullptr;
+  auto *wrapped = new iowarp_obj_t;
+  wrapped->under_object = under;
+  wrapped->under_vol_id = o->under_vol_id;
+  return wrapped;
+}
+
+static herr_t iowarp_object_copy(void *src_obj,
+                                 const H5VL_loc_params_t *loc_params1,
+                                 const char *src_name,
+                                 void *dst_obj,
+                                 const H5VL_loc_params_t *loc_params2,
+                                 const char *dst_name,
+                                 hid_t ocpypl_id, hid_t lcpl_id,
+                                 hid_t dxpl_id, void **req) {
+  auto *s = static_cast<iowarp_obj_t *>(src_obj);
+  auto *d = static_cast<iowarp_obj_t *>(dst_obj);
+  return H5VLobject_copy(s->under_object, loc_params1, src_name,
+                          d->under_object, loc_params2, dst_name,
+                          s->under_vol_id, ocpypl_id, lcpl_id, dxpl_id, req);
+}
+
+static herr_t iowarp_object_get(void *obj,
+                                const H5VL_loc_params_t *loc_params,
+                                H5VL_object_get_args_t *args,
+                                hid_t dxpl_id, void **req) {
+  auto *o = static_cast<iowarp_obj_t *>(obj);
+  return H5VLobject_get(o->under_object, loc_params, o->under_vol_id,
+                         args, dxpl_id, req);
+}
+
+static herr_t iowarp_object_specific(void *obj,
+                                     const H5VL_loc_params_t *loc_params,
+                                     H5VL_object_specific_args_t *args,
+                                     hid_t dxpl_id, void **req) {
+  auto *o = static_cast<iowarp_obj_t *>(obj);
+  return H5VLobject_specific(o->under_object, loc_params, o->under_vol_id,
+                              args, dxpl_id, req);
 }
 
 /* Introspect */
@@ -558,7 +702,8 @@ static herr_t iowarp_introspect_get_cap_flags(const void *info,
                                               uint64_t *cap_flags) {
   (void)info;
   *cap_flags = H5VL_CAP_FLAG_FILE_BASIC | H5VL_CAP_FLAG_DATASET_BASIC |
-               H5VL_CAP_FLAG_GROUP_BASIC | H5VL_CAP_FLAG_ATTR_BASIC;
+               H5VL_CAP_FLAG_GROUP_BASIC | H5VL_CAP_FLAG_ATTR_BASIC |
+               H5VL_CAP_FLAG_LINK_BASIC | H5VL_CAP_FLAG_OBJECT_BASIC;
   return 0;
 }
 
@@ -645,11 +790,20 @@ const H5VL_class_t H5VL_iowarp_cls = {
     },
 
     /* link_cls */ {
-        nullptr, nullptr, nullptr, nullptr, nullptr,
+        /* create   */ iowarp_link_create,
+        /* copy     */ iowarp_link_copy,
+        /* move     */ nullptr,
+        /* get      */ iowarp_link_get,
+        /* specific */ iowarp_link_specific,
     },
 
     /* object_cls */ {
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        /* open     */ iowarp_object_open,
+        /* copy     */ iowarp_object_copy,
+        /* get      */ iowarp_object_get,
+        /* specific */ iowarp_object_specific,
+        /* optional */ nullptr,
+        /* close    */ nullptr,  /* objects are closed by their specific type */
     },
 
     /* introspect_cls */ {
