@@ -77,6 +77,13 @@ class WrpAdapters(Interceptor):
                 'help': 'Intercepts NVIDIA GPUDirect Storage operations'
             },
             {
+                'name': 'adios2',
+                'msg': 'Enable ADIOS2 IOWarp engine plugin',
+                'type': bool,
+                'default': False,
+                'help': 'Sets ADIOS2_PLUGIN_PATH so ADIOS2 discovers the iowarp_engine plugin'
+            },
+            {
                 'name': 'include',
                 'msg': 'Path patterns to include for interception (list)',
                 'type': list,
@@ -160,8 +167,17 @@ class WrpAdapters(Interceptor):
             self.log(f'Found libwrp_cte_nvidia_gds.so at {nvidia_gds_lib}')
             has_one = True
 
+        if self.config['adios2']:
+            adios2_lib = self.find_library('iowarp_engine')
+            if adios2_lib is None:
+                raise Exception('Could not find iowarp_engine library')
+            self.env['ADIOS2_PLUGIN_PATH'] = str(pathlib.Path(adios2_lib).parent)
+            self.env['WRP_CTE_ROOT'] = str(pathlib.Path(adios2_lib).parent.parent)
+            self.log(f'Found libiowarp_engine.so at {adios2_lib}')
+            has_one = True
+
         if not has_one:
-            raise Exception('No WRP CTE adapter selected. Please enable at least one adapter (posix, mpiio, stdio, vfd, or nvidia_gds).')
+            raise Exception('No WRP CTE adapter selected. Please enable at least one adapter (posix, mpiio, stdio, vfd, nvidia_gds, or adios2).')
 
         # Generate CAE configuration
         self._generate_cae_config()
@@ -208,6 +224,11 @@ class WrpAdapters(Interceptor):
         if self.config['nvidia_gds']:
             self.prepend_env('LD_PRELOAD', self.env['WRP_CTE_NVIDIA_GDS'])
             self.log(f"Added NVIDIA GDS adapter to LD_PRELOAD")
+
+        # Configure ADIOS2 plugin path
+        if self.config['adios2']:
+            self.setenv('ADIOS2_PLUGIN_PATH', self.env['ADIOS2_PLUGIN_PATH'])
+            self.log(f"Set ADIOS2_PLUGIN_PATH to {self.env['ADIOS2_PLUGIN_PATH']}")
 
     def _generate_cae_config(self):
         """
