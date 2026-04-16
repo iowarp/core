@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake ninja-build pkg-config g++ make \
     python3-dev python3-pip python3-venv \
     libelf-dev libaio-dev liburing-dev \
+    libfuse3-dev fuse3 \
     openmpi-bin libopenmpi-dev mpi-default-dev \
     libboost-all-dev catch2 libcurl4-openssl-dev libssl-dev \
     nlohmann-json3-dev \
@@ -143,35 +144,25 @@ RUN cd /tmp \
     && ldconfig && rm -rf /tmp/libpressio*
 """
 
-IOWARP_CLONE_AND_BUILD = r"""
-# Clone and build IOWarp
-RUN git clone --recurse-submodules --depth 1 \
+def iowarp_clone_and_build(branch: str, preset: str) -> str:
+    """
+    Render the Dockerfile snippet that clones IOWarp at the given branch and
+    builds it via the given CMakePresets.json preset.
+
+    :param branch: Git branch of iowarp/clio-core to check out (e.g., 'main',
+                   'dev', 'transparent-compress').
+    :param preset: Name of a preset declared in CMakePresets.json
+                   (e.g., 'build-cpu-release', 'release-adapter').
+    """
+    return rf"""
+# Clone and build IOWarp ({branch} @ preset: {preset})
+RUN git clone --recurse-submodules --depth 1 --branch {branch} \
     https://github.com/iowarp/clio-core.git /opt/iowarp
 
 WORKDIR /opt/iowarp
-RUN mkdir -p build && cd build && \
-    cmake \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_INSTALL_PREFIX=/usr/local \
-        -DWRP_CORE_ENABLE_RUNTIME=ON \
-        -DWRP_CORE_ENABLE_CTE=ON \
-        -DWRP_CORE_ENABLE_CAE=ON \
-        -DWRP_CORE_ENABLE_CEE=ON \
-        -DWRP_CORE_ENABLE_TESTS=OFF \
-        -DWRP_CORE_ENABLE_PYTHON=OFF \
-        -DWRP_CORE_ENABLE_CONDA=OFF \
-        -DWRP_CORE_ENABLE_ZMQ=ON \
-        -DWRP_CORE_ENABLE_CEREAL=ON \
-        -DWRP_CORE_ENABLE_HDF5=ON \
-        -DWRP_CORE_ENABLE_MPI=ON \
-        -DWRP_CORE_ENABLE_IO_URING=ON \
-        -DWRP_CTE_ENABLE_COMPRESS=ON \
-        -DWRP_CTE_ENABLE_ADIOS2_ADAPTER=ON \
-        -DWRP_CORE_ENABLE_GRAY_SCOTT=ON \
-        -DWRP_CORE_ENABLE_RPATH=ON \
-        ../ && \
-    make -j$(nproc) && \
-    make install && \
+RUN cmake --preset {preset} -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    cmake --build build -j$(nproc) && \
+    cmake --install build && \
     ldconfig
 
 # Seed default chimaera config
@@ -179,6 +170,12 @@ RUN mkdir -p /root/.chimaera && \
     cp /opt/iowarp/context-runtime/config/chimaera_default.yaml \
        /root/.chimaera/chimaera.yaml
 """
+
+
+# Default snippet preserved for backward compatibility with older imports
+# (e.g., jarvis_iowarp.adios2_gray_scott). Uses the 'main' branch and the
+# legacy 'build-cpu-release' preset.
+IOWARP_CLONE_AND_BUILD = iowarp_clone_and_build('main', 'build-cpu-release')
 
 IOWARP_DEPLOY_BASE = r"""
 ARG DEBIAN_FRONTEND=noninteractive
@@ -195,6 +192,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libblosc2-2t64 \
     libzstd1 liblz4-1 liblzma5 libbz2-1.0 libbrotli1 libsnappy1v5 \
     libzfp1 \
+    libfuse3-3 fuse3 \
     && rm -rf /var/lib/apt/lists/*
 
 ENV OMPI_ALLOW_RUN_AS_ROOT=1
@@ -310,28 +308,45 @@ class WrpRuntime(Service):
                 'type': int,
                 'default': 50000
             },
+            {
+                'name': 'git_branch',
+                'msg': 'Branch of iowarp/clio-core to clone inside the container build',
+                'type': str,
+                'default': 'main'
+            },
+            {
+                'name': 'cmake_preset',
+                'msg': 'CMakePresets.json preset used to configure the IOWarp build',
+                'type': str,
+                'default': 'release-adapter'
+            },
         ]
 
     # ------------------------------------------------------------------
     # Container Dockerfile generators
     # ------------------------------------------------------------------
 
-    def _build_phase(self) -> str:
+    def _build_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
-        return f"""FROM ubuntu:24.04
+        branch = self.config.get('git_branch', 'main')
+        preset = self.config.get('cmake_preset', 'release-adapter')
+        content = f"""FROM ubuntu:24.04
 {IOWARP_BUILD_DEPS}
-{IOWARP_CLONE_AND_BUILD}
+{iowarp_clone_and_build(branch, preset)}
 """
+        return content, preset
 
-    def _build_deploy_phase(self) -> str:
+    def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
-        return f"""FROM {self.build_image_name} AS builder
+        suffix = getattr(self, '_build_suffix', '')
+        content = f"""FROM {self.build_image_name()} AS builder
 FROM ubuntu:24.04
 {IOWARP_DEPLOY_BASE}
 CMD ["/bin/bash"]
 """
+        return content, suffix
 
     # ------------------------------------------------------------------
     # Configuration

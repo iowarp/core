@@ -268,6 +268,37 @@
             }
         },
         {
+            "name": "release-adapter",
+            "displayName": "Release + Adapters (ADIOS2, HDF5 VOL, FUSE)",
+            "description": "Release build with ADIOS2, HDF5 VOL, and FUSE3 adapters enabled. HDF5 VOL connector is built automatically when HDF5 is present (WRP_CORE_ENABLE_HDF5=ON). Requires HDF5 >= 1.12 and libfuse3-dev on the build host.",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "WRP_CORE_ENABLE_RUNTIME": "ON",
+                "WRP_CORE_ENABLE_CTE": "ON",
+                "WRP_CORE_ENABLE_CAE": "ON",
+                "WRP_CORE_ENABLE_CEE": "ON",
+                "WRP_CORE_ENABLE_TESTS": "OFF",
+                "WRP_CORE_ENABLE_BENCHMARKS": "OFF",
+                "WRP_CORE_ENABLE_PYTHON": "OFF",
+                "WRP_CORE_ENABLE_CONDA": "OFF",
+                "WRP_CORE_ENABLE_ELF": "OFF",
+                "WRP_CORE_ENABLE_ZMQ": "ON",
+                "WRP_CORE_ENABLE_CEREAL": "ON",
+                "WRP_CORE_ENABLE_HDF5": "ON",
+                "WRP_CORE_ENABLE_MPI": "ON",
+                "WRP_CORE_ENABLE_IO_URING": "ON",
+                "WRP_CORE_ENABLE_RPATH": "ON",
+                "WRP_CTE_ENABLE_COMPRESS": "ON",
+                "WRP_CTE_ENABLE_ADIOS2_ADAPTER": "ON",
+                "WRP_CTE_ENABLE_FUSE_ADAPTER": "ON",
+                "WRP_CORE_ENABLE_GRAY_SCOTT": "ON",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "HSHM_LOG_LEVEL": "1"
+            }
+        },
+        {
             "name": "pip-release",
             "displayName": "Pip Release (Minimal, Static Deps)",
             "description": "Minimal release build for pip wheels with statically-linked external deps",
