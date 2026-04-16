@@ -2524,7 +2524,7 @@ chi::TaskResume Runtime::ModifyExistingData(
 
   ++mod_count;
   if (mod_count % 100 == 0) {
-    HLOG(kInfo,
+    HLOG(kDebug,
          "[ModifyExistingData] ops={} setup={:.3f} ms vec_alloc={:.3f} ms "
          "async_send={:.3f} ms co_await={:.3f} ms",
          mod_count, t_setup_ms, t_vec_alloc_ms, t_async_send_ms, t_co_await_ms);

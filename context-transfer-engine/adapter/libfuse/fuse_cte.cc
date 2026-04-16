@@ -92,6 +92,18 @@ static int cte_fuse_getattr(const char *path, struct stat *stbuf,
     return 0;
   }
 
+  // Check if path is an explicit directory (sentinel tag with trailing /)
+  // or an implicit directory (any tags under this prefix).
+  // Check directories BEFORE files so that "mkdir foo && touch foo" doesn't
+  // shadow the directory with a file of the same name.
+  if (CteTagExists(p + "/") || CteDirExists(p)) {
+    stbuf->st_mode = S_IFDIR | 0755;
+    stbuf->st_nlink = 2;
+    stbuf->st_uid = getuid();
+    stbuf->st_gid = getgid();
+    return 0;
+  }
+
   // Check if path is a file (tag exists with this exact name)
   if (CteTagExists(p)) {
     auto tag_id = CteGetOrCreateTag(p);
@@ -100,15 +112,6 @@ static int cte_fuse_getattr(const char *path, struct stat *stbuf,
     stbuf->st_uid = getuid();
     stbuf->st_gid = getgid();
     stbuf->st_size = static_cast<off_t>(CteGetTagSize(tag_id));
-    return 0;
-  }
-
-  // Check if path is an implicit directory (any tags under this prefix)
-  if (CteDirExists(p)) {
-    stbuf->st_mode = S_IFDIR | 0755;
-    stbuf->st_nlink = 2;
-    stbuf->st_uid = getuid();
-    stbuf->st_gid = getgid();
     return 0;
   }
 
@@ -147,8 +150,35 @@ static int cte_fuse_readdir(const char *path, void *buf,
     filler(buf, name.c_str(), nullptr, 0, static_cast<fuse_fill_dir_flags>(0));
   }
 
-  // List implicit subdirectories
+  // List implicit subdirectories (dirs with files beneath them)
   auto subdirs = CteListSubdirs(p);
+
+  // Also find explicit empty directories (sentinel tags ending with /).
+  // Sentinel tags under "/a/b" look like "/a/b/childdir/" — match with
+  // regex "^/a/b/[^/]+/$" to find direct child sentinels.
+  {
+    auto *cte_client = WRP_CTE_CLIENT;
+    std::string escaped = RegexEscape(p);
+    if (!escaped.empty() && escaped.back() != '/') escaped += '/';
+    std::string regex = "^" + escaped + "[^/]+/$";
+    auto task = cte_client->AsyncTagQuery(regex);
+    task.Wait();
+    if (task->GetReturnCode() == 0) {
+      size_t prefix_len = p.size();
+      if (!p.empty() && p.back() != '/') prefix_len++;
+      for (const auto &sentinel : task->results_) {
+        // Extract dirname: strip prefix and trailing /
+        if (sentinel.size() > prefix_len + 1) {
+          std::string dirname = sentinel.substr(prefix_len,
+                                                sentinel.size() - prefix_len - 1);
+          if (std::find(subdirs.begin(), subdirs.end(), dirname) == subdirs.end()) {
+            subdirs.push_back(dirname);
+          }
+        }
+      }
+    }
+  }
+
   for (const auto &name : subdirs) {
     // Avoid duplicates if a file and subdir have the same name
     if (std::find(files.begin(), files.end(), name) == files.end()) {
@@ -161,10 +191,13 @@ static int cte_fuse_readdir(const char *path, void *buf,
 }
 
 static int cte_fuse_mkdir(const char *path, mode_t mode) {
-  (void)path;
   (void)mode;
-  // Directories are implicit — they exist when files are created beneath them.
-  // mkdir succeeds silently.
+  std::string p(path);
+  // Create a sentinel tag with a trailing "/" to mark an explicit directory.
+  // This lets getattr report the directory before any files exist under it.
+  std::string sentinel = p + "/";
+  auto tag_id = CteGetOrCreateTag(sentinel);
+  if (tag_id.IsNull()) return -EIO;
   return 0;
 }
 
@@ -174,7 +207,11 @@ static int cte_fuse_rmdir(const char *path) {
   auto files = CteListDirectChildren(p);
   auto subdirs = CteListSubdirs(p);
   if (!files.empty() || !subdirs.empty()) return -ENOTEMPTY;
-  // Empty implicit directory — nothing to do
+  // Delete the sentinel tag if it exists
+  std::string sentinel = p + "/";
+  if (CteTagExists(sentinel)) {
+    CteDelTag(sentinel);
+  }
   return 0;
 }
 

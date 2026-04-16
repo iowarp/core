@@ -70,6 +70,48 @@ set_tests_properties(
         ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
 )
 
-install(TARGETS test_fuse_adapter RUNTIME DESTINATION bin)
+# ------------------------------------------------------------------------------
+# Copy-workspace test: ingests /workspace into CTE, reads back, verifies
+# ------------------------------------------------------------------------------
+
+add_executable(test_fuse_copy_workspace
+    test_fuse_copy_workspace.cc
+)
+
+target_include_directories(test_fuse_copy_workspace PRIVATE
+    ${WRP_CTE_ROOT}
+)
+
+target_link_libraries(test_fuse_copy_workspace
+    wrp_cte_core_runtime
+    wrp_cte_core_client
+    chimaera::admin_runtime
+    chimaera::admin_client
+    chimaera::bdev_runtime
+    chimaera::bdev_client
+    hshm::cxx
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+
+# Copy CTE config to build directory
+add_custom_command(TARGET test_fuse_copy_workspace POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/cte_config.yaml
+        ${CMAKE_CURRENT_BINARY_DIR}/cte_config.yaml
+)
+
+add_test(NAME fuse_copy_workspace
+    COMMAND test_fuse_copy_workspace "Ingest and verify")
+
+set_tests_properties(
+    fuse_copy_workspace
+    PROPERTIES
+        TIMEOUT 600
+        LABELS "unit;adapter;fuse;copy_workspace"
+        ENVIRONMENT "CHI_WITH_RUNTIME=1;HSHM_LOG_LEVEL=error;WRP_RUNTIME_CONF=${CMAKE_CURRENT_SOURCE_DIR}/cte_config.yaml;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+        RESOURCE_LOCK "chimaera_runtime"
+)
+
+install(TARGETS test_fuse_adapter test_fuse_copy_workspace RUNTIME DESTINATION bin)
 
 message(STATUS "FUSE adapter tests configured successfully")
