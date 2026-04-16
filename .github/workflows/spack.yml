@@ -26,5 +26,9 @@ jobs:
         run: |
           . ./spack/share/spack/setup-env.sh
           spack repo add installers/spack
-          spack install iowarp+posix
+          spack install iowarp+posix || {
+            echo "=== SPACK BUILD LOG ==="
+            find /tmp -name "spack-stage-iowarp-*" -name "*.log" -exec cat {} \;
+            exit 1
+          }
           spack load iowarp+posix
