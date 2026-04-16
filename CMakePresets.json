@@ -356,7 +356,7 @@
                 "WRP_CORE_ENABLE_COVERAGE": "OFF",
                 "WRP_CORE_ENABLE_ZMQ": "ON",
                 "WRP_CORE_ENABLE_CEREAL": "ON",
-                "HSHM_LOG_LEVEL": "3",
+                "HSHM_LOG_LEVEL": "1",
                 "WRP_CORE_ENABLE_IO_URING": "ON"
             }
         },
