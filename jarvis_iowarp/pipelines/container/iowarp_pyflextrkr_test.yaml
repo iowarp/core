@@ -18,14 +18,22 @@ container_engine: docker
 container_base: ubuntu:24.04
 
 # Image is built locally by the pipeline; never try to pull it from a registry.
-# /tmp is bind-mounted so chimaera runtime inside the container can read
-# the hostfile path that jarvis stamped into its config (which lives on host).
+# jarvis copies the effective hostfile into <shared_dir>/hostfile on save
+# (see jarvis_cd/core/pipeline.py), and shared_dir is already bind-mounted
+# into the container at the same path, so no extra /tmp pass-through.
 container_extensions:
   pull_policy: never
-  volumes:
-    - /tmp:/tmp
 
 pkgs:
+  # Library packages — provide HDF5/ADIOS2/compression to wrp_runtime's
+  # build. See iowarp_container_test.yaml for the full explanation.
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+  - pkg_type: builtin.compress_libs
+    deploy_mode: container
+
   # IOWarp runtime (Chimaera storage daemon)
   - pkg_type: jarvis_iowarp.wrp_runtime
     deploy_mode: container

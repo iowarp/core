@@ -309,7 +309,7 @@ class Adios2GrayScott(Application):
             env=self.mod_env,
             exec_async=cfg['run_async'],
             container=self._container_engine,
-            container_image=self.deploy_image_name,
+            container_image=self.deploy_image_name(),
             shared_dir=self.shared_dir,
             private_dir=self.private_dir,
             bind_mounts=self.container_mounts,

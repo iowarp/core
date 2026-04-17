@@ -1,13 +1,24 @@
 #!/bin/bash
-# IOWarp runtime build script — installs all build deps, clones the IOWarp
-# source at ##GIT_BRANCH##, and configures/builds via the ##CMAKE_PRESET##
-# CMakePresets.json preset. Runs inside the jarvis pipeline build container
-# (started from container_base, typically ubuntu:24.04).
+# IOWarp runtime build script — runs inside the jarvis pipeline build
+# container (started from container_base, typically ubuntu:24.04).
+#
+# HDF5, ADIOS2, and the lossy compression stack (fpzip / SZ3 /
+# std_compat / libpressio) are NOT built here anymore. Those live in
+# reusable jarvis Library packages — builtin.hdf5, builtin.adios2,
+# builtin.compress_libs — that must appear before wrp_runtime in the
+# pipeline. When jarvis runs Phase 1 it checks for each Library's
+# cached deploy image (jarvis-deploy-hdf5-2.1.1 etc.) and, if present,
+# docker-cp's its /usr/local and /opt into the shared build container
+# (see jarvis_cd/core/pipeline.py _build_pipeline_container, commit
+# 285fcb4). By the time this script runs those libs are already in
+# /usr/local, so CMake's find_package() just picks them up.
 set -e
 
 export DEBIAN_FRONTEND=noninteractive
 
 # --- System build deps ------------------------------------------------------
+# Only the deps unique to the IOWarp build: the Library packages cover
+# compiler toolchain + their own runtime deps before us.
 apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl wget git \
     cmake ninja-build pkg-config g++ make \
@@ -84,82 +95,12 @@ cmake -S cppzmq-4.10.0 -B cppzmq-build \
 cmake --install cppzmq-build
 rm -rf /tmp/cppzmq-*
 
-# --- HDF5 2.1.1 -------------------------------------------------------------
-# Ubuntu 24.04 apt only has 1.10; iowarp_hdf5_vol needs 2.x VOL API.
-cd /tmp
-wget -q https://github.com/HDFGroup/hdf5/releases/download/2.1.1/hdf5-2.1.1.tar.gz
-tar xzf hdf5-2.1.1.tar.gz
-cd hdf5-2.1.1
-cmake -B build -S . \
-   -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release \
-   -DBUILD_SHARED_LIBS=ON -DBUILD_STATIC_LIBS=OFF \
-   -DHDF5_BUILD_CPP_LIB=ON -DHDF5_BUILD_TOOLS=ON \
-   -DHDF5_ENABLE_Z_LIB_SUPPORT=ON -DHDF5_ENABLE_SZIP_SUPPORT=OFF \
-   -DHDF5_BUILD_EXAMPLES=OFF -DHDF5_BUILD_FORTRAN=OFF -DBUILD_TESTING=OFF
-cmake --build build -j"$(nproc)"
-cmake --install build
-cd /tmp
-rm -rf hdf5-2.1.1*
-
-# --- ADIOS2 v2.11.0 ---------------------------------------------------------
-cd /tmp
-git clone --depth 1 --branch v2.11.0 https://github.com/ornladios/ADIOS2.git
-cmake -S ADIOS2 -B adios2-build \
-   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
-   -DADIOS2_BUILD_EXAMPLES=OFF -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF \
-   -DADIOS2_USE_MPI=ON -DADIOS2_USE_HDF5=ON -DADIOS2_USE_ZeroMQ=ON \
-   -DADIOS2_USE_Python=OFF -DADIOS2_USE_SST=OFF -DADIOS2_USE_Fortran=OFF \
-   -DCMAKE_CXX_STANDARD=17
-make -C adios2-build -j"$(nproc)"
-make -C adios2-build install
-ldconfig
-rm -rf /tmp/ADIOS2 /tmp/adios2-build
-
-# --- Lossy compression: FPZIP, SZ3, std_compat, LibPressio ------------------
-cd /tmp
-git clone https://github.com/LLNL/fpzip.git
-cmake -S fpzip -B fpzip-build \
-   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
-   -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF -DBUILD_UTILITIES=OFF
-make -C fpzip-build -j"$(nproc)"
-make -C fpzip-build install
-ldconfig
-rm -rf /tmp/fpzip*
-
-cd /tmp
-git clone https://github.com/szcompressor/SZ3.git
-cmake -S SZ3 -B sz3-build \
-   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
-   -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF
-make -C sz3-build -j"$(nproc)"
-make -C sz3-build install
-ldconfig
-rm -rf /tmp/SZ3 /tmp/sz3-build
-
-cd /tmp
-git clone https://github.com/robertu94/std_compat.git
-cmake -S std_compat -B std_compat-build \
-   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_TESTING=OFF
-make -C std_compat-build -j"$(nproc)"
-make -C std_compat-build install
-ldconfig
-rm -rf /tmp/std_compat*
-
-cd /tmp
-git clone https://github.com/robertu94/libpressio.git
-cmake -S libpressio -B libpressio-build \
-   -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
-   -DLIBPRESSIO_HAS_ZFP=ON -DLIBPRESSIO_HAS_SZ3=ON -DLIBPRESSIO_HAS_FPZIP=ON \
-   -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF
-make -C libpressio-build -j"$(nproc)"
-make -C libpressio-build install
-ldconfig
-rm -rf /tmp/libpressio*
-
 # --- Clone and build IOWarp -------------------------------------------------
-# Submodules are NOT recursed at clone time: external/jarvis-cd pulls its own
-# `awesome-scienctific-applications` submodule via an SSH URL that fails in
-# containers, and the core build does not need it.
+# HDF5, ADIOS2, and the compression libs were already injected by the
+# pipeline before this script started (see header comment).
+# Submodules are NOT recursed at clone time: external/jarvis-cd pulls its
+# own `awesome-scienctific-applications` submodule via an SSH URL that
+# fails in containers, and the core build does not need it.
 git clone --depth 1 --branch ##GIT_BRANCH## \
     https://github.com/iowarp/clio-core.git /opt/iowarp
 

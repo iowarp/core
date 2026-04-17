@@ -1,35 +1,59 @@
-# Pipeline: IOWarp + LAMMPS H5MD Container Test
-# Purpose: Run LAMMPS with HDF5 output, intercepted by IOWarp HDF5 VOL connector
-# Tests the full IOWarp stack: runtime -> CTE -> VOL -> LAMMPS H5MD dumps
+# Pipeline: IOWarp runtime + CTE + wrp_adapters (HDF5 VOL) + LAMMPS (H5MD)
+# Purpose: Exercise the IOWarp HDF5 VOL connector with LAMMPS writing an
+# H5MD trajectory.
+#
+# Notes:
+#  - install_manager: container is mandatory — see iowarp_container_test.yaml.
+#  - pull_policy: never keeps docker-compose from trying to pull the local
+#    pipeline image.
+#  - The LAMMPS input script lives next to this YAML; we bind-mount this
+#    directory at the same absolute path inside the container so lmp -in
+#    ... can read it. Edit the bind-mount host path if your checkout lives
+#    elsewhere.
+#  - Jarvis copies the effective hostfile into <shared_dir>/hostfile on
+#    save; shared_dir is already bind-mounted, so no /tmp pass-through is
+#    needed.
 
 name: iowarp_lammps_h5md_test
 
+install_manager: container
 container_engine: docker
 container_base: ubuntu:24.04
 
+container_extensions:
+  pull_policy: never
+  volumes:
+    - /mnt/common/llogan/iowarp/core/jarvis_iowarp/pipelines/container:/mnt/common/llogan/iowarp/core/jarvis_iowarp/pipelines/container:ro
+
 pkgs:
-  # IOWarp runtime (storage management daemon)
+  # See iowarp_container_test.yaml for the Library-injection explanation.
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+  - pkg_type: builtin.compress_libs
+    deploy_mode: container
+
   - pkg_type: jarvis_iowarp.wrp_runtime
     deploy_mode: container
+    git_branch: transparent-compress
+    cmake_preset: release-adapter
     port: 9413
     sleep: 2
 
-  # IOWarp CTE (Content Transfer Engine)
   - pkg_type: jarvis_iowarp.wrp_cte
     deploy_mode: container
 
-  # LAMMPS with HDF5 H5MD dump output
   - pkg_type: builtin.lammps
     deploy_mode: container
     nprocs: 1
     ppn: 1
     kokkos_gpu: false
-    script: /mnt/common/llogan/.ppi-jarvis/shared/iowarp_lammps_h5md_test/lammps_h5md.in
+    script: /mnt/common/llogan/iowarp/core/jarvis_iowarp/pipelines/container/lammps_h5md.in
     out: /tmp/lammps_h5md
     base_image: ubuntu:24.04
 
 interceptors:
-  # IOWarp HDF5 VOL connector intercepts LAMMPS H5Dwrite calls
   - pkg_type: jarvis_iowarp.wrp_adapters
     vol: true
     include:

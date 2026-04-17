@@ -185,6 +185,19 @@ class WrpRuntime(Service):
             main_size = SizeType(self.config['main_segment_size']).bytes
         client_size = SizeType(self.config['client_data_segment_size']).bytes
 
+        # Prefer the hostfile copy that jarvis.pipeline.save() stamps into
+        # the pipeline's shared_dir (<pipeline_shared_dir>/hostfile). That
+        # location is bind-mounted into every deploy container at the same
+        # path and is reachable from both host and container. Fall back to
+        # the effective hostfile's original path only if the copy doesn't
+        # exist (e.g., running before pipeline.save() has been called).
+        pipeline_shared = self.jarvis.get_pipeline_shared_dir(self.pipeline.name)
+        hostfile_shared = os.path.join(str(pipeline_shared), 'hostfile')
+        if os.path.exists(hostfile_shared):
+            hostfile_path = hostfile_shared
+        else:
+            hostfile_path = self.hostfile.path if self.hostfile.path else ''
+
         config_dict = {
             'memory': {
                 'main_segment_size': main_size,
@@ -192,13 +205,7 @@ class WrpRuntime(Service):
             },
             'networking': {
                 'port': self.config['port'],
-                # self.hostfile resolves package -> pipeline -> global.
-                # Using pipeline-level hostfile matters for container mode:
-                # pipeline.save() copies that hostfile into <shared_dir>/hostfile
-                # which is bind-mounted into every container at the same path.
-                # self.jarvis.hostfile.path would pick up the global path instead,
-                # which isn't mounted inside containers.
-                'hostfile': self.hostfile.path if self.hostfile.path else ''
+                'hostfile': hostfile_path
             },
             'logging': {
                 'level': self.config['log_level'],
