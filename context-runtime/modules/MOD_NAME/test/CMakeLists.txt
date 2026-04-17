@@ -899,10 +899,12 @@ add_custom_target(test_gpu_parallelism
   COMMENT "Running GPU cross-warp parallelism validation tests"
 )
 
-if(WRP_CORE_ENABLE_TESTS)
+if(WRP_CORE_ENABLE_TESTS AND (HSHM_ENABLE_CUDA OR HSHM_ENABLE_ROCM))
   # Run cross-warp and single-warp tests as separate processes to avoid
   # GPU state corruption between test cases (cross-warp dispatch leaves
   # persistent kernel state that affects subsequent GPU operations).
+  # Only registered when a GPU runtime is available; without CUDA/ROCm the
+  # run_gpu_parallelism_test() weak stub returns -200 and all assertions fail.
   add_test(
     NAME cr_gpu_parallelism_cross_warp
     COMMAND ${GPU_PARALLELISM_TEST_TARGET} "[cross_warp]"
