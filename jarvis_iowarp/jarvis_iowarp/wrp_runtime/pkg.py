@@ -380,7 +380,13 @@ CMD ["/bin/bash"]
             },
             'networking': {
                 'port': self.config['port'],
-                'hostfile': self.jarvis.hostfile.path if self.jarvis.hostfile.path else ''
+                # self.hostfile resolves package -> pipeline -> global.
+                # Using pipeline-level hostfile matters for container mode:
+                # pipeline.save() copies that hostfile into <shared_dir>/hostfile
+                # which is bind-mounted into every container at the same path.
+                # self.jarvis.hostfile.path would pick up the global path instead,
+                # which isn't mounted inside containers.
+                'hostfile': self.hostfile.path if self.hostfile.path else ''
             },
             'logging': {
                 'level': self.config['log_level'],
@@ -415,7 +421,7 @@ CMD ["/bin/bash"]
                 hostfile=self.jarvis.hostfile,
                 exec_async=True,
                 container=self._container_engine,
-                container_image=self.deploy_image_name,
+                container_image=self.deploy_image_name(),
                 private_dir=self.private_dir,
                 bind_mounts=self.container_mounts,
             )).run()
@@ -425,7 +431,7 @@ CMD ["/bin/bash"]
                 hostfile=self.jarvis.hostfile,
                 exec_async=True,
                 container=self._container_engine,
-                container_image=self.deploy_image_name,
+                container_image=self.deploy_image_name(),
                 private_dir=self.private_dir,
                 bind_mounts=self.container_mounts,
             )).run()
@@ -458,7 +464,7 @@ CMD ["/bin/bash"]
             env=self.env,
             hostfile=self.jarvis.hostfile,
             container=self._container_engine,
-            container_image=self.deploy_image_name,
+            container_image=self.deploy_image_name(),
             private_dir=self.private_dir,
             bind_mounts=self.container_mounts,
         )).run()
