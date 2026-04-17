@@ -10,10 +10,12 @@ from jarvis_cd.shell.process import Mkdir, Rm
 from jarvis_cd.util.config_parser import JsonFile
 import os
 
-# Reuse the IOWarp build snippets from wrp_runtime
-from jarvis_iowarp.wrp_runtime.pkg import (
-    IOWARP_BUILD_DEPS, IOWARP_CLONE_AND_BUILD, IOWARP_DEPLOY_BASE
-)
+# Container build is delegated to jarvis_iowarp.wrp_runtime: every pipeline
+# that uses adios2_gray_scott also instantiates wrp_runtime, whose build.sh
+# compiles IOWarp with WRP_CORE_ENABLE_GRAY_SCOTT=ON (enabled by the
+# 'release-adapter' preset), producing /usr/local/bin/gray-scott in the
+# shared build image. So this package contributes no build or deploy
+# content of its own; see wrp_runtime/build.sh + Dockerfile.deploy.
 
 
 class Adios2GrayScott(Application):
@@ -195,33 +197,15 @@ class Adios2GrayScott(Application):
         ]
 
     # ------------------------------------------------------------------
-    # Container Dockerfile generators
+    # Container build — delegated to wrp_runtime
     # ------------------------------------------------------------------
-
-    def _build_phase(self) -> str:
-        """
-        BUILD container: install all IOWarp deps, build IOWarp (which
-        includes gray-scott via WRP_CORE_ENABLE_GRAY_SCOTT=ON).
-        Self-contained from ubuntu:24.04.
-        """
-        if self.config.get('deploy_mode') != 'container':
-            return None
-        return f"""FROM ubuntu:24.04
-{IOWARP_BUILD_DEPS}
-{IOWARP_CLONE_AND_BUILD}
-"""
-
-    def _build_deploy_phase(self) -> str:
-        """
-        DEPLOY container: minimal image with IOWarp + gray-scott binaries.
-        """
-        if self.config.get('deploy_mode') != 'container':
-            return None
-        return f"""FROM {self.build_image_name} AS builder
-FROM ubuntu:24.04
-{IOWARP_DEPLOY_BASE}
-CMD ["/bin/bash"]
-"""
+    # Every pipeline that uses adios2_gray_scott in container mode also
+    # spins up wrp_runtime, whose build.sh compiles IOWarp with
+    # WRP_CORE_ENABLE_GRAY_SCOTT=ON. That produces /usr/local/bin/gray-scott
+    # in the committed build image, which wrp_runtime's Dockerfile.deploy
+    # copies into the final deploy image. So no separate build/deploy
+    # content is emitted here.
+    # _build_phase / _build_deploy_phase inherit the base-class no-op.
 
     # ------------------------------------------------------------------
     # Configuration
@@ -321,10 +305,12 @@ CMD ["/bin/bash"]
             nprocs=cfg['nprocs'],
             ppn=cfg['ppn'],
             hostfile=self.hostfile,
+            port=self.ssh_port,
             env=self.mod_env,
             exec_async=cfg['run_async'],
             container=self._container_engine,
             container_image=self.deploy_image_name,
+            shared_dir=self.shared_dir,
             private_dir=self.private_dir,
             bind_mounts=self.container_mounts,
         ))
