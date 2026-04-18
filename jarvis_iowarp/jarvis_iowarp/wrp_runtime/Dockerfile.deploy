@@ -24,11 +24,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV OMPI_ALLOW_RUN_AS_ROOT=1
 ENV OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
 
-# Copy IOWarp binaries and libraries from the committed build image
-COPY --from=builder /usr/local/lib   /usr/local/lib
-COPY --from=builder /usr/local/bin   /usr/local/bin
-COPY --from=builder /usr/local/share /usr/local/share
-COPY --from=builder /root/.chimaera  /root/.chimaera
+# Copy IOWarp binaries, libraries and headers from the committed build
+# image. /usr/local/include is needed when this deploy image is injected
+# into a jarvis build container as a compile-time dependency for a
+# downstream package (e.g. chronolog's chimod/*_client.cc uses
+# <chimaera/chimaera.h>).
+COPY --from=builder /usr/local/lib     /usr/local/lib
+COPY --from=builder /usr/local/bin     /usr/local/bin
+COPY --from=builder /usr/local/share   /usr/local/share
+COPY --from=builder /usr/local/include /usr/local/include
+COPY --from=builder /root/.chimaera    /root/.chimaera
 
 # Set up library paths and update cache
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu
