@@ -18,6 +18,10 @@ container_base: ubuntu:24.04
 
 container_extensions:
   pull_policy: never
+  # io_uring_setup is blocked by Docker's default seccomp profile —
+  # IOWarp's bdev backend needs it.
+  security_opt:
+    - seccomp=unconfined
 
 pkgs:
   # See iowarp_container_test.yaml for the Library-injection explanation.

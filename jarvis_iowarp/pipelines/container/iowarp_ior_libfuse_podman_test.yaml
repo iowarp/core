@@ -1,0 +1,64 @@
+# Pipeline: IOWarp FUSE + IOR — Podman variant
+# Purpose: Same workload as iowarp_ior_libfuse_test.yaml (which runs under
+# Docker), but using Podman (typically rootless) as the container engine.
+#
+# Podman-specific notes:
+#  - container_base must be fully qualified (docker.io/...) because
+#    podman doesn't default to docker.io.
+#  - Rootless podman needs explicit SYS_ADMIN + /dev/fuse + seccomp
+#    unconfined for the FUSE mount and IOWarp's io_uring-backed bdev
+#    (see iowarp_ior_libfuse_test.yaml for the seccomp backstory).
+#  - wrp_cte_libfuse's pkg.py uses self._container_engine (which
+#    resolves to "podman" here), so its docker-exec-style commands
+#    become `podman exec` automatically.
+
+name: iowarp_ior_libfuse_podman_test
+
+install_manager: container
+container_engine: podman
+container_base: docker.io/ubuntu:24.04
+
+container_extensions:
+  pull_policy: never
+  cap_add:
+    - SYS_ADMIN
+  devices:
+    - /dev/fuse:/dev/fuse
+  security_opt:
+    - apparmor:unconfined
+    - seccomp=unconfined
+
+pkgs:
+  # Library pkgs — provide HDF5/ADIOS2/compression via Phase-1 injection.
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+  - pkg_type: builtin.compress_libs
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    deploy_mode: container
+    git_branch: transparent-compress
+    cmake_preset: release-adapter
+    port: 9413
+    sleep: 2
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_cte_libfuse
+    deploy_mode: container
+    mountpoint: /mnt/wrp_cte
+    sleep: 2
+
+  - pkg_type: builtin.ior
+    deploy_mode: container
+    api: posix
+    write: true
+    read: true
+    nprocs: 1
+    ppn: 1
+    xfer: 1m
+    block: 8m
+    out: /mnt/wrp_cte/ior.bin

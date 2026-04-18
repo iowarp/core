@@ -1,0 +1,80 @@
+# Pipeline: IOWarp FUSE + IOR — Apptainer variant
+# Purpose: Same workload as iowarp_ior_libfuse_test.yaml (Docker) and
+# iowarp_ior_libfuse_podman_test.yaml (Podman), but using Apptainer.
+#
+# Apptainer caveats (vs Docker/Podman):
+#  - Apptainer has no long-running container concept like `docker run -d
+#    sleep infinity`. Every `apptainer exec <sif> <cmd>` spawns a fresh
+#    namespace. For the FUSE mount to persist across pkg starts (FUSE
+#    daemon in one process, IOR in the next), we rely on
+#    `apptainer instance start` — wrp_cte_libfuse/pkg.py's
+#    _exec_in_container() dispatches via `apptainer exec instance://<name>`
+#    when the engine is apptainer. The pipeline must start the instance
+#    before wrp_cte_libfuse runs; today that requires either the
+#    upstream jarvis_cd _start_containerized_pipeline to `apptainer
+#    instance start` (it does `docker compose up` for docker/podman but
+#    no-ops for apptainer), or a manual pre-step:
+#
+#        apptainer instance start --cap-add SYS_ADMIN \
+#            --bind /dev/fuse \
+#            <shared_dir>/<pipeline>.sif <pipeline>
+#
+#    Until upstream adds that, this pipeline YAML is best-effort.
+#
+#  - io_uring_setup: Apptainer doesn't apply Docker's seccomp profile,
+#    so io_uring works by default (no seccomp-unconfined equivalent
+#    needed, but --fakeroot or --no-eval may matter).
+#
+#  - FUSE in Apptainer: the daemon has to mount inside the instance
+#    namespace; --cap-add SYS_ADMIN + --device /dev/fuse (apptainer's
+#    equivalent) or running under --fakeroot are typical requirements.
+#
+# Until an install target on this host has apptainer available, this
+# pipeline is unvalidated — it builds the image and SIF, but the start
+# phase will fail without apptainer installed (`apptainer: command not
+# found`). See iowarp_ior_libfuse_test.yaml for the validated Docker
+# variant.
+
+name: iowarp_ior_libfuse_apptainer_test
+
+install_manager: container
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_extensions:
+  pull_policy: never
+
+pkgs:
+  # Library pkgs — provide HDF5/ADIOS2/compression via Phase-1 injection.
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+  - pkg_type: builtin.compress_libs
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    deploy_mode: container
+    git_branch: transparent-compress
+    cmake_preset: release-adapter
+    port: 9413
+    sleep: 2
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_cte_libfuse
+    deploy_mode: container
+    mountpoint: /mnt/wrp_cte
+    sleep: 2
+
+  - pkg_type: builtin.ior
+    deploy_mode: container
+    api: posix
+    write: true
+    read: true
+    nprocs: 1
+    ppn: 1
+    xfer: 1m
+    block: 8m
+    out: /mnt/wrp_cte/ior.bin

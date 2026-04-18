@@ -25,6 +25,12 @@ container_base: ubuntu:24.04
 
 container_extensions:
   pull_policy: never
+  # Docker's default seccomp profile blocks io_uring_setup since
+  # 20.10.10; IOWarp's bdev backend uses io_uring so every bdev target
+  # registration silently fails without this, leading to EIO on all CTE
+  # PutBlob/GetBlob operations.
+  security_opt:
+    - seccomp=unconfined
 
 pkgs:
   # Library packages — their build.sh runs inside the shared build

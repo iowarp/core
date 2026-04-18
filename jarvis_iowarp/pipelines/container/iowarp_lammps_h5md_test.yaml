@@ -22,6 +22,10 @@ container_base: ubuntu:24.04
 
 container_extensions:
   pull_policy: never
+  # io_uring_setup is blocked by Docker's default seccomp profile —
+  # IOWarp's bdev backend needs it.
+  security_opt:
+    - seccomp=unconfined
   volumes:
     - /mnt/common/llogan/iowarp/core/jarvis_iowarp/pipelines/container:/mnt/common/llogan/iowarp/core/jarvis_iowarp/pipelines/container:ro
 

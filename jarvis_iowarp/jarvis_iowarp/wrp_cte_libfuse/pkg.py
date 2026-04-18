@@ -89,18 +89,35 @@ class WrpCteLibfuse(Service):
 
     def _exec_in_container(self, shell_cmd, env=None):
         """
-        Run ``shell_cmd`` inside the pipeline's deploy container via
-        ``docker/podman exec``. Bypasses jarvis-cd's Exec wrapper — we
-        don't need its SSH/Pssh promotion here because the whole
-        pipeline is single-node-in-a-container.
+        Run ``shell_cmd`` inside the pipeline's deploy container.
+
+        Engine dispatch:
+          - docker / podman: ``<engine> exec <pipeline>_container ...``.
+          - apptainer: ``apptainer exec instance://<pipeline>`` — we rely
+            on the instance being started in start() (apptainer has no
+            long-running daemonic container otherwise, so a plain
+            ``apptainer exec <sif>`` creates a fresh ephemeral process
+            group each call and a FUSE mount in one wouldn't persist to
+            the next).
+          - bare-metal / engine == 'none': run on host.
 
         Returns the container exec return code.
         """
         engine = self._container_engine
         if not engine or engine == 'none':
-            # Bare-metal mode: just run on host.
             return subprocess.call(['bash', '-c', shell_cmd], env=env)
-        container = f'{self.deploy_image_name()}_container'
+        image = self.deploy_image_name()
+        if engine == 'apptainer':
+            # Route via the long-lived instance we started in start().
+            # --cleanenv + explicit --env so only our vars reach the
+            # process (apptainer leaks host $PATH etc. otherwise).
+            cmd = ['apptainer', 'exec', '--cleanenv']
+            for k, v in (env or {}).items():
+                cmd.extend(['--env', f'{k}={v}'])
+            cmd.extend([f'instance://{image}', 'bash', '-c', shell_cmd])
+            self.log(f"apptainer exec instance://{image}: {shell_cmd}")
+            return subprocess.call(cmd)
+        container = f'{image}_container'
         cmd = [engine, 'exec']
         for k, v in (env or {}).items():
             cmd.extend(['-e', f'{k}={v}'])

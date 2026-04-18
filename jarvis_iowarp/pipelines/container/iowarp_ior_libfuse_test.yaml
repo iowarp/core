@@ -31,6 +31,12 @@ container_extensions:
     - /dev/fuse:/dev/fuse
   security_opt:
     - apparmor:unconfined
+    # Docker's default seccomp profile blocks io_uring_setup (syscall 425)
+    # since 20.10.10 — see moby/moby#42680. IOWarp's bdev backend uses
+    # AsyncIoFactory which prefers io_uring; without this the factory's
+    # Open() returns false, bdev target registration fails, and every CTE
+    # PutBlob goes through with no backing store → FUSE writes get EIO.
+    - seccomp=unconfined
 
 pkgs:
   # Library packages — provide HDF5/ADIOS2/compression to wrp_runtime's

@@ -23,6 +23,10 @@ container_base: ubuntu:24.04
 # into the container at the same path, so no extra /tmp pass-through.
 container_extensions:
   pull_policy: never
+  # io_uring_setup is blocked by Docker's default seccomp profile —
+  # IOWarp's bdev backend needs it.
+  security_opt:
+    - seccomp=unconfined
 
 pkgs:
   # Library packages — provide HDF5/ADIOS2/compression to wrp_runtime's
