@@ -12,7 +12,6 @@
  *   ./test_kg_backends bm25
  *   ./test_kg_backends elasticsearch localhost:9200/cte_kg_bench
  *   ./test_kg_backends neo4j localhost:7474
- *   ./test_kg_backends redis 127.0.0.1:6380
  *   ./test_kg_backends qdrant localhost:6333
  *   ./test_kg_backends all       # Run all available backends
  */
@@ -223,14 +222,8 @@ int main(int argc, char *argv[]) {
 #ifdef WRP_CTE_KG_NEO4J
     RunBackendTest("neo4j", "localhost:7474");
 #endif
-#ifdef WRP_CTE_KG_REDIS
-    RunBackendTest("redis", "127.0.0.1:6380");
-#endif
 #ifdef WRP_CTE_KG_QDRANT
     RunBackendTest("qdrant", "localhost:6333");
-#endif
-#ifdef WRP_CTE_KG_ZEP
-    RunBackendTest("zep", "localhost:8198/cte_kg_bench");
 #endif
   } else {
     RunBackendTest(backend, config);
