@@ -1,21 +1,27 @@
 #ifndef WRPCTE_KG_BACKEND_QDRANT_H_
 #define WRPCTE_KG_BACKEND_QDRANT_H_
 
+#include <wrp_cte/core/embedding_client.h>
 #include <wrp_cte/core/kg_backend.h>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
-#include <functional>
+
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace wrp_cte::core {
 
 /**
  * Qdrant backend — vector database using embedding-based semantic search.
  * Requires an embedding endpoint (OpenAI-compatible) to convert text to vectors.
- * Measures the cost of semantic precision vs keyword matching.
  *
- * Set env vars:
- *   QDRANT_EMBEDDING_ENDPOINT=http://localhost:8081/v1
- *   QDRANT_EMBEDDING_MODEL=qwen2.5-3b
+ * Config string format:
+ *   "host:port/collection [embedding_endpoint]"
+ *
+ * Env var overrides (see EmbeddingClient):
+ *   CTE_EMBEDDING_ENDPOINT, CTE_EMBEDDING_MODEL (preferred)
+ *   QDRANT_EMBEDDING_ENDPOINT, QDRANT_EMBEDDING_MODEL (legacy)
  */
 class QdrantBackend : public KGBackend {
  public:
@@ -27,17 +33,16 @@ class QdrantBackend : public KGBackend {
     collection_ = "cte_kg_bench";
     embedding_dim_ = 384;
 
+    std::string emb_endpoint;
     // Parse config: "host:port/collection embedding_endpoint"
-    // e.g., "localhost:6333/cte_wrf_bench http://localhost:8090/v1/embeddings"
     if (!config.empty()) {
-      // Split by space: first part is qdrant address, second is embedding endpoint
       auto space = config.find(' ');
-      std::string qdrant_part = (space != std::string::npos) ? config.substr(0, space) : config;
+      std::string qdrant_part =
+          (space != std::string::npos) ? config.substr(0, space) : config;
       if (space != std::string::npos) {
-        embedding_endpoint_ = config.substr(space + 1);
+        emb_endpoint = config.substr(space + 1);
       }
 
-      // Parse host:port/collection
       auto colon = qdrant_part.find(':');
       if (colon != std::string::npos) {
         qdrant_host_ = qdrant_part.substr(0, colon);
@@ -52,20 +57,17 @@ class QdrantBackend : public KGBackend {
       }
     }
 
-    // Override from env vars if set
-    const char *emb_endpoint = std::getenv("QDRANT_EMBEDDING_ENDPOINT");
-    const char *emb_model = std::getenv("QDRANT_EMBEDDING_MODEL");
-    if (emb_endpoint) embedding_endpoint_ = emb_endpoint;
-    if (emb_model) embedding_model_ = emb_model;
+    embedder_.Configure(emb_endpoint);
 
     try {
-      qdrant_client_ = std::make_unique<httplib::Client>(qdrant_host_, qdrant_port_);
+      qdrant_client_ =
+          std::make_unique<httplib::Client>(qdrant_host_, qdrant_port_);
       qdrant_client_->set_connection_timeout(5);
       qdrant_client_->set_read_timeout(30);
 
       // Auto-detect embedding dimension with a test embedding
-      if (!embedding_endpoint_.empty()) {
-        auto test_emb = GetEmbedding("test");
+      if (embedder_.Configured()) {
+        auto test_emb = embedder_.Embed("test");
         if (!test_emb.empty()) {
           embedding_dim_ = static_cast<int>(test_emb.size());
         }
@@ -76,10 +78,9 @@ class QdrantBackend : public KGBackend {
       if (!check || check->status == 404 ||
           check->body.find("\"status\":\"ok\"") == std::string::npos) {
         nlohmann::json create_body = {
-            {"vectors", {{"size", embedding_dim_}, {"distance", "Cosine"}}}
-        };
-        qdrant_client_->Put("/collections/" + collection_,
-                            create_body.dump(), "application/json");
+            {"vectors", {{"size", embedding_dim_}, {"distance", "Cosine"}}}};
+        qdrant_client_->Put("/collections/" + collection_, create_body.dump(),
+                            "application/json");
       }
     } catch (...) {
       qdrant_client_.reset();
@@ -95,53 +96,45 @@ class QdrantBackend : public KGBackend {
   }
 
   void Add(const TagId &tag_id, const std::string &text) override {
-    auto embedding = GetEmbedding(text);
+    auto embedding = embedder_.Embed(text);
     if (embedding.empty()) return;
 
-    // Use a deterministic point ID from tag_id
-    uint64_t point_id = (static_cast<uint64_t>(tag_id.major_) << 32) |
-                        tag_id.minor_;
+    uint64_t point_id =
+        (static_cast<uint64_t>(tag_id.major_) << 32) | tag_id.minor_;
 
     nlohmann::json body = {
-        {"points", {{
-            {"id", point_id},
-            {"vector", embedding},
-            {"payload", {
-                {"tag_major", tag_id.major_},
-                {"tag_minor", tag_id.minor_},
-                {"text", text}
-            }}
-        }}}
-    };
-    qdrant_client_->Put("/collections/" + collection_ + "/points",
-                        body.dump(), "application/json");
+        {"points",
+         {{{"id", point_id},
+           {"vector", embedding},
+           {"payload",
+            {{"tag_major", tag_id.major_},
+             {"tag_minor", tag_id.minor_},
+             {"text", text}}}}}}};
+    qdrant_client_->Put("/collections/" + collection_ + "/points", body.dump(),
+                        "application/json");
     size_++;
   }
 
   void Remove(const TagId &tag_id) override {
-    uint64_t point_id = (static_cast<uint64_t>(tag_id.major_) << 32) |
-                        tag_id.minor_;
+    uint64_t point_id =
+        (static_cast<uint64_t>(tag_id.major_) << 32) | tag_id.minor_;
     nlohmann::json body = {{"points", {point_id}}};
     qdrant_client_->Post("/collections/" + collection_ + "/points/delete",
                          body.dump(), "application/json");
     if (size_ > 0) size_--;
   }
 
-  std::vector<KGSearchResult> Search(
-      const std::string &query, int top_k) override {
+  std::vector<KGSearchResult> Search(const std::string &query,
+                                     int top_k) override {
     std::vector<KGSearchResult> results;
-
-    auto embedding = GetEmbedding(query);
+    auto embedding = embedder_.Embed(query);
     if (embedding.empty()) return results;
 
     nlohmann::json body = {
-        {"vector", embedding},
-        {"limit", top_k},
-        {"with_payload", true}
-    };
+        {"vector", embedding}, {"limit", top_k}, {"with_payload", true}};
     auto res = qdrant_client_->Post(
-        "/collections/" + collection_ + "/points/search",
-        body.dump(), "application/json");
+        "/collections/" + collection_ + "/points/search", body.dump(),
+        "application/json");
 
     if (!res || res->status != 200) return results;
 
@@ -164,68 +157,19 @@ class QdrantBackend : public KGBackend {
     if (qdrant_client_) {
       qdrant_client_->Delete("/collections/" + collection_);
       nlohmann::json create_body = {
-          {"vectors", {{"size", embedding_dim_}, {"distance", "Cosine"}}}
-      };
-      qdrant_client_->Put("/collections/" + collection_,
-                          create_body.dump(), "application/json");
+          {"vectors", {{"size", embedding_dim_}, {"distance", "Cosine"}}}};
+      qdrant_client_->Put("/collections/" + collection_, create_body.dump(),
+                          "application/json");
       size_ = 0;
     }
   }
 
  private:
-  std::vector<float> GetEmbedding(const std::string &text) {
-    if (embedding_endpoint_.empty()) return {};
-
-    // Parse host:port and path from endpoint URL
-    // e.g., "http://localhost:8090/v1/embeddings"
-    std::string host = "localhost";
-    int port = 8090;
-    std::string path = "/v1/embeddings";
-
-    auto proto_end = embedding_endpoint_.find("://");
-    std::string rest = (proto_end != std::string::npos)
-        ? embedding_endpoint_.substr(proto_end + 3)
-        : embedding_endpoint_;
-    auto slash = rest.find('/');
-    if (slash != std::string::npos) {
-      path = rest.substr(slash);  // Use path as-is (already includes /embeddings)
-      rest = rest.substr(0, slash);
-    }
-    auto colon = rest.find(':');
-    if (colon != std::string::npos) {
-      host = rest.substr(0, colon);
-      port = std::stoi(rest.substr(colon + 1));
-    } else {
-      host = rest;
-    }
-
-    httplib::Client emb_client(host, port);
-    emb_client.set_connection_timeout(10);
-    emb_client.set_read_timeout(60);
-
-    nlohmann::json body = {
-        {"model", embedding_model_},
-        {"input", text}
-    };
-    auto res = emb_client.Post(path, body.dump(), "application/json");
-    if (!res || res->status != 200) return {};
-
-    auto resp = nlohmann::json::parse(res->body, nullptr, false);
-    if (resp.is_discarded()) return {};
-
-    try {
-      return resp["data"][0]["embedding"].get<std::vector<float>>();
-    } catch (...) {
-      return {};
-    }
-  }
-
   std::string qdrant_host_;
   int qdrant_port_;
   std::string collection_;
   int embedding_dim_;
-  std::string embedding_endpoint_;
-  std::string embedding_model_;
+  EmbeddingClient embedder_;
   std::unique_ptr<httplib::Client> qdrant_client_;
   size_t size_ = 0;
 };

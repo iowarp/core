@@ -69,6 +69,14 @@ add_executable(test_indexing_depth_config
 add_executable(test_depth_runtime_e2e
     test_depth_runtime_e2e.cc
 )
+# Acropolis — live Qdrant backend test (needs running Qdrant + embedding stub)
+add_executable(test_qdrant_backend_live
+    test_qdrant_backend_live.cc
+)
+# Acropolis — full runtime + Qdrant + L3 embedding pipeline E2E
+add_executable(test_depth_qdrant_e2e
+    test_depth_qdrant_e2e.cc
+)
 # Acropolis — L2 HDF5 extractor on a real file
 if(WRP_CORE_ENABLE_HDF5)
   find_package(HDF5 QUIET COMPONENTS C)
@@ -260,6 +268,34 @@ target_link_libraries(test_depth_runtime_e2e
     ${CMAKE_THREAD_LIBS_INIT}
 )
 
+target_include_directories(test_qdrant_backend_live PRIVATE
+    ${CMAKE_SOURCE_DIR}/test
+)
+target_link_libraries(test_qdrant_backend_live
+    wrp_cte_core_client
+    hshm::cxx
+    nlohmann_json::nlohmann_json
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+target_compile_definitions(test_qdrant_backend_live PRIVATE
+    WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
+    WRP_CTE_KG_QDRANT
+)
+
+target_include_directories(test_depth_qdrant_e2e PRIVATE
+    ${CMAKE_SOURCE_DIR}/test
+)
+target_link_libraries(test_depth_qdrant_e2e
+    wrp_cte_core_runtime
+    wrp_cte_core_client
+    chimaera::admin_runtime
+    chimaera::admin_client
+    chimaera::bdev_runtime
+    chimaera::bdev_client
+    hshm::cxx
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+
 if(TARGET test_depth_hdf5_e2e)
   target_include_directories(test_depth_hdf5_e2e PRIVATE
       ${CMAKE_SOURCE_DIR}/test
@@ -340,6 +376,17 @@ add_test(NAME acropolis_depth_runtime_e2e
 if(TARGET test_depth_hdf5_e2e)
   add_test(NAME acropolis_depth_hdf5_e2e
       COMMAND test_depth_hdf5_e2e)
+endif()
+
+# Live-service tests — only enabled when ACROPOLIS_LIVE_TESTS=ON is passed.
+# These require a running Qdrant server and a mock embedding server (see
+# tools/mock_embedding_server.py). Gate them to keep CI hermetic.
+option(ACROPOLIS_LIVE_TESTS "Run Acropolis tests that need live Qdrant + embedder" OFF)
+if(ACROPOLIS_LIVE_TESTS)
+    add_test(NAME acropolis_qdrant_backend_live
+        COMMAND test_qdrant_backend_live)
+    add_test(NAME acropolis_depth_qdrant_e2e
+        COMMAND test_depth_qdrant_e2e)
 endif()
 
 # Add test_core_functionality tests
