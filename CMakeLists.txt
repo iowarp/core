@@ -912,6 +912,12 @@ else()
     message(STATUS "Context-visualizer component disabled (requires WRP_CORE_ENABLE_PYTHON)")
 endif()
 
+# Acropolis CLI tools (set-depth xattr helper etc.)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/CMakeLists.txt)
+    message(STATUS "Building Acropolis tools")
+    add_subdirectory(tools)
+endif()
+
 # Gray-Scott Example Application
 if(WRP_CORE_ENABLE_GRAY_SCOTT)
     message(STATUS "Building Gray-Scott ADIOS2 example")

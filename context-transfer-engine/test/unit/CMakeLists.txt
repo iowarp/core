@@ -58,6 +58,27 @@ add_executable(test_reorganize_blob
     test_reorganize_blob.cc
 )
 
+# Acropolis — adaptive indexing depth tests (pure unit, no runtime needed)
+add_executable(test_depth_controller
+    test_depth_controller.cc
+)
+add_executable(test_indexing_depth_config
+    test_indexing_depth_config.cc
+)
+# Acropolis — end-to-end test through the live CTE runtime
+add_executable(test_depth_runtime_e2e
+    test_depth_runtime_e2e.cc
+)
+# Acropolis — L2 HDF5 extractor on a real file
+if(WRP_CORE_ENABLE_HDF5)
+  find_package(HDF5 QUIET COMPONENTS C)
+  if(HDF5_FOUND)
+    add_executable(test_depth_hdf5_e2e
+      test_depth_hdf5_e2e.cc
+    )
+  endif()
+endif()
+
 # Include directories for all tests - using unified simple_test.h framework
 target_include_directories(cte_core_unit_tests PRIVATE
   ${CMAKE_SOURCE_DIR}/test  # For unified simple_test.h
@@ -203,6 +224,60 @@ target_link_libraries(test_reorganize_blob
     ${CMAKE_THREAD_LIBS_INIT}    # Threading support
 )
 
+# --- Acropolis depth-controller tests ---
+target_include_directories(test_depth_controller PRIVATE
+    ${CMAKE_SOURCE_DIR}/test     # For unified simple_test.h
+)
+target_link_libraries(test_depth_controller
+    wrp_cte_core_client          # Pulls in wrp_cte headers + httplib
+    hshm::cxx
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+
+target_include_directories(test_indexing_depth_config PRIVATE
+    ${CMAKE_SOURCE_DIR}/test     # For unified simple_test.h
+)
+target_link_libraries(test_indexing_depth_config
+    wrp_cte_core_client          # needed for wrp_cte::core::Config impl
+    wrp_cte_core_runtime         # LoadFromString lives here
+    chimaera::admin_client
+    hshm::cxx
+    hshm::configure
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+
+target_include_directories(test_depth_runtime_e2e PRIVATE
+    ${CMAKE_SOURCE_DIR}/test     # For unified simple_test.h
+)
+target_link_libraries(test_depth_runtime_e2e
+    wrp_cte_core_runtime
+    wrp_cte_core_client
+    chimaera::admin_runtime
+    chimaera::admin_client
+    chimaera::bdev_runtime
+    chimaera::bdev_client
+    hshm::cxx
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+
+if(TARGET test_depth_hdf5_e2e)
+  target_include_directories(test_depth_hdf5_e2e PRIVATE
+      ${CMAKE_SOURCE_DIR}/test
+      ${HDF5_INCLUDE_DIRS}
+  )
+  target_link_libraries(test_depth_hdf5_e2e
+      wrp_cte_core_runtime
+      wrp_cte_core_client
+      chimaera::admin_runtime
+      chimaera::admin_client
+      chimaera::bdev_runtime
+      chimaera::bdev_client
+      hshm::cxx
+      ${HDF5_C_LIBRARIES}
+      ${CMAKE_THREAD_LIBS_INIT}
+  )
+endif()
+
 # Note: Include directories are provided automatically via linked ChiMod targets
 # wrp_cte_core_client provides ${WRP_CTE_ROOT}/core/include via transitive includes
 
@@ -254,6 +329,18 @@ add_test(NAME cte_config_tests
     COMMAND test_cte_config_dpe "[cte][config]")
 add_test(NAME cte_dpe_tests
     COMMAND test_cte_config_dpe "[cte][dpe]")
+
+# Acropolis — adaptive indexing depth
+add_test(NAME acropolis_depth_controller
+    COMMAND test_depth_controller)
+add_test(NAME acropolis_indexing_depth_config
+    COMMAND test_indexing_depth_config)
+add_test(NAME acropolis_depth_runtime_e2e
+    COMMAND test_depth_runtime_e2e)
+if(TARGET test_depth_hdf5_e2e)
+  add_test(NAME acropolis_depth_hdf5_e2e
+      COMMAND test_depth_hdf5_e2e)
+endif()
 
 # Add test_core_functionality tests
 add_test(NAME cte_functional_pool_creation

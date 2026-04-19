@@ -1,0 +1,48 @@
+# Acropolis — end-to-end example: CTE with adaptive indexing depth + semantic
+# backend. Start with bm25 (no external deps) or switch to qdrant/elasticsearch
+# when an embedding endpoint is available.
+
+runtime:
+  num_threads: 4
+  queue_depth: 256
+  conf_dir: /tmp/cte_depth_test
+
+compose:
+  - mod_name: wrp_cte_core
+    pool_name: wrp_cte_core
+    pool_query: local
+    pool_id: "512.0"
+    storage:
+      - path: /tmp/cte_depth_test/ram_storage
+        bdev_type: ram
+        capacity_limit: 512MB
+
+    # --- Pick one ---
+    # knowledge_graph:
+    #   backend: bm25
+    # knowledge_graph:
+    #   backend: qdrant
+    #   config: "localhost:6333/cte_depth_bench"
+    # knowledge_graph:
+    #   backend: elasticsearch
+    #   config: "localhost:9200/cte_depth_bench vector"
+    knowledge_graph:
+      backend: bm25
+
+    # Acropolis adaptive indexing depth
+    indexing_depth:
+      default: 0
+      formats:
+        h5:      2
+        hdf5:    2
+        nc:      2
+        nc4:     2
+        parquet: 2
+        csv:     1
+        mp4:     0
+
+    # Shared embedding endpoint (used for L3 depth + semantic backends).
+    # Omit if you're only running L0-L2 with a keyword backend.
+    embedding:
+      endpoint: "http://localhost:8090/v1/embeddings"
+      model: "qwen2.5-3b"

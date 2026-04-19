@@ -54,6 +54,16 @@ function(add_cae_unit_test TEST_NAME TEST_SOURCE)
   # Create test executable
   add_executable(${TEST_NAME} ${TEST_SOURCE})
 
+  # libhdf5 transitively needs libcurl for its REST VOL; symbol versions
+  # must match the libcurl that libhdf5 was built against. The system apt
+  # curl (with CURL_OPENSSL_4) matches the system libhdf5.
+  set(_maybe_curl "")
+  if(EXISTS "/usr/lib/x86_64-linux-gnu/libcurl.so.4")
+    set(_maybe_curl "/usr/lib/x86_64-linux-gnu/libcurl.so.4")
+  elseif(TARGET CURL::libcurl)
+    set(_maybe_curl CURL::libcurl)
+  endif()
+
   # Link common dependencies
   target_link_libraries(${TEST_NAME}
     PRIVATE
@@ -62,6 +72,7 @@ function(add_cae_unit_test TEST_NAME TEST_SOURCE)
       chimaera::cxx
       hshm::configure
       ${ARG_EXTRA_LIBS}
+      ${_maybe_curl}
   )
 
   # Add common include directories
@@ -309,8 +320,10 @@ if(SUMMARY_OP_ENABLED)
 endif()
 
 # Benchmark: HDF5 Dataset Discovery via Knowledge Graph (run manually)
-# Requires KNOWLEDGE_GRAPH enabled
-if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
+# Requires KNOWLEDGE_GRAPH + CURL + HDF5 (skipped otherwise so the rest of the
+# tree still configures when optional deps are missing).
+find_package(CURL QUIET)
+if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH AND CURL_FOUND AND WRP_CORE_ENABLE_HDF5)
   add_executable(cae_hdf5_discovery_bench
     ${CMAKE_CURRENT_SOURCE_DIR}/hdf5_assim/bench_hdf5_discovery.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../core/src/factory/summary_operator.cc
@@ -334,6 +347,7 @@ if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
   install(TARGETS cae_hdf5_discovery_bench DESTINATION bin)
 
   # WRF weather simulation discovery test (end-to-end with real HDF5)
+  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/hdf5_assim/test_wrf_discovery.cc)
   add_executable(test_wrf_discovery
     ${CMAKE_CURRENT_SOURCE_DIR}/hdf5_assim/test_wrf_discovery.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../core/src/factory/summary_operator.cc
@@ -357,6 +371,7 @@ if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
     ${HDF5_INCLUDE_DIRS}
   )
   install(TARGETS test_wrf_discovery DESTINATION bin)
+  endif()
 
   # GADGET-2 discovery test
   add_executable(test_gadget2_discovery
@@ -372,6 +387,13 @@ if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
       ${HDF5_LIBRARIES}
       nlohmann_json::nlohmann_json
   )
+  # Match the libcurl ABI that libhdf5 was built against (system apt curl).
+  if(EXISTS "/usr/lib/x86_64-linux-gnu/libcurl.so.4")
+    target_link_libraries(test_gadget2_discovery PRIVATE
+        "/usr/lib/x86_64-linux-gnu/libcurl.so.4")
+  elseif(TARGET CURL::libcurl)
+    target_link_libraries(test_gadget2_discovery PRIVATE CURL::libcurl)
+  endif()
   if(CURL_FOUND)
     target_link_libraries(test_gadget2_discovery PRIVATE CURL::libcurl)
     target_compile_definitions(test_gadget2_discovery PRIVATE WRP_CAE_ENABLE_SUMMARY_OP)
@@ -386,6 +408,7 @@ if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
   install(TARGETS test_gadget2_discovery DESTINATION bin)
 
   # Competitor benchmark: CTE vs Graphiti vs Hindsight (standalone, uses httplib)
+  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/hdf5_assim/bench_gadget2_competitors.cc)
   add_executable(bench_gadget2_competitors
     ${CMAKE_CURRENT_SOURCE_DIR}/hdf5_assim/bench_gadget2_competitors.cc
   )
@@ -398,6 +421,7 @@ if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
     ${CMAKE_SOURCE_DIR}/external/httplib
   )
   install(TARGETS bench_gadget2_competitors DESTINATION bin)
+  endif()
 
   # KG Backend comparison test (standalone, no CTE runtime needed)
   add_executable(test_kg_backends
@@ -420,7 +444,6 @@ if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
   # Optional backends
   option(WRP_CTE_KG_ELASTICSEARCH "Enable Elasticsearch KG backend" OFF)
   option(WRP_CTE_KG_NEO4J "Enable Neo4j KG backend" OFF)
-  option(WRP_CTE_KG_REDIS "Enable Redis KG backend" OFF)
   option(WRP_CTE_KG_QDRANT "Enable Qdrant KG backend" OFF)
 
   if(WRP_CTE_KG_ELASTICSEARCH OR WRP_CTE_KG_NEO4J OR WRP_CTE_KG_QDRANT)
@@ -435,33 +458,8 @@ if(WRP_CTE_ENABLE_KNOWLEDGE_GRAPH)
   if(WRP_CTE_KG_NEO4J)
     target_compile_definitions(test_kg_backends PRIVATE WRP_CTE_KG_NEO4J)
   endif()
-  if(WRP_CTE_KG_REDIS)
-    find_library(HIREDIS_LIB NAMES hiredis
-      PATHS /usr/lib/x86_64-linux-gnu /usr/lib /usr/local/lib
-      PATH_SUFFIXES hiredis)
-    if(NOT HIREDIS_LIB)
-      # Try versioned .so on systems without symlink
-      find_file(HIREDIS_LIB NAMES libhiredis.so.0.14 libhiredis.so.1
-        PATHS /usr/lib/x86_64-linux-gnu /usr/lib)
-    endif()
-    if(HIREDIS_LIB)
-      target_compile_definitions(test_kg_backends PRIVATE WRP_CTE_KG_REDIS)
-      target_include_directories(test_kg_backends PRIVATE
-        ${CMAKE_SOURCE_DIR}/external
-      )
-      target_link_libraries(test_kg_backends PRIVATE ${HIREDIS_LIB})
-      message(STATUS "Found hiredis: ${HIREDIS_LIB}")
-    else()
-      message(WARNING "hiredis library not found, Redis backend disabled")
-    endif()
-  endif()
   if(WRP_CTE_KG_QDRANT)
     target_compile_definitions(test_kg_backends PRIVATE WRP_CTE_KG_QDRANT)
-  endif()
-
-  option(WRP_CTE_KG_ZEP "Enable Zep KG backend" OFF)
-  if(WRP_CTE_KG_ZEP)
-    target_compile_definitions(test_kg_backends PRIVATE WRP_CTE_KG_ZEP)
   endif()
 
   install(TARGETS test_kg_backends DESTINATION bin)

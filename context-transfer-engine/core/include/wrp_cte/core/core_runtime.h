@@ -44,6 +44,7 @@
 #ifdef WRP_CTE_ENABLE_KNOWLEDGE_GRAPH
 #include <wrp_cte/core/kg_backend.h>
 #include <wrp_cte/core/kg_backend_factory.h>
+#include <wrp_cte/core/depth_controller.h>
 #endif
 #include <wrp_cte/core/core_client.h>
 #include <wrp_cte/core/core_config.h>
@@ -259,6 +260,10 @@ private:
   // Pluggable knowledge graph backend (default: BM25)
   std::unique_ptr<KGBackend> kg_backend_;
   chi::CoRwLock kg_lock_;  // Lock for knowledge graph access
+
+  // Acropolis adaptive indexing-depth controller. Only used by the KG path
+  // (UpdateKnowledgeGraph) to produce the payload fed to the backend.
+  DepthController depth_controller_;
 #endif
 
   /**

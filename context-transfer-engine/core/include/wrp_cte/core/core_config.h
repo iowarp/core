@@ -38,6 +38,7 @@
 #include <hermes_shm/util/config_parse.h>
 #include <yaml-cpp/yaml.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -167,6 +168,30 @@ class Config {
    */
   std::string kg_backend_ = "bm25";   // "bm25", "elasticsearch", "neo4j", etc.
   std::string kg_config_;              // Backend-specific config (e.g., "host:port/index")
+
+  /**
+   * Acropolis adaptive indexing depth configuration
+   *
+   * YAML schema (optional; omitted sections fall back to defaults):
+   *   indexing_depth:
+   *     default: 0             # L0 by default
+   *     formats:
+   *       hdf5: 2
+   *       nc:   2
+   *       parquet: 2
+   *       csv:  1
+   *       mp4:  0
+   *
+   * Values are int (0-4) mapping to IndexDepth enum levels.
+   * Depth is read per ingest and can also be overridden per-file via
+   * the user.acropolis.depth xattr (see depth_controller.h).
+   */
+  int depth_default_ = 0;                                ///< global default level
+  std::map<std::string, int> depth_per_format_;          ///< ext -> level
+
+  /** Shared embedding endpoint used for L3 indexing + semantic backends. */
+  std::string embedding_endpoint_;                       ///< e.g. "http://host:port/v1/embeddings"
+  std::string embedding_model_;                          ///< e.g. "qwen2.5-3b"
 
   /**
    * Default constructor

@@ -35,6 +35,9 @@
 #include <wrp_cte/core/core_config.h>
 #include <wrp_cte/core/core_dpe.h>
 #include <wrp_cte/core/core_runtime.h>
+#ifdef WRP_CORE_ENABLE_HDF5
+#include <wrp_cte/core/hdf5_summary.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -316,6 +319,39 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
   kg_backend_->Init(config_.kg_config_);
   HLOG(kInfo, "KG backend: {} (config: {})",
        kg_backend_->Name(), config_.kg_config_.empty() ? "default" : config_.kg_config_);
+
+  // Acropolis — adaptive indexing depth controller
+  {
+    DepthDefaults dd;
+    int glob = config_.depth_default_;
+    if (glob < 0 || glob > 4) glob = 0;
+    dd.global_default = static_cast<IndexDepth>(glob);
+    for (const auto &kv : config_.depth_per_format_) {
+      int lvl = kv.second;
+      if (lvl < 0 || lvl > 4) continue;
+      dd.per_format[kv.first] = static_cast<IndexDepth>(lvl);
+    }
+    depth_controller_.SetDefaults(std::move(dd));
+
+    EmbeddingClient ec;
+    ec.Configure(config_.embedding_endpoint_, config_.embedding_model_);
+    depth_controller_.SetEmbedder(std::move(ec));
+
+#ifdef WRP_CORE_ENABLE_HDF5
+    // Register HDF5 L2 extractor so any H5 file gets full group/dataset
+    // metadata indexed, regardless of whether CAE drives the ingest.
+    depth_controller_.RegisterL2Extractor("h5",   &Hdf5Summary::Extract);
+    depth_controller_.RegisterL2Extractor("hdf5", &Hdf5Summary::Extract);
+    HLOG(kInfo, "Acropolis L2: HDF5 extractor registered for .h5 and .hdf5");
+#endif
+
+    HLOG(kInfo,
+         "Acropolis depth controller: default_level={} per_format_entries={} "
+         "embedding_endpoint={}",
+         config_.depth_default_, config_.depth_per_format_.size(),
+         config_.embedding_endpoint_.empty() ? "(none)"
+                                              : config_.embedding_endpoint_);
+  }
 #endif
 
   co_return;
@@ -3138,9 +3174,51 @@ chi::TaskResume Runtime::UpdateKnowledgeGraph(
     hipc::FullPtr<UpdateKnowledgeGraphTask> task, chi::RunContext &ctx) {
   try {
     TagId tag_id = task->tag_id_;
-    std::string summary = task->summary_.str();
+    std::string caller_summary = task->summary_.str();
+    std::string task_tag_name  = task->tag_name_.str();
 
-    // Update the tag's summary in TagInfo
+    // Acropolis: run the depth controller before handing off to the backend.
+    // Policy resolution uses the tag_name (as a proxy for file path/extension)
+    // and any xattrs present on that path. Levels 0..target are executed
+    // additively and accumulated into a single text payload.
+    std::string tag_name = task_tag_name;
+    uint64_t total_size = 0;
+    IndexDepth tag_stored_depth = IndexDepth::kNameOnly;
+    bool tag_has_explicit_depth = false;
+    {
+      chi::ScopedCoRwReadLock rd(tag_map_lock_);
+      TagInfo *info = tag_id_to_info_.find(tag_id);
+      if (info != nullptr) {
+        if (tag_name.empty()) tag_name = info->tag_name_;
+        total_size = info->total_size_.load();
+        // Only treat the Tag's stored depth as an explicit override if it's
+        // been deliberately promoted above the L0 default. Otherwise let
+        // ResolvePolicy fall through to xattr/format-default/global-default.
+        if (info->index_depth_ != IndexDepth::kNameOnly) {
+          tag_stored_depth = info->index_depth_;
+          tag_has_explicit_depth = true;
+        }
+      }
+    }
+
+    IndexDepth resolved = depth_controller_.ResolvePolicy(
+        tag_name,
+        tag_has_explicit_depth ? std::make_optional(tag_stored_depth)
+                                : std::nullopt);
+
+    // Build the payload. The caller-supplied summary is preserved so existing
+    // producers (e.g. HDF5 assimilator) still contribute rich L2 content.
+    std::vector<char> empty_data;  // raw bytes not available at KG-update time
+    IndexPayload payload = depth_controller_.Index(
+        tag_id, tag_name, empty_data, total_size, resolved);
+
+    std::string combined_text = payload.text;
+    if (!caller_summary.empty()) {
+      if (!combined_text.empty()) combined_text += " | ";
+      combined_text += caller_summary;
+    }
+
+    // Persist the summary + achieved depth on TagInfo.
     {
       chi::ScopedCoRwWriteLock write_lock(tag_map_lock_);
       TagInfo *tag_info_ptr = tag_id_to_info_.find(tag_id);
@@ -3148,17 +3226,20 @@ chi::TaskResume Runtime::UpdateKnowledgeGraph(
         task->SetReturnCode(1);  // Tag not found
         co_return;
       }
-      tag_info_ptr->summary_ = summary;
+      tag_info_ptr->summary_     = combined_text;
+      tag_info_ptr->index_depth_ = payload.depth_achieved;
     }
 
-    // Add to knowledge graph
+    // Add to knowledge graph backend at the achieved depth.
     {
       chi::ScopedCoRwWriteLock write_lock(kg_lock_);
-      kg_backend_->Add(tag_id, summary);
+      kg_backend_->Add(tag_id, combined_text);
     }
 
-    HLOG(kDebug, "Updated knowledge graph for tag {}.{}: {}",
-         tag_id.major_, tag_id.minor_, summary);
+    HLOG(kDebug,
+         "Updated knowledge graph for tag {}.{} at depth={}: {}",
+         tag_id.major_, tag_id.minor_, IndexDepthName(payload.depth_achieved),
+         combined_text);
     task->SetReturnCode(0);
   } catch (const std::exception &e) {
     HLOG(kError, "UpdateKnowledgeGraph failed: {}", e.what());

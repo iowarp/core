@@ -299,6 +299,37 @@ bool Config::ParseYamlNode(const YAML::Node &node) {
     HLOG(kInfo, "Parsed KG config: backend={}, config={}", kg_backend_, kg_config_);
   }
 
+  // Parse Acropolis indexing-depth configuration
+  if (node["indexing_depth"]) {
+    auto d_node = node["indexing_depth"];
+    if (d_node["default"]) {
+      depth_default_ = d_node["default"].as<int>();
+      if (depth_default_ < 0 || depth_default_ > 4) depth_default_ = 0;
+    }
+    if (d_node["formats"] && d_node["formats"].IsMap()) {
+      for (auto it = d_node["formats"].begin();
+           it != d_node["formats"].end(); ++it) {
+        std::string ext = it->first.as<std::string>();
+        int lvl = it->second.as<int>();
+        if (lvl < 0 || lvl > 4) continue;
+        depth_per_format_[ext] = lvl;
+      }
+    }
+    HLOG(kInfo, "Parsed indexing_depth: default={} formats={}",
+         depth_default_, depth_per_format_.size());
+  }
+
+  // Parse shared embedding endpoint (used by L3 depth + semantic backends)
+  if (node["embedding"]) {
+    auto emb = node["embedding"];
+    if (emb["endpoint"]) {
+      embedding_endpoint_ = emb["endpoint"].as<std::string>();
+    }
+    if (emb["model"]) {
+      embedding_model_ = emb["model"].as<std::string>();
+    }
+  }
+
   // Parse environment variable configuration
   if (node["config_env_var"]) {
     config_env_var_ = node["config_env_var"].as<std::string>();

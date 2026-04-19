@@ -66,6 +66,32 @@ static constexpr const char *kCtePoolName = "wrp_cte_core";
 using Timestamp = std::chrono::time_point<std::chrono::steady_clock>;
 
 /**
+ * IndexDepth — Acropolis adaptive indexing depth levels.
+ *
+ * Controls how deeply a file is analyzed at ingest time. Higher levels are
+ * additive (L3 includes everything L0-L2 did plus embedding generation) and
+ * more expensive. Default is L0 — zero overhead.
+ */
+enum class IndexDepth : uint8_t {
+  kNameOnly      = 0,  ///< filename, path, size, timestamps (~zero cost)
+  kStatMeta      = 1,  ///< + format detection, xattrs (~zero cost)
+  kFormatExtract = 2,  ///< + HDF5/NetCDF/Parquet internal structure (~ms)
+  kEmbedding     = 3,  ///< + text summary -> embedding vector (~$0.001-0.01)
+  kDeepContent   = 4,  ///< + actual data values, statistical profiles (~$0.01+)
+};
+
+inline const char *IndexDepthName(IndexDepth d) {
+  switch (d) {
+    case IndexDepth::kNameOnly:      return "L0-name";
+    case IndexDepth::kStatMeta:      return "L1-stat";
+    case IndexDepth::kFormatExtract: return "L2-format";
+    case IndexDepth::kEmbedding:     return "L3-embed";
+    case IndexDepth::kDeepContent:   return "L4-deep";
+  }
+  return "unknown";
+}
+
+/**
  * CreateParams for CTE Core chimod
  * Contains configuration parameters for CTE container creation
  */
@@ -552,6 +578,7 @@ struct TagInfo {
   Timestamp last_modified_;         // Last modification time
   Timestamp last_read_;             // Last read time
   std::string summary_;             // Summary text for knowledge graph
+  IndexDepth index_depth_;          // Acropolis adaptive indexing depth
 
   TagInfo()
       : tag_name_(),
@@ -559,7 +586,8 @@ struct TagInfo {
         total_size_(0),
         last_modified_(std::chrono::steady_clock::now()),
         last_read_(std::chrono::steady_clock::now()),
-        summary_() {}
+        summary_(),
+        index_depth_(IndexDepth::kNameOnly) {}
 
   TagInfo(const std::string &tag_name, const TagId &tag_id)
       : tag_name_(tag_name),
@@ -567,7 +595,8 @@ struct TagInfo {
         total_size_(0),
         last_modified_(std::chrono::steady_clock::now()),
         last_read_(std::chrono::steady_clock::now()),
-        summary_() {}
+        summary_(),
+        index_depth_(IndexDepth::kNameOnly) {}
 
   // Copy constructor
   TagInfo(const TagInfo &other)
@@ -576,7 +605,8 @@ struct TagInfo {
         total_size_(other.total_size_.load()),
         last_modified_(other.last_modified_),
         last_read_(other.last_read_),
-        summary_(other.summary_) {}
+        summary_(other.summary_),
+        index_depth_(other.index_depth_) {}
 
   // Copy assignment operator
   TagInfo &operator=(const TagInfo &other) {
@@ -587,6 +617,7 @@ struct TagInfo {
       last_modified_ = other.last_modified_;
       last_read_ = other.last_read_;
       summary_ = other.summary_;
+      index_depth_ = other.index_depth_;
     }
     return *this;
   }
