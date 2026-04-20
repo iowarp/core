@@ -95,7 +95,11 @@ ENV PATH=/usr/local/bin:${PATH}
 # Update library cache
 RUN ldconfig
 
-# Install Jarvis-CD and register the IOWarp repo
+# Install Jarvis-CD and register the IOWarp repo.
+# /opt/jarvis-cd was copied from the builder as a submodule: its .git is a
+# gitlink into the parent repo's .git/modules, which is not present here, so
+# setuptools-scm can't derive a version. Pretend-version skips that lookup.
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_JARVIS_CD=0.0.0
 RUN pip3 install --break-system-packages -r /opt/jarvis-cd/requirements.txt && \
     pip3 install --break-system-packages -e /opt/jarvis-cd
 
