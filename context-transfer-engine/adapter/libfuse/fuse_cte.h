@@ -55,7 +55,7 @@
 namespace wrp::cae::fuse {
 
 /** Default page size for blob I/O */
-static constexpr size_t kDefaultPageSize = 4096;
+static constexpr size_t kDefaultPageSize = 1024 * 1024;  // 1 MB
 
 /**
  * CTE-backed filesystem helpers.

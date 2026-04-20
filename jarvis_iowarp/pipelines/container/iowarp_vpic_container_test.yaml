@@ -1,24 +1,47 @@
-# Pipeline: IOWarp + VPIC Container Test
-# Purpose: Run VPIC plasma simulation with IOWarp CTE intercepting POSIX I/O
-# Requirements: Docker installed, hostfile configured
+# Pipeline: IOWarp runtime + CTE + wrp_adapters (POSIX) + VPIC
+# Purpose: Run the VPIC Harris-sheet plasma deck with IOWarp's POSIX
+# adapter intercepting its file I/O through the CTE.
+#
+# Notes:
+#  - install_manager: container is mandatory — see iowarp_container_test.yaml.
+#  - pull_policy: never keeps docker-compose from trying to pull the local
+#    pipeline image.
+#  - Jarvis copies the effective hostfile into <shared_dir>/hostfile on
+#    save, and shared_dir is already bind-mounted into the container, so
+#    no extra pass-through is needed.
 
 name: iowarp_vpic_container_test
 
+install_manager: container
 container_engine: docker
 container_base: ubuntu:24.04
 
+container_extensions:
+  pull_policy: never
+  # io_uring_setup is blocked by Docker's default seccomp profile —
+  # IOWarp's bdev backend needs it.
+  security_opt:
+    - seccomp=unconfined
+
 pkgs:
-  # IOWarp runtime (storage management daemon)
+  # See iowarp_container_test.yaml for the Library-injection explanation.
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+  - pkg_type: builtin.compress_libs
+    deploy_mode: container
+
   - pkg_type: jarvis_iowarp.wrp_runtime
     deploy_mode: container
+    git_branch: transparent-compress
+    cmake_preset: release-adapter
     port: 9413
     sleep: 2
 
-  # IOWarp CTE (Content Transfer Engine)
   - pkg_type: jarvis_iowarp.wrp_cte
     deploy_mode: container
 
-  # VPIC plasma simulation
   - pkg_type: builtin.vpic
     deploy_mode: container
     nprocs: 2
@@ -27,7 +50,6 @@ pkgs:
     base_image: ubuntu:24.04
 
 interceptors:
-  # IOWarp POSIX adapter intercepts VPIC file I/O
   - pkg_type: jarvis_iowarp.wrp_adapters
     posix: true
     include:

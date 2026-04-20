@@ -176,7 +176,7 @@ class WrpCte(Service):
             env=self.mod_env,
             hostfile=self.jarvis.hostfile,
             container=self._container_engine,
-            container_image=self.deploy_image_name,
+            container_image=self.deploy_image_name(),
             private_dir=self.private_dir,
             bind_mounts=self.container_mounts,
         )).run()
@@ -258,7 +258,15 @@ class WrpCte(Service):
         return round(type_scores.get(storage_type, 0.5), 2)
 
     def _get_default_devices(self):
-        return [('/tmp/cte_storage/cte_target.bin', '100GB', 0.6)]
+        # Default backing store lives inside the pipeline's shared_dir
+        # rather than /tmp: shared_dir is bind-mounted into the deploy
+        # container at the same path, so the host-side Mkdir in
+        # _configure() is actually visible inside the container when
+        # `chimaera compose` later opens the file. /tmp in a container
+        # is its own ephemeral tmpfs and won't see host mkdirs.
+        return [
+            (f'{self.shared_dir}/cte_storage/cte_target.bin', '100GB', 0.6)
+        ]
 
     def _validate_and_convert_devices(self, devices):
         validated = []

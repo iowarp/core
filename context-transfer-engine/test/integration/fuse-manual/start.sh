@@ -62,9 +62,9 @@ ok "Chimaera runtime started (PID $RUNTIME_PID)"
 # --- Start FUSE daemon -------------------------------------------------------
 
 info "Mounting FUSE filesystem at $MOUNT_POINT ..."
-# Run FUSE daemon as a pure client — connect to the already-running
-# runtime instead of trying to start its own.
-CHI_WITH_RUNTIME=0 wrp_cte_fuse "$MOUNT_POINT" -f &
+# Run FUSE daemon as a pure client via shared memory — connect to the
+# already-running runtime instead of trying to start its own.
+CHI_WITH_RUNTIME=0 CHI_IPC_MODE=SHM wrp_cte_fuse "$MOUNT_POINT" -f &
 FUSE_PID=$!
 echo "$FUSE_PID" > "$PID_DIR/fuse.pid"
 echo "$MOUNT_POINT" > "$PID_DIR/mount_point"

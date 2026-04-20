@@ -24,6 +24,8 @@ jobs:
 
       - name: Install iowarp
         run: |
+          # Convert SSH submodule URLs to HTTPS so spack can clone without SSH keys
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
           . ./spack/share/spack/setup-env.sh
           spack repo add installers/spack
           spack install iowarp+posix || {

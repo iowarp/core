@@ -1,0 +1,53 @@
+FROM ##BUILD_IMAGE## AS builder
+
+FROM ##DEPLOY_BASE##
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Minimal runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgomp1 \
+        libelf1 \
+        liburing2 \
+        openmpi-bin \
+        libopenmpi3t64 \
+        openssh-server openssh-client \
+        libblosc2-2t64 \
+        libzstd1 liblz4-1 liblzma5 libbz2-1.0 libbrotli1 libsnappy1v5 \
+        libzfp1 \
+        libfuse3-3 fuse3 \
+        python3 python3-pip python3-venv git \
+        wget curl \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV OMPI_ALLOW_RUN_AS_ROOT=1
+ENV OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+
+# Copy IOWarp binaries, libraries and headers from the committed build
+# image. /usr/local/include is needed when this deploy image is injected
+# into a jarvis build container as a compile-time dependency for a
+# downstream package (e.g. chronolog's chimod/*_client.cc uses
+# <chimaera/chimaera.h>).
+COPY --from=builder /usr/local/lib     /usr/local/lib
+COPY --from=builder /usr/local/bin     /usr/local/bin
+COPY --from=builder /usr/local/share   /usr/local/share
+COPY --from=builder /usr/local/include /usr/local/include
+COPY --from=builder /root/.chimaera    /root/.chimaera
+
+# Set up library paths and update cache
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu
+ENV PATH=/usr/local/bin:${PATH}
+RUN ldconfig && mkdir -p /run/sshd
+
+# Install jarvis-cd inside the deploy image so pipeline orchestration
+# (SSH/MPI) can happen from the host into the container.
+RUN pip3 install --break-system-packages pyyaml pandas podman-compose
+RUN cd /tmp \
+    && git clone --depth 1 --branch dev https://github.com/grc-iit/jarvis-cd.git \
+    && cd jarvis-cd \
+    && git config submodule.awesome-scienctific-applications.update none \
+    && pip3 install --break-system-packages . \
+    && cd / && rm -rf /tmp/jarvis-cd
+
+CMD ["/bin/bash"]

@@ -1,15 +1,61 @@
+# Pipeline: IOWarp runtime + CTE + ADIOS2 Gray-Scott (IOWarp engine)
+# Purpose: End-to-end smoke test for the IOWarp container stack using the
+# ADIOS2 Gray-Scott mini-app writing through the IOWarp ADIOS2 engine.
+#
+# Notes:
+#  - install_manager: container is *required* — without it
+#    pipeline._propagate_deploy_mode() overwrites every package's
+#    deploy_mode back to 'default' no matter what the pkgs block says,
+#    which then tries to exec chimaera from the host PATH.
+#  - container_extensions:pull_policy: never keeps docker-compose from
+#    hitting a registry for the locally-built pipeline image.
+#  - Jarvis copies the effective hostfile into <shared_dir>/hostfile on
+#    save, and shared_dir is already bind-mounted inside the container at
+#    the same path, so no extra /tmp pass-through is needed.
+#  - wrp_runtime builds IOWarp with WRP_CORE_ENABLE_GRAY_SCOTT=ON via the
+#    release-adapter preset, so gray-scott lands in /usr/local/bin of the
+#    shared build image; adios2_gray_scott itself contributes no build
+#    phase (delegated — see its pkg.py).
+
 name: iowarp_container_test
+
+install_manager: container
 container_engine: docker
 container_base: ubuntu:24.04
-env:
-  JARVIS_DOCKER_HOST_PREFIX: /home/llogan/Documents/Projects/iowarp/core
+
+container_extensions:
+  pull_policy: never
+  # Docker's default seccomp profile blocks io_uring_setup since
+  # 20.10.10; IOWarp's bdev backend uses io_uring so every bdev target
+  # registration silently fails without this, leading to EIO on all CTE
+  # PutBlob/GetBlob operations.
+  security_opt:
+    - seccomp=unconfined
+
 pkgs:
+  # Library packages — their build.sh runs inside the shared build
+  # container, their deploy images get cached as jarvis-deploy-<name>-
+  # <version>, and on subsequent pipeline loads jarvis docker-cp's
+  # /usr/local + /opt from those cached images into the build container
+  # so wrp_runtime's build.sh finds HDF5/ADIOS2/compression already
+  # installed. Must be listed BEFORE wrp_runtime.
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+  - pkg_type: builtin.compress_libs
+    deploy_mode: container
+
   - pkg_type: jarvis_iowarp.wrp_runtime
     deploy_mode: container
+    git_branch: transparent-compress
+    cmake_preset: release-adapter
     port: 9413
     sleep: 2
+
   - pkg_type: jarvis_iowarp.wrp_cte
     deploy_mode: container
+
   - pkg_type: jarvis_iowarp.adios2_gray_scott
     deploy_mode: container
     engine: iowarp

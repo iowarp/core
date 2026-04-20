@@ -290,7 +290,7 @@
                 "WRP_CORE_ENABLE_MPI": "ON",
                 "WRP_CORE_ENABLE_IO_URING": "ON",
                 "WRP_CORE_ENABLE_RPATH": "ON",
-                "WRP_CTE_ENABLE_COMPRESS": "ON",
+                "WRP_CTE_ENABLE_COMPRESS": "OFF",
                 "WRP_CTE_ENABLE_ADIOS2_ADAPTER": "ON",
                 "WRP_CTE_ENABLE_FUSE_ADAPTER": "ON",
                 "WRP_CORE_ENABLE_GRAY_SCOTT": "ON",

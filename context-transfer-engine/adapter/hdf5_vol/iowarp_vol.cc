@@ -129,9 +129,11 @@ static void *iowarp_file_create(const char *name, unsigned flags,
   hid_t under_vol_id = H5VL_NATIVE;
   void *under_vol_info = nullptr;
 
-  /* Check if user provided IOWarp VOL info */
+  /* Check if user provided IOWarp VOL info.
+   * HDF5 2.x split H5Pget_vol() into H5Pget_vol_id() + H5Pget_vol_info();
+     we only care about the info blob here. */
   iowarp_vol_info_t *vol_info = nullptr;
-  H5Pget_vol(fapl_id, nullptr, reinterpret_cast<void **>(&vol_info));
+  H5Pget_vol_info(fapl_id, reinterpret_cast<void **>(&vol_info));
   size_t chunk_size = IOWARP_VOL_DEFAULT_CHUNK_SIZE;
   if (vol_info) {
     under_vol_id = vol_info->under_vol_id;
@@ -263,8 +265,10 @@ static void *iowarp_dataset_create(void *obj,
   auto *dset = new iowarp_dataset_t;
   dset->obj.under_object = under_dset;
   dset->obj.under_vol_id = o->under_vol_id;
-  /* Try to get the file pointer for CTE interception */
-  dset->file = dynamic_cast<iowarp_file_t *>(nullptr);  /* placeholder */
+  /* CTE interception via the file tag requires a real iowarp_file_t; we
+     don't have one here because `obj` comes in already-unwrapped. Leave
+     as nullptr → fall through to native VOL for writes/reads. */
+  dset->file = nullptr;
   dset->dataset_path = name ? name : "";
 
   return dset;
@@ -308,11 +312,14 @@ static herr_t iowarp_dataset_write(size_t count, void *dset[],
     auto *dataset = static_cast<iowarp_dataset_t *>(dset[d]);
     if (!dataset || !buf[d]) continue;
 
-    /* If no file reference (opened from group), fall through to native */
+    /* If no file reference (opened from group), fall through to native.
+       HDF5 2.x signature: (count, dset[], connector_id, mem_type_id[],
+       mem_space_id[], file_space_id[], plist_id, buf[], req) */
     if (!dataset->file) {
-      H5VLdataset_write(1, &dataset->obj.under_object, &mem_type_id[d],
-                         &mem_space_id[d], &file_space_id[d],
-                         dataset->obj.under_vol_id, dxpl_id, &buf[d], req);
+      H5VLdataset_write(1, &dataset->obj.under_object,
+                         dataset->obj.under_vol_id,
+                         &mem_type_id[d], &mem_space_id[d], &file_space_id[d],
+                         dxpl_id, &buf[d], req);
       continue;
     }
 
@@ -358,9 +365,10 @@ static herr_t iowarp_dataset_write(size_t count, void *dset[],
     }
 
     /* Also write to native VOL for metadata consistency */
-    H5VLdataset_write(1, &dataset->obj.under_object, &mem_type_id[d],
-                       &mem_space_id[d], &file_space_id[d],
-                       dataset->obj.under_vol_id, dxpl_id, &buf[d], req);
+    H5VLdataset_write(1, &dataset->obj.under_object,
+                       dataset->obj.under_vol_id,
+                       &mem_type_id[d], &mem_space_id[d], &file_space_id[d],
+                       dxpl_id, &buf[d], req);
   }
 
   return 0;
@@ -382,11 +390,14 @@ static herr_t iowarp_dataset_read(size_t count, void *dset[],
     auto *dataset = static_cast<iowarp_dataset_t *>(dset[d]);
     if (!dataset || !buf[d]) continue;
 
-    /* If no file reference, fall through to native */
+    /* If no file reference, fall through to native. HDF5 2.x signature:
+       (count, dset[], connector_id, mem_type_id[], mem_space_id[],
+        file_space_id[], plist_id, buf[], req) */
     if (!dataset->file) {
-      H5VLdataset_read(1, &dataset->obj.under_object, &mem_type_id[d],
-                        &mem_space_id[d], &file_space_id[d],
-                        dataset->obj.under_vol_id, dxpl_id, &buf[d], req);
+      H5VLdataset_read(1, &dataset->obj.under_object,
+                        dataset->obj.under_vol_id,
+                        &mem_type_id[d], &mem_space_id[d], &file_space_id[d],
+                        dxpl_id, &buf[d], req);
       continue;
     }
 
@@ -795,6 +806,7 @@ const H5VL_class_t H5VL_iowarp_cls = {
         /* move     */ nullptr,
         /* get      */ iowarp_link_get,
         /* specific */ iowarp_link_specific,
+        /* optional */ nullptr,
     },
 
     /* object_cls */ {
@@ -803,7 +815,7 @@ const H5VL_class_t H5VL_iowarp_cls = {
         /* get      */ iowarp_object_get,
         /* specific */ iowarp_object_specific,
         /* optional */ nullptr,
-        /* close    */ nullptr,  /* objects are closed by their specific type */
+        /* (no close — objects are closed by their specific type class) */
     },
 
     /* introspect_cls */ {

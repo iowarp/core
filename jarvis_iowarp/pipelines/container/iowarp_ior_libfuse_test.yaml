@@ -1,0 +1,75 @@
+# Pipeline: IOWarp + CTE libfuse + IOR
+# Purpose: Validate the IOWarp FUSE adapter under a POSIX workload.
+#
+# Flow:
+#   1. wrp_runtime            — Chimaera storage daemon (IOWarp core)
+#   2. wrp_cte                — Content Transfer Engine compose
+#   3. wrp_cte_libfuse        — mounts the CTE FUSE filesystem at /mnt/wrp_cte
+#   4. builtin.ior            — writes via plain POSIX to /mnt/wrp_cte/ior.bin
+#
+# IOR's POSIX writes go through the kernel FUSE layer, which calls into
+# wrp_cte_fuse, which invokes the CTE client to store blobs. This is the
+# non-LD_PRELOAD interception path (complementary to the HDF5 VOL connector
+# exercised by the pyflextrkr pipeline).
+
+name: iowarp_ior_libfuse_test
+
+install_manager: container
+container_engine: docker
+container_base: ubuntu:24.04
+
+# Local-build image, don't try to pull from a registry.
+# FUSE inside a container needs CAP_SYS_ADMIN and access to /dev/fuse.
+# jarvis persists the effective hostfile into <shared_dir>/hostfile on
+# save, and shared_dir is already bind-mounted into the container at the
+# same path, so no extra /tmp pass-through is needed.
+container_extensions:
+  pull_policy: never
+  cap_add:
+    - SYS_ADMIN
+  devices:
+    - /dev/fuse:/dev/fuse
+  security_opt:
+    - apparmor:unconfined
+    # Docker's default seccomp profile blocks io_uring_setup (syscall 425)
+    # since 20.10.10 — see moby/moby#42680. IOWarp's bdev backend uses
+    # AsyncIoFactory which prefers io_uring; without this the factory's
+    # Open() returns false, bdev target registration fails, and every CTE
+    # PutBlob goes through with no backing store → FUSE writes get EIO.
+    - seccomp=unconfined
+
+pkgs:
+  # Library packages — provide HDF5/ADIOS2/compression to wrp_runtime's
+  # build. See iowarp_container_test.yaml for the full explanation.
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+  - pkg_type: builtin.compress_libs
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    deploy_mode: container
+    git_branch: transparent-compress
+    cmake_preset: release-adapter
+    port: 9413
+    sleep: 2
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_cte_libfuse
+    deploy_mode: container
+    mountpoint: /mnt/wrp_cte
+    sleep: 2
+
+  - pkg_type: builtin.ior
+    deploy_mode: container
+    api: posix
+    write: true
+    read: true
+    nprocs: 1
+    ppn: 1
+    xfer: 1m
+    block: 8m
+    out: /mnt/wrp_cte/ior.bin
