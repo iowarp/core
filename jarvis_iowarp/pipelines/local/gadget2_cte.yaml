@@ -1,0 +1,41 @@
+# Gadget-2 N-body + CTE via FUSE filesystem (containerized)
+name: gadget2_cte
+
+install_manager: container
+container_engine: docker
+container_base: ubuntu:24.04
+
+container_extensions:
+  pull_policy: never
+  cap_add:
+    - SYS_ADMIN
+  devices:
+    - /dev/fuse:/dev/fuse
+  security_opt:
+    - apparmor:unconfined
+    - seccomp=unconfined
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    deploy_mode: container
+    git_branch: transparent-compress
+    cmake_preset: release-adapter
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_cte_libfuse
+    deploy_mode: container
+    mountpoint: /mnt/wrp_cte
+    sleep: 2
+
+  - pkg_type: builtin.gadget2
+    deploy_mode: container
+    nprocs: 4
+    ppn: 4
+    output: /mnt/wrp_cte/gadget2_out

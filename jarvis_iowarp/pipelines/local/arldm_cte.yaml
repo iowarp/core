@@ -1,0 +1,33 @@
+# ARLDM diffusion model + CTE via HDF5 VOL connector (containerized)
+name: arldm_cte
+
+install_manager: container
+container_engine: docker
+container_base: ubuntu:24.04
+
+container_extensions:
+  pull_policy: never
+  security_opt:
+    - seccomp=unconfined
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    deploy_mode: container
+    git_branch: transparent-compress
+    cmake_preset: release-adapter
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_adapters
+    deploy_mode: container
+    vol: true
+    include: [".*"]
+
+  - pkg_type: builtin.arldm
+    deploy_mode: container
