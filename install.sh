@@ -6,6 +6,7 @@
 # Usage:
 #   ./install.sh              # Build with default (release) preset
 #   ./install.sh release      # Build with release preset
+#   ./install.sh release-fuse # Build with FUSE adapter enabled
 #   ./install.sh debug        # Build with debug preset
 #   ./install.sh conda        # Build with conda-optimized preset
 #   ./install.sh cuda         # Build with CUDA preset
