@@ -126,6 +126,8 @@ size_t ConfigManager::GetMemorySegmentSize(MemorySegment segment) const {
     return CalculateMainSegmentSize();
   case kClientDataSegment:
     return client_data_segment_size_;
+  case kQueueSegment:
+    return CalculateQueueSegmentSize();
   default:
     return 0;
   }
@@ -147,6 +149,9 @@ ConfigManager::GetSharedMemorySegmentName(MemorySegment segment) const {
     break;
   case kClientDataSegment:
     segment_name = client_data_segment_name_;
+    break;
+  case kQueueSegment:
+    segment_name = queue_segment_name_;
     break;
   default:
     return "";
@@ -237,6 +242,29 @@ void ConfigManager::ParseYAML(YAML::Node &yaml_conf) {
     // Note: heartbeat_interval parsing removed (not used by runtime)
   }
 
+  // Parse GPU orchestrator configuration
+  if (yaml_conf["gpu"]) {
+    auto gpu = yaml_conf["gpu"];
+    if (gpu["blocks"]) {
+      gpu_blocks_ = gpu["blocks"].as<u32>();
+    }
+    if (gpu["threads_per_block"]) {
+      gpu_threads_per_block_ = gpu["threads_per_block"].as<u32>();
+    }
+    if (gpu["queue_depth"]) {
+      gpu_queue_depth_ = gpu["queue_depth"].as<u32>();
+    }
+  }
+  // Environment variable overrides for GPU config (higher priority than YAML).
+  // Allows benchmarks to set the partition count dynamically from their
+  // thread parameters before CHIMAERA_INIT().
+  if (const char *env = std::getenv("CHI_GPU_BLOCKS")) {
+    gpu_blocks_ = static_cast<u32>(std::stoul(env));
+  }
+  if (const char *env = std::getenv("CHI_GPU_THREADS")) {
+    gpu_threads_per_block_ = static_cast<u32>(std::stoul(env));
+  }
+
   // Parse networking
   if (yaml_conf["networking"]) {
     auto networking = yaml_conf["networking"];
@@ -309,9 +337,15 @@ size_t ConfigManager::CalculateMainSegmentSize() const {
     return main_segment_size_;
   }
 
-  // Auto-calculate based on queue_depth and num_threads using exact ring_buffer sizes
-  constexpr size_t BASE_OVERHEAD = 32 * 1024 * 1024;  // 32MB for metadata
-  constexpr u32 NUM_PRIORITIES = 2;                    // normal + resumed
+  // Main segment holds task data (FutureShm, BuddyAllocator metadata) — no queues
+  // Use 1 GB default for task/data allocations
+  return hshm::Unit<size_t>::Gigabytes(1);
+}
+
+size_t ConfigManager::CalculateQueueSegmentSize() const {
+  // Queue segment holds TaskQueue and NetQueue ring buffers (ArenaAllocator)
+  constexpr size_t BASE_OVERHEAD = 4 * 1024 * 1024;  // 4MB for allocator metadata
+  constexpr u32 NUM_PRIORITIES = 2;                   // normal + resumed
 
   // Calculate total workers: num_threads + 1 network worker
   u32 total_workers = num_threads_ + 1;
@@ -322,17 +356,13 @@ size_t ConfigManager::CalculateMainSegmentSize() const {
       NUM_PRIORITIES,     // num_priorities
       queue_depth_);      // depth per queue
 
-  // Calculate network queue size: NetQueue with 1 lane
+  // Calculate network queue size: NetQueue with 1 lane, 4 priorities
   size_t net_queue_size = NetQueue::CalculateSize(
       1,                  // num_lanes
-      NUM_PRIORITIES,     // num_priorities
+      4,                  // num_priorities: SendIn, SendOut, ClientSendTcp, ClientSendIpc
       queue_depth_);      // depth per queue
 
-  // Total size: BASE_OVERHEAD + queues_size * num_workers
-  size_t queues_size = worker_queues_size + net_queue_size;
-  size_t calculated = BASE_OVERHEAD + (queues_size * total_workers);
-
-  return calculated;
+  return BASE_OVERHEAD + worker_queues_size + net_queue_size;
 }
 
 } // namespace chi

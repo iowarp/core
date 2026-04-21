@@ -36,10 +36,6 @@
 
 #include <stddef.h>
 
-#if HSHM_ENABLE_CEREAL
-#include <cereal/archives/binary.hpp>
-#endif
-
 // #include "hermes_shm/data_structures/ipc/hash.h"  // Deleted during hard refactoring
 
 namespace hshm::ipc {
@@ -118,6 +114,15 @@ template <typename Ar, typename T>
 inline constexpr bool has_load_save_cls_v =
     has_load_cls_v<Ar, T> && has_save_cls_v<Ar, T>;
 
+// Detect if an archive supports batch write_range/read_range operations
+template <typename Ar, typename = void>
+struct has_range_ops : std::false_type {};
+template <typename Ar>
+struct has_range_ops<Ar, std::void_t<typename Ar::supports_range_ops>>
+    : std::true_type {};
+template <typename Ar>
+constexpr bool has_range_ops_v = has_range_ops<Ar>::value;
+
 // Detect if a class is serializable
 template <typename Ar, typename T>
 inline constexpr bool is_serializeable_v =
@@ -125,44 +130,52 @@ inline constexpr bool is_serializeable_v =
     has_serialize_cls_v<Ar, T> || has_load_save_cls_v<Ar, T> ||
     std::is_arithmetic_v<T> || std::is_enum<T>::value;
 
+// Detect if resize_no_init exists
+template <typename, typename = void>
+struct has_resize_no_init : std::false_type {};
+template <typename T>
+struct has_resize_no_init<T,
+    std::void_t<decltype(std::declval<T&>().resize_no_init(size_t{}))>>
+    : std::true_type {};
+
+/** Resize container without zero-filling when possible. */
+template <typename ContainerT>
+HSHM_INLINE_CROSS_FUN void resize_for_overwrite(ContainerT &c, size_t n) {
+  if constexpr (has_resize_no_init<ContainerT>::value) {
+    c.resize_no_init(n);
+  } else {
+    c.resize(n);
+  }
+}
+
 template <typename Ar, typename T>
-HSHM_CROSS_FUN void write_binary(Ar &ar, const T *data, size_t size) {
-#if HSHM_ENABLE_CEREAL
-  auto binary = cereal::binary_data(data, size);
-  ar(binary);
-#else
+HSHM_INLINE_CROSS_FUN void write_binary(Ar &ar, const T *data, size_t size) {
   ar.write_binary((const char *)data, size);
-#endif
 }
 template <typename Ar, typename T>
-HSHM_CROSS_FUN void read_binary(Ar &ar, T *data, size_t size) {
-#if HSHM_ENABLE_CEREAL
-  auto binary = cereal::binary_data(data, size);
-  ar(binary);
-#else
+HSHM_INLINE_CROSS_FUN void read_binary(Ar &ar, T *data, size_t size) {
   ar.read_binary((char *)data, size);
-#endif
 }
 
 /** Serialize a generic string. */
 template <typename Ar, typename StringT>
-HSHM_CROSS_FUN void save_string(Ar &ar, const StringT &text) {
-  ar << text.size();
-  // ar.write(text.data(), text.size());
-  write_binary(ar, text.data(), text.size());
+HSHM_INLINE_CROSS_FUN void save_string(Ar &ar, const StringT &text) {
+  ar.save_string_fused(text.data(), text.size());
 }
-/** Deserialize a generic string. */
+/** Deserialize a generic string.
+ *  Uses load_string_fused when the archive supports it (fused size+data read).
+ *  Otherwise falls back to separate read operations. */
 template <typename Ar, typename StringT>
-HSHM_CROSS_FUN void load_string(Ar &ar, StringT &text) {
+HSHM_INLINE_CROSS_FUN void load_string(Ar &ar, StringT &text) {
   size_t size = 0;
   ar >> size;
-  text.resize(size);
-  read_binary(ar, text.data(), text.size());
+  resize_for_overwrite(text, size);
+  read_binary(ar, text.data(), size);
 }
 
 /** Serialize a generic vector */
 template <typename Ar, typename ContainerT, typename T>
-HSHM_CROSS_FUN void save_vec(Ar &ar, const ContainerT &obj) {
+HSHM_INLINE_CROSS_FUN void save_vec(Ar &ar, const ContainerT &obj) {
   ar << obj.size();
   if constexpr (std::is_arithmetic_v<T>) {
     write_binary(ar, (char *)obj.data(), obj.size() * sizeof(T));
@@ -174,13 +187,14 @@ HSHM_CROSS_FUN void save_vec(Ar &ar, const ContainerT &obj) {
 }
 /** Deserialize a generic vector */
 template <typename Ar, typename ContainerT, typename T>
-HSHM_CROSS_FUN void load_vec(Ar &ar, ContainerT &obj) {
+HSHM_INLINE_CROSS_FUN void load_vec(Ar &ar, ContainerT &obj) {
   size_t size = 0;
   ar >> size;
-  obj.resize(size);
   if constexpr (std::is_arithmetic_v<T>) {
-    read_binary(ar, (char *)obj.data(), obj.size() * sizeof(T));
+    resize_for_overwrite(obj, size);
+    read_binary(ar, (char *)obj.data(), size * sizeof(T));
   } else {
+    obj.resize(size);
     for (size_t i = 0; i < size; ++i) {
       ar >> (obj[i]);
     }
@@ -189,7 +203,7 @@ HSHM_CROSS_FUN void load_vec(Ar &ar, ContainerT &obj) {
 
 /** Serialize a generic list */
 template <typename Ar, typename ContainerT, typename T>
-HSHM_CROSS_FUN void save_list(Ar &ar, const ContainerT &obj) {
+HSHM_INLINE_CROSS_FUN void save_list(Ar &ar, const ContainerT &obj) {
   ar << obj.size();
   for (auto iter = obj.cbegin(); iter != obj.cend(); ++iter) {
     ar << (*iter);
@@ -197,7 +211,7 @@ HSHM_CROSS_FUN void save_list(Ar &ar, const ContainerT &obj) {
 }
 /** Deserialize a generic list */
 template <typename Ar, typename ContainerT, typename T>
-HSHM_CROSS_FUN void load_list(Ar &ar, ContainerT &obj) {
+HSHM_INLINE_CROSS_FUN void load_list(Ar &ar, ContainerT &obj) {
   size_t size = 0;
   ar >> size;
   for (size_t i = 0; i < size; ++i) {
@@ -209,7 +223,7 @@ HSHM_CROSS_FUN void load_list(Ar &ar, ContainerT &obj) {
 
 /** Serialize a generic list */
 template <typename Ar, typename ContainerT, typename KeyT, typename T>
-HSHM_CROSS_FUN void save_map(Ar &ar, const ContainerT &obj) {
+HSHM_INLINE_CROSS_FUN void save_map(Ar &ar, const ContainerT &obj) {
   ar << obj.size();
   for (auto iter = obj.cbegin(); iter != obj.cend(); ++iter) {
     ar << (*iter).first;
@@ -218,7 +232,7 @@ HSHM_CROSS_FUN void save_map(Ar &ar, const ContainerT &obj) {
 }
 /** Deserialize a generic list */
 template <typename Ar, typename ContainerT, typename KeyT, typename T>
-HSHM_CROSS_FUN void load_map(Ar &ar, ContainerT &obj) {
+HSHM_INLINE_CROSS_FUN void load_map(Ar &ar, ContainerT &obj) {
   size_t size = 0;
   ar >> size;
   for (size_t i = 0; i < size; ++i) {
@@ -231,28 +245,5 @@ HSHM_CROSS_FUN void load_map(Ar &ar, ContainerT &obj) {
 }
 
 }  // namespace hshm::ipc
-
-#if HSHM_ENABLE_CEREAL
-// Forward declarations for hshm::priv types
-namespace hshm::priv {
-template <typename T, typename AllocT, size_t SSOSize> class basic_string;
-template <typename T, typename AllocT> class vector;
-}  // namespace hshm::priv
-
-// Tell cereal to use member load/save functions for hshm::priv types
-namespace cereal {
-template<typename T, typename AllocT, size_t SSOSize>
-struct specialize<cereal::BinaryOutputArchive, hshm::priv::basic_string<T, AllocT, SSOSize>, cereal::specialization::member_load_save> {};
-
-template<typename T, typename AllocT, size_t SSOSize>
-struct specialize<cereal::BinaryInputArchive, hshm::priv::basic_string<T, AllocT, SSOSize>, cereal::specialization::member_load_save> {};
-
-template<typename T, typename AllocT>
-struct specialize<cereal::BinaryOutputArchive, hshm::priv::vector<T, AllocT>, cereal::specialization::member_load_save> {};
-
-template<typename T, typename AllocT>
-struct specialize<cereal::BinaryInputArchive, hshm::priv::vector<T, AllocT>, cereal::specialization::member_load_save> {};
-}  // namespace cereal
-#endif  // HSHM_ENABLE_CEREAL
 
 #endif  // HSHM_SHM_SERIALIZE_COMMON_H_

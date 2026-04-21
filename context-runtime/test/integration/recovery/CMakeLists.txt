@@ -13,13 +13,13 @@ set(RECOVERY_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Add integration test that runs the recovery test suite
 add_test(
-    NAME cr_recovery_integration
+    NAME cr_recovery_integration_docker
     COMMAND ${RECOVERY_TEST_DIR}/run_tests.sh all
     WORKING_DIRECTORY ${RECOVERY_TEST_DIR}
 )
 
 # Set test properties
-set_tests_properties(cr_recovery_integration PROPERTIES
+set_tests_properties(cr_recovery_integration_docker PROPERTIES
     LABELS "integration;docker;recovery"
     TIMEOUT 600  # 10 minute timeout for Docker-based tests
     ENVIRONMENT "NUM_NODES=4;TEST_FILTER=[recovery]"

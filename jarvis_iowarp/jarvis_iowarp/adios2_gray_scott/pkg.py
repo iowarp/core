@@ -1,38 +1,40 @@
 """
-This module provides classes and methods to launch the Gray Scott application.
-Gray Scott is a 3D 7-point stencil code for modeling the diffusion of two
-substances.
+Gray Scott ADIOS2 Application
+
+3D 7-point stencil code for modeling the diffusion of two substances.
+Supports both bare-metal and container deployment modes.
 """
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
+from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo, LocalExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 from jarvis_cd.util.config_parser import JsonFile
-import pathlib
 import os
+
+# Container build is delegated to jarvis_iowarp.wrp_runtime: every pipeline
+# that uses adios2_gray_scott also instantiates wrp_runtime, whose build.sh
+# compiles IOWarp with WRP_CORE_ENABLE_GRAY_SCOTT=ON (enabled by the
+# 'release-adapter' preset), producing /usr/local/bin/gray-scott in the
+# shared build image. So this package contributes no build or deploy
+# content of its own; see wrp_runtime/build.sh + Dockerfile.deploy.
 
 
 class Adios2GrayScott(Application):
     """
-    This class provides methods to launch the GrayScott application.
+    Gray Scott supporting default and container deployment.
+
+    deploy_mode='default': runs gray-scott on the host via MPI.
+    deploy_mode='container': builds IOWarp + gray-scott from source,
+    copies binaries to a minimal deploy container, runs inside it.
     """
+
     def _init(self):
-        """
-        Initialize paths
-        """
         self.adios2_xml_path = f'{self.shared_dir}/adios2.xml'
         self.settings_json_path = f'{self.shared_dir}/settings-files.json'
         self.var_json_path = f'{self.shared_dir}/var.json'
         self.operator_json_path = f'{self.shared_dir}/operator.json'
-        self.process = None  # Store process handle for async execution
+        self.process = None
 
     def _configure_menu(self):
-        """
-        Create a CLI menu for the configurator method.
-        For thorough documentation of these parameters, view:
-        https://github.com/scs-lab/jarvis-util/wiki/3.-Argument-Parsing
-
-        :return: List(dict)
-        """
         return [
             {
                 'name': 'nprocs',
@@ -138,32 +140,33 @@ class Adios2GrayScott(Application):
             },
             {
                 'name': 'adios_span',
-                'msg': '???',
+                'msg': 'Use ADIOS span mode',
                 'type': bool,
                 'default': False,
             },
             {
                 'name': 'adios_memory_selection',
-                'msg': '???',
+                'msg': 'Use ADIOS memory selection',
                 'type': bool,
                 'default': False,
             },
             {
                 'name': 'mesh_type',
-                'msg': '???',
+                'msg': 'Mesh type for output',
                 'type': str,
                 'default': 'image',
             },
             {
                 'name': 'engine',
                 'msg': 'Engine to be used',
-                'choices': ['bp5', 'hermes', 'bp5_derived', 'hermes_derived', 'iowarp', 'iowarp_derived', 'sst'],
+                'choices': ['bp5', 'hermes', 'bp5_derived', 'hermes_derived',
+                            'iowarp', 'iowarp_derived', 'sst'],
                 'type': str,
                 'default': 'bp5',
             },
             {
                 'name': 'full_run',
-                'msg': 'Whill postprocessing be executed?',
+                'msg': 'Will postprocessing be executed?',
                 'type': bool,
                 'default': True,
             },
@@ -177,7 +180,7 @@ class Adios2GrayScott(Application):
                 'name': 'db_path',
                 'msg': 'Path where the DB will be stored',
                 'type': str,
-                'default': 'benchmark_metadata.db',
+                'default': '/tmp/benchmark_metadata.db',
             },
             {
                 'name': 'Execution_order',
@@ -191,25 +194,37 @@ class Adios2GrayScott(Application):
                 'type': bool,
                 'default': False,
             },
-
         ]
 
-    # jarvis pkg config adios2_gray_scott ppn=20 full_run=true engine=hermes db_path=/mnt/nvme/jcernudagarcia/metadata.db out_file=gs.bp nprocs=1
+    # ------------------------------------------------------------------
+    # Container build — delegated to wrp_runtime
+    # ------------------------------------------------------------------
+    # Every pipeline that uses adios2_gray_scott in container mode also
+    # spins up wrp_runtime, whose build.sh compiles IOWarp with
+    # WRP_CORE_ENABLE_GRAY_SCOTT=ON. That produces /usr/local/bin/gray-scott
+    # in the committed build image, which wrp_runtime's Dockerfile.deploy
+    # copies into the final deploy image. So no separate build/deploy
+    # content is emitted here.
+    # _build_phase / _build_deploy_phase inherit the base-class no-op.
+
+    # ------------------------------------------------------------------
+    # Configuration
+    # ------------------------------------------------------------------
 
     def _configure(self, **kwargs):
-        """
-        Converts the Jarvis configuration to application-specific configuration.
-        E.g., OrangeFS produces an orangefs.xml file.
+        super()._configure(**kwargs)
 
-        :param kwargs: Configuration parameters for this pkg.
-        :return: None
-        """
+        self.adios2_xml_path = f'{self.shared_dir}/adios2.xml'
+        self.settings_json_path = f'{self.shared_dir}/settings-files.json'
+        self.var_json_path = f'{self.shared_dir}/var.json'
+        self.operator_json_path = f'{self.shared_dir}/operator.json'
+
         if self.config['out_file'] is None:
             adios_dir = os.path.join(self.shared_dir, 'gray-scott-output')
-            self.config['out_file'] = os.path.join(adios_dir,
-                                                 'data/out.bp')
+            self.config['out_file'] = os.path.join(adios_dir, 'data/out.bp')
             Mkdir(adios_dir, PsshExecInfo(hostfile=self.hostfile,
                                           env=self.env)).run()
+
         settings_json = {
             'L': self.config['L'],
             'Du': self.config['Du'],
@@ -231,20 +246,22 @@ class Adios2GrayScott(Application):
             'mesh_type': self.config['mesh_type'],
             'adios_config': f'{self.adios2_xml_path}'
         }
+
         output_dir = os.path.dirname(self.config['out_file'])
         db_dir = os.path.dirname(self.config['db_path'])
         Mkdir([output_dir, db_dir], PsshExecInfo(hostfile=self.hostfile,
-                                       env=self.env)).run()
+                                                  env=self.env)).run()
 
         JsonFile(self.settings_json_path).save(settings_json)
-        print(f"Using engine {self.config['engine']}")
-        if self.config['engine'].lower() in ['bp5', 'bp5_derived']:
+
+        engine = self.config['engine'].lower()
+        if engine in ['bp5', 'bp5_derived']:
             self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
-                                self.adios2_xml_path)
-        elif self.config['engine'].lower() == 'sst':
+                                    self.adios2_xml_path)
+        elif engine == 'sst':
             self.copy_template_file(f'{self.pkg_dir}/config/sst.xml',
-                                self.adios2_xml_path)
-        elif self.config['engine'].lower() in ['hermes', 'hermes_derived']:
+                                    self.adios2_xml_path)
+        elif engine in ['hermes', 'hermes_derived']:
             self.copy_template_file(f'{self.pkg_dir}/config/hermes.xml',
                                     self.adios2_xml_path,
                                     replacements={
@@ -258,7 +275,7 @@ class Adios2GrayScott(Application):
                                     self.var_json_path)
             self.copy_template_file(f'{self.pkg_dir}/config/operator.yaml',
                                     self.operator_json_path)
-        elif self.config['engine'].lower() in ['iowarp', 'iowarp_derived']:
+        elif engine in ['iowarp', 'iowarp_derived']:
             self.copy_template_file(f'{self.pkg_dir}/config/iowarp.xml',
                                     self.adios2_xml_path,
                                     replacements={
@@ -273,73 +290,40 @@ class Adios2GrayScott(Application):
             self.copy_template_file(f'{self.pkg_dir}/config/operator.yaml',
                                     self.operator_json_path)
         else:
-            raise Exception('Engine not defined')
+            raise Exception(f'Engine not defined: {engine}')
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     def start(self):
-        """
-        Launch an application. E.g., OrangeFS will launch the servers, clients,
-        and metadata services on all necessary pkgs.
+        cfg = self.config
 
-        :return: None
-        """
-        # print(self.env['HERMES_CLIENT_CONF'])
-        if self.config['engine'].lower() in ['bp5_derived', 'hermes_derived', 'iowarp_derived']:
-            derived = 1
-            self.process = Exec(f'gray-scott {self.settings_json_path} {derived}',
-                 MpiExecInfo(nprocs=self.config['nprocs'],
-                             ppn=self.config['ppn'],
-                             hostfile=self.hostfile,
-                             env=self.mod_env,
-                             exec_async=self.config['run_async']
-                             ))
-            self.process.run()
-        elif self.config['engine'].lower() in ['hermes', 'bp5', 'iowarp', 'sst']:
+        cmd = f'gray-scott {self.settings_json_path}'
 
-            derived = 0
-            self.process = Exec(f'gray-scott {self.settings_json_path} {derived}',
-                 MpiExecInfo(nprocs=self.config['nprocs'],
-                             ppn=self.config['ppn'],
-                             hostfile=self.hostfile,
-                             env=self.mod_env,
-                             exec_async=self.config['run_async']))
-            self.process.run()
-
-
-    def wait(self):
-        """
-        Wait for async process to complete.
-
-        :return: None
-        """
-        if self.process:
-            self.process.wait_all()
+        self.process = Exec(cmd, MpiExecInfo(
+            nprocs=cfg['nprocs'],
+            ppn=cfg['ppn'],
+            hostfile=self.hostfile,
+            port=self.ssh_port,
+            env=self.mod_env,
+            exec_async=cfg['run_async'],
+            container=self._container_engine,
+            container_image=self.deploy_image_name,
+            shared_dir=self.shared_dir,
+            private_dir=self.private_dir,
+            bind_mounts=self.container_mounts,
+        ))
+        self.process.run()
 
     def stop(self):
-        """
-        Stop a running application. E.g., OrangeFS will terminate the servers,
-        clients, and metadata services.
-
-        :return: None
-        """
-        # If running async, wait for completion instead of killing
         if self.config.get('run_async', False) and self.process:
-            print("Waiting for async gray-scott producer to complete...")
             self.process.wait_all()
         elif self.process:
             self.process.kill_all()
-        pass
 
     def clean(self):
-        """
-        Destroy all data for an application. E.g., OrangeFS will delete all
-        metadata and data directories in addition to the orangefs.xml file.
-
-        :return: None
-        """
         output_file = [self.config['out_file'],
                        self.config['checkpoint_output'],
-                       self.config['db_path']
-                       ]
-
-        print(f'Removing {output_file}')
+                       self.config['db_path']]
         Rm(output_file, PsshExecInfo(hostfile=self.hostfile)).run()

@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #------------------------------------------------------------
 # Build and install llama.cpp C++ library + server (system-wide)
 # This provides libllama.so, headers, and llama-server binary
-# for the C++ integration work (iowarp-llm/).
+# for the C++ integration work (context-transfer-engine/llm-hooks/).
 # The workspace submodule at external/llama.cpp is used for
 # modifying llama.cpp itself; this install is for stable baseline use.
 #------------------------------------------------------------

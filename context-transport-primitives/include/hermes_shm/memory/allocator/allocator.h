@@ -59,6 +59,9 @@ using AllocatorId = MemoryBackendId;
 
 class Allocator;
 
+/** Memory mode: shared (offset-based) or private (raw-pointer, cached base) */
+enum class MemMode { kShared, kPrivate };
+
 /** ShmPtr type base */
 class ShmPointer {};
 
@@ -74,7 +77,7 @@ struct ShmPtrBase;
  * Allocators inherit from this.
  * */
 struct AllocatorHeader {
-  hipc::atomic<hshm::size_t> total_alloc_;
+  hipc::atomic<hshm::big_uint> total_alloc_;
 
   AllocatorHeader() = default;
 
@@ -82,21 +85,21 @@ struct AllocatorHeader {
   void Configure() { total_alloc_ = 0; }
 
   HSHM_INLINE_CROSS_FUN
-  void AddSize(hshm::size_t size) {
+  void AddSize(hshm::big_uint size) {
 #ifdef HSHM_ALLOC_TRACK_SIZE
     total_alloc_ += size;
 #endif
   }
 
   HSHM_INLINE_CROSS_FUN
-  void SubSize(hshm::size_t size) {
+  void SubSize(hshm::big_uint size) {
 #ifdef HSHM_ALLOC_TRACK_SIZE
     total_alloc_ -= size;
 #endif
   }
 
   HSHM_INLINE_CROSS_FUN
-  hshm::size_t GetCurrentlyAllocatedSize() { return total_alloc_.load(); }
+  hshm::big_uint GetCurrentlyAllocatedSize() { return total_alloc_.load(); }
 };
 
 /** The allocator information struct */
@@ -109,6 +112,11 @@ class Allocator {
   size_t this_; /**< Offset of this allocator object within backend data (this -
                    backend.data_) */
   size_t region_size_; /**< Size of the region this allocator manages */
+  size_t shift_; /**< Displacement for remote allocators not co-located with
+                     their data (e.g., allocator in GPU __shared__, data in
+                     global memory).  Set to this_ so that offset calculations
+                     resolve to the backend data instead of the allocator's
+                     address space. */
 
  private:
   MemoryBackend
@@ -118,7 +126,8 @@ class Allocator {
   /** Default constructor */
   HSHM_INLINE_CROSS_FUN
   Allocator()
-      : alloc_header_size_(0), data_start_(0), this_(0), region_size_(0) {}
+      : alloc_header_size_(0), data_start_(0), this_(0), region_size_(0),
+        shift_(0) {}
 
   /** Get the allocator identifier from backend */
   HSHM_INLINE_CROSS_FUN
@@ -132,40 +141,22 @@ class Allocator {
    * Get backend data pointer (reconstructs from allocator position)
    */
   HSHM_INLINE_CROSS_FUN
-  char *GetBackendData() { return reinterpret_cast<char *>(this) - this_; }
+  char *GetBackendData() {
+    // Cast through size_t to break GPU address space inference
+    // (prevents __shared__ address space from propagating to device pointers)
+    size_t addr = reinterpret_cast<size_t>(this) - this_;
+    return reinterpret_cast<char *>(addr);
+  }
 
   /**
    * Get backend data pointer (reconstructs from allocator position)
    */
   HSHM_INLINE_CROSS_FUN
   char *GetBackendData() const {
-    return reinterpret_cast<char *>(const_cast<Allocator *>(this)) - this_;
+    size_t addr = reinterpret_cast<size_t>(this) - this_;
+    return reinterpret_cast<char *>(addr);
   }
 
-  /**
-   * Get typed private header (process-local storage)
-   * This region is kBackendHeaderSize bytes and is NOT shared between processes
-   * Uses GetBackend() to access the proper priv_header_off_ for correct
-   * calculation
-   * @return Pointer to private header of type HEADER_T
-   */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN HEADER_T *GetPrivateHeader() {
-    return const_cast<HEADER_T *>(
-        static_cast<const Allocator *>(this)->GetPrivateHeader<HEADER_T>());
-  }
-
-  /**
-   * Get typed private header (process-local storage) - const version
-   * This region is kBackendHeaderSize bytes and is NOT shared between processes
-   * Uses GetBackend() to access the proper priv_header_off_ for correct
-   * calculation
-   * @return Const pointer to private header of type HEADER_T
-   */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN const HEADER_T *GetPrivateHeader() const {
-    return backend_.GetPrivateHeader<HEADER_T>(GetBackendData());
-  }
 
   /**
    * Get a copy of the memory backend
@@ -176,29 +167,6 @@ class Allocator {
     MemoryBackend backend = backend_;
     backend.data_ = GetBackendData();
     return backend;
-  }
-
-  /**
-   * Get the shared header of the shared-memory allocator
-   * The shared header is located in the backend's shared header region
-   * Uses GetBackendData() to access the proper offset for correct calculation
-   *
-   * @return Shared header pointer
-   */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN HEADER_T *GetSharedHeader() {
-    return backend_.GetSharedHeader<HEADER_T>(GetBackendData());
-  }
-
-  /**
-   * Get the shared header of the shared-memory allocator (const)
-   * Uses GetBackendData() to access the proper offset for correct calculation
-   *
-   * @return Shared header pointer
-   */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN const HEADER_T *GetSharedHeader() const {
-    return backend_.GetSharedHeader<HEADER_T>(GetBackendData());
   }
 
   /**
@@ -218,8 +186,7 @@ class Allocator {
    */
   HSHM_INLINE_CROSS_FUN
   char *GetAllocatorDataStart() const {
-    return reinterpret_cast<char *>(const_cast<Allocator *>(this)) +
-           data_start_;
+    return GetBackendData() + GetAllocatorDataOff();
   }
 
   /**
@@ -229,7 +196,7 @@ class Allocator {
    * @return Offset from backend data_ to allocator data start
    */
   HSHM_INLINE_CROSS_FUN
-  size_t GetAllocatorDataOff() const { return this_ + data_start_; }
+  size_t GetAllocatorDataOff() const { return this_ + data_start_ - shift_; }
 
   /**
    * Get the size of the allocator's data region (excluding allocator object and
@@ -249,11 +216,13 @@ class Allocator {
    * */
   template <typename T = void>
   HSHM_INLINE_CROSS_FUN bool ContainsPtr(const T *ptr) const {
-    MemoryBackend backend = GetBackend();
-    const char *shared_header = backend.GetSharedHeader<char>();
+    if (backend_.data_capacity_ == SIZE_MAX) {
+      return true;
+    }
     const char *char_ptr = reinterpret_cast<const char *>(ptr);
-    size_t off = char_ptr - shared_header;
-    return char_ptr >= shared_header && off < backend.data_capacity_;
+    const char *data = GetBackendData();
+    size_t off = char_ptr - data;
+    return char_ptr >= data && off < backend_.data_capacity_;
   }
 
   /**
@@ -368,7 +337,7 @@ class Allocator {
  * */
 template <typename T, bool ATOMIC>
 struct OffsetPtrBase : public ShmPointer {
-  hipc::opt_atomic<hshm::size_t, ATOMIC>
+  hipc::opt_atomic<hshm::big_uint, ATOMIC>
       off_; /**< Offset within the allocator's slot */
 
   /** Serialize an hipc::OffsetPtrBase */
@@ -391,7 +360,7 @@ struct OffsetPtrBase : public ShmPointer {
 
   /** Full constructor */
   HSHM_INLINE_CROSS_FUN explicit OffsetPtrBase(
-      hipc::opt_atomic<hshm::size_t, ATOMIC> off)
+      hipc::opt_atomic<hshm::big_uint, ATOMIC> off)
       : off_(off.load()) {}
 
   /** Copy constructor from different type */
@@ -612,6 +581,15 @@ struct ShmPtrBase : public ShmPointer {
   HSHM_INLINE_CROSS_FUN ShmPtrBase() {
     alloc_id_.SetNull();
     off_.SetNull();
+  }
+
+  /** Construct from a raw pointer (UVA). Stores the address as the offset
+   *  with a null AllocatorId, which GPU-side resolution treats as absolute. */
+  HSHM_INLINE_CROSS_FUN static ShmPtrBase FromRaw(void *ptr) {
+    ShmPtrBase p;
+    p.alloc_id_ = AllocatorId::GetNull();
+    p.off_.exchange(reinterpret_cast<size_t>(ptr));
+    return p;
   }
 
   /** Full constructor */
@@ -1058,6 +1036,66 @@ struct FullPtr : public ShmPointer {
 };
 
 /**
+ * Arena state for bump-allocation within an allocator-owned block.
+ * Stored inside the allocator; pushed/popped as a stack.
+ */
+struct ArenaState {
+  size_t arena_off_ = 0;   /**< Offset of arena block (relative to backend base) */
+  size_t arena_cur_ = 0;   /**< Current bump position within arena */
+  size_t arena_end_ = 0;   /**< End of arena block */
+
+  HSHM_INLINE_CROSS_FUN bool IsActive() const { return arena_off_ != 0; }
+};
+
+/**
+ * RAII arena handle. Calls PopArena on destruction.
+ *
+ * @tparam AllocT Allocator type (e.g. BuddyAllocator)
+ */
+template <typename AllocT>
+struct Arena {
+  AllocT *alloc_;
+  ArenaState prior_;       /**< Previous arena state to restore on pop */
+  OffsetPtr<> alloc_off_;  /**< Offset of the block to free on pop */
+
+  HSHM_CROSS_FUN Arena() : alloc_(nullptr) {}
+  HSHM_CROSS_FUN Arena(AllocT *alloc, ArenaState prior, OffsetPtr<> alloc_off)
+      : alloc_(alloc), prior_(prior), alloc_off_(alloc_off) {}
+
+  // Move-only
+  HSHM_CROSS_FUN Arena(Arena &&o) noexcept
+      : alloc_(o.alloc_), prior_(o.prior_), alloc_off_(o.alloc_off_) {
+    o.alloc_ = nullptr;
+  }
+  HSHM_CROSS_FUN Arena &operator=(Arena &&o) noexcept {
+    if (this != &o) {
+      if (alloc_) alloc_->PopArena(*this);
+      alloc_ = o.alloc_;
+      prior_ = o.prior_;
+      alloc_off_ = o.alloc_off_;
+      o.alloc_ = nullptr;
+    }
+    return *this;
+  }
+  Arena(const Arena &) = delete;
+  Arena &operator=(const Arena &) = delete;
+
+  /** Explicitly pop the arena and disarm the RAII destructor. */
+  HSHM_CROSS_FUN void Release() {
+    if (alloc_) {
+      alloc_->PopArena(*this);
+      alloc_ = nullptr;
+    }
+  }
+
+  HSHM_CROSS_FUN ~Arena() {
+    if (alloc_) {
+      alloc_->PopArena(*this);
+    }
+  }
+};
+
+/**
  * The allocator base class.
  * */
 template <typename CoreAllocT>
@@ -1130,6 +1168,25 @@ class BaseAllocator : public CoreAllocT {
   HSHM_CROSS_FUN
   void FreeTls() { CoreAllocT::FreeTls(); }
 
+  using SelfT = BaseAllocator<CoreAllocT>;
+
+  /** Push a bump arena for fast allocation */
+  HSHM_CROSS_FUN
+  Arena<SelfT> PushArena(size_t size) {
+    ArenaState prior;
+    OffsetPtr<> block;
+    if (!CoreAllocT::PushArenaState(prior, block, size)) {
+      return Arena<SelfT>();
+    }
+    return Arena<SelfT>(this, prior, block);
+  }
+
+  /** Pop a bump arena, freeing its block */
+  HSHM_CROSS_FUN
+  void PopArena(Arena<SelfT> &arena) {
+    CoreAllocT::PopArenaState(arena.prior_, arena.alloc_off_);
+  }
+
   /** Get the allocator identifier */
   HSHM_INLINE_CROSS_FUN
   AllocatorId GetId() { return CoreAllocT::GetId(); }
@@ -1183,8 +1240,11 @@ class BaseAllocator : public CoreAllocT {
   template <typename T = void>
   HSHM_INLINE_CROSS_FUN FullPtr<T> Allocate(size_t size) {
     auto offset_ptr = AllocateOffset(size);
+    if (offset_ptr.IsNull()) {
+      return FullPtr<T>();
+    }
     auto *alloc_ptr = static_cast<Allocator *>(this);
-    return FullPtr<T>(alloc_ptr, OffsetPtr<T>(offset_ptr.load()));
+    return FullPtr<T>(alloc_ptr, offset_ptr.load());
   }
 
   /**
@@ -1367,16 +1427,6 @@ class BaseAllocator : public CoreAllocT {
   /**====================================
    * Helpers
    * ===================================*/
-
-  /**
-   * Get the shared header of the shared-memory allocator
-   *
-   * @return Shared header pointer
-   * */
-  template <typename HEADER_T>
-  HSHM_INLINE_CROSS_FUN HEADER_T *GetSharedHeader() {
-    return CoreAllocT::template GetSharedHeader<HEADER_T>();
-  }
 
   /**
    * Determine whether or not this allocator contains a process-specific

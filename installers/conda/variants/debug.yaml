@@ -1,7 +1,7 @@
 # IOWarp Core - Debug Variant
 # Debug build using CMakePresets.json "debug" preset
 #
-# Usage: rattler-build build --recipe recipe/ --variant-config variants/debug.yaml
+# Usage: IOWARP_PRESET=debug conda build installers/conda/ -c conda-forge
 
 preset:
   - debug

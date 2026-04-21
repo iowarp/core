@@ -69,6 +69,8 @@ struct PoolInfo {
   /** Local (default) container for this node. Initially static_container_.
       When migrated away, another from containers_ is chosen. If none, falls back to static. */
   Container* local_container_ = nullptr;
+  /** GPU device pointer to gpu::Container (nullptr if no GPU companion) */
+  void* gpu_container_ptr_ = nullptr;
 
   PoolInfo() : pool_id_(), num_containers_(0), is_active_(false) {}
 

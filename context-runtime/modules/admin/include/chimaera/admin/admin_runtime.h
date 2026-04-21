@@ -340,6 +340,12 @@ public:
   chi::TaskResume SystemMonitor(hipc::FullPtr<SystemMonitorTask> task, chi::RunContext &rctx);
 
   /**
+   * Handle RegisterGpuContainer - Register a GPU container with the GPU orchestrator
+   * The GPU orchestrator's gpu::PoolManager will be updated with the new container
+   */
+  chi::TaskResume RegisterGpuContainer(hipc::FullPtr<RegisterGpuContainerTask> task, chi::RunContext &rctx);
+
+  /**
    * Helper: Receive task inputs from remote node
    */
   void RecvIn(hipc::FullPtr<RecvTask> task, chi::LoadTaskArchive& archive, hshm::lbm::Transport* lbm_transport);
@@ -385,18 +391,18 @@ public:
   /**
    * Deserialize task input parameters into an existing task using LocalSerialize
    */
-  void LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive &archive,
+  void LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive &archive,
                      hipc::FullPtr<chi::Task> task_ptr) override;
 
   /**
    * Allocate and deserialize task input parameters using LocalSerialize
    */
-  hipc::FullPtr<chi::Task> LocalAllocLoadTask(chi::u32 method, chi::LocalLoadTaskArchive &archive) override;
+  hipc::FullPtr<chi::Task> LocalAllocLoadTask(chi::u32 method, chi::DefaultLoadArchive &archive) override;
 
   /**
    * Serialize task output parameters using LocalSerialize (for local transfers)
    */
-  void LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive &archive,
+  void LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive &archive,
                      hipc::FullPtr<chi::Task> task_ptr) override;
 
   /**

@@ -1,0 +1,63 @@
+version: "3.8"
+
+# Docker Swarm stack for testing issue #93:
+# Ensures benchmark data distribution is proper after removing MPI.
+# Each service gets a unique NODE_ID so tags/blobs never collide across nodes.
+#
+# Architecture:
+#   - node1, node2: each runs the iowarp runtime with CHI_WITH_RUNTIME=1
+#     so the benchmark initialises its own embedded runtime. Nodes are
+#     independent (no shared runtime) which is the correct multi-node model.
+#
+# Deploy:
+#   docker stack deploy -c docker-stack.yml iowarp_bench
+# Logs:
+#   docker service logs -f iowarp_bench_node1
+#   docker service logs -f iowarp_bench_node2
+# Remove:
+#   docker stack rm iowarp_bench
+
+services:
+  node1:
+    image: iowarp/deploy-cpu:latest
+    command: >
+      bash -c "
+        chimaera runtime start --config /etc/iowarp/chimaera.yaml &
+        sleep 3 &&
+        wrp_cte_bench Put 2 4 1m 20 &&
+        chimaera runtime stop
+      "
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: none
+    environment:
+      - NODE_ID=1
+      - CHI_SERVER_CONF=/etc/iowarp/chimaera.yaml
+    configs:
+      - source: cte_config
+        target: /etc/iowarp/chimaera.yaml
+
+  node2:
+    image: iowarp/deploy-cpu:latest
+    command: >
+      bash -c "
+        chimaera runtime start --config /etc/iowarp/chimaera.yaml &
+        sleep 3 &&
+        wrp_cte_bench Put 2 4 1m 20 &&
+        chimaera runtime stop
+      "
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: none
+    environment:
+      - NODE_ID=2
+      - CHI_SERVER_CONF=/etc/iowarp/chimaera.yaml
+    configs:
+      - source: cte_config
+        target: /etc/iowarp/chimaera.yaml
+
+configs:
+  cte_config:
+    file: ./cte_config.yaml

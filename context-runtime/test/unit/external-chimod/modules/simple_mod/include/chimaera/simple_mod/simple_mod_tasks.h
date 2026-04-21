@@ -111,7 +111,7 @@ struct FlushTask : public chi::Task {
    * No additional parameters for FlushTask
    */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     // No parameters to serialize for flush
     (void)ar;
@@ -122,7 +122,7 @@ struct FlushTask : public chi::Task {
    * This includes: total_work_done_
    */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(total_work_done_);
   }

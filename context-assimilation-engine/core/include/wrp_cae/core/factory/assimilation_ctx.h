@@ -36,8 +36,7 @@
 
 #include <string>
 #include <vector>
-#include <cereal/types/string.hpp>
-#include <cereal/types/vector.hpp>
+#include "hermes_shm/data_structures/serialization/global_serialize.h"
 
 namespace wrp_cae::core {
 
@@ -81,7 +80,7 @@ struct AssimilationCtx {
         src_token(source_token),
         dst_token(dest_token) {}
 
-  // Serialization support for cereal
+  // Serialization support
   template<class Archive>
   void serialize(Archive& ar) {
     ar(src, dst, format, depends_on, range_off, range_size, src_token, dst_token,

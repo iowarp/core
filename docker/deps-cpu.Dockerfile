@@ -75,13 +75,33 @@ RUN apt-get update && apt-get install -y \
 # precedence via CMAKE_PREFIX_PATH ordering.
 RUN apt-get update && apt-get install -y \
     libboost-all-dev \
-    libhdf5-dev \
     catch2 \
     libcurl4-openssl-dev \
     libssl-dev \
     nlohmann-json3-dev \
     libpoco-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# HDF5 2.x from source (Ubuntu 24.04 apt only has 1.10, too old for VOL API)
+RUN cd /tmp \
+    && wget -q https://github.com/HDFGroup/hdf5/releases/download/2.1.1/hdf5-2.1.1.tar.gz \
+    && tar xzf hdf5-2.1.1.tar.gz \
+    && cd hdf5-2.1.1 \
+    && cmake -B build -S . \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=ON \
+        -DBUILD_STATIC_LIBS=OFF \
+        -DHDF5_BUILD_CPP_LIB=ON \
+        -DHDF5_BUILD_TOOLS=ON \
+        -DHDF5_ENABLE_Z_LIB_SUPPORT=ON \
+        -DHDF5_ENABLE_SZIP_SUPPORT=OFF \
+        -DHDF5_BUILD_EXAMPLES=OFF \
+        -DHDF5_BUILD_FORTRAN=OFF \
+        -DBUILD_TESTING=OFF \
+    && cmake --build build --parallel $(nproc) \
+    && cmake --install build \
+    && cd /tmp && rm -rf hdf5-2.1.1 hdf5-2.1.1.tar.gz
 
 # Compression libraries
 RUN apt-get update && apt-get install -y \
@@ -136,6 +156,10 @@ RUN getent group docker || groupadd docker
 RUN echo '#!/bin/bash\n\
     if [ -S /var/run/docker.sock ]; then\n\
     sudo chmod 666 /var/run/docker.sock\n\
+    fi\n\
+    # Register jarvis_iowarp repo if workspace is mounted and not already added\n\
+    if [ -d /workspace/jarvis_iowarp ]; then\n\
+    jarvis repo add /workspace/jarvis_iowarp --force 2>/dev/null\n\
     fi\n\
     exec "$@"' > /usr/local/bin/docker-entrypoint.sh \
     && chmod +x /usr/local/bin/docker-entrypoint.sh
@@ -411,6 +435,9 @@ RUN cd /home/iowarp \
     && pip install -r requirements.txt \
     && pip install -e .
 
+# Initialize Jarvis configuration directories
+RUN jarvis init
+
 # Configure Spack to use system packages
 RUN mkdir -p ~/.spack && \
     echo "packages:" > ~/.spack/packages.yaml && \
@@ -431,8 +458,8 @@ RUN mkdir -p ~/.spack && \
     echo "    buildable: false" >> ~/.spack/packages.yaml && \
     echo "  hdf5:" >> ~/.spack/packages.yaml && \
     echo "    externals:" >> ~/.spack/packages.yaml && \
-    echo "    - spec: hdf5" >> ~/.spack/packages.yaml && \
-    echo "      prefix: /usr" >> ~/.spack/packages.yaml && \
+    echo "    - spec: hdf5@2.1.1" >> ~/.spack/packages.yaml && \
+    echo "      prefix: /usr/local" >> ~/.spack/packages.yaml && \
     echo "    buildable: false" >> ~/.spack/packages.yaml && \
     echo "  python:" >> ~/.spack/packages.yaml && \
     echo "    externals:" >> ~/.spack/packages.yaml && \

@@ -178,6 +178,15 @@ if [ "$DO_BUILD" = true ]; then
         print_info "Using conda prefix: $CONDA_PREFIX"
     fi
 
+    # Ensure build dependencies are available in conda env (coverage does a
+    # fresh from-source build which needs development headers / cmake configs)
+    if [ -n "$CONDA_PREFIX" ]; then
+        print_info "Installing build dependencies into conda env..."
+        conda install -y -c conda-forge \
+            cmake make pkg-config cereal yaml-cpp zeromq \
+            msgpack-c hdf5 catch2 libaio liburing 2>&1 | tail -3
+    fi
+
     print_info "Configuring build with coverage enabled..."
     cmake --preset=debug \
         -DWRP_CORE_ENABLE_COVERAGE=ON \
@@ -357,14 +366,27 @@ cd "${BUILD_DIR}"
 
 print_info "Capturing final coverage data with lcov..."
 
-# Use geninfo directly with comprehensive error ignoring for all components at once
-# This approach gives more accurate results than capturing from root directory
+# lcov 2.x is stricter about errors than 1.x. Build a comprehensive
+# --ignore-errors list so that stale .gcda files, missing sources, or
+# version mismatches do not abort the capture.
+if [ "${LCOV_MAJOR}" -ge 2 ] 2>/dev/null; then
+    LCOV_IGNORE_OPTS=(--ignore-errors source,graph,mismatch,empty,unused,negative,count,inconsistent)
+else
+    LCOV_IGNORE_OPTS=(--ignore-errors source,graph)
+fi
+
 lcov --capture \
      --directory . \
      --output-file coverage_combined.info \
      "${LCOV_RC_OPTS[@]}" \
-     --ignore-errors source,graph \
-     2>&1 | grep -E "Found [0-9]+ data files|Finished" || true
+     "${LCOV_IGNORE_OPTS[@]}" \
+     2>&1 | tee /tmp/lcov_capture.log | grep -E "Found [0-9]+ data files|Finished|Reading" || true
+
+if [ ! -f coverage_combined.info ] || [ ! -s coverage_combined.info ]; then
+    print_error "Failed to generate coverage data"
+    print_info "lcov capture log (last 20 lines):"
+    tail -20 /tmp/lcov_capture.log 2>/dev/null || true
+fi
 
 if [ ! -f coverage_combined.info ] || [ ! -s coverage_combined.info ]; then
     print_error "Failed to generate coverage data"
@@ -392,6 +414,7 @@ lcov --remove coverage_all.info \
      '*/catch2/*' \
      '*/nanobind/*' \
      --output-file coverage_filtered.info \
+     "${LCOV_IGNORE_OPTS[@]}" \
      2>&1 | grep -E "Removed|Summary|lines|functions" | tail -5 || true
 
 if [ ! -f coverage_filtered.info ] || [ ! -s coverage_filtered.info ]; then

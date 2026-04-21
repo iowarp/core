@@ -25,6 +25,12 @@ set(STREAMING_TEST_SOURCES
   test_streaming.cc
 )
 
+# GPU Client Process test executable
+set(GPU_CLIENT_PROCESS_TEST_TARGET chimaera_gpu_client_process_tests)
+set(GPU_CLIENT_PROCESS_TEST_SOURCES
+  test_gpu_client_process.cc
+)
+
 # GPU Submission test executable (Part 3)
 set(GPU_SUBMISSION_TEST_TARGET chimaera_gpu_submission_tests)
 set(GPU_SUBMISSION_TEST_CPU_SOURCES
@@ -32,6 +38,15 @@ set(GPU_SUBMISSION_TEST_CPU_SOURCES
 )
 set(GPU_SUBMISSION_TEST_GPU_SOURCES
   test_gpu_submission_gpu.cc
+)
+
+# GPU Queue Stress test executable
+set(GPU_QUEUE_STRESS_TEST_TARGET chimaera_gpu_queue_stress_tests)
+set(GPU_QUEUE_STRESS_TEST_CPU_SOURCES
+  test_gpu_queue_stress_cpu.cc
+)
+set(GPU_QUEUE_STRESS_TEST_GPU_SOURCES
+  test_gpu_queue_stress_gpu.cc
 )
 
 # Create flush correctness test executable
@@ -434,6 +449,18 @@ if(WRP_CORE_ENABLE_TESTS)
     cr_all_streaming_tests
     PROPERTIES LABELS "msan_skip;asan_skip"
   )
+
+  # GPU Client Process Tests
+  add_test(
+    NAME cr_gpu_client_process_tests
+    COMMAND ${GPU_CLIENT_PROCESS_TEST_TARGET} "[gpu][client_process]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_gpu_client_process_tests PROPERTIES
+    TIMEOUT 180
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1"
+    LABELS "msan_skip;asan_skip"
+  )
 endif()
 
 # Custom targets for MOD_NAME tests
@@ -528,6 +555,35 @@ add_custom_target(test_streaming_concurrent
   COMMENT "Running Chimaera concurrent streaming tests"
 )
 
+# GPU Client Process test executable (fork-based, CPU-only)
+add_executable(${GPU_CLIENT_PROCESS_TEST_TARGET} ${GPU_CLIENT_PROCESS_TEST_SOURCES})
+
+target_include_directories(${GPU_CLIENT_PROCESS_TEST_TARGET} PRIVATE
+  ${CHIMAERA_ROOT}/include
+  ${CHIMAERA_ROOT}/test  # For simple_test.h
+  ${CHIMAERA_ROOT}/modules/admin/include  # For admin tasks
+  ${CHIMAERA_ROOT}/modules/MOD_NAME/include  # For MOD_NAME tasks and client
+)
+
+target_link_libraries(${GPU_CLIENT_PROCESS_TEST_TARGET}
+  chimaera_admin_runtime          # Admin module runtime
+  chimaera_admin_client           # Admin module client
+  chimaera_MOD_NAME_runtime       # MOD_NAME module runtime
+  chimaera_MOD_NAME_client        # MOD_NAME module client
+  hshm::cxx                       # HermesShm library
+  ${CMAKE_THREAD_LIBS_INIT}       # Threading support
+)
+if(WRP_CORE_ENABLE_CUDA)
+  find_package(CUDAToolkit QUIET)
+  target_link_libraries(${GPU_CLIENT_PROCESS_TEST_TARGET} CUDA::cudart)
+endif()
+
+set_target_properties(${GPU_CLIENT_PROCESS_TEST_TARGET} PROPERTIES
+  CXX_STANDARD 20
+  CXX_STANDARD_REQUIRED ON
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
 # Create GPU Submission test executable
 # Configure for CUDA if available, otherwise build CPU-only version
 if(HSHM_ENABLE_CUDA OR HSHM_ENABLE_ROCM)
@@ -559,8 +615,8 @@ if(HSHM_ENABLE_CUDA OR HSHM_ENABLE_ROCM)
   )
 
   # CPU sources need CUDA disabled to avoid __device__ errors from CXX compiler.
-  # -U first removes the target-level HSHM_ENABLE_CUDA=1 from hshm::cuda_cxx
-  # to avoid a redefinition warning.
+  # Also strip --coverage: these targets link with CUDA linker (g++) which can't
+  # resolve llvm_gc* coverage symbols from clang-compiled objects.
   set_source_files_properties(${GPU_SUBMISSION_TEST_CPU_SOURCES} PROPERTIES
     COMPILE_OPTIONS "-UHSHM_ENABLE_CUDA;-DHSHM_ENABLE_CUDA=0"
   )
@@ -596,6 +652,10 @@ if(HSHM_ENABLE_CUDA OR HSHM_ENABLE_ROCM)
   set_target_properties(${GPU_SUBMISSION_TEST_TARGET} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
+  if(WRP_CORE_ENABLE_COVERAGE)
+    set_property(TARGET ${GPU_SUBMISSION_TEST_TARGET} PROPERTY COMPILE_OPTIONS "")
+    set_property(TARGET ${GPU_SUBMISSION_TEST_TARGET} PROPERTY LINK_OPTIONS "")
+  endif()
 
   message(STATUS "Building GPU submission tests with CUDA support")
 else()
@@ -635,6 +695,239 @@ add_custom_target(test_gpu_submission
   DEPENDS ${GPU_SUBMISSION_TEST_TARGET}
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   COMMENT "Running Chimaera Part 3 GPU submission tests"
+)
+
+# GPU Queue Stress test build rules
+if(HSHM_ENABLE_CUDA OR HSHM_ENABLE_ROCM)
+  # GPU kernels compiled as CUDA
+  set(GPU_QUEUE_STRESS_CUDA_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/cuda/${GPU_QUEUE_STRESS_TEST_GPU_SOURCES})
+  configure_file(${GPU_QUEUE_STRESS_TEST_GPU_SOURCES} ${GPU_QUEUE_STRESS_CUDA_SOURCE} COPYONLY)
+  set_source_files_properties(${GPU_QUEUE_STRESS_CUDA_SOURCE} PROPERTIES LANGUAGE CUDA)
+
+  add_library(${GPU_QUEUE_STRESS_TEST_TARGET}_gpu_kernels OBJECT ${GPU_QUEUE_STRESS_CUDA_SOURCE})
+  target_include_directories(${GPU_QUEUE_STRESS_TEST_TARGET}_gpu_kernels PRIVATE
+    ${CHIMAERA_ROOT}/include
+    ${CHIMAERA_ROOT}/modules/admin/include
+    ${CHIMAERA_ROOT}/modules/MOD_NAME/include
+  )
+  target_link_libraries(${GPU_QUEUE_STRESS_TEST_TARGET}_gpu_kernels PRIVATE hshm::cuda_cxx)
+  set_target_properties(${GPU_QUEUE_STRESS_TEST_TARGET}_gpu_kernels PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    POSITION_INDEPENDENT_CODE ON
+    CUDA_STANDARD 17
+  )
+  target_compile_options(${GPU_QUEUE_STRESS_TEST_TARGET}_gpu_kernels PUBLIC
+    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
+  )
+
+  add_executable(${GPU_QUEUE_STRESS_TEST_TARGET}
+    ${GPU_QUEUE_STRESS_TEST_CPU_SOURCES}
+    $<TARGET_OBJECTS:${GPU_QUEUE_STRESS_TEST_TARGET}_gpu_kernels>
+  )
+
+  set_source_files_properties(${GPU_QUEUE_STRESS_TEST_CPU_SOURCES} PROPERTIES
+    COMPILE_OPTIONS "-UHSHM_ENABLE_CUDA;-DHSHM_ENABLE_CUDA=0"
+  )
+
+  target_include_directories(${GPU_QUEUE_STRESS_TEST_TARGET} PRIVATE
+    ${CHIMAERA_ROOT}/include
+    ${CHIMAERA_ROOT}/test
+    ${CHIMAERA_ROOT}/modules/admin/include
+    ${CHIMAERA_ROOT}/modules/MOD_NAME/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+
+  target_link_libraries(${GPU_QUEUE_STRESS_TEST_TARGET}
+    chimaera_admin_runtime
+    chimaera_admin_client
+    chimaera_MOD_NAME_runtime
+    chimaera_MOD_NAME_client
+    hshm::cxx
+    hshm::cuda_cxx
+    ${CMAKE_THREAD_LIBS_INIT}
+  )
+
+  set_target_properties(${GPU_QUEUE_STRESS_TEST_TARGET} PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    CUDA_STANDARD 17
+    CUDA_STANDARD_REQUIRED ON
+    POSITION_INDEPENDENT_CODE ON
+    CUDA_SEPARABLE_COMPILATION ON
+    LINKER_LANGUAGE CUDA
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+
+  if(WRP_CORE_ENABLE_COVERAGE)
+    set_property(TARGET ${GPU_QUEUE_STRESS_TEST_TARGET} PROPERTY COMPILE_OPTIONS "")
+    set_property(TARGET ${GPU_QUEUE_STRESS_TEST_TARGET} PROPERTY LINK_OPTIONS "")
+  endif()
+  message(STATUS "Building GPU queue stress tests with CUDA support")
+else()
+  add_executable(${GPU_QUEUE_STRESS_TEST_TARGET} ${GPU_QUEUE_STRESS_TEST_CPU_SOURCES})
+
+  target_include_directories(${GPU_QUEUE_STRESS_TEST_TARGET} PRIVATE
+    ${CHIMAERA_ROOT}/include
+    ${CHIMAERA_ROOT}/test
+    ${CHIMAERA_ROOT}/modules/admin/include
+    ${CHIMAERA_ROOT}/modules/MOD_NAME/include
+  )
+
+  target_link_libraries(${GPU_QUEUE_STRESS_TEST_TARGET}
+    chimaera_admin_runtime
+    chimaera_admin_client
+    chimaera_MOD_NAME_runtime
+    chimaera_MOD_NAME_client
+    hshm::cxx
+    ${CMAKE_THREAD_LIBS_INIT}
+  )
+
+  set_target_properties(${GPU_QUEUE_STRESS_TEST_TARGET} PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+
+  message(STATUS "Building GPU queue stress tests without CUDA support (CPU-only)")
+endif()
+
+add_custom_target(test_gpu_queue_stress
+  COMMAND ${GPU_QUEUE_STRESS_TEST_TARGET}
+  DEPENDS ${GPU_QUEUE_STRESS_TEST_TARGET}
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  COMMENT "Running GPU queue stress tests (64 client warps vs 1 RT warp)"
+)
+
+add_custom_target(test_gpu_client_process
+  COMMAND ${GPU_CLIENT_PROCESS_TEST_TARGET}
+  DEPENDS ${GPU_CLIENT_PROCESS_TEST_TARGET}
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  COMMENT "Running Chimaera GPU client process tests"
+)
+
+# GPU Parallelism test executable (cross-warp validation)
+set(GPU_PARALLELISM_TEST_TARGET chimaera_gpu_parallelism_tests)
+set(GPU_PARALLELISM_TEST_CPU_SOURCES
+  test_gpu_parallelism_cpu.cc
+)
+set(GPU_PARALLELISM_TEST_GPU_SOURCES
+  test_gpu_parallelism_gpu.cc
+)
+
+if(HSHM_ENABLE_CUDA OR HSHM_ENABLE_ROCM)
+  # GPU kernels compiled in test_gpu_initiated_kernels (unified device link)
+  add_executable(${GPU_PARALLELISM_TEST_TARGET}
+    ${GPU_PARALLELISM_TEST_CPU_SOURCES}
+  )
+
+  set_source_files_properties(${GPU_PARALLELISM_TEST_CPU_SOURCES} PROPERTIES
+    COMPILE_OPTIONS "-UHSHM_ENABLE_CUDA;-DHSHM_ENABLE_CUDA=0"
+  )
+
+  target_include_directories(${GPU_PARALLELISM_TEST_TARGET} PRIVATE
+    ${CHIMAERA_ROOT}/include
+    ${CHIMAERA_ROOT}/test
+    ${CHIMAERA_ROOT}/modules/admin/include
+    ${CHIMAERA_ROOT}/modules/MOD_NAME/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+
+  target_link_libraries(${GPU_PARALLELISM_TEST_TARGET}
+    test_gpu_initiated_kernels
+    chimaera_admin_runtime
+    chimaera_admin_client
+    chimaera_MOD_NAME_runtime
+    chimaera_MOD_NAME_client
+    hshm::cxx
+    hshm::cuda_cxx
+    ${CMAKE_THREAD_LIBS_INIT}
+  )
+  if(WRP_CORE_ENABLE_CUDA AND CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES)
+    find_package(CUDAToolkit QUIET)
+    set_property(TARGET ${GPU_PARALLELISM_TEST_TARGET} APPEND PROPERTY
+      LINK_LIBRARIES "CUDA::cudart")
+  endif()
+
+  set_target_properties(${GPU_PARALLELISM_TEST_TARGET} PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    CUDA_STANDARD 17
+    CUDA_STANDARD_REQUIRED ON
+    POSITION_INDEPENDENT_CODE ON
+    CUDA_SEPARABLE_COMPILATION ON
+    LINKER_LANGUAGE CUDA
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+
+  if(WRP_CORE_ENABLE_COVERAGE)
+    set_property(TARGET ${GPU_PARALLELISM_TEST_TARGET} PROPERTY COMPILE_OPTIONS "")
+    set_property(TARGET ${GPU_PARALLELISM_TEST_TARGET} PROPERTY LINK_OPTIONS "")
+  endif()
+  message(STATUS "Building GPU parallelism tests with CUDA support")
+else()
+  add_executable(${GPU_PARALLELISM_TEST_TARGET} ${GPU_PARALLELISM_TEST_CPU_SOURCES})
+
+  target_include_directories(${GPU_PARALLELISM_TEST_TARGET} PRIVATE
+    ${CHIMAERA_ROOT}/include
+    ${CHIMAERA_ROOT}/test
+    ${CHIMAERA_ROOT}/modules/admin/include
+    ${CHIMAERA_ROOT}/modules/MOD_NAME/include
+  )
+
+  target_link_libraries(${GPU_PARALLELISM_TEST_TARGET}
+    chimaera_admin_runtime
+    chimaera_admin_client
+    chimaera_MOD_NAME_runtime
+    chimaera_MOD_NAME_client
+    hshm::cxx
+    ${CMAKE_THREAD_LIBS_INIT}
+  )
+
+  set_target_properties(${GPU_PARALLELISM_TEST_TARGET} PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+
+  message(STATUS "Building GPU parallelism tests without CUDA support (CPU-only)")
+endif()
+
+add_custom_target(test_gpu_parallelism
+  COMMAND ${GPU_PARALLELISM_TEST_TARGET}
+  DEPENDS ${GPU_PARALLELISM_TEST_TARGET}
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  COMMENT "Running GPU cross-warp parallelism validation tests"
+)
+
+if(WRP_CORE_ENABLE_TESTS)
+  # Run cross-warp and single-warp tests as separate processes to avoid
+  # GPU state corruption between test cases (cross-warp dispatch leaves
+  # persistent kernel state that affects subsequent GPU operations).
+  add_test(
+    NAME cr_gpu_parallelism_cross_warp
+    COMMAND ${GPU_PARALLELISM_TEST_TARGET} "[cross_warp]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_gpu_parallelism_cross_warp PROPERTIES
+    TIMEOUT 180
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1;CHI_GPU_BLOCKS=64;CHI_GPU_THREADS=32"
+    LABELS "msan_skip;asan_skip"
+  )
+  add_test(
+    NAME cr_gpu_parallelism_single_warp
+    COMMAND ${GPU_PARALLELISM_TEST_TARGET} "[single_warp]"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_gpu_parallelism_single_warp PROPERTIES
+    TIMEOUT 180
+    ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH};CHIMAERA_TEST_MODE=1;CHI_GPU_BLOCKS=64;CHI_GPU_THREADS=32"
+    LABELS "msan_skip;asan_skip"
+  )
+endif()
+
+# Install GPU parallelism test
+install(TARGETS ${GPU_PARALLELISM_TEST_TARGET}
+  RUNTIME DESTINATION bin
 )
 
 # Migrate test executable (integration test binary for container migration)
@@ -728,7 +1021,7 @@ set_target_properties(${RECONNECT_TEST_TARGET} PROPERTIES
 )
 
 # Install test executables
-install(TARGETS ${FLUSH_TEST_TARGET} ${COMUTEX_TEST_TARGET} ${WAIT_FUNCTIONALITY_TEST_TARGET} ${STREAMING_TEST_TARGET} ${GPU_SUBMISSION_TEST_TARGET} ${MIGRATE_TEST_TARGET} ${RECOVERY_TEST_TARGET} ${RECONNECT_TEST_TARGET}
+install(TARGETS ${FLUSH_TEST_TARGET} ${COMUTEX_TEST_TARGET} ${WAIT_FUNCTIONALITY_TEST_TARGET} ${STREAMING_TEST_TARGET} ${GPU_SUBMISSION_TEST_TARGET} ${GPU_CLIENT_PROCESS_TEST_TARGET} ${MIGRATE_TEST_TARGET} ${RECOVERY_TEST_TARGET} ${RECONNECT_TEST_TARGET}
   RUNTIME DESTINATION bin
 )
 
@@ -738,6 +1031,7 @@ message(STATUS "  CoMutex test target: ${COMUTEX_TEST_TARGET}")
 message(STATUS "  Wait Functionality test target: ${WAIT_FUNCTIONALITY_TEST_TARGET}")
 message(STATUS "  Streaming test target: ${STREAMING_TEST_TARGET}")
 message(STATUS "  GPU Submission test target: ${GPU_SUBMISSION_TEST_TARGET}")
+message(STATUS "  GPU Client Process test target: ${GPU_CLIENT_PROCESS_TEST_TARGET}")
 message(STATUS "  Migrate test target: ${MIGRATE_TEST_TARGET}")
 message(STATUS "  Recovery test target: ${RECOVERY_TEST_TARGET}")
 message(STATUS "  Reconnect test target: ${RECONNECT_TEST_TARGET}")

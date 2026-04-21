@@ -1,0 +1,46 @@
+# FUSE Filesystem Integration Test
+# Single-node Docker test that mounts a CTE-backed FUSE filesystem
+# and exercises standard POSIX I/O operations.
+#
+# Usage:
+#   ./run_tests.sh
+#
+# Requirements:
+#   - Docker with --cap-add SYS_ADMIN and /dev/fuse access
+#   - libfuse3 installed in the container image
+#   - wrp_cte_fuse binary built with -DWRP_CTE_ENABLE_FUSE_ADAPTER=ON
+
+services:
+  cte-fuse-test:
+    image: iowarp/deps-cpu:latest
+    security_opt:
+      - seccomp:unconfined
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    container_name: cte-fuse-test
+    hostname: iowarp-fuse
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    volumes:
+      - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
+    tmpfs:
+      - /tmp:mode=1777
+      - /mnt:mode=1777
+    environment:
+      - CHI_SERVER_CONF=/workspace/context-transfer-engine/test/integration/fuse/wrp_config.yaml
+      - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
+      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+    mem_limit: 4g
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "-c"]
+    command: >
+      "
+        set -x &&
+        echo '========================================' &&
+        echo 'FUSE Integration Test: Starting' &&
+        echo '========================================' &&
+        /workspace/context-transfer-engine/test/integration/fuse/test_fuse_mount.sh
+        EXIT_CODE=$$? &&
+        exit $$EXIT_CODE
+      "

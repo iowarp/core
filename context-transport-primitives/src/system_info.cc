@@ -36,8 +36,17 @@
 
 #include "hermes_shm/introspect/system_info.h"
 
+#include <climits>
+#ifdef __linux__
+#include <linux/limits.h>  // PATH_MAX on some Linux toolchains
+#endif
+// LCOV_EXCL_START — compile-time fallback, unreachable on standard Linux
+#ifndef PATH_MAX
+#define PATH_MAX 4096  // POSIX default; not always in <climits> under NVHPC
+#endif
+// LCOV_EXCL_STOP
 #include <cstdlib>
-#include <filesystem>
+#include <string>
 
 #include "hermes_shm/constants/macros.h"
 // MSan: inform sanitizer that mmap-backed memory is initialized by the kernel
@@ -52,6 +61,7 @@
 #define HSHM_MSAN_UNPOISON(ptr, size) ((void)0)
 #endif
 #if HSHM_ENABLE_PROCFS_SYSINFO
+#include <limits.h>
 #include <dlfcn.h>
 #include <signal.h>
 // LINUX
@@ -546,58 +556,6 @@ void *SystemInfo::MapSharedMemory(const File &fd, size_t size, i64 off) {
 #endif
 }
 
-void *SystemInfo::MapMixedMemory(const File &fd, size_t private_size,
-                                  size_t shared_size, i64 shared_offset) {
-#if HSHM_ENABLE_PROCFS_SYSINFO
-  // Calculate total size
-  size_t total_size = private_size + shared_size;
-
-  // Step 1: Reserve the entire contiguous address space
-  // Map the entire region as private/anonymous to reserve virtual addresses
-  void *ptr = mmap64(nullptr, total_size, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (ptr == MAP_FAILED) {
-    perror("MapMixedMemory: initial mmap failed");
-    return nullptr;
-  }
-  HSHM_MSAN_UNPOISON(ptr, total_size);
-
-  // Step 2: Remap the shared portion using MAP_FIXED
-  // This replaces the shared portion with actual shared memory from the fd
-  // The private portion remains as private/anonymous
-  char *shared_ptr = static_cast<char*>(ptr) + private_size;
-  void *result = mmap64(shared_ptr, shared_size, PROT_READ | PROT_WRITE,
-                        MAP_SHARED | MAP_FIXED, fd.posix_fd_, shared_offset);
-  if (result == MAP_FAILED || result != shared_ptr) {
-    int saved_errno = errno;
-    fprintf(stderr, "MapMixedMemory: MAP_FIXED mmap failed\n");
-    fprintf(stderr, "  Requested addr: %p\n", shared_ptr);
-    fprintf(stderr, "  Size: %zu bytes\n", shared_size);
-    fprintf(stderr, "  fd: %d\n", fd.posix_fd_);
-    fprintf(stderr, "  offset: %ld\n", shared_offset);
-    fprintf(stderr, "  errno: %d (%s)\n", saved_errno, strerror(saved_errno));
-    if (result != MAP_FAILED && result != shared_ptr) {
-      fprintf(stderr, "  Got addr: %p (unexpected!)\n", result);
-      munmap(result, shared_size);
-    }
-    // Clean up: unmap the entire region
-    munmap(ptr, total_size);
-    return nullptr;
-  }
-  HSHM_MSAN_UNPOISON(shared_ptr, shared_size);
-
-  // Success: we now have [private_size bytes private | shared_size bytes shared]
-  return ptr;
-
-#elif HSHM_ENABLE_WINDOWS_SYSINFO
-  // Windows doesn't easily support MAP_FIXED-like behavior for mixed mappings
-  // Fall back to just returning the shared mapping
-  // The private region won't work as expected on Windows
-  (void)private_size;  // Unused on Windows
-  return MapSharedMemory(fd, shared_size, shared_offset);
-#endif
-}
-
 void SystemInfo::UnmapMemory(void *ptr, size_t size) {
 #if HSHM_ENABLE_PROCFS_SYSINFO
   munmap(ptr, size);
@@ -633,7 +591,9 @@ std::string SystemInfo::GetModuleDirectory() {
   if (dladdr(addr, &dl_info) == 0) return "";
   char resolved[PATH_MAX];
   if (realpath(dl_info.dli_fname, resolved) == nullptr) return "";
-  return std::filesystem::path(resolved).parent_path().string();
+  std::string resolved_str(resolved);
+  auto pos = resolved_str.rfind('/');
+  return (pos != std::string::npos) ? resolved_str.substr(0, pos) : std::string();
 #elif HSHM_ENABLE_WINDOWS_SYSINFO
   HMODULE hModule = nullptr;
   if (!GetModuleHandleExA(
@@ -645,7 +605,10 @@ std::string SystemInfo::GetModuleDirectory() {
   }
   char path[MAX_PATH];
   if (GetModuleFileNameA(hModule, path, MAX_PATH) == 0) return "";
-  return std::filesystem::path(path).parent_path().string();
+  std::string path_str(path);
+  auto pos2 = path_str.rfind('\\');
+  if (pos2 == std::string::npos) pos2 = path_str.rfind('/');
+  return (pos2 != std::string::npos) ? path_str.substr(0, pos2) : std::string();
 #endif
 }
 

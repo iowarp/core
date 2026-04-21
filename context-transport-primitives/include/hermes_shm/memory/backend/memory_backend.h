@@ -145,11 +145,10 @@ struct MemoryBackendHeader {
   size_t backend_size_;      // Total size of region_
   size_t data_capacity_;     // Capacity available for data allocation
   int data_id_;              // Device ID for the data buffer (GPU ID, etc.)
-  size_t priv_header_off_;   // Offset from data_ back to start of private header
 
   HSHM_CROSS_FUN void Print() const {
-    printf("(%s) MemoryBackendHeader: id: (%u, %u), backend_size: %lu, data_capacity: %lu, priv_header_off: %lu\n",
-           kCurrentDevice, id_.major_, id_.minor_, (long unsigned)backend_size_, (long unsigned)data_capacity_, (long unsigned)priv_header_off_);
+    printf("(%s) MemoryBackendHeader: id: (%u, %u), backend_size: %lu, data_capacity: %lu\n",
+           kCurrentDevice, id_.major_, id_.minor_, (long unsigned)backend_size_, (long unsigned)data_capacity_);
   }
 };
 
@@ -158,17 +157,14 @@ struct MemoryBackendHeader {
 
 class UrlMemoryBackend {};
 
-/**
- * Global constant for backend header sizes
- * Each header (shared and private) is 4KB
- */
-static constexpr size_t kBackendHeaderSize = 4 * 1024;  // 4KB per header (shared + private = 8KB total)
+/** Size of the backend header region (page-aligned) */
+static const size_t kBackendHeaderSize = 4096;
 
 class MemoryBackend : public MemoryBackendHeader {
  public:
-  MemoryBackendHeader *header_;  // Pointer to the MemoryBackendHeader in shared/mapped memory
-  char *region_;    // The entire region: [private header] [shared header] [data]
-  char *data_;      // Data buffer for allocators (points to start of data section)
+  MemoryBackendHeader *header_;  // Pointer to persisted header in region_
+  char *region_;    // The entire allocated/mapped region
+  char *data_;      // Data buffer (region_ + kBackendHeaderSize)
 
  public:
   HSHM_CROSS_FUN
@@ -179,7 +175,6 @@ class MemoryBackend : public MemoryBackendHeader {
     backend_size_ = 0;
     data_capacity_ = 0;
     data_id_ = -1;
-    priv_header_off_ = 0;
   }
 
   ~MemoryBackend() = default;
@@ -220,149 +215,23 @@ class MemoryBackend : public MemoryBackendHeader {
     flags_.UnsetBits(MEMORY_BACKEND_OWNED);
   }
 
-
   /**
-   * Get pointer to the private header given a data pointer.
-   * Private header is kBackendHeaderSize bytes before the custom header.
+   * Create a sub-backend view over a portion of this backend's data region.
    *
-   * @tparam T Type to cast the private header to (default: char)
-   * @param data The data pointer to calculate offset from
-   * @return Pointer to the kBackendHeaderSize-byte private header, or nullptr if data is null
-   */
-  template<typename T = char>
-  HSHM_CROSS_FUN
-  T *GetPrivateHeader(char *data) {
-    if (data == nullptr) {
-      return nullptr;
-    }
-    return reinterpret_cast<T*>(data - priv_header_off_);
-  }
-
-  /**
-   * Get pointer to the private header given a data pointer (const version).
+   * The returned backend shares the same id_ but has data_ and data_capacity_
+   * adjusted to cover [data_ + offset, data_ + offset + size).
    *
-   * @tparam T Type to cast the private header to (default: char)
-   * @param data The data pointer to calculate offset from
-   * @return Const pointer to the kBackendHeaderSize-byte private header, or nullptr if data is null
-   */
-  template<typename T = char>
-  HSHM_CROSS_FUN
-  const T *GetPrivateHeader(const char *data) const {
-    if (data == nullptr) {
-      return nullptr;
-    }
-    return reinterpret_cast<const T*>(data - priv_header_off_);
-  }
-
-  /**
-   * Get pointer to the shared header given a data pointer.
-   * Shared header is located kBackendHeaderSize bytes after the private header.
-   *
-   * @tparam T Type to cast the shared header to (default: char)
-   * @param data The data pointer to calculate offset from
-   * @return Pointer to the kBackendHeaderSize-byte shared header, or nullptr if data is null
-   */
-  template<typename T = char>
-  HSHM_CROSS_FUN
-  T *GetSharedHeader(char *data) {
-    if (data == nullptr) {
-      return nullptr;
-    }
-    char *priv = GetPrivateHeader<char>(data);
-    return reinterpret_cast<T*>(priv + kBackendHeaderSize);
-  }
-
-  /**
-   * Get pointer to the shared header given a data pointer (const version).
-   * Shared header is located kBackendHeaderSize bytes after the private header.
-   *
-   * @tparam T Type to cast the shared header to (default: char)
-   * @param data The data pointer to calculate offset from
-   * @return Const pointer to the kBackendHeaderSize-byte shared header, or nullptr if data is null
-   */
-  template<typename T = char>
-  HSHM_CROSS_FUN
-  const T *GetSharedHeader(const char *data) const {
-    if (data == nullptr) {
-      return nullptr;
-    }
-    const char *priv = GetPrivateHeader<char>(data);
-    return reinterpret_cast<const T*>(priv + kBackendHeaderSize);
-  }
-  
-  /**
-   * Get pointer to the shared header (4KB before data_, at data_ - kBackendHeaderSize)
-   *
-   * This region is shared between processes and typically used for
-   * allocator-level shared metadata (e.g., custom allocator headers).
-   * Located AFTER the private header (closer to data_).
-   *
-   * @tparam T Type to cast the shared header to (default: char)
-   * @return Pointer to the kBackendHeaderSize-byte shared header, or nullptr if data_ is null
-   */
-  template<typename T = char>
-  HSHM_CROSS_FUN
-  T *GetSharedHeader() {
-    return GetSharedHeader<T>(data_);
-  }
-
-  /**
-   * Get pointer to the shared header (const version)
-   *
-   * @tparam T Type to cast the shared header to (default: char)
-   * @return Const pointer to the kBackendHeaderSize-byte shared header, or nullptr if data_ is null
-   */
-  template<typename T = char>
-  HSHM_CROSS_FUN
-  const T *GetSharedHeader() const {
-    return GetSharedHeader<T>(data_);
-  }
-
-  /**
-   * Get pointer to the private header (process-local storage)
-   *
-   * This region is process-local and not shared between processes.
-   * Each process that attaches gets its own independent copy.
-   * Located BEFORE the shared header.
-   * Useful for thread-local storage and process-specific metadata.
-   *
-   * @tparam T Type to cast the private header to (default: char)
-   * @return Pointer to the kBackendHeaderSize-byte private header, or nullptr if data_ is null
-   */
-  template<typename T = char>
-  HSHM_CROSS_FUN
-  T *GetPrivateHeader() {
-    return GetPrivateHeader<T>(data_);
-  }
-
-  /**
-   * Get pointer to the private header (const version)
-   *
-   * @tparam T Type to cast the private header to (default: char)
-   * @return Const pointer to the kBackendHeaderSize-byte private header, or nullptr if data_ is null
-   */
-  template<typename T = char>
-  HSHM_CROSS_FUN
-  const T *GetPrivateHeader() const {
-    return GetPrivateHeader<T>(data_);
-  }
-
-  /**
-   * Get size of the private header
-   * @return Size of private header (always kBackendHeaderSize = 4KB)
+   * @param offset Byte offset from data_ where the clip starts
+   * @param size   Size of the clipped region in bytes
+   * @return A new MemoryBackend describing the sub-region
    */
   HSHM_CROSS_FUN
-  static constexpr size_t GetPrivateHeaderSize() {
-    return kBackendHeaderSize;
-  }
-
-  /**
-   * Get size of the shared header
-   * @return Size of shared header (always kBackendHeaderSize = 4KB)
-   */
-  HSHM_CROSS_FUN
-  static constexpr size_t GetSharedHeaderSize() {
-    return kBackendHeaderSize;
+  MemoryBackend Clip(size_t offset, size_t size) const {
+    MemoryBackend sub;
+    sub.id_ = id_;
+    sub.data_ = data_ + offset;
+    sub.data_capacity_ = size;
+    return sub;
   }
 
   /**

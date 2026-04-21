@@ -46,10 +46,6 @@ add_cee_api_unit_test(test_context_destroy test_context_destroy.cc)
 
 # Comprehensive coverage test
 add_executable(test_context_comprehensive test_context_comprehensive.cc)
-target_include_directories(test_context_comprehensive
-  PRIVATE
-    ${CMAKE_SOURCE_DIR}/test  # For simple_test.h
-)
 target_link_libraries(test_context_comprehensive
   PRIVATE
     wrp_cee_api

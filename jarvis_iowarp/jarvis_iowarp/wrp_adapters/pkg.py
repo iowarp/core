@@ -1,8 +1,8 @@
 """
 This module provides classes and methods to inject WRP (IoWarp) CTE adapters.
 The WrpAdapters interceptor enables interception of various I/O APIs (POSIX,
-MPI-IO, STDIO, HDF5 VFD, NVIDIA GDS) and routes them to the Content Transfer
-Engine for intelligent data placement and transfer.
+MPI-IO, STDIO, HDF5 VFD, HDF5 VOL, NVIDIA GDS) and routes them to the Content
+Transfer Engine for intelligent data placement and transfer.
 """
 from jarvis_cd.core.pkg import Interceptor
 from jarvis_cd.util import SizeType
@@ -21,6 +21,7 @@ class WrpAdapters(Interceptor):
     - MPI-IO (MPI_File_* operations)
     - STDIO (fread, fwrite, fopen, etc.)
     - HDF5 VFD (Virtual File Driver for HDF5)
+    - HDF5 VOL (Volume connector for HDF5 dataset I/O)
     - NVIDIA GDS (GPUDirect Storage)
     """
 
@@ -70,11 +71,25 @@ class WrpAdapters(Interceptor):
                 'help': 'Enables HDF5 Virtual File Driver for CTE'
             },
             {
+                'name': 'vol',
+                'msg': 'Intercept HDF5 I/O via VOL connector',
+                'type': bool,
+                'default': False,
+                'help': 'Enables HDF5 VOL connector for CTE'
+            },
+            {
                 'name': 'nvidia_gds',
                 'msg': 'Intercept NVIDIA GDS I/O',
                 'type': bool,
                 'default': False,
                 'help': 'Intercepts NVIDIA GPUDirect Storage operations'
+            },
+            {
+                'name': 'adios2',
+                'msg': 'Enable ADIOS2 IOWarp engine plugin',
+                'type': bool,
+                'default': False,
+                'help': 'Sets ADIOS2_PLUGIN_PATH so ADIOS2 discovers the iowarp_engine plugin'
             },
             {
                 'name': 'include',
@@ -99,6 +114,18 @@ class WrpAdapters(Interceptor):
             },
         ]
 
+    def _find_adapter_lib(self, name):
+        """
+        Find an adapter library on the host or, for containerized pipelines,
+        assume /usr/local/lib/ inside the container.
+        """
+        if hasattr(self, 'pipeline') and self.pipeline:
+            if self.pipeline._has_containerized_packages():
+                container_path = f'/usr/local/lib/lib{name}.so'
+                self.log(f'Using container library path: {container_path}')
+                return container_path
+        return self.find_library(name)
+
     def _configure(self, **kwargs):
         """
         Configure the WRP adapters interceptor.
@@ -116,7 +143,7 @@ class WrpAdapters(Interceptor):
         has_one = False
 
         if self.config['posix']:
-            posix_lib = self.find_library('wrp_cte_posix')
+            posix_lib = self._find_adapter_lib('wrp_cte_posix')
             if posix_lib is None:
                 raise Exception('Could not find wrp_cte_posix library')
             self.env['WRP_CTE_POSIX'] = posix_lib
@@ -125,7 +152,7 @@ class WrpAdapters(Interceptor):
             has_one = True
 
         if self.config['mpiio']:
-            mpiio_lib = self.find_library('wrp_cte_mpiio')
+            mpiio_lib = self._find_adapter_lib('wrp_cte_mpiio')
             if mpiio_lib is None:
                 raise Exception('Could not find wrp_cte_mpiio library')
             self.env['WRP_CTE_MPIIO'] = mpiio_lib
@@ -134,7 +161,7 @@ class WrpAdapters(Interceptor):
             has_one = True
 
         if self.config['stdio']:
-            stdio_lib = self.find_library('wrp_cte_stdio')
+            stdio_lib = self._find_adapter_lib('wrp_cte_stdio')
             if stdio_lib is None:
                 raise Exception('Could not find wrp_cte_stdio library')
             self.env['WRP_CTE_STDIO'] = stdio_lib
@@ -143,7 +170,7 @@ class WrpAdapters(Interceptor):
             has_one = True
 
         if self.config['vfd']:
-            vfd_lib = self.find_library('wrp_cte_vfd')
+            vfd_lib = self._find_adapter_lib('wrp_cte_vfd')
             if vfd_lib is None:
                 raise Exception('Could not find wrp_cte_vfd library')
             self.env['WRP_CTE_VFD'] = vfd_lib
@@ -151,8 +178,17 @@ class WrpAdapters(Interceptor):
             self.log(f'Found libwrp_cte_vfd.so at {vfd_lib}')
             has_one = True
 
+        if self.config['vol']:
+            vol_lib = self._find_adapter_lib('iowarp_hdf5_vol')
+            if vol_lib is None:
+                raise Exception('Could not find iowarp_hdf5_vol library')
+            self.env['WRP_CTE_VOL'] = vol_lib
+            self.env['WRP_CTE_ROOT'] = str(pathlib.Path(vol_lib).parent.parent)
+            self.log(f'Found libiowarp_hdf5_vol.so at {vol_lib}')
+            has_one = True
+
         if self.config['nvidia_gds']:
-            nvidia_gds_lib = self.find_library('wrp_cte_nvidia_gds')
+            nvidia_gds_lib = self._find_adapter_lib('wrp_cte_nvidia_gds')
             if nvidia_gds_lib is None:
                 raise Exception('Could not find wrp_cte_nvidia_gds library')
             self.env['WRP_CTE_NVIDIA_GDS'] = nvidia_gds_lib
@@ -160,8 +196,17 @@ class WrpAdapters(Interceptor):
             self.log(f'Found libwrp_cte_nvidia_gds.so at {nvidia_gds_lib}')
             has_one = True
 
+        if self.config['adios2']:
+            adios2_lib = self.find_library('iowarp_engine')
+            if adios2_lib is None:
+                raise Exception('Could not find iowarp_engine library')
+            self.env['ADIOS2_PLUGIN_PATH'] = str(pathlib.Path(adios2_lib).parent)
+            self.env['WRP_CTE_ROOT'] = str(pathlib.Path(adios2_lib).parent.parent)
+            self.log(f'Found libiowarp_engine.so at {adios2_lib}')
+            has_one = True
+
         if not has_one:
-            raise Exception('No WRP CTE adapter selected. Please enable at least one adapter (posix, mpiio, stdio, vfd, or nvidia_gds).')
+            raise Exception('No WRP CTE adapter selected. Please enable at least one adapter (posix, mpiio, stdio, vfd, nvidia_gds, or adios2).')
 
         # Generate CAE configuration
         self._generate_cae_config()
@@ -204,10 +249,21 @@ class WrpAdapters(Interceptor):
             self.setenv('HDF5_DRIVER', 'wrp_cte_vfd')
             self.log(f"Configured HDF5 VFD with plugin path: {plugin_path_parent}")
 
+        # Configure HDF5 VOL connector
+        if self.config['vol']:
+            self.prepend_env('LD_PRELOAD', self.env['WRP_CTE_VOL'])
+            self.setenv('HDF5_VOL_CONNECTOR', 'iowarp')
+            self.log(f"Added HDF5 VOL connector to LD_PRELOAD and set HDF5_VOL_CONNECTOR=iowarp")
+
         # Add NVIDIA GDS adapter to LD_PRELOAD
         if self.config['nvidia_gds']:
             self.prepend_env('LD_PRELOAD', self.env['WRP_CTE_NVIDIA_GDS'])
             self.log(f"Added NVIDIA GDS adapter to LD_PRELOAD")
+
+        # Configure ADIOS2 plugin path
+        if self.config['adios2']:
+            self.setenv('ADIOS2_PLUGIN_PATH', self.env['ADIOS2_PLUGIN_PATH'])
+            self.log(f"Set ADIOS2_PLUGIN_PATH to {self.env['ADIOS2_PLUGIN_PATH']}")
 
     def _generate_cae_config(self):
         """

@@ -8,3 +8,7 @@ kMonitor: 9
 kDynamicSchedule: 10
 kCompress: 11
 kDecompress: 12
+
+# GPU support (no GPU methods yet; all are no-ops on GPU)
+has_gpu: true
+gpu_methods: []

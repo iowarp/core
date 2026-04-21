@@ -1,0 +1,17 @@
+name: iowarp_container_test
+container_engine: docker
+container_base: ubuntu:24.04
+env:
+  JARVIS_DOCKER_HOST_PREFIX: /home/llogan/Documents/Projects/iowarp/core
+pkgs:
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    deploy_mode: container
+    port: 9413
+    sleep: 2
+  - pkg_type: jarvis_iowarp.wrp_cte
+    deploy_mode: container
+  - pkg_type: jarvis_iowarp.adios2_gray_scott
+    deploy_mode: container
+    engine: iowarp
+    nprocs: 1
+    steps: 10

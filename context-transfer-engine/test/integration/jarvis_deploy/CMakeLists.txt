@@ -10,13 +10,13 @@ set(JARVIS_DEPLOY_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Add integration test that runs the Jarvis deployment test
 add_test(
-    NAME cte_jarvis_deploy_integration
+    NAME cte_jarvis_deploy_integration_docker
     COMMAND ${JARVIS_DEPLOY_TEST_DIR}/run_tests.sh
     WORKING_DIRECTORY ${JARVIS_DEPLOY_TEST_DIR}
 )
 
 # Set test properties
-set_tests_properties(cte_jarvis_deploy_integration PROPERTIES
+set_tests_properties(cte_jarvis_deploy_integration_docker PROPERTIES
     LABELS "integration;docker;distributed;jarvis"
     TIMEOUT 120  # 2 minute timeout for Docker-based tests
 )

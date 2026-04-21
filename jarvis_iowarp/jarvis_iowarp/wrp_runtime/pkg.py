@@ -1,11 +1,11 @@
 """
 IOWarp Runtime Service Package
 
-This package deploys and manages the IOWarp (Chimaera) runtime service across distributed nodes.
-Assumes chimaera has been installed and binaries are available in PATH.
+Manages the Chimaera runtime deployment. Supports both bare-metal (default)
+and container deployment modes via deploy_mode configuration.
 """
 from jarvis_cd.core.pkg import Service
-from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo
+from jarvis_cd.shell import Exec, PsshExecInfo, LocalExecInfo
 from jarvis_cd.shell.process import Kill, GdbServer
 from jarvis_cd.util import SizeType
 from jarvis_cd.util.logger import Color
@@ -15,22 +15,30 @@ import time
 import yaml
 
 
+# The container build for this package is driven by two template files
+# next to this pkg.py:
+#   - build.sh          : shell commands executed inside the jarvis pipeline
+#                         build container (started from container_base by
+#                         pipeline._build_pipeline_container). Installs all
+#                         IOWarp build deps, clones clio-core at the chosen
+#                         branch, and builds via the chosen CMakePresets
+#                         entry.
+#   - Dockerfile.deploy : multi-stage Dockerfile that copies the built
+#                         artifacts out of the committed build image into
+#                         a minimal Ubuntu deploy image.
+# See jarvis-cd dev branch commit 4717991 for the single-build-container
+# architecture this package targets.
+
+
 class WrpRuntime(Service):
     """
-    IOWarp Runtime Service
-
-    Manages the Chimaera runtime deployment across distributed nodes,
-    including configuration generation and runtime lifecycle management.
-
-    Assumes chimaera binary is installed and available in PATH.
+    IOWarp Runtime Service supporting default and container deployment.
     """
 
     def _init(self):
-        """Initialize package-specific variables"""
-        self.config_file = None
+        self.config_file = f'{self.shared_dir}/chimaera_config.yaml'
 
     def _configure_menu(self):
-        """Define configuration options for IOWarp runtime"""
         return [
             {
                 'name': 'num_threads',
@@ -105,44 +113,78 @@ class WrpRuntime(Service):
                 'msg': 'Maximum sleep duration cap (microseconds)',
                 'type': int,
                 'default': 50000
-            }
+            },
+            {
+                'name': 'git_branch',
+                'msg': 'Branch of iowarp/clio-core to clone inside the container build',
+                'type': str,
+                'default': 'main'
+            },
+            {
+                'name': 'cmake_preset',
+                'msg': 'CMakePresets.json preset used to configure the IOWarp build',
+                'type': str,
+                'default': 'release-adapter'
+            },
         ]
 
+    # ------------------------------------------------------------------
+    # Container build — single-container architecture
+    # ------------------------------------------------------------------
+    # jarvis-cd's pipeline spins up one long-running build container from
+    # container_base and exec's each package's build.sh inside it (see
+    # jarvis_cd/core/pipeline.py::_build_pipeline_container). For each
+    # configured package the script is template-substituted via
+    # _read_build_script(...) and copy'd into the container. The container
+    # is then committed to ##BUILD_IMAGE##, which Dockerfile.deploy
+    # multi-stage-copies into a minimal runtime image.
+
+    def _build_phase(self):
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        branch = self.config.get('git_branch', 'main')
+        preset = self.config.get('cmake_preset', 'release-adapter')
+        content = self._read_build_script('build.sh', {
+            'GIT_BRANCH': branch,
+            'CMAKE_PRESET': preset,
+        })
+        return content, preset
+
+    def _build_deploy_phase(self):
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        suffix = getattr(self, '_build_suffix', '')
+        content = self._read_template('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+            'DEPLOY_BASE': 'ubuntu:24.04',
+        })
+        return content, suffix
+
+    # ------------------------------------------------------------------
+    # Configuration
+    # ------------------------------------------------------------------
+
     def _configure(self, **kwargs):
-        """Configure the IOWarp runtime service"""
-        # Set configuration file path in shared directory
+        super()._configure(**kwargs)
+
         self.config_file = f'{self.shared_dir}/chimaera_config.yaml'
 
-        # Set the CHI_SERVER_CONF environment variable
-        # This is what both RuntimeInit and ClientInit check
         self.setenv('CHI_SERVER_CONF', self.config_file)
-
-        # Set HSHM_LOG_LEVEL for debug logging
         self.setenv('HSHM_LOG_LEVEL', self.config['log_level'])
-
-        # Set CHI_IPC_MODE for client-server transport
         self.setenv('CHI_IPC_MODE', self.config['ipc_mode'].upper())
 
-        # Generate chimaera configuration
         self._generate_config()
 
         self.log(f"IOWarp runtime configured")
         self.log(f"  Config file: {self.config_file}")
-        self.log(f"  CHI_SERVER_CONF: {self.config_file}")
-        self.log(f"  HSHM_LOG_LEVEL: {self.config['log_level']}")
-        self.log(f"  CHI_IPC_MODE: {self.config['ipc_mode'].upper()}")
 
     def _generate_config(self):
-        """Generate Chimaera runtime configuration file"""
-        # Parse size strings to bytes (handle "auto" for main_segment_size)
         if self.config['main_segment_size'] == 'auto':
             main_size = 'auto'
         else:
             main_size = SizeType(self.config['main_segment_size']).bytes
         client_size = SizeType(self.config['client_data_segment_size']).bytes
 
-        # Build configuration dictionary matching chimaera_default.yaml format
-        # Worker threads are now consolidated into runtime section
         config_dict = {
             'memory': {
                 'main_segment_size': main_size,
@@ -150,66 +192,67 @@ class WrpRuntime(Service):
             },
             'networking': {
                 'port': self.config['port'],
-                'hostfile': self.jarvis.hostfile.path if self.jarvis.hostfile.path else ''
+                # self.hostfile resolves package -> pipeline -> global.
+                # Using pipeline-level hostfile matters for container mode:
+                # pipeline.save() copies that hostfile into <shared_dir>/hostfile
+                # which is bind-mounted into every container at the same path.
+                # self.jarvis.hostfile.path would pick up the global path instead,
+                # which isn't mounted inside containers.
+                'hostfile': self.hostfile.path if self.hostfile.path else ''
             },
             'logging': {
                 'level': self.config['log_level'],
                 'file': f"{self.shared_dir}/chimaera.log"
             },
             'runtime': {
-                # Worker thread configuration
                 'num_threads': self.config['num_threads'],
                 'process_reaper_threads': self.config['process_reaper_workers'],
-                # Task execution configuration
                 'queue_depth': self.config['queue_depth'],
                 'local_sched': self.config['local_sched'],
                 'heartbeat_interval': self.config['heartbeat_interval'],
-                # Worker sleep configuration
                 'first_busy_wait': self.config['first_busy_wait'],
                 'max_sleep': self.config['max_sleep']
             }
         }
 
-        # Write configuration to YAML file
         with open(self.config_file, 'w') as f:
-            f.write('# Chimaera Runtime Configuration\n')
-            f.write('# Generated by Jarvis IOWarp Runtime Package\n\n')
+            f.write('# Chimaera Runtime Configuration\n\n')
             yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
 
-        self.log(f"Generated Chimaera configuration: {self.config_file}")
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     def start(self):
-        """Start the IOWarp runtime service on all nodes""" 
-        # Launch runtime on all nodes using PsshExecInfo
-        # IMPORTANT: Use env (shared environment), not mod_env
-        self.log(f"Starting IOWarp runtime on all nodes")
-        self.log(f"  Config (CHI_SERVER_CONF from env): {self.env.get('CHI_SERVER_CONF', 'NOT SET')}")
-        self.log(f"  Nodes: {len(self.jarvis.hostfile)}")
-
-        # The chimaera binary will read CHI_SERVER_CONF from environment
+        self.log("Starting IOWarp runtime")
         cmd = 'chimaera runtime start'
 
-        # Execute with or without debugging
         if self.config.get('do_dbg', False):
-            self.log(f"Starting with GDB server on port {self.config['dbg_port']}")
             GdbServer(cmd, self.config['dbg_port'], PsshExecInfo(
                 env=self.env,
                 hostfile=self.jarvis.hostfile,
-                exec_async=True
+                exec_async=True,
+                container=self._container_engine,
+                container_image=self.deploy_image_name(),
+                private_dir=self.private_dir,
+                bind_mounts=self.container_mounts,
             )).run()
         else:
             Exec(cmd, PsshExecInfo(
-                env=self.env,  # Use env, not mod_env
+                env=self.env,
                 hostfile=self.jarvis.hostfile,
-                exec_async=True
+                exec_async=True,
+                container=self._container_engine,
+                container_image=self.deploy_image_name(),
+                private_dir=self.private_dir,
+                bind_mounts=self.container_mounts,
             )).run()
 
         self.sleep()
 
-        # Wait for the runtime to be ready (port accepting connections)
         port = self.config['port']
         host = self.jarvis.hostfile.hosts[0] if self.jarvis.hostfile.hosts else '127.0.0.1'
-        self.log(f'Waiting for runtime to accept connections on {host}:{port}', color=Color.YELLOW)
+        self.log(f'Waiting for runtime on {host}:{port}', color=Color.YELLOW)
         for i in range(30):
             try:
                 ret = subprocess.run(
@@ -221,28 +264,28 @@ class WrpRuntime(Service):
                 pass
             time.sleep(1)
         else:
-            self.log(f'WARNING: Runtime did not respond on {host}:{port} after 30s', color=Color.RED)
+            self.log(f'WARNING: Runtime did not respond on {host}:{port} after 30s',
+                     color=Color.RED)
 
-        self.log("IOWarp runtime started successfully on all nodes")
+        self.log("IOWarp runtime started")
 
     def stop(self):
-        """Stop the IOWarp runtime service on all nodes"""
-        self.log("Stopping IOWarp runtime on all nodes")
+        self.log("Stopping IOWarp runtime")
 
-        # chimaera runtime stop now waits for the runtime to actually exit
-        cmd = 'chimaera runtime stop'
-        Exec(cmd, PsshExecInfo(
+        Exec('chimaera runtime stop', PsshExecInfo(
             env=self.env,
-            hostfile=self.jarvis.hostfile
+            hostfile=self.jarvis.hostfile,
+            container=self._container_engine,
+            container_image=self.deploy_image_name(),
+            private_dir=self.private_dir,
+            bind_mounts=self.container_mounts,
         )).run()
 
-        # Fallback: force kill any remaining chimaera processes
         Kill('chimaera',
              PsshExecInfo(env=self.env,
                           hostfile=self.jarvis.hostfile),
              partial=False).run()
 
-        # Wait for the port to be free before returning
         port = self.config['port']
         host = self.jarvis.hostfile.hosts[0] if self.jarvis.hostfile.hosts else '127.0.0.1'
         for i in range(10):
@@ -257,42 +300,24 @@ class WrpRuntime(Service):
             time.sleep(1)
         time.sleep(1)
 
-        self.log("IOWarp runtime stopped on all nodes")
+        self.log("IOWarp runtime stopped")
 
     def kill(self):
-        """Forcibly terminate the IOWarp runtime on all nodes"""
-        self.log("Forcibly killing IOWarp runtime on all nodes")
-
+        self.log("Forcibly killing IOWarp runtime")
         Kill('chimaera', PsshExecInfo(
             hostfile=self.jarvis.hostfile
         )).run()
 
-        self.log("IOWarp runtime killed on all nodes")
-
-    def status(self) -> str:
-        """Check IOWarp runtime status"""
-        # Could enhance this by checking if processes are actually running
-        # For now, return basic status
-        return "unknown"
-
     def clean(self):
-        """Clean IOWarp runtime data and temporary files"""
         self.log("Cleaning IOWarp runtime data")
 
-        # Remove configuration file
         if self.config_file and os.path.exists(self.config_file):
             os.remove(self.config_file)
 
-        # Remove log file
         log_file = f'{self.shared_dir}/chimaera.log'
         if os.path.exists(log_file):
             os.remove(log_file)
 
-        # Clean shared memory segments on all nodes
-        self.log("Cleaning shared memory segments on all nodes")
-        cmd = 'rm -f /dev/shm/chi_*'
-        Exec(cmd, PsshExecInfo(
+        Exec('rm -f /dev/shm/chi_*', PsshExecInfo(
             hostfile=self.jarvis.hostfile
         )).run()
-
-        self.log("Cleanup completed")

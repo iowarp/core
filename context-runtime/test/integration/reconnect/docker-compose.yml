@@ -15,7 +15,7 @@
 services:
   # Node 1 - Test coordinator (runtime will be shut down by the test)
   iowarp-node1:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: iowarp-reconnect-node1
@@ -23,12 +23,12 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-reconnect-cluster:
-        ipv4_address: 172.29.0.10
+        ipv4_address: 172.26.0.10
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
     environment:
       - NODE_ID=1
-      - NODE_IP=172.29.0.10
+      - NODE_IP=172.26.0.10
       - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/reconnect/wrp_conf.yaml
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/reconnect/hostfile
       - CHI_WITH_RUNTIME=0
@@ -36,7 +36,7 @@ services:
       - CHI_CLIENT_RETRY_TIMEOUT=5
       - CHI_CLIENT_TRY_NEW_SERVERS=16
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -51,7 +51,7 @@ services:
 
   # Node 2
   iowarp-node2:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: iowarp-reconnect-node2
@@ -59,18 +59,18 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-reconnect-cluster:
-        ipv4_address: 172.29.0.11
+        ipv4_address: 172.26.0.11
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
     environment:
       - NODE_ID=2
-      - NODE_IP=172.29.0.11
+      - NODE_IP=172.26.0.11
       - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/reconnect/wrp_conf.yaml
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/reconnect/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -82,7 +82,7 @@ services:
 
   # Node 3
   iowarp-node3:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: iowarp-reconnect-node3
@@ -90,18 +90,18 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-reconnect-cluster:
-        ipv4_address: 172.29.0.12
+        ipv4_address: 172.26.0.12
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
     environment:
       - NODE_ID=3
-      - NODE_IP=172.29.0.12
+      - NODE_IP=172.26.0.12
       - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/reconnect/wrp_conf.yaml
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/reconnect/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -113,7 +113,7 @@ services:
 
   # Node 4
   iowarp-node4:
-    image: iowarp/deps-cpu:latest
+    image: ${IOWARP_DOCKER_IMAGE:-iowarp/deps-cpu:latest}
     security_opt:
       - seccomp:unconfined
     container_name: iowarp-reconnect-node4
@@ -121,18 +121,18 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     networks:
       iowarp-reconnect-cluster:
-        ipv4_address: 172.29.0.13
+        ipv4_address: 172.26.0.13
     volumes:
       - ${HOST_WORKSPACE:-${IOWARP_CORE_ROOT:-/workspace}}:/workspace:rw
     environment:
       - NODE_ID=4
-      - NODE_IP=172.29.0.13
+      - NODE_IP=172.26.0.13
       - CHI_SERVER_CONF=/workspace/context-runtime/test/integration/reconnect/wrp_conf.yaml
       - CONTAINER_HOSTFILE=/workspace/context-runtime/test/integration/reconnect/hostfile
       - CHI_WITH_RUNTIME=0
       - CHI_NUM_CONTAINERS=4
       - PATH=/workspace/build/bin:/usr/local/bin:/usr/bin:/bin
-      - LD_LIBRARY_PATH=/workspace/build/bin:$LD_LIBRARY_PATH
+      - LD_LIBRARY_PATH=/workspace/build/bin:/usr/local/cuda/lib64:/usr/local/lib
     mem_limit: 16g
     working_dir: /workspace
     entrypoint: [ "/bin/bash", "-c" ]
@@ -147,4 +147,4 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.29.0.0/16
+        - subnet: 172.26.0.0/24

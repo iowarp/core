@@ -3,27 +3,23 @@
 # This OMNI file demonstrates transferring data from a Globus endpoint to the local filesystem
 # using the Content Assimilation Engine (CAE).
 #
-# Dataset: Materials Science Data Collection
-# Globus URL: https://app.globus.org/file-manager?add_identity=4a606161-92f1-4b5a-b0f6-c160e32df121&origin_id=e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae&origin_path=%2F&two_pane=false
-# Endpoint ID: e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae
+# Dataset: AFRL Challenge Data - Publication 1151 Input Data
+# Endpoint ID: 82f1b5c6-6e9b-11e5-ba47-22000b92c6ec
+# Browse: https://app.globus.org/file-manager?origin_id=82f1b5c6-6e9b-11e5-ba47-22000b92c6ec&origin_path=%2Fafrl-challenge-data%2Fpublished%2Fpublication_1151%2Fdata%2FInput+Data%2F
 #
 # Prerequisites:
-# - Valid GLOBUS_ACCESS_TOKEN environment variable set
-# - Globus endpoint must have HTTPS access enabled for local transfers
+# - Valid GLOBUS_ACCESS_TOKEN environment variable
 # - Network connectivity to Globus services
 
 version: "1.0"
 
 transfers:
-  # Transfer a file from Globus endpoint to local filesystem
-  # Using Globus web URL format - the code will automatically extract endpoint ID and path
-  - src: "https://app.globus.org/file-manager?add_identity=4a606161-92f1-4b5a-b0f6-c160e32df121&origin_id=e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae&origin_path=%2F&two_pane=false"
-    dst: "file::/tmp/globus_matsci/data.txt"
+  - src: "globus://82f1b5c6-6e9b-11e5-ba47-22000b92c6ec/afrl-challenge-data/published/publication_1151/data/Input Data/HomeIn-Build B.csv"
+    dst: "file::/tmp/globus_matsci/HomeIn-Build_B.csv"
     format: "binary"
     src_token: "${GLOBUS_ACCESS_TOKEN}"
 
-  # Alternative format using globus:// URI (also supported)
-  # - src: "globus://e8cf0e9a-f96a-11ed-9a83-83ef71fbf0ae/path/to/file.dat"
-  #   dst: "file::/tmp/globus_matsci/file.dat"
-  #   format: "binary"
-  #   src_token: "${GLOBUS_ACCESS_TOKEN}"
+  - src: "globus://82f1b5c6-6e9b-11e5-ba47-22000b92c6ec/afrl-challenge-data/published/publication_1151/data/Input Data/Build B Question Item Conditions.xlsx"
+    dst: "file::/tmp/globus_matsci/Build_B_Question_Item_Conditions.xlsx"
+    format: "binary"
+    src_token: "${GLOBUS_ACCESS_TOKEN}"

@@ -31,7 +31,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "../../../../test/simple_test.h"
+#include "simple_test.h"
 #include <filesystem>
 #include <cstdlib>
 #include <memory>

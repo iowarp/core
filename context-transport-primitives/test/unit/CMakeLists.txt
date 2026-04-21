@@ -31,7 +31,7 @@ endif()
 
 add_subdirectory(io)
 
-if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
+if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM OR WRP_CORE_ENABLE_SYCL)
     add_subdirectory(gpu)
 endif()
 

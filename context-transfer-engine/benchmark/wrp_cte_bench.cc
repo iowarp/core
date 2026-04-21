@@ -52,6 +52,8 @@
 #include <wrp_cte/core/core_client.h>
 #include <hermes_shm/util/logging.h>
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -160,12 +162,13 @@ double CalcBandwidth(chi::u64 total_bytes, double microseconds) {
 class CTEBenchmark {
  public:
   CTEBenchmark(size_t num_threads, const std::string &test_case, int depth,
-               chi::u64 io_size, int io_count)
+               chi::u64 io_size, int io_count, const std::string &node_id)
       : num_threads_(num_threads),
         test_case_(test_case),
         depth_(depth),
         io_size_(io_size),
-        io_count_(io_count) {}
+        io_count_(io_count),
+        node_id_(node_id) {}
 
   ~CTEBenchmark() = default;
 
@@ -190,6 +193,7 @@ class CTEBenchmark {
  private:
   void PrintBenchmarkInfo() {
     HLOG(kInfo, "=== CTE Core Benchmark ===");
+    HLOG(kInfo, "Node ID: {}", node_id_);
     HLOG(kInfo, "Test case: {}", test_case_);
     HLOG(kInfo, "Worker threads: {}", num_threads_);
     HLOG(kInfo, "Async depth per thread: {}", depth_);
@@ -213,8 +217,8 @@ class CTEBenchmark {
     std::memset(shm_buffer.ptr_, thread_id & 0xFF, io_size_);
     hipc::ShmPtr<> shm_ptr = shm_buffer.shm_.template Cast<void>();
 
-    // Create one tag per thread
-    std::string tag_name = "tag_t" + std::to_string(thread_id);
+    // Create one tag per node+thread so replicas on different nodes never clash
+    std::string tag_name = "tag_n" + node_id_ + "_t" + std::to_string(thread_id);
     auto tag_task = cte_client->AsyncGetOrCreateTag(tag_name);
     tag_task.Wait();
     wrp_cte::core::TagId tag_id = tag_task->tag_id_;
@@ -231,7 +235,7 @@ class CTEBenchmark {
       tasks.reserve(batch_size);
 
       for (int j = 0; j < batch_size; ++j) {
-        std::string blob_name = "blob_" + std::to_string(i + j);
+        std::string blob_name = "blob_t" + std::to_string(thread_id) + "_" + std::to_string(i + j);
         auto task = cte_client->AsyncPutBlob(tag_id, blob_name, 0, io_size_,
                                              shm_ptr, 0.8f);
         tasks.push_back(task);
@@ -281,8 +285,8 @@ class CTEBenchmark {
     hipc::ShmPtr<> put_ptr = put_shm.shm_.template Cast<void>();
     hipc::ShmPtr<> get_ptr = get_shm.shm_.template Cast<void>();
 
-    // Create one tag per thread
-    std::string tag_name = "tag_t" + std::to_string(thread_id);
+    // Create one tag per node+thread so replicas on different nodes never clash
+    std::string tag_name = "tag_n" + node_id_ + "_t" + std::to_string(thread_id);
     auto tag_task = cte_client->AsyncGetOrCreateTag(tag_name);
     tag_task.Wait();
     wrp_cte::core::TagId tag_id = tag_task->tag_id_;
@@ -290,7 +294,7 @@ class CTEBenchmark {
     // Populate data using Put operations
     for (int i = 0; i < io_count_; ++i) {
       std::memset(put_shm.ptr_, (thread_id + i) & 0xFF, io_size_);
-      std::string blob_name = "blob_" + std::to_string(i);
+      std::string blob_name = "blob_t" + std::to_string(thread_id) + "_" + std::to_string(i);
       auto task = cte_client->AsyncPutBlob(tag_id, blob_name, 0, io_size_,
                                            put_ptr, 0.8f);
       task.Wait();
@@ -306,7 +310,7 @@ class CTEBenchmark {
       int batch_size = std::min(depth_, io_count_ - i);
 
       for (int j = 0; j < batch_size; ++j) {
-        std::string blob_name = "blob_" + std::to_string(i + j);
+        std::string blob_name = "blob_t" + std::to_string(thread_id) + "_" + std::to_string(i + j);
         auto task = cte_client->AsyncGetBlob(tag_id, blob_name, 0, io_size_, 0,
                                              get_ptr);
         task.Wait();
@@ -356,8 +360,8 @@ class CTEBenchmark {
     hipc::ShmPtr<> put_ptr = put_shm.shm_.template Cast<void>();
     hipc::ShmPtr<> get_ptr = get_shm.shm_.template Cast<void>();
 
-    // Create one tag per thread
-    std::string tag_name = "tag_t" + std::to_string(thread_id);
+    // Create one tag per node+thread so replicas on different nodes never clash
+    std::string tag_name = "tag_n" + node_id_ + "_t" + std::to_string(thread_id);
     auto tag_task = cte_client->AsyncGetOrCreateTag(tag_name);
     tag_task.Wait();
     wrp_cte::core::TagId tag_id = tag_task->tag_id_;
@@ -374,7 +378,7 @@ class CTEBenchmark {
       put_tasks.reserve(batch_size);
 
       for (int j = 0; j < batch_size; ++j) {
-        std::string blob_name = "blob_" + std::to_string(i + j);
+        std::string blob_name = "blob_t" + std::to_string(thread_id) + "_" + std::to_string(i + j);
         auto task = cte_client->AsyncPutBlob(tag_id, blob_name, 0, io_size_,
                                              put_ptr, 0.8f);
         put_tasks.push_back(task);
@@ -385,7 +389,7 @@ class CTEBenchmark {
       }
 
       for (int j = 0; j < batch_size; ++j) {
-        std::string blob_name = "blob_" + std::to_string(i + j);
+        std::string blob_name = "blob_t" + std::to_string(thread_id) + "_" + std::to_string(i + j);
         auto task = cte_client->AsyncGetBlob(tag_id, blob_name, 0, io_size_, 0,
                                              get_ptr);
         task.Wait();
@@ -480,6 +484,7 @@ class CTEBenchmark {
   int depth_;
   chi::u64 io_size_;
   int io_count_;
+  std::string node_id_;
 };
 
 int main(int argc, char **argv) {
@@ -541,6 +546,18 @@ int main(int argc, char **argv) {
   chi::u64 io_size = ParseSize(argv[4]);
   int io_count = std::atoi(argv[5]);
 
+  // NODE_ID distinguishes benchmark replicas on different swarm nodes so their
+  // tags and blobs never collide.  Defaults to hostname if not set.
+  const char *node_id_env = std::getenv("NODE_ID");
+  std::string node_id;
+  if (node_id_env && node_id_env[0] != '\0') {
+    node_id = node_id_env;
+  } else {
+    char hostname[256] = {};
+    gethostname(hostname, sizeof(hostname));
+    node_id = hostname;
+  }
+
   // Validate parameters
   if (num_threads == 0 || depth <= 0 || io_size == 0 || io_count <= 0) {
     HLOG(kError, "Invalid parameters");
@@ -552,7 +569,7 @@ int main(int argc, char **argv) {
   }
 
   // Run benchmark
-  CTEBenchmark benchmark(num_threads, test_case, depth, io_size, io_count);
+  CTEBenchmark benchmark(num_threads, test_case, depth, io_size, io_count, node_id);
   benchmark.Run();
 
   return 0;

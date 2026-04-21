@@ -13,13 +13,13 @@ set(RECONNECT_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Add integration test that runs the reconnect test suite
 add_test(
-    NAME cr_reconnect_integration
+    NAME cr_reconnect_integration_docker
     COMMAND ${RECONNECT_TEST_DIR}/run_tests.sh all
     WORKING_DIRECTORY ${RECONNECT_TEST_DIR}
 )
 
 # Set test properties
-set_tests_properties(cr_reconnect_integration PROPERTIES
+set_tests_properties(cr_reconnect_integration_docker PROPERTIES
     LABELS "integration;docker;reconnect"
     TIMEOUT 600  # 10 minute timeout for Docker-based tests
     ENVIRONMENT "NUM_NODES=4;TEST_FILTER=[reconnect]"

@@ -53,6 +53,10 @@
 #include "iocp_io.h"
 #endif
 
+#if HSHM_ENABLE_NIXL
+#include "nixl_io.h"
+#endif
+
 namespace hshm {
 
 enum class AsyncIoBackend {
@@ -60,6 +64,7 @@ enum class AsyncIoBackend {
   kIoUring,    /**< io_uring (Linux 5.1+) */
   kPosixAio,   /**< POSIX aio_read/aio_write */
   kIocp,       /**< Windows I/O Completion Ports */
+  kNixl,       /**< NIXL (Network Interface eXtension Layer) */
   kDefault     /**< Auto-select best available for platform */
 };
 
@@ -83,6 +88,11 @@ class AsyncIoFactory {
         return std::make_unique<IoUringAsyncIO>(io_depth);
 #endif
 
+#if HSHM_ENABLE_NIXL
+      case AsyncIoBackend::kNixl:
+        return std::make_unique<NixlAsyncIO>(io_depth);
+#endif
+
 #if !defined(_WIN32)
       case AsyncIoBackend::kPosixAio:
         return std::make_unique<PosixAsyncIO>(io_depth);
@@ -100,7 +110,9 @@ class AsyncIoFactory {
 
  private:
   static AsyncIoBackend GetDefaultBackend() {
-#if HSHM_ENABLE_IO_URING
+#if HSHM_ENABLE_NIXL
+    return AsyncIoBackend::kNixl;
+#elif HSHM_ENABLE_IO_URING
     return AsyncIoBackend::kIoUring;
 #elif HSHM_ENABLE_LIBAIO
     return AsyncIoBackend::kLinuxAio;

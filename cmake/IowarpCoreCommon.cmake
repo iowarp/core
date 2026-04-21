@@ -41,17 +41,24 @@ macro(wrp_core_enable_cuda CXX_STANDARD)
     set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
     if(NOT CMAKE_CUDA_ARCHITECTURES)
-        set(CMAKE_CUDA_ARCHITECTURES native)
+        set(CMAKE_CUDA_ARCHITECTURES native CACHE STRING "CUDA architectures to compile for" FORCE)
     endif()
 
     message(STATUS "USING CUDA ARCH: ${CMAKE_CUDA_ARCHITECTURES}")
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --forward-unknown-to-host-compiler -diag-suppress=177,20014,20011,20012")
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=-Wno-format,-Wno-pedantic,-Wno-sign-compare,-Wno-unused-but-set-variable")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-unused-variable")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Wno-format -Wno-pedantic -Wno-sign-compare -Wno-unused-but-set-variable")
     enable_language(CUDA)
 
     set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_INCLUDES 0)
     set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES 0)
     set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_OBJECTS 0)
+
+    # When code coverage is enabled, add_link_options(--coverage) causes the
+    # CUDA device link stub to reference __gcov_* symbols. Set a flag so
+    # add_cuda_library/add_cuda_executable can link libgcov to resolve them.
+    if(WRP_CORE_ENABLE_COVERAGE)
+        set(WRP_CORE_CUDA_NEEDS_GCOV TRUE CACHE INTERNAL "")
+    endif()
 
     # Cache critical CUDA platform variables so they survive any nested
     # project() call (e.g. from external/llama.cpp) that may reset the
@@ -91,7 +98,7 @@ macro(wrp_core_enable_rocm GPU_RUNTIME CXX_STANDARD)
     set(CMAKE_${GPU_RUNTIME}_STANDARD ${CXX_STANDARD})
     set(CMAKE_${GPU_RUNTIME}_EXTENSIONS OFF)
     set(CMAKE_${GPU_RUNTIME}_STANDARD_REQUIRED ON)
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --forward-unknown-to-host-compiler")
+    # --forward-unknown-to-host-compiler is nvcc-only; not needed with clang
     set(ROCM_ROOT
         "/opt/rocm"
         CACHE PATH
@@ -106,6 +113,36 @@ macro(wrp_core_enable_rocm GPU_RUNTIME CXX_STANDARD)
         find_package(HIP REQUIRED)
     endif()
 endmacro()
+
+# Enable Intel GPU / SYCL (oneAPI icpx -fsycl)
+# Note: SYCL flags are NOT applied globally to avoid breaking PCH and non-SYCL
+# targets. Use target_compile_options / target_link_options on SYCL targets,
+# or call wrp_core_apply_sycl_flags(<target>) defined below.
+macro(wrp_core_enable_sycl CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD ${CXX_STANDARD})
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+    # Intel GPU target for Aurora (Ponte Vecchio / PVC)
+    set(SYCL_TARGET "spir64_gen" CACHE STRING "SYCL AOT target (default: spir64_gen for Intel GPU)")
+    set(SYCL_DEVICE "pvc" CACHE STRING "SYCL AOT device (default: pvc for Aurora Ponte Vecchio)")
+
+    message(STATUS "SYCL enabled: target=${SYCL_TARGET} device=${SYCL_DEVICE}")
+endmacro()
+
+# Apply SYCL compile and link flags to a specific target.
+# Call this for each executable or library that contains SYCL device code.
+function(wrp_core_apply_sycl_flags target)
+    target_compile_options(${target} PRIVATE
+        -fsycl
+        -fsycl-targets=${SYCL_TARGET}
+        "SHELL:-Xsycl-target-backend \"-device ${SYCL_DEVICE}\""
+    )
+    target_link_options(${target} PRIVATE
+        -fsycl
+        -fsycl-targets=${SYCL_TARGET}
+        "SHELL:-Xsycl-target-backend \"-device ${SYCL_DEVICE}\""
+    )
+endfunction()
 
 # Function for setting source files for rocm
 function(set_rocm_sources MODE DO_COPY SRC_FILES ROCM_SOURCE_FILES_VAR)
@@ -187,15 +224,35 @@ function(add_rocm_gpu_executable TARGET DO_COPY)
     target_compile_options(${TARGET} PUBLIC -fgpu-rdc)
 endfunction()
 
-# Function for adding a CUDA library
+
+# Function for adding a CUDA library (NVCC only)
+#
+# Uses CMake's native CUDA language support with NVCC.
+#
+# Usage:
+#   add_cuda_library(TARGET SHARED|STATIC DO_COPY source1.cc ...
+#       [INCLUDE_DIRS dir1 dir2 ...]
+#       [LINK_LIBS lib1 lib2 ...])
 function(add_cuda_library TARGET SHARED DO_COPY)
-    set(SRC_FILES ${ARGN})
+    cmake_parse_arguments(CUDA "" "" "INCLUDE_DIRS;LINK_LIBS" ${ARGN})
+    set(SRC_FILES ${CUDA_UNPARSED_ARGUMENTS})
+
+    # Resolve "native" to the detected GPU architecture before add_library so
+    # CMake does not attempt to re-detect the GPU at configure time for targets
+    # created in subdirectories processed after the first enable_language(CUDA)
+    # call.
+    if(CMAKE_CUDA_ARCHITECTURES STREQUAL "native" AND CMAKE_CUDA_ARCHITECTURES_NATIVE)
+        set(CMAKE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES_NATIVE}"
+            CACHE STRING "CUDA architectures to compile for" FORCE)
+    endif()
+
     set(CUDA_SOURCE_FILES "")
     set_cuda_sources("${DO_COPY}" "${SRC_FILES}" CUDA_SOURCE_FILES)
+
     add_library(${TARGET} ${SHARED} ${CUDA_SOURCE_FILES})
 
-    target_compile_options(${TARGET} PUBLIC
-        $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+    set_target_properties(${TARGET} PROPERTIES
+        CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
 
     if(SHARED STREQUAL "SHARED")
         set_target_properties(${TARGET} PROPERTIES
@@ -210,11 +267,37 @@ function(add_cuda_library TARGET SHARED DO_COPY)
             CUDA_RUNTIME_LIBRARY Static
         )
     endif()
+
+    if(CUDA_INCLUDE_DIRS)
+        foreach(_dir IN LISTS CUDA_INCLUDE_DIRS)
+            target_include_directories(${TARGET} PUBLIC
+                $<BUILD_INTERFACE:${_dir}>)
+        endforeach()
+    endif()
+
+    # Resolve __gcov_* symbols from CUDA device link stubs when coverage is on
+    if(WRP_CORE_CUDA_NEEDS_GCOV)
+        set_property(TARGET ${TARGET} APPEND PROPERTY LINK_LIBRARIES gcov)
+    endif()
+
+    if(CUDA_LINK_LIBS)
+        target_link_libraries(${TARGET} ${CUDA_LINK_LIBS})
+    endif()
 endfunction()
 
-# Function for adding a CUDA executable
+# Function for adding a CUDA executable (NVCC only)
+#
+# Uses CMake's native CUDA language support with NVCC.
+#
+# Usage:
+#   add_cuda_executable(TARGET DO_COPY source1.cc ...
+#       [INCLUDE_DIRS dir1 dir2 ...]
+#       [LINK_LIBS lib1 lib2 ...]
+#       [DEFS DEF1 DEF2 ...])
 function(add_cuda_executable TARGET DO_COPY)
-    set(SRC_FILES ${ARGN})
+    cmake_parse_arguments(CUDA "" "" "INCLUDE_DIRS;LINK_LIBS;DEFS" ${ARGN})
+    set(SRC_FILES ${CUDA_UNPARSED_ARGUMENTS})
+
     set(CUDA_SOURCE_FILES "")
     set_cuda_sources("${DO_COPY}" "${SRC_FILES}" CUDA_SOURCE_FILES)
     add_executable(${TARGET} ${CUDA_SOURCE_FILES})
@@ -223,14 +306,31 @@ function(add_cuda_executable TARGET DO_COPY)
         POSITION_INDEPENDENT_CODE ON
     )
 
-    # When copying sources, we need to add the include path back to the original source directory
     if(${DO_COPY})
         target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     endif()
 
-    target_compile_options(${TARGET} PUBLIC
-        $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>)
+    if(CUDA_INCLUDE_DIRS)
+        foreach(_dir IN LISTS CUDA_INCLUDE_DIRS)
+            target_include_directories(${TARGET} PUBLIC
+                $<BUILD_INTERFACE:${_dir}>)
+        endforeach()
+    endif()
+
+    if(CUDA_DEFS)
+        target_compile_definitions(${TARGET} PRIVATE ${CUDA_DEFS})
+    endif()
+
+    # Resolve __gcov_* symbols from CUDA device link stubs when coverage is on
+    if(WRP_CORE_CUDA_NEEDS_GCOV)
+        set_property(TARGET ${TARGET} APPEND PROPERTY LINK_LIBRARIES gcov)
+    endif()
+
+    if(CUDA_LINK_LIBS)
+        target_link_libraries(${TARGET} ${CUDA_LINK_LIBS})
+    endif()
 endfunction()
+
 
 #------------------------------------------------------------------------------
 # Jarvis Repo Management
@@ -550,6 +650,8 @@ function(add_chimod_client)
 endfunction()
 
 #------------------------------------------------------------------------------
+# GPU Device Code Embedding Function
+#------------------------------------------------------------------------------
 # ChiMod Runtime Library Function
 #------------------------------------------------------------------------------
 
@@ -584,8 +686,41 @@ function(add_chimod_runtime)
   # Create target name
   set(TARGET_NAME "${CHIMAERA_NAMESPACE}_${CHIMAERA_MODULE_NAME}_runtime")
 
-  # Create the library
-  add_library(${TARGET_NAME} SHARED ${ARG_SOURCES})
+  # Separate _gpu.cc sources from regular sources
+  set(CPU_SOURCES "")
+  set(GPU_SOURCES "")
+  foreach(SRC ${ARG_SOURCES})
+    if(SRC MATCHES "_gpu\\.cc$")
+      list(APPEND GPU_SOURCES ${SRC})
+    else()
+      list(APPEND CPU_SOURCES ${SRC})
+    endif()
+  endforeach()
+
+  # Create the library (CPU sources only)
+  add_library(${TARGET_NAME} SHARED ${CPU_SOURCES})
+
+  # Build GPU companion library if GPU sources exist and GPU is enabled
+  set(GPU_TARGET_NAME "${TARGET_NAME}_gpu")
+  if(GPU_SOURCES)
+    if(WRP_CORE_ENABLE_CUDA)
+      add_cuda_library(${GPU_TARGET_NAME} SHARED TRUE ${GPU_SOURCES})
+      target_link_libraries(${GPU_TARGET_NAME} PUBLIC ${TARGET_NAME} hshm::cuda_cxx)
+      target_include_directories(${GPU_TARGET_NAME} PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      )
+      message(STATUS "GPU companion ${GPU_TARGET_NAME} created with CUDA for: ${GPU_SOURCES}")
+    elseif(WRP_CORE_ENABLE_ROCM)
+      add_rocm_gpu_library(${GPU_TARGET_NAME} SHARED TRUE ${GPU_SOURCES})
+      target_link_libraries(${GPU_TARGET_NAME} PUBLIC ${TARGET_NAME} hshm::cxx)
+      target_include_directories(${GPU_TARGET_NAME} PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      )
+      message(STATUS "GPU companion ${GPU_TARGET_NAME} created with ROCm for: ${GPU_SOURCES}")
+    else()
+      message(STATUS "GPU sources found but no GPU backend enabled, skipping: ${GPU_SOURCES}")
+    endif()
+  endif()
 
   # Set C++ standard
   set(CHIMAERA_CXX_STANDARD 20)

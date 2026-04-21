@@ -151,6 +151,12 @@ class ConfigManager : public hshm::BaseConfig {
   size_t CalculateMainSegmentSize() const;
 
   /**
+   * Calculate queue segment size needed for TaskQueue and NetQueue ring buffers
+   * @return Calculated size in bytes
+   */
+  size_t CalculateQueueSegmentSize() const;
+
+  /**
    * Get memory segment size
    * @param segment Memory segment identifier
    * @return Size in bytes
@@ -242,6 +248,24 @@ class ConfigManager : public hshm::BaseConfig {
    */
   float GetLearningRate() const { return learning_rate_; }
 
+  /**
+   * Get number of GPU blocks for GPU orchestrator
+   * @return Number of blocks (default: 32)
+   */
+  u32 GetGpuBlocks() const { return gpu_blocks_; }
+
+  /**
+   * Get number of threads per block for GPU orchestrator
+   * @return Threads per block (default: 32)
+   */
+  u32 GetGpuThreadsPerBlock() const { return gpu_threads_per_block_; }
+
+  /**
+   * Get GPU queue depth for GPU orchestrator task queues
+   * @return Queue depth (default: 16)
+   */
+  u32 GetGpuQueueDepth() const { return gpu_queue_depth_; }
+
  private:
   /**
    * Set default configuration values (implements hshm::BaseConfig)
@@ -270,6 +294,7 @@ class ConfigManager : public hshm::BaseConfig {
   // Shared memory segment names with environment variable support
   std::string main_segment_name_ = "chi_main_segment_${USER}";
   std::string client_data_segment_name_ = "chi_client_data_segment_${USER}";
+  std::string queue_segment_name_ = "chi_queue_segment_${USER}";
 
   // Networking configuration
   std::string hostfile_path_ = "";
@@ -287,6 +312,11 @@ class ConfigManager : public hshm::BaseConfig {
 
   // Task load prediction model
   float learning_rate_ = 0.2f;               // Default: 0.2 SGD learning rate
+
+  // GPU orchestrator configuration
+  u32 gpu_blocks_ = 1;                       // Default: 1 block
+  u32 gpu_threads_per_block_ = 32;           // Default: 32 threads per block
+  u32 gpu_queue_depth_ = 16;                 // Default: 16 tasks per queue
 
   // Compose configuration
   ComposeConfig compose_config_;

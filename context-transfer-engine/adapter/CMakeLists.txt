@@ -58,6 +58,16 @@ if (WRP_CTE_ENABLE_ADIOS2_ADAPTER)
     add_subdirectory(adios2)
 endif()
 
+# FUSE adapter does not require ELF support (standalone daemon)
+if (WRP_CTE_ENABLE_FUSE_ADAPTER)
+    add_subdirectory(libfuse)
+endif()
+
+# HDF5 VOL connector (requires HDF5 >= 2.0, does not require ELF)
+if (WRP_CTE_ENABLE_HDF5_VOL)
+    add_subdirectory(hdf5_vol)
+endif()
+
 #-----------------------------------------------------------------------------
 # Install adapter headers
 #-----------------------------------------------------------------------------

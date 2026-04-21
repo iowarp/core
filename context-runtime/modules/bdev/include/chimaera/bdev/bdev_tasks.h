@@ -56,8 +56,11 @@ using MonitorTask = chimaera::admin::MonitorTask;
  * Block device type enumeration
  */
 enum class BdevType : chi::u32 {
-  kFile = 0,  // File-based block device (default)
-  kRam = 1    // RAM-based block device
+  kFile = 0,    // File-based block device (default)
+  kRam = 1,     // RAM-based block device
+  kHbm = 2,     // GPU High-Bandwidth Memory via cudaMalloc (device memory)
+  kPinned = 3,  // Pinned host memory via cudaMallocHost
+  kNoop = 4     // No-op backend for latency testing (no actual I/O)
 };
 
 /**
@@ -68,13 +71,13 @@ struct Block {
   chi::u64 size_;        // Size of block
   chi::u32 block_type_;  // Block size category (0=4KB, 1=64KB, 2=256KB, 3=1MB)
 
-  Block() : offset_(0), size_(0), block_type_(0) {}
-  Block(chi::u64 offset, chi::u64 size, chi::u32 block_type)
+  HSHM_GPU_FUN Block() : offset_(0), size_(0), block_type_(0) {}
+  HSHM_GPU_FUN Block(chi::u64 offset, chi::u64 size, chi::u32 block_type)
       : offset_(offset), size_(size), block_type_(block_type) {}
 
   // Cereal serialization
   template <class Archive>
-  void serialize(Archive &ar) {
+  HSHM_CROSS_FUN void serialize(Archive &ar) {
     ar(offset_, size_, block_type_);
   }
 };
@@ -90,7 +93,7 @@ struct PerfMetrics {
   double write_latency_us_;      // Average write latency in microseconds
   double iops_;                  // I/O operations per second
 
-  PerfMetrics()
+  HSHM_CROSS_FUN PerfMetrics()
       : read_bandwidth_mbps_(0.0),
         write_bandwidth_mbps_(0.0),
         read_latency_us_(0.0),
@@ -99,7 +102,7 @@ struct PerfMetrics {
 
   // Cereal serialization
   template <class Archive>
-  void serialize(Archive &ar) {
+  HSHM_CROSS_FUN void serialize(Archive &ar) {
     ar(read_bandwidth_mbps_, write_bandwidth_mbps_, read_latency_us_,
        write_latency_us_, iops_);
   }
@@ -224,6 +227,12 @@ struct CreateParams {
         bdev_type_ = BdevType::kFile;
       } else if (type_str == "ram") {
         bdev_type_ = BdevType::kRam;
+      } else if (type_str == "hbm") {
+        bdev_type_ = BdevType::kHbm;
+      } else if (type_str == "pinned") {
+        bdev_type_ = BdevType::kPinned;
+      } else if (type_str == "noop") {
+        bdev_type_ = BdevType::kNoop;
       }
     }
 
@@ -295,31 +304,30 @@ struct AllocateBlocksTask : public chi::Task {
   OUT chi::priv::vector<Block> blocks_;  // Allocated blocks information
 
   /** SHM default constructor */
-  AllocateBlocksTask() : chi::Task(), size_(0), blocks_(HSHM_MALLOC) {}
+  HSHM_CROSS_FUN AllocateBlocksTask() : chi::Task(), size_(0), blocks_(CHI_PRIV_ALLOC) {}
 
   /** Emplace constructor */
-  explicit AllocateBlocksTask(const chi::TaskId &task_node,
+  HSHM_CROSS_FUN explicit AllocateBlocksTask(const chi::TaskId &task_node,
                               const chi::PoolId &pool_id,
                               const chi::PoolQuery &pool_query, chi::u64 size)
-      : chi::Task(task_node, pool_id, pool_query, 10), size_(size), blocks_(HSHM_MALLOC) {
-    // Initialize task
-    task_id_ = task_node;
-    pool_id_ = pool_id;
-    method_ = Method::kAllocateBlocks;
-    task_flags_.Clear();
-    pool_query_ = pool_query;
+      : chi::Task(task_node, pool_id, pool_query, Method::kAllocateBlocks), size_(size), blocks_(CHI_PRIV_ALLOC) {
+  }
+
+  /** Fix up priv::vector SVO pointer after cudaMemcpy D→H */
+  HSHM_CROSS_FUN void FixupAfterCopy() {
+    blocks_.FixupSvoPtr();
   }
 
   /** Serialize IN and INOUT parameters */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(size_);
   }
 
   /** Serialize OUT and INOUT parameters */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(blocks_);
   }
@@ -352,14 +360,14 @@ struct FreeBlocksTask : public chi::Task {
   IN chi::priv::vector<Block> blocks_;  // Blocks to free
 
   /** SHM default constructor */
-  FreeBlocksTask() : chi::Task(), blocks_(HSHM_MALLOC) {}
+  HSHM_CROSS_FUN FreeBlocksTask() : chi::Task(), blocks_(CHI_PRIV_ALLOC) {}
 
   /** Emplace constructor for multiple blocks */
   explicit FreeBlocksTask(const chi::TaskId &task_node,
                           const chi::PoolId &pool_id,
                           const chi::PoolQuery &pool_query,
                           const std::vector<Block> &blocks)
-      : chi::Task(task_node, pool_id, pool_query, 10), blocks_(HSHM_MALLOC) {
+      : chi::Task(task_node, pool_id, pool_query, 10), blocks_(CHI_PRIV_ALLOC) {
     // Initialize task
     task_id_ = task_node;
     pool_id_ = pool_id;
@@ -373,18 +381,32 @@ struct FreeBlocksTask : public chi::Task {
     }
   }
 
+  /** Emplace constructor for GPU (priv::vector) */
+  HSHM_CROSS_FUN explicit FreeBlocksTask(const chi::TaskId &task_node,
+                          const chi::PoolId &pool_id,
+                          const chi::PoolQuery &pool_query,
+                          const chi::priv::vector<Block> &blocks)
+      : chi::Task(task_node, pool_id, pool_query, Method::kFreeBlocks),
+        blocks_(blocks) {
+  }
+
   /** Serialize IN and INOUT parameters */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(blocks_);
   }
 
   /** Serialize OUT and INOUT parameters */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     // No additional output parameters
+  }
+
+  /** Fix up SVO pointer after POD copy (e.g., CPU→GPU memcpy) */
+  HSHM_CROSS_FUN void FixupAfterCopy() {
+    blocks_.FixupSvoPtr();
   }
 
   /**
@@ -416,39 +438,35 @@ struct WriteTask : public chi::Task {
   OUT chi::u64 bytes_written_;          // Number of bytes actually written
 
   /** SHM default constructor */
-  WriteTask() : chi::Task(), blocks_(HSHM_MALLOC), length_(0), bytes_written_(0) {}
+  HSHM_CROSS_FUN WriteTask() : chi::Task(), blocks_(CHI_PRIV_ALLOC), length_(0), bytes_written_(0) {}
 
   /** Emplace constructor */
-  explicit WriteTask(const chi::TaskId &task_node, const chi::PoolId &pool_id,
+  HSHM_CROSS_FUN explicit WriteTask(const chi::TaskId &task_node, const chi::PoolId &pool_id,
                      const chi::PoolQuery &pool_query,
                      const chi::priv::vector<Block> &blocks, hipc::ShmPtr<> data,
                      size_t length)
-      : chi::Task(task_node, pool_id, pool_query, 10),
+      : chi::Task(task_node, pool_id, pool_query, Method::kWrite),
         blocks_(blocks),
         data_(data),
         length_(length),
         bytes_written_(0) {
-    // Initialize task
-    task_id_ = task_node;
-    pool_id_ = pool_id;
-    method_ = Method::kWrite;
-    task_flags_.Clear();
-    pool_query_ = pool_query;
   }
 
   /** Destructor - free buffer if TASK_DATA_OWNER is set */
-  ~WriteTask() {
+  HSHM_CROSS_FUN ~WriteTask() {
+#if HSHM_IS_HOST
     if (task_flags_.Any(TASK_DATA_OWNER) && !data_.IsNull()) {
-      auto *ipc_manager = CHI_IPC;
+      auto *ipc_manager = CHI_CPU_IPC;
       if (ipc_manager) {
         ipc_manager->FreeBuffer(data_.Cast<char>());
       }
     }
+#endif
   }
 
   /** Serialize IN and INOUT parameters */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(blocks_, length_);
     // Use bulk transfer for data pointer - BULK_XFER for actual data
@@ -458,9 +476,14 @@ struct WriteTask : public chi::Task {
 
   /** Serialize OUT and INOUT parameters */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(bytes_written_);
+  }
+
+  /** Fix up priv::vector SVO pointer after cudaMemcpy D→H */
+  HSHM_CROSS_FUN void FixupAfterCopy() {
+    blocks_.FixupSvoPtr();
   }
 
   /** Aggregate */
@@ -496,39 +519,35 @@ struct ReadTask : public chi::Task {
   OUT chi::u64 bytes_read_;  // Number of bytes actually read
 
   /** SHM default constructor */
-  ReadTask() : chi::Task(), blocks_(HSHM_MALLOC), length_(0), bytes_read_(0) {}
+  HSHM_CROSS_FUN ReadTask() : chi::Task(), blocks_(CHI_PRIV_ALLOC), length_(0), bytes_read_(0) {}
 
   /** Emplace constructor */
-  explicit ReadTask(const chi::TaskId &task_node, const chi::PoolId &pool_id,
+  HSHM_CROSS_FUN explicit ReadTask(const chi::TaskId &task_node, const chi::PoolId &pool_id,
                     const chi::PoolQuery &pool_query,
                     const chi::priv::vector<Block> &blocks, hipc::ShmPtr<> data,
                     size_t length)
-      : chi::Task(task_node, pool_id, pool_query, 10),
+      : chi::Task(task_node, pool_id, pool_query, Method::kRead),
         blocks_(blocks),
         data_(data),
         length_(length),
         bytes_read_(0) {
-    // Initialize task
-    task_id_ = task_node;
-    pool_id_ = pool_id;
-    method_ = Method::kRead;
-    task_flags_.Clear();
-    pool_query_ = pool_query;
   }
 
   /** Destructor - free buffer if TASK_DATA_OWNER is set */
-  ~ReadTask() {
+  HSHM_CROSS_FUN ~ReadTask() {
+#if HSHM_IS_HOST
     if (task_flags_.Any(TASK_DATA_OWNER) && !data_.IsNull()) {
-      auto *ipc_manager = CHI_IPC;
+      auto *ipc_manager = CHI_CPU_IPC;
       if (ipc_manager) {
         ipc_manager->FreeBuffer(data_.Cast<char>());
       }
     }
+#endif
   }
 
   /** Serialize IN and INOUT parameters */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     ar(blocks_, length_);
     // Use BULK_EXPOSE to indicate metadata only - receiver will allocate buffer
@@ -537,11 +556,16 @@ struct ReadTask : public chi::Task {
 
   /** Serialize OUT and INOUT parameters */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(length_, bytes_read_);
     // Use BULK_XFER to actually transfer the read data back
     ar.bulk(data_, length_, BULK_XFER);
+  }
+
+  /** Fix up priv::vector SVO pointer after cudaMemcpy D→H */
+  HSHM_CROSS_FUN void FixupAfterCopy() {
+    blocks_.FixupSvoPtr();
   }
 
   /** Aggregate */
@@ -591,14 +615,14 @@ struct GetStatsTask : public chi::Task {
 
   /** Serialize IN and INOUT parameters */
   template <typename Archive>
-  void SerializeIn(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
     Task::SerializeIn(ar);
     // No additional input parameters
   }
 
   /** Serialize OUT and INOUT parameters */
   template <typename Archive>
-  void SerializeOut(Archive &ar) {
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
     Task::SerializeOut(ar);
     ar(metrics_, remaining_size_);
   }
@@ -619,6 +643,71 @@ struct GetStatsTask : public chi::Task {
   void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
     Task::Aggregate(other_base);
     Copy(other_base.template Cast<GetStatsTask>());
+  }
+};
+
+/**
+ * UpdateTask - Send device/pinned memory pointers to the GPU container.
+ * Called by the CPU bdev runtime after allocating kHbm or kPinned memory,
+ * so the GPU-side GpuRuntime container can perform direct device memcpy.
+ */
+struct UpdateTask : public chi::Task {
+  IN chi::u64 hbm_ptr_;     ///< Device pointer to HBM buffer (0 if none)
+  IN chi::u64 pinned_ptr_;  ///< Pinned host pointer (0 if none)
+  IN chi::u64 hbm_size_;    ///< Byte size of the HBM buffer
+  IN chi::u64 pinned_size_; ///< Byte size of the pinned buffer
+  IN chi::u64 total_size_;  ///< Allocatable size (max of hbm/pinned)
+  IN chi::u32 bdev_type_;   ///< BdevType enum value
+  IN chi::u32 alignment_;   ///< Allocation alignment in bytes
+
+  HSHM_CROSS_FUN UpdateTask()
+      : chi::Task(), hbm_ptr_(0), pinned_ptr_(0), hbm_size_(0),
+        pinned_size_(0), total_size_(0), bdev_type_(0), alignment_(4096) {}
+
+  explicit UpdateTask(const chi::TaskId &task_node,
+                      const chi::PoolId &pool_id,
+                      const chi::PoolQuery &pool_query,
+                      chi::u64 hbm_ptr, chi::u64 pinned_ptr,
+                      chi::u64 hbm_size, chi::u64 pinned_size,
+                      chi::u64 total_size, chi::u32 bdev_type,
+                      chi::u32 alignment)
+      : chi::Task(task_node, pool_id, pool_query, 10),
+        hbm_ptr_(hbm_ptr), pinned_ptr_(pinned_ptr),
+        hbm_size_(hbm_size), pinned_size_(pinned_size),
+        total_size_(total_size), bdev_type_(bdev_type), alignment_(alignment) {
+    task_id_ = task_node;
+    pool_id_ = pool_id;
+    method_ = Method::kUpdate;
+    task_flags_.Clear();
+    pool_query_ = pool_query;
+  }
+
+  template <typename Archive>
+  HSHM_CROSS_FUN void SerializeIn(Archive &ar) {
+    Task::SerializeIn(ar);
+    ar(hbm_ptr_, pinned_ptr_, hbm_size_, pinned_size_,
+       total_size_, bdev_type_, alignment_);
+  }
+
+  template <typename Archive>
+  HSHM_CROSS_FUN void SerializeOut(Archive &ar) {
+    Task::SerializeOut(ar);
+  }
+
+  void Copy(const hipc::FullPtr<UpdateTask> &other) {
+    Task::Copy(other.template Cast<Task>());
+    hbm_ptr_     = other->hbm_ptr_;
+    pinned_ptr_  = other->pinned_ptr_;
+    hbm_size_    = other->hbm_size_;
+    pinned_size_ = other->pinned_size_;
+    total_size_  = other->total_size_;
+    bdev_type_   = other->bdev_type_;
+    alignment_   = other->alignment_;
+  }
+
+  void Aggregate(const hipc::FullPtr<chi::Task> &other_base) {
+    Task::Aggregate(other_base);
+    Copy(other_base.template Cast<UpdateTask>());
   }
 };
 

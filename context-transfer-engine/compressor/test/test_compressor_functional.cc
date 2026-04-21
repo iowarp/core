@@ -160,7 +160,7 @@ chi::PoolId CreateCompressorPool() {
   chi::PoolId compressor_pool_id = chi::PoolId(2, 1);
   Client compressor_client;
 
-  auto create_task = compressor_client.AsyncCreate(
+  auto create_task = compressor_client.AsyncCreateCompressor(
       chi::PoolQuery::Local(),
       "test_compressor_pool",
       compressor_pool_id);
@@ -302,7 +302,7 @@ TEST_CASE("Decompress and Retrieve", "[compressor][functional][basic]") {
 
   hipc::ShmPtr<> get_blob_data = get_buffer.shm_.template Cast<void>();
 
-  auto decompress_task = fixture.compressor_client_.AsyncDecompress(
+  auto decompress_task = fixture.compressor_client_.AsyncDecompressExplicit(
       chi::PoolQuery::Local(),
       fixture.tag_id_,
       "test_blob_roundtrip",

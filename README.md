@@ -154,7 +154,7 @@ git submodule update --init --recursive
 
 ### Native
 
-The following command will install conda, rattler-build, and iowarp in a single script.
+The following command will install conda, conda-build, and iowarp in a single script.
 ```bash
 bash install.sh release
 ```

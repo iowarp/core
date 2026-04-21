@@ -31,154 +31,181 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-// Copyright 2024 IOWarp contributors
 #ifndef WRP_CTE_COMPRESSOR_CLIENT_H_
 #define WRP_CTE_COMPRESSOR_CLIENT_H_
 
-#include <chimaera/chimaera.h>
-#include <hermes_shm/util/singleton.h>
+#include <wrp_cte/core/core_client.h>
 #include <wrp_cte/compressor/compressor_tasks.h>
 
 namespace wrp_cte::compressor {
 
 /**
- * Compressor client for asynchronous compression operations
- * Provides async API for DynamicSchedule, Compress, and Decompress tasks
+ * Transparent compression client.
+ *
+ * Inherits the full CTE core client API so that user code can swap
+ * between wrp_cte::core::Client and wrp_cte::compressor::Client
+ * without any changes. AsyncPutBlob is intercepted and routed through
+ * the compressor chimod (DynamicSchedule), and AsyncGetBlob is routed
+ * through decompression. All other methods (target management, tag
+ * management, metadata, etc.) pass through to the CTE core directly.
  */
-class Client : public chi::ContainerClient {
+class Client : public wrp_cte::core::Client {
  public:
   Client() = default;
-  explicit Client(const chi::PoolId &pool_id) { Init(pool_id); }
 
   /**
-   * Create the compressor container
-   * @param pool_query Task routing strategy
-   * @param pool_name Name of the pool
-   * @param custom_pool_id Explicit pool ID for the container
-   * @return Future for CreateTask
+   * Construct a compressor client (runtime-internal use).
+   * Only the compressor pool is known; core pool is resolved per-task.
    */
-  chi::Future<CreateTask> AsyncCreate(const chi::PoolQuery& pool_query,
-                                       const std::string& pool_name,
-                                       const chi::PoolId& custom_pool_id) {
-    auto* ipc_manager = CHI_IPC;
-    auto task = ipc_manager->NewTask<CreateTask>(
-        chi::CreateTaskId(),
-        chi::kAdminPoolId,  // Always use admin pool for CreateTask
-        pool_query,
-        "wrp_cte_compressor",  // ChiMod library name
-        pool_name,
-        custom_pool_id,
-        this);  // Client pointer for PostWait callback
-    return ipc_manager->Send(task);
+  explicit Client(const chi::PoolId &compressor_pool_id)
+      : compressor_pool_id_(compressor_pool_id) {
+    wrp_cte::core::Client::Init(compressor_pool_id);
   }
 
   /**
-   * Monitor container state - asynchronous
+   * Construct a compressor client (user-facing).
+   * @param compressor_pool_id Pool ID of the compressor chimod
+   * @param core_pool_id Pool ID of the CTE core chimod
    */
-  chi::Future<MonitorTask> AsyncMonitor(const chi::PoolQuery &pool_query,
-                                        const std::string &query) {
+  Client(const chi::PoolId &compressor_pool_id,
+         const chi::PoolId &core_pool_id)
+      : compressor_pool_id_(compressor_pool_id) {
+    wrp_cte::core::Client::Init(core_pool_id);
+  }
+
+  /**
+   * Create the compressor container.
+   */
+  chi::Future<CreateTask> AsyncCreateCompressor(
+      const chi::PoolQuery &pool_query, const std::string &pool_name,
+      const chi::PoolId &custom_pool_id) {
     auto *ipc_manager = CHI_IPC;
-    auto task = ipc_manager->NewTask<MonitorTask>(
-        chi::CreateTaskId(), pool_id_, pool_query, query);
+    auto task = ipc_manager->NewTask<CreateTask>(
+        chi::CreateTaskId(), chi::kAdminPoolId, pool_query,
+        "wrp_cte_compressor", pool_name, custom_pool_id, this);
     return ipc_manager->Send(task);
   }
 
+  // ------------------------------------------------------------------
+  // Overridden data-path methods: route through compressor
+  // ------------------------------------------------------------------
+
   /**
-   * Asynchronous dynamic scheduling - analyzes data, compresses, and stores via PutBlob
-   * Has same inputs as PutBlobTask for seamless integration
-   * @param pool_query Pool query for task routing
-   * @param tag_id Tag ID for blob grouping
-   * @param blob_name Blob name
-   * @param offset Offset within blob
-   * @param size Size of blob data
-   * @param blob_data Blob data (shared memory pointer)
-   * @param score Score 0-1 for placement decisions
-   * @param context Compression context (updated with predictions)
-   * @param flags Operation flags
-   * @param core_pool_id Pool ID of core chimod for PutBlob
-   * @return Future for DynamicScheduleTask
+   * AsyncPutBlob override: routes data through compression before storage.
+   * The compressor runtime will analyze, compress, then call core PutBlob.
+   */
+  chi::Future<DynamicScheduleTask> AsyncPutBlob(
+      const wrp_cte::core::TagId &tag_id, const char *blob_name,
+      chi::u64 offset, chi::u64 size, hipc::ShmPtr<> blob_data,
+      float score = -1.0f,
+      const wrp_cte::core::Context &context = wrp_cte::core::Context(),
+      chi::u32 flags = 0,
+      const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
+    auto *ipc_manager = CHI_IPC;
+    // core_pool_id is a fallback — the runtime uses next_pool_id from
+    // compose config when available.
+    auto task = ipc_manager->NewTask<DynamicScheduleTask>(
+        chi::CreateTaskId(), compressor_pool_id_, pool_query, tag_id,
+        blob_name, offset, size, blob_data, score, context, flags,
+        chi::PoolId::GetNull());
+    return ipc_manager->Send(task);
+  }
+
+  /** std::string overload */
+  chi::Future<DynamicScheduleTask> AsyncPutBlob(
+      const wrp_cte::core::TagId &tag_id, const std::string &blob_name,
+      chi::u64 offset, chi::u64 size, hipc::ShmPtr<> blob_data,
+      float score = -1.0f,
+      const wrp_cte::core::Context &context = wrp_cte::core::Context(),
+      chi::u32 flags = 0,
+      const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
+    return AsyncPutBlob(tag_id, blob_name.c_str(), offset, size, blob_data,
+                        score, context, flags, pool_query);
+  }
+
+  /**
+   * AsyncGetBlob override: retrieves and decompresses data transparently.
+   * The compressor runtime will call core GetBlob then decompress.
+   */
+  chi::Future<DecompressTask> AsyncGetBlob(
+      const wrp_cte::core::TagId &tag_id, const char *blob_name,
+      chi::u64 offset, chi::u64 size, chi::u32 flags,
+      hipc::ShmPtr<> blob_data,
+      const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
+    auto *ipc_manager = CHI_IPC;
+    auto task = ipc_manager->NewTask<DecompressTask>(
+        chi::CreateTaskId(), compressor_pool_id_, pool_query, tag_id,
+        blob_name, offset, size, flags, blob_data,
+        chi::PoolId::GetNull());
+    return ipc_manager->Send(task);
+  }
+
+  /** std::string overload */
+  chi::Future<DecompressTask> AsyncGetBlob(
+      const wrp_cte::core::TagId &tag_id, const std::string &blob_name,
+      chi::u64 offset, chi::u64 size, chi::u32 flags,
+      hipc::ShmPtr<> blob_data,
+      const chi::PoolQuery &pool_query = chi::PoolQuery::Dynamic()) {
+    return AsyncGetBlob(tag_id, blob_name.c_str(), offset, size, flags,
+                        blob_data, pool_query);
+  }
+
+  // ------------------------------------------------------------------
+  // Compressor-specific methods (used internally by compressor runtime)
+  // ------------------------------------------------------------------
+
+  /**
+   * Explicit dynamic scheduling — analyzes data, picks best compressor,
+   * compresses, and stores via core PutBlob.
    */
   chi::Future<DynamicScheduleTask> AsyncDynamicSchedule(
       const chi::PoolQuery &pool_query,
-      const wrp_cte::core::TagId &tag_id,
-      const std::string &blob_name,
-      chi::u64 offset, chi::u64 size,
-      hipc::ShmPtr<> blob_data,
-      float score, const Context &context,
-      chi::u32 flags,
-      const chi::PoolId &core_pool_id) {
+      const wrp_cte::core::TagId &tag_id, const std::string &blob_name,
+      chi::u64 offset, chi::u64 size, hipc::ShmPtr<> blob_data,
+      float score, const wrp_cte::core::Context &context,
+      chi::u32 flags, const chi::PoolId &core_pool_id) {
     auto *ipc_manager = CHI_IPC;
-
     auto task = ipc_manager->NewTask<DynamicScheduleTask>(
-        chi::CreateTaskId(), pool_id_, pool_query,
-        tag_id, blob_name, offset, size, blob_data,
-        score, context, flags, core_pool_id);
-
+        chi::CreateTaskId(), compressor_pool_id_, pool_query, tag_id,
+        blob_name, offset, size, blob_data, score, context, flags,
+        core_pool_id);
     return ipc_manager->Send(task);
   }
 
   /**
-   * Asynchronous compression - compresses data and stores via PutBlob
-   * Has same inputs as PutBlobTask for seamless integration
-   * @param pool_query Pool query for task routing
-   * @param tag_id Tag ID for blob grouping
-   * @param blob_name Blob name
-   * @param offset Offset within blob
-   * @param size Size of blob data
-   * @param blob_data Blob data (shared memory pointer)
-   * @param score Score 0-1 for placement decisions
-   * @param context Compression context (library, preset, etc.)
-   * @param flags Operation flags
-   * @param core_pool_id Pool ID of core chimod for PutBlob
-   * @return Future for CompressTask
+   * Explicit compression — compresses data and stores via core PutBlob.
    */
   chi::Future<CompressTask> AsyncCompress(
       const chi::PoolQuery &pool_query,
-      const wrp_cte::core::TagId &tag_id,
-      const std::string &blob_name,
-      chi::u64 offset, chi::u64 size,
-      hipc::ShmPtr<> blob_data,
-      float score, const Context &context,
-      chi::u32 flags,
-      const chi::PoolId &core_pool_id) {
+      const wrp_cte::core::TagId &tag_id, const std::string &blob_name,
+      chi::u64 offset, chi::u64 size, hipc::ShmPtr<> blob_data,
+      float score, const wrp_cte::core::Context &context,
+      chi::u32 flags, const chi::PoolId &core_pool_id) {
     auto *ipc_manager = CHI_IPC;
-
     auto task = ipc_manager->NewTask<CompressTask>(
-        chi::CreateTaskId(), pool_id_, pool_query,
-        tag_id, blob_name, offset, size, blob_data,
-        score, context, flags, core_pool_id);
-
+        chi::CreateTaskId(), compressor_pool_id_, pool_query, tag_id,
+        blob_name, offset, size, blob_data, score, context, flags,
+        core_pool_id);
     return ipc_manager->Send(task);
   }
 
   /**
-   * Asynchronous decompression - retrieves via GetBlob and decompresses
-   * Has same inputs as GetBlobTask for seamless integration
-   * @param pool_query Pool query for task routing
-   * @param tag_id Tag ID for blob lookup
-   * @param blob_name Blob name
-   * @param offset Offset within blob
-   * @param size Size of decompressed data to retrieve
-   * @param flags Operation flags
-   * @param blob_data Output buffer for decompressed data
-   * @param core_pool_id Pool ID of core chimod for GetBlob
-   * @return Future for DecompressTask
+   * Explicit decompression — retrieves via core GetBlob and decompresses.
    */
-  chi::Future<DecompressTask> AsyncDecompress(
+  chi::Future<DecompressTask> AsyncDecompressExplicit(
       const chi::PoolQuery &pool_query,
-      const wrp_cte::core::TagId &tag_id,
-      const std::string &blob_name,
-      chi::u64 offset, chi::u64 size,
-      chi::u32 flags, hipc::ShmPtr<> blob_data,
-      const chi::PoolId &core_pool_id) {
+      const wrp_cte::core::TagId &tag_id, const std::string &blob_name,
+      chi::u64 offset, chi::u64 size, chi::u32 flags,
+      hipc::ShmPtr<> blob_data, const chi::PoolId &core_pool_id) {
     auto *ipc_manager = CHI_IPC;
-
     auto task = ipc_manager->NewTask<DecompressTask>(
-        chi::CreateTaskId(), pool_id_, pool_query,
-        tag_id, blob_name, offset, size, flags, blob_data, core_pool_id);
-
+        chi::CreateTaskId(), compressor_pool_id_, pool_query, tag_id,
+        blob_name, offset, size, flags, blob_data, core_pool_id);
     return ipc_manager->Send(task);
   }
+
+ private:
+  chi::PoolId compressor_pool_id_;
 };
 
 }  // namespace wrp_cte::compressor

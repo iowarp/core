@@ -68,6 +68,14 @@ RUN mkdir -p /home/iowarp/.chimaera && \
 
 FROM runtime-base
 
+# Install Python and pip for Jarvis-CD
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-venv \
+    openssh-server \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy IOWarp installation from build container
 COPY --from=builder /usr/local/lib /usr/local/lib
 COPY --from=builder /usr/local/bin /usr/local/bin
@@ -76,6 +84,10 @@ COPY --from=builder /usr/local/share /usr/local/share
 # Copy default config for runtime auto-discovery
 COPY --from=builder --chown=iowarp:iowarp /home/iowarp/.chimaera /home/iowarp/.chimaera
 
+# Copy Jarvis-CD and jarvis_iowarp from builder
+COPY --from=builder /workspace/external/jarvis-cd /opt/jarvis-cd
+COPY --from=builder /workspace/jarvis_iowarp /opt/jarvis_iowarp
+
 # Set up library paths
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu
 ENV PATH=/usr/local/bin:${PATH}
@@ -83,9 +95,17 @@ ENV PATH=/usr/local/bin:${PATH}
 # Update library cache
 RUN ldconfig
 
+# Install Jarvis-CD and register the IOWarp repo
+RUN pip3 install --break-system-packages -r /opt/jarvis-cd/requirements.txt && \
+    pip3 install --break-system-packages -e /opt/jarvis-cd
+
 # Switch to iowarp user
 USER iowarp
 WORKDIR /home/iowarp
+
+# Initialize jarvis and register the iowarp package repo
+RUN jarvis init && \
+    jarvis repo add /opt/jarvis_iowarp
 
 # Set up environment in bashrc
 RUN echo 'export LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH' >> /home/iowarp/.bashrc

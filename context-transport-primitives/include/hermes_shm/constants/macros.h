@@ -99,6 +99,10 @@
 #define HSHM_ENABLE_CUDA_OR_ROCM 1
 #endif
 
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM || HSHM_ENABLE_SYCL
+#define HSHM_ENABLE_GPU 1
+#endif
+
 /** Detect GPU compilers.
  * These combine the CMake build flag (HSHM_ENABLE_CUDA / HSHM_ENABLE_ROCM)
  * with the actual compiler detection (__CUDACC__ / __HIPCC__) so that GPU
@@ -117,19 +121,36 @@
 #define HSHM_IS_ROCM_COMPILER 0
 #endif
 
+/** Detect SYCL compiler (Intel oneAPI icpx -fsycl) */
+#if HSHM_ENABLE_SYCL && defined(SYCL_LANGUAGE_VERSION)
+#define HSHM_IS_SYCL_COMPILER 1
+#else
+#define HSHM_IS_SYCL_COMPILER 0
+#endif
+
 #if HSHM_IS_CUDA_COMPILER || HSHM_IS_ROCM_COMPILER
 #define HSHM_IS_GPU_COMPILER 1
 #else
 #define HSHM_IS_GPU_COMPILER 0
 #endif
 
-/** Includes for CUDA and ROCm */
+/** Includes for CUDA and ROCm.
+ * nvcc/hipcc get the full runtime header (includes device builtins).
+ * Regular g++/clang++ with HSHM_ENABLE_CUDA/ROCM get the runtime API header
+ * which provides host-callable functions (cudaMalloc, cudaMemcpy, etc.)
+ * without device builtins (atomicAdd, threadIdx, etc.). */
 #if HSHM_IS_CUDA_COMPILER
 #include <cuda_runtime.h>
+#elif HSHM_ENABLE_CUDA
+#include <cuda_runtime_api.h>
 #endif
 
 #if HSHM_IS_ROCM_COMPILER
 #include <hip/hip_runtime.h>
+#endif
+
+#if HSHM_IS_SYCL_COMPILER
+#include <sycl/sycl.hpp>
 #endif
 
 /** Macros for CUDA functions.
@@ -150,22 +171,21 @@
 #endif
 
 /** Error checking for ROCM */
-#define HIP_ERROR_CHECK(X)                                                  \
-  do {                                                                      \
-    if (X != hipSuccess) {                                                  \
-      hipError_t hipErr = hipGetLastError();                                \
+#define HIP_ERROR_CHECK(X)                                                 \
+  do {                                                                     \
+    if (X != hipSuccess) {                                                 \
+      hipError_t hipErr = hipGetLastError();                               \
       HLOG(kFatal, "HIP Error {}: {}", hipErr, hipGetErrorString(hipErr)); \
-    }                                                                       \
+    }                                                                      \
   } while (false)
 
 /** Error checking for CUDA */
-#define CUDA_ERROR_CHECK(X)                       \
-  do {                                            \
-    if (X != cudaSuccess) {                       \
-      cudaError_t cudaErr = cudaGetLastError();   \
-      HLOG(kFatal, "CUDA Error {}: {}", cudaErr, \
-            cudaGetErrorString(cudaErr));         \
-    }                                             \
+#define CUDA_ERROR_CHECK(X)                                                    \
+  do {                                                                         \
+    if (X != cudaSuccess) {                                                    \
+      cudaError_t cudaErr = cudaGetLastError();                                \
+      HLOG(kFatal, "CUDA Error {}: {}", cudaErr, cudaGetErrorString(cudaErr)); \
+    }                                                                          \
   } while (false)
 
 /**
@@ -201,7 +221,11 @@
 #define HSHM_GPU_KERNEL ROCM_KERNEL
 
 /** Macro for inline gpu/host function + var */
+#if HSHM_IS_GPU_COMPILER
+#define HSHM_INLINE_CROSS_FUN HSHM_CROSS_FUN __forceinline__
+#else
 #define HSHM_INLINE_CROSS_FUN HSHM_CROSS_FUN inline
+#endif
 #define HSHM_INLINE_CROSS_VAR HSHM_CROSS_FUN inline
 #define HSHM_INLINE_GPU_FUN ROCM_DEVICE HSHM_INLINE
 #define HSHM_INLINE_GPU_VAR ROCM_DEVICE inline
@@ -269,6 +293,10 @@ namespace hipc = hshm::ipc;
 
 #define HSHM_DEFAULT_ALLOC \
   HSHM_MEMORY_MANAGER->template GetDefaultAllocator<HSHM_DEFAULT_ALLOC_T>()
+
+#ifndef HSHM_DEFAULT_ALLOC_GPU_T
+#define HSHM_DEFAULT_ALLOC_GPU_T hipc::PartitionedAllocator
+#endif
 
 /** Default memory context macro (no longer used - kept for compatibility) */
 #define HSHM_MCTX (void)0

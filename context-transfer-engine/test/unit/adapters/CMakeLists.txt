@@ -11,3 +11,8 @@ endif()
 if(WRP_CTE_ENABLE_ADIOS2_ADAPTER)
     add_subdirectory(adios2)
 endif()
+
+# FUSE adapter tests (doesn't require ELF or libfuse3 — tests internal components)
+if(WRP_CTE_ENABLE_FUSE_ADAPTER)
+    add_subdirectory(libfuse)
+endif()

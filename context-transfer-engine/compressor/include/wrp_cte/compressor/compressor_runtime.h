@@ -154,11 +154,11 @@ private:
   void Aggregate(chi::u32 method, hipc::FullPtr<chi::Task> orig_task,
                  const hipc::FullPtr<chi::Task>& replica_task) override;
   void DelTask(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr) override;
-  void LocalLoadTask(chi::u32 method, chi::LocalLoadTaskArchive &archive,
+  void LocalLoadTask(chi::u32 method, chi::DefaultLoadArchive &archive,
                      hipc::FullPtr<chi::Task> task_ptr) override;
   hipc::FullPtr<chi::Task> LocalAllocLoadTask(chi::u32 method,
-                                               chi::LocalLoadTaskArchive &archive) override;
-  void LocalSaveTask(chi::u32 method, chi::LocalSaveTaskArchive &archive,
+                                               chi::DefaultLoadArchive &archive) override;
+  void LocalSaveTask(chi::u32 method, chi::DefaultSaveArchive &archive,
                      hipc::FullPtr<chi::Task> task_ptr) override;
 
 private:
@@ -172,7 +172,7 @@ private:
 #endif
 
   // Compression telemetry ring buffer for performance monitoring
-  using CompressionTelemetryLog = hipc::ring_buffer<CompressionTelemetry, CHI_MAIN_ALLOC_T>;
+  using CompressionTelemetryLog = hipc::ring_buffer<CompressionTelemetry, CHI_TASK_ALLOC_T>;
   hipc::ShmPtr<CompressionTelemetryLog> compression_telemetry_log_;
   std::atomic<std::uint64_t> compression_logical_time_;
 

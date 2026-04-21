@@ -1,0 +1,35 @@
+# Pipeline: IOWarp + VPIC Container Test
+# Purpose: Run VPIC plasma simulation with IOWarp CTE intercepting POSIX I/O
+# Requirements: Docker installed, hostfile configured
+
+name: iowarp_vpic_container_test
+
+container_engine: docker
+container_base: ubuntu:24.04
+
+pkgs:
+  # IOWarp runtime (storage management daemon)
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    deploy_mode: container
+    port: 9413
+    sleep: 2
+
+  # IOWarp CTE (Content Transfer Engine)
+  - pkg_type: jarvis_iowarp.wrp_cte
+    deploy_mode: container
+
+  # VPIC plasma simulation
+  - pkg_type: builtin.vpic
+    deploy_mode: container
+    nprocs: 2
+    ppn: 2
+    sample_deck: harris
+    base_image: ubuntu:24.04
+
+interceptors:
+  # IOWarp POSIX adapter intercepts VPIC file I/O
+  - pkg_type: jarvis_iowarp.wrp_adapters
+    posix: true
+    include:
+      - ".*vpic_run.*"
+    adapter_page_size: 1M

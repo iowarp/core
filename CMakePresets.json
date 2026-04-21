@@ -37,23 +37,29 @@
         },
         {
             "name": "cuda-debug",
+            "displayName": "CUDA Debug (Clang, GPU Runtime [experimental])",
             "hidden": false,
             "generator": "Unix Makefiles",
             "binaryDir": "${sourceDir}/build",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
                 "WRP_CORE_ENABLE_RUNTIME": "ON",
                 "WRP_CORE_ENABLE_CTE": "ON",
-                "WRP_CORE_ENABLE_CAE": "OFF",
-                "WRP_CORE_ENABLE_CEE": "OFF",
+                "WRP_CORE_ENABLE_CAE": "ON",
+                "WRP_CORE_ENABLE_CEE": "ON",
                 "WRP_CORE_ENABLE_TESTS": "ON",
                 "WRP_CORE_ENABLE_BENCHMARKS": "ON",
                 "WRP_CORE_ENABLE_ELF": "OFF",
                 "WRP_CORE_ENABLE_CUDA": "ON",
-                "CMAKE_CUDA_ARCHITECTURES": "86",
+                "WRP_CORE_ENABLE_GPU_RUNTIME": "ON",
+                "WRP_CORE_ENABLE_BAM": "ON",
+                "CMAKE_CUDA_ARCHITECTURES": "native",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "WRP_CORE_ENABLE_ASAN": "OFF",
-                "WRP_CORE_ENABLE_IO_URING": "ON"
+                "WRP_CORE_ENABLE_IO_URING": "ON",
+                "WRP_CORE_ENABLE_DOCKER_CI": "ON"
             }
         },
         {
@@ -74,6 +80,30 @@
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "WRP_CORE_ENABLE_ASAN": "ON",
                 "WRP_CORE_ENABLE_IO_URING": "ON"
+            }
+        },
+        {
+            "name": "sycl-debug",
+            "hidden": false,
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build_gpu",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "WRP_CORE_ENABLE_RUNTIME": "ON",
+                "WRP_CORE_ENABLE_CTE": "ON",
+                "WRP_CORE_ENABLE_CAE": "OFF",
+                "WRP_CORE_ENABLE_CEE": "OFF",
+                "WRP_CORE_ENABLE_TESTS": "ON",
+                "WRP_CORE_ENABLE_ELF": "OFF",
+                "WRP_CORE_ENABLE_SYCL": "ON",
+                "WRP_CTE_ENABLE_COMPRESS": "OFF",
+                "WRP_CTE_ENABLE_ADIOS2_ADAPTER": "OFF",
+                "WRP_CORE_ENABLE_GRAY_SCOTT": "OFF",
+                "WRP_CORE_ENABLE_CONDA": "OFF",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "WRP_CORE_ENABLE_ASAN": "OFF",
+                "WRP_CORE_ENABLE_RPATH": "ON",
+                "WRP_CORE_ENABLE_IO_URING": "OFF"
             }
         },
         {
@@ -231,10 +261,41 @@
                 "WRP_CORE_ENABLE_PYTHON": "ON",
                 "WRP_CORE_ENABLE_ZMQ": "ON",
                 "WRP_CORE_ENABLE_CEREAL": "ON",
-                "WRP_CORE_ENABLE_HDF5": "ON",
+                "WRP_CTE_ENABLE_HDF5_VOL": "ON",
                 "WRP_CORE_ENABLE_MPI": "ON",
                 "HSHM_LOG_LEVEL": "1",
                 "WRP_CORE_ENABLE_IO_URING": "ON"
+            }
+        },
+        {
+            "name": "release-adapter",
+            "displayName": "Release + Adapters (ADIOS2, HDF5 VOL, FUSE)",
+            "description": "Release build with ADIOS2, HDF5 VOL, and FUSE3 adapters enabled. HDF5 VOL connector enabled via WRP_CTE_ENABLE_HDF5_VOL=ON. Requires HDF5 >= 1.12 and libfuse3-dev on the build host.",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "WRP_CORE_ENABLE_RUNTIME": "ON",
+                "WRP_CORE_ENABLE_CTE": "ON",
+                "WRP_CORE_ENABLE_CAE": "ON",
+                "WRP_CORE_ENABLE_CEE": "ON",
+                "WRP_CORE_ENABLE_TESTS": "OFF",
+                "WRP_CORE_ENABLE_BENCHMARKS": "OFF",
+                "WRP_CORE_ENABLE_PYTHON": "OFF",
+                "WRP_CORE_ENABLE_CONDA": "OFF",
+                "WRP_CORE_ENABLE_ELF": "OFF",
+                "WRP_CORE_ENABLE_ZMQ": "ON",
+                "WRP_CORE_ENABLE_CEREAL": "ON",
+                "WRP_CTE_ENABLE_HDF5_VOL": "ON",
+                "WRP_CORE_ENABLE_MPI": "ON",
+                "WRP_CORE_ENABLE_IO_URING": "ON",
+                "WRP_CORE_ENABLE_RPATH": "ON",
+                "WRP_CTE_ENABLE_COMPRESS": "ON",
+                "WRP_CTE_ENABLE_ADIOS2_ADAPTER": "ON",
+                "WRP_CTE_ENABLE_FUSE_ADAPTER": "ON",
+                "WRP_CORE_ENABLE_GRAY_SCOTT": "ON",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "HSHM_LOG_LEVEL": "1"
             }
         },
         {
@@ -257,7 +318,7 @@
                 "WRP_CORE_ENABLE_ZMQ": "ON",
                 "WRP_CORE_ENABLE_CEREAL": "ON",
                 "WRP_CORE_ENABLE_MPI": "OFF",
-                "WRP_CORE_ENABLE_HDF5": "OFF",
+                "WRP_CTE_ENABLE_HDF5_VOL": "OFF",
                 "WRP_CORE_ENABLE_ELF": "OFF",
                 "WRP_CTE_ENABLE_COMPRESS": "OFF",
                 "WRP_CORE_ENABLE_ENCRYPT": "OFF",
@@ -291,7 +352,7 @@
                 "WRP_CORE_ENABLE_CONDA": "OFF",
                 "WRP_CORE_ENABLE_ELF": "OFF",
                 "WRP_CORE_ENABLE_RPATH": "OFF",
-                "WRP_CORE_ENABLE_HDF5": "OFF",
+                "WRP_CTE_ENABLE_HDF5_VOL": "OFF",
                 "WRP_CORE_ENABLE_BENCHMARKS": "OFF",
                 "HSHM_LOG_LEVEL": "1"
             },
@@ -299,6 +360,35 @@
                 "type": "equals",
                 "lhs": "${hostSystemName}",
                 "rhs": "Windows"
+            }
+        },
+        {
+            "name": "release-fuse",
+            "displayName": "Release with FUSE adapter",
+            "hidden": false,
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "WRP_CORE_ENABLE_RUNTIME": "ON",
+                "WRP_CORE_ENABLE_CTE": "ON",
+                "WRP_CORE_ENABLE_CAE": "ON",
+                "WRP_CORE_ENABLE_CEE": "ON",
+                "WRP_CORE_ENABLE_TESTS": "ON",
+                "WRP_CORE_ENABLE_ELF": "OFF",
+                "WRP_CTE_ENABLE_COMPRESS": "OFF",
+                "WRP_CTE_ENABLE_FUSE_ADAPTER": "ON",
+                "WRP_CORE_ENABLE_GRAY_SCOTT": "OFF",
+                "WRP_CTE_ENABLE_ADIOS2_ADAPTER": "OFF",
+                "WRP_CORE_ENABLE_CONDA": "OFF",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "WRP_CORE_ENABLE_ASAN": "OFF",
+                "WRP_CORE_ENABLE_PYTHON": "ON",
+                "WRP_CORE_ENABLE_COVERAGE": "OFF",
+                "WRP_CORE_ENABLE_ZMQ": "ON",
+                "WRP_CORE_ENABLE_CEREAL": "ON",
+                "HSHM_LOG_LEVEL": "1",
+                "WRP_CORE_ENABLE_IO_URING": "ON"
             }
         },
         {

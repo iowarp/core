@@ -1,0 +1,37 @@
+# Pipeline: IOWarp + LAMMPS H5MD Container Test
+# Purpose: Run LAMMPS with HDF5 output, intercepted by IOWarp HDF5 VOL connector
+# Tests the full IOWarp stack: runtime -> CTE -> VOL -> LAMMPS H5MD dumps
+
+name: iowarp_lammps_h5md_test
+
+container_engine: docker
+container_base: ubuntu:24.04
+
+pkgs:
+  # IOWarp runtime (storage management daemon)
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    deploy_mode: container
+    port: 9413
+    sleep: 2
+
+  # IOWarp CTE (Content Transfer Engine)
+  - pkg_type: jarvis_iowarp.wrp_cte
+    deploy_mode: container
+
+  # LAMMPS with HDF5 H5MD dump output
+  - pkg_type: builtin.lammps
+    deploy_mode: container
+    nprocs: 1
+    ppn: 1
+    kokkos_gpu: false
+    script: /mnt/common/llogan/.ppi-jarvis/shared/iowarp_lammps_h5md_test/lammps_h5md.in
+    out: /tmp/lammps_h5md
+    base_image: ubuntu:24.04
+
+interceptors:
+  # IOWarp HDF5 VOL connector intercepts LAMMPS H5Dwrite calls
+  - pkg_type: jarvis_iowarp.wrp_adapters
+    vol: true
+    include:
+      - ".*lammps_h5md.*"
+    adapter_page_size: 1M

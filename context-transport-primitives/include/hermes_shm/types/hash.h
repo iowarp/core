@@ -47,7 +47,7 @@ namespace hshm {
 template <typename T>
 struct hash {
   HSHM_INLINE_CROSS_FUN std::size_t operator()(const T &key) const {
-#ifdef HSHM_IS_GPU
+#if HSHM_IS_GPU
     // GPU-compatible FNV-1a hash for basic types
     return fnv1a_hash(reinterpret_cast<const unsigned char*>(&key), sizeof(T));
 #else
@@ -76,7 +76,7 @@ struct hash {
 template <>
 struct hash<uint8_t> {
   HSHM_INLINE_CROSS_FUN std::size_t operator()(uint8_t key) const {
-#ifdef HSHM_IS_GPU
+#if HSHM_IS_GPU
     return static_cast<std::size_t>(key);
 #else
     return std::hash<uint8_t>{}(key);
@@ -87,7 +87,7 @@ struct hash<uint8_t> {
 template <>
 struct hash<uint16_t> {
   HSHM_INLINE_CROSS_FUN std::size_t operator()(uint16_t key) const {
-#ifdef HSHM_IS_GPU
+#if HSHM_IS_GPU
     return static_cast<std::size_t>(key);
 #else
     return std::hash<uint16_t>{}(key);
@@ -98,7 +98,7 @@ struct hash<uint16_t> {
 template <>
 struct hash<uint32_t> {
   HSHM_INLINE_CROSS_FUN std::size_t operator()(uint32_t key) const {
-#ifdef HSHM_IS_GPU
+#if HSHM_IS_GPU
     return static_cast<std::size_t>(key);
 #else
     return std::hash<uint32_t>{}(key);
@@ -109,7 +109,7 @@ struct hash<uint32_t> {
 template <>
 struct hash<uint64_t> {
   HSHM_INLINE_CROSS_FUN std::size_t operator()(uint64_t key) const {
-#ifdef HSHM_IS_GPU
+#if HSHM_IS_GPU
     return static_cast<std::size_t>(key);
 #else
     return std::hash<uint64_t>{}(key);
@@ -120,7 +120,7 @@ struct hash<uint64_t> {
 template <>
 struct hash<int8_t> {
   HSHM_INLINE_CROSS_FUN std::size_t operator()(int8_t key) const {
-#ifdef HSHM_IS_GPU
+#if HSHM_IS_GPU
     return static_cast<std::size_t>(key);
 #else
     return std::hash<int8_t>{}(key);
@@ -131,7 +131,7 @@ struct hash<int8_t> {
 template <>
 struct hash<int16_t> {
   HSHM_INLINE_CROSS_FUN std::size_t operator()(int16_t key) const {
-#ifdef HSHM_IS_GPU
+#if HSHM_IS_GPU
     return static_cast<std::size_t>(key);
 #else
     return std::hash<int16_t>{}(key);
@@ -142,7 +142,7 @@ struct hash<int16_t> {
 template <>
 struct hash<int32_t> {
   HSHM_INLINE_CROSS_FUN std::size_t operator()(int32_t key) const {
-#ifdef HSHM_IS_GPU
+#if HSHM_IS_GPU
     return static_cast<std::size_t>(key);
 #else
     return std::hash<int32_t>{}(key);
@@ -153,11 +153,21 @@ struct hash<int32_t> {
 template <>
 struct hash<int64_t> {
   HSHM_INLINE_CROSS_FUN std::size_t operator()(int64_t key) const {
-#ifdef HSHM_IS_GPU
+#if HSHM_IS_GPU
     return static_cast<std::size_t>(key);
 #else
     return std::hash<int64_t>{}(key);
 #endif
+  }
+};
+
+/**
+ * GPU-compatible equal_to functor
+ */
+template <typename T>
+struct equal_to {
+  HSHM_INLINE_CROSS_FUN bool operator()(const T &a, const T &b) const {
+    return a == b;
   }
 };
 

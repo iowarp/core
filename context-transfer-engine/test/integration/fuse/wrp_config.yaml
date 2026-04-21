@@ -1,0 +1,17 @@
+---
+# WRP Configuration for FUSE Integration Testing
+# Single-node configuration with RAM storage
+
+runtime:
+  num_threads: 4
+  queue_depth: 256
+
+compose:
+  - mod_name: wrp_cte_core
+    pool_name: cte_main
+    pool_query: local
+    pool_id: "512.0"
+    storage:
+      - path: /mnt/cte_fuse_ram
+        bdev_type: ram
+        capacity_limit: 100MB

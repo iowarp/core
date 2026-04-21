@@ -66,7 +66,7 @@ set(HSHM_EXPORTED_TARGETS "HermesShm")
 # ------------------------------------------------------------------------------
 
 # CMAKE_POSITION_INDEPENDENT_CODE is set by root CMakeLists.txt
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "^(Apple)?Clang$" OR CMAKE_CXX_COMPILER_ID STREQUAL "MinGW" OR CMAKE_CXX_COMPILER_ID MATCHES "^Intel")
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "^(Apple)?Clang$" OR CMAKE_CXX_COMPILER_ID STREQUAL "MinGW" OR CMAKE_CXX_COMPILER_ID MATCHES "^Intel" OR CMAKE_CXX_COMPILER_ID STREQUAL "NVHPC")
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         message("IN DEBUG MODE")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0 -Wfatal-errors")
@@ -99,7 +99,11 @@ elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     set(HSHM_COMPILER_MSVC "ON")
     set(REAL_TIME_FLAGS "ws2_32")
 else()
-    message(FATAL_ERROR "Unsupported compiler ${CMAKE_CXX_COMPILER_ID}")
+    # Treat unrecognized compilers (e.g. NVHPC on first cmake run) as GNU-compatible
+    message(WARNING "Unrecognized compiler '${CMAKE_CXX_COMPILER_ID}', assuming GNU-compatible flags")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O3")
+    set(HSHM_COMPILER_GNU "ON")
+    set(REAL_TIME_FLAGS "-lrt -ldl")
 endif()
 
 # ------------------------------------------------------------------------------
@@ -112,11 +116,15 @@ endif()
 
 # ENABLE GPU SUPPORT
 if(WRP_CORE_ENABLE_CUDA)
-    wrp_core_enable_cuda(17)
+    wrp_core_enable_cuda(20)
 endif()
 
 if(WRP_CORE_ENABLE_ROCM)
     wrp_core_enable_rocm("HIP" 17)
+endif()
+
+if(WRP_CORE_ENABLE_SYCL)
+    wrp_core_enable_sycl(17)
 endif()
 
 # ------------------------------------------------------------------------------
@@ -164,6 +172,25 @@ endif()
 if(WRP_CORE_ENABLE_THALLIUM)
     # Thallium dependencies would go here
 endif()
+if(WRP_CORE_ENABLE_NIXL)
+    find_library(NIXL_LIB NAMES nixl PATHS /usr/local/lib /usr/local/lib/x86_64-linux-gnu
+                 /usr/lib /usr/lib/x86_64-linux-gnu)
+    find_library(NIXL_BUILD_LIB NAMES nixl_build PATHS /usr/local/lib /usr/local/lib/x86_64-linux-gnu
+                 /usr/lib /usr/lib/x86_64-linux-gnu)
+    find_path(NIXL_INCLUDE NAMES nixl.h PATHS /usr/local/include /usr/include)
+    if(NIXL_LIB AND NIXL_INCLUDE)
+        message(STATUS "Found NIXL: lib=${NIXL_LIB} include=${NIXL_INCLUDE}")
+        target_link_libraries(lightbeam INTERFACE ${NIXL_LIB})
+        if(NIXL_BUILD_LIB)
+            target_link_libraries(lightbeam INTERFACE ${NIXL_BUILD_LIB})
+        endif()
+        target_include_directories(lightbeam INTERFACE ${NIXL_INCLUDE})
+    else()
+        message(WARNING "NIXL requested (WRP_CORE_ENABLE_NIXL=ON) but not found; disabling")
+        set(WRP_CORE_ENABLE_NIXL OFF)
+        set(HSHM_ENABLE_NIXL OFF CACHE BOOL "" FORCE)
+    endif()
+endif()
 if(WIN32)
     target_link_libraries(lightbeam INTERFACE ws2_32)
 endif()
@@ -172,6 +199,8 @@ target_compile_definitions(lightbeam INTERFACE
     HSHM_ENABLE_ZMQ=$<BOOL:${WRP_CORE_ENABLE_ZMQ}>
     HSHM_ENABLE_LIBFABRIC=$<BOOL:${WRP_CORE_ENABLE_LIBFABRIC}>
     HSHM_ENABLE_THALLIUM=$<BOOL:${WRP_CORE_ENABLE_THALLIUM}>
+    HSHM_ENABLE_NIXL=$<BOOL:${WRP_CORE_ENABLE_NIXL}>
+    HSHM_ENABLE_NVSHMEM=$<BOOL:${WRP_CORE_ENABLE_NVSHMEM}>
 )
 add_library(hshm::lightbeam ALIAS lightbeam)
 
@@ -344,6 +373,27 @@ target_compile_definitions(encrypt INTERFACE
 )
 add_library(hshm::encrypt ALIAS encrypt)
 
+# hshm::nixl - NIXL (NVIDIA Inference Xfer Library) transport
+add_library(nixl_transport INTERFACE)
+if(WRP_CORE_ENABLE_NIXL AND NIXL_LIB AND NIXL_INCLUDE)
+    target_link_libraries(nixl_transport INTERFACE ${NIXL_LIB})
+    if(NIXL_BUILD_LIB)
+        target_link_libraries(nixl_transport INTERFACE ${NIXL_BUILD_LIB})
+    endif()
+    target_include_directories(nixl_transport INTERFACE ${NIXL_INCLUDE})
+endif()
+target_compile_definitions(nixl_transport INTERFACE
+    HSHM_ENABLE_NIXL=$<BOOL:${WRP_CORE_ENABLE_NIXL}>
+)
+add_library(hshm::nixl ALIAS nixl_transport)
+
+# hshm::nvshmem - NVSHMEM GPU-to-GPU communication
+add_library(nvshmem_transport INTERFACE)
+target_compile_definitions(nvshmem_transport INTERFACE
+    HSHM_ENABLE_NVSHMEM=$<BOOL:${WRP_CORE_ENABLE_NVSHMEM}>
+)
+add_library(hshm::nvshmem ALIAS nvshmem_transport)
+
 # Legacy host_deps for backwards compatibility (will be removed)
 add_library(host_deps INTERFACE)
 target_link_libraries(host_deps INTERFACE
@@ -370,6 +420,8 @@ install(TARGETS
     compress
     aio
     encrypt
+    nixl_transport
+    nvshmem_transport
     host_deps
     EXPORT
     ${HSHM_EXPORTED_TARGETS}

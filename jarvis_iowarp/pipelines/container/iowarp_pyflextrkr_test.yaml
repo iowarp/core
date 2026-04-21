@@ -1,0 +1,57 @@
+# Pipeline: IOWarp + PyFLEXTRKR Container Test
+# Purpose: Run PyFLEXTRKR (Python h5py / h5netcdf atmospheric feature tracker)
+# with IOWarp CTE intercepting the HDF5 file I/O.
+#
+# Notes:
+#  - PyFLEXTRKR downloads a small idealized MCS dataset at runtime and runs
+#    the full 9-step tracking pipeline serially; this is the upstream self-test
+#    (see run_demo.sh in pyflextrkr_container).
+#  - We intercept HDF5 via the VOL connector since h5py/h5netcdf open files
+#    through libhdf5 directly (no MPI-IO / POSIX hook needed for the demo).
+#  - base_image is sci-hpc-base-cpu to avoid the CUDA dependency of the
+#    default sci-hpc-base — this host has no NVIDIA GPU.
+
+name: iowarp_pyflextrkr_test
+
+install_manager: container
+container_engine: docker
+container_base: ubuntu:24.04
+
+# Image is built locally by the pipeline; never try to pull it from a registry.
+# /tmp is bind-mounted so chimaera runtime inside the container can read
+# the hostfile path that jarvis stamped into its config (which lives on host).
+container_extensions:
+  pull_policy: never
+  volumes:
+    - /tmp:/tmp
+
+pkgs:
+  # IOWarp runtime (Chimaera storage daemon)
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    deploy_mode: container
+    git_branch: transparent-compress
+    cmake_preset: release-adapter
+    port: 9413
+    sleep: 2
+
+  # IOWarp Content Transfer Engine
+  - pkg_type: jarvis_iowarp.wrp_cte
+    deploy_mode: container
+
+  # PyFLEXTRKR demo (h5py + h5netcdf; runs run_demo.sh inside container).
+  # jarvis-cd dev branch renamed pyflextrkr_container → pyflextrkr and
+  # switched to the single-build-container flow.
+  - pkg_type: builtin.pyflextrkr
+    deploy_mode: container
+    demo: mcs_tbpf
+    nprocs: 1
+    ppn: 1
+    base_image: ubuntu:24.04
+
+interceptors:
+  # IOWarp HDF5 VOL connector intercepts h5py / h5netcdf dataset I/O
+  - pkg_type: jarvis_iowarp.wrp_adapters
+    vol: true
+    include:
+      - ".*pyflextrkr.*"
+    adapter_page_size: 1M

@@ -46,6 +46,9 @@ struct GpuIpcMemHandle {
 #if HSHM_ENABLE_ROCM
   hipIpcMemHandle_t rocm_;
 #endif
+#if HSHM_ENABLE_SYCL
+  void *sycl_ptr_;  // SYCL USM pointers are directly shareable; store base ptr
+#endif
 };
 
 class GpuApi {
@@ -55,16 +58,29 @@ class GpuApi {
     CUDA_ERROR_CHECK(cudaSetDevice(gpu_id));
 #elif HSHM_ENABLE_ROCM
     HIP_ERROR_CHECK(hipSetDevice(gpu_id));
+#elif HSHM_ENABLE_SYCL
+    // SYCL device selection is done via queue construction; no global set
+    (void)gpu_id;
 #endif
   }
 
   static int GetDeviceCount() {
     int ngpu = 0;
 #if HSHM_ENABLE_ROCM
-    HIP_ERROR_CHECK(hipGetDeviceCount(&ngpu));
-#endif
-#if HSHM_ENABLE_CUDA
-    CUDA_ERROR_CHECK(cudaGetDeviceCount(&ngpu));
+    if (hipGetDeviceCount(&ngpu) != hipSuccess) {
+      ngpu = 0;
+    }
+#elif HSHM_ENABLE_CUDA
+    if (cudaGetDeviceCount(&ngpu) != cudaSuccess) {
+      cudaGetLastError();  // Clear the error state
+      ngpu = 0;
+    }
+#elif HSHM_ENABLE_SYCL
+    auto platforms = sycl::platform::get_platforms();
+    for (auto &p : platforms) {
+      auto devs = p.get_devices(sycl::info::device_type::gpu);
+      ngpu += static_cast<int>(devs.size());
+    }
 #endif
     return ngpu;
   }
@@ -72,9 +88,50 @@ class GpuApi {
   static void Synchronize() {
 #if HSHM_ENABLE_ROCM
     HIP_ERROR_CHECK(hipDeviceSynchronize());
+#elif HSHM_ENABLE_CUDA
+    CUDA_ERROR_CHECK(cudaDeviceSynchronize());
+#elif HSHM_ENABLE_SYCL
+    SyclQueue().wait_and_throw();
+#endif
+  }
+
+  /** Synchronize a specific GPU stream instead of the whole device */
+  static void Synchronize(void *stream) {
+#if HSHM_ENABLE_ROCM
+    HIP_ERROR_CHECK(hipStreamSynchronize(static_cast<hipStream_t>(stream)));
 #endif
 #if HSHM_ENABLE_CUDA
-    CUDA_ERROR_CHECK(cudaDeviceSynchronize());
+    CUDA_ERROR_CHECK(
+        cudaStreamSynchronize(static_cast<cudaStream_t>(stream)));
+#endif
+  }
+
+  /** Create a non-blocking GPU stream */
+  static void *CreateStream() {
+    void *stream = nullptr;
+#if HSHM_ENABLE_ROCM
+    hipStream_t s;
+    HIP_ERROR_CHECK(
+        hipStreamCreateWithFlags(&s, hipStreamNonBlocking));
+    stream = s;
+#endif
+#if HSHM_ENABLE_CUDA
+    cudaStream_t s;
+    CUDA_ERROR_CHECK(
+        cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking));
+    stream = s;
+#endif
+    return stream;
+  }
+
+  /** Destroy a GPU stream */
+  static void DestroyStream(void *stream) {
+#if HSHM_ENABLE_ROCM
+    HIP_ERROR_CHECK(hipStreamDestroy(static_cast<hipStream_t>(stream)));
+#endif
+#if HSHM_ENABLE_CUDA
+    CUDA_ERROR_CHECK(
+        cudaStreamDestroy(static_cast<cudaStream_t>(stream)));
 #endif
   }
 
@@ -99,6 +156,15 @@ class GpuApi {
 #endif
   }
 
+  static void CloseIpcMemHandle(void *data) {
+#if HSHM_ENABLE_ROCM
+    HIP_ERROR_CHECK(hipIpcCloseMemHandle(data));
+#endif
+#if HSHM_ENABLE_CUDA
+    CUDA_ERROR_CHECK(cudaIpcCloseMemHandle(data));
+#endif
+  }
+
   template <typename T>
   static T *Malloc(size_t size) {
 #if HSHM_ENABLE_ROCM
@@ -107,9 +173,9 @@ class GpuApi {
     return ptr;
 #endif
 #if HSHM_ENABLE_CUDA
-    T *ptr;
-    CUDA_ERROR_CHECK(cudaMalloc(&ptr, size));
-    return ptr;
+    void *vptr;
+    CUDA_ERROR_CHECK(cudaMalloc(&vptr, size));
+    return static_cast<T *>(vptr);
 #endif
   }
 
@@ -119,11 +185,12 @@ class GpuApi {
     T *ptr;
     HIP_ERROR_CHECK(hipMallocManaged(&ptr, size));
     return ptr;
-#endif
-#if HSHM_ENABLE_CUDA
+#elif HSHM_ENABLE_CUDA
     T *ptr;
     CUDA_ERROR_CHECK(cudaMallocManaged(&ptr, size));
     return ptr;
+#elif HSHM_ENABLE_SYCL
+    return static_cast<T *>(sycl::malloc_shared(size, SyclQueue()));
 #endif
     return nullptr;
   }
@@ -132,11 +199,14 @@ class GpuApi {
   static void RegisterHostMemory(T *ptr, size_t size) {
 #if HSHM_ENABLE_ROCM
     HIP_ERROR_CHECK(
-        hipHostRegister((void *)ptr, size, hipHostRegisterPortable));
-#endif
-#if HSHM_ENABLE_CUDA
+        hipHostRegister((void *)ptr, size, hipHostRegisterPortable | hipHostRegisterMapped));
+#elif HSHM_ENABLE_CUDA
     CUDA_ERROR_CHECK(
-        cudaHostRegister((void *)ptr, size, cudaHostRegisterPortable));
+        cudaHostRegister((void *)ptr, size, cudaHostRegisterPortable | cudaHostRegisterMapped));
+#elif HSHM_ENABLE_SYCL
+    // SYCL USM host memory doesn't require explicit registration;
+    // use sycl::malloc_host for GPU-accessible host allocations when needed.
+    (void)ptr; (void)size;
 #endif
   }
 
@@ -144,19 +214,21 @@ class GpuApi {
   static void UnregisterHostMemory(T *ptr) {
 #if HSHM_ENABLE_ROCM
     HIP_ERROR_CHECK(hipHostUnregister((void *)ptr));
-#endif
-#if HSHM_ENABLE_CUDA
+#elif HSHM_ENABLE_CUDA
     CUDA_ERROR_CHECK(cudaHostUnregister((void *)ptr));
+#elif HSHM_ENABLE_SYCL
+    (void)ptr;
 #endif
   }
 
   template <typename T>
-  static void Memcpy(T *dst, T *src, size_t size) {
+  static void Memcpy(T *dst, const T *src, size_t size) {
 #if HSHM_ENABLE_ROCM
     HIP_ERROR_CHECK(hipMemcpy(dst, src, size, hipMemcpyDefault));
-#endif
-#if HSHM_ENABLE_CUDA
+#elif HSHM_ENABLE_CUDA
     CUDA_ERROR_CHECK(cudaMemcpy(dst, src, size, cudaMemcpyDefault));
+#elif HSHM_ENABLE_SYCL
+    SyclQueue().memcpy(dst, src, size).wait_and_throw();
 #endif
   }
 
@@ -193,18 +265,77 @@ class GpuApi {
   static void Free(T *ptr) {
 #if HSHM_ENABLE_ROCM
     HIP_ERROR_CHECK(hipFree(ptr));
-#endif
-#if HSHM_ENABLE_CUDA
+#elif HSHM_ENABLE_CUDA
     CUDA_ERROR_CHECK(cudaFree(ptr));
+#elif HSHM_ENABLE_SYCL
+    sycl::free(ptr, SyclQueue());
 #endif
   }
 
-#if HSHM_ENABLE_CUDA_OR_ROCM
+  /** Allocate pinned host memory accessible by GPU. */
+  template <typename T>
+  static T *MallocHost(size_t size) {
+#if HSHM_ENABLE_ROCM
+    T *ptr;
+    HIP_ERROR_CHECK(hipHostMalloc(&ptr, size, hipHostMallocDefault));
+    return ptr;
+#endif
+#if HSHM_ENABLE_CUDA
+    void *vptr;
+    CUDA_ERROR_CHECK(cudaMallocHost(&vptr, size));
+    return static_cast<T *>(vptr);
+#endif
+    return nullptr;
+  }
+
+  /** Free pinned host memory. */
+  template <typename T>
+  static void FreeHost(T *ptr) {
+#if HSHM_ENABLE_ROCM
+    HIP_ERROR_CHECK(hipHostFree(ptr));
+#endif
+#if HSHM_ENABLE_CUDA
+    CUDA_ERROR_CHECK(cudaFreeHost(ptr));
+#endif
+  }
+
+  /** Async memcpy (uses cudaMemcpyDefault direction). */
+  template <typename T>
+  static void MemcpyAsync(T *dst, const T *src, size_t size,
+                           void *stream = nullptr) {
+#if HSHM_ENABLE_ROCM
+    HIP_ERROR_CHECK(hipMemcpyAsync(dst, src, size, hipMemcpyDefault,
+                                    static_cast<hipStream_t>(stream)));
+#endif
+#if HSHM_ENABLE_CUDA
+    CUDA_ERROR_CHECK(cudaMemcpyAsync(dst, src, size, cudaMemcpyDefault,
+                                      static_cast<cudaStream_t>(stream)));
+#endif
+  }
+
+  /** Allocate device memory and copy host data into it. */
+  template <typename T>
+  static T *MallocAndCopy(const T *host_src, size_t copy_size,
+                           size_t alloc_size) {
+    T *device_ptr = Malloc<T>(alloc_size);
+    if (!device_ptr) return nullptr;
+    Memcpy(device_ptr, host_src, copy_size);
+    return device_ptr;
+  }
+
+#if HSHM_IS_GPU_COMPILER
   HSHM_GPU_FUN static size_t GetGlobalThreadId() {
     return threadIdx.x + blockIdx.x * blockDim.x +
            (threadIdx.y + blockIdx.y * blockDim.y) * (blockDim.x * gridDim.x) +
            (threadIdx.z + blockIdx.z * blockDim.z) *
                (blockDim.x * gridDim.x * blockDim.y * gridDim.y);
+  }
+#endif
+
+#if HSHM_ENABLE_SYCL
+  static sycl::queue &SyclQueue() {
+    static sycl::queue q{sycl::gpu_selector_v};
+    return q;
   }
 #endif
 };
