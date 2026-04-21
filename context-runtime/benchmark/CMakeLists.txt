@@ -1,10 +1,8 @@
 # Benchmark directory
-
 # BDev I/O throughput benchmark
 add_executable(wrp_run_thrpt_benchmark
   wrp_run_thrpt_benchmark.cc
 )
-
 target_link_libraries(wrp_run_thrpt_benchmark
   cxx                             # Core Chimaera runtime
   chimaera::bdev_client           # BDev client for I/O operations
@@ -12,14 +10,19 @@ target_link_libraries(wrp_run_thrpt_benchmark
   chimaera::admin_client          # Admin client for container creation
   hshm::cxx                       # HermesShm shared memory framework
 )
-
 # Install benchmark executable
 install(TARGETS wrp_run_thrpt_benchmark
   DESTINATION bin
 )
-
+# Edge scheduler latency benchmark
+add_executable(wrp_edge_benchmark wrp_edge_benchmark.cc)
+target_link_libraries(wrp_edge_benchmark
+  cxx                             # Core Chimaera runtime
+  chimaera::admin_client          # Admin client for generic task submission
+  hshm::cxx                       # HermesShm shared memory framework
+)
+install(TARGETS wrp_edge_benchmark DESTINATION bin)
 # GPU runtime latency benchmark
 add_subdirectory(bench_gpu_runtime)
-
 # CDP (CUDA Dynamic Parallelism) overhead benchmark — NVCC only
 add_subdirectory(bench_cdp)

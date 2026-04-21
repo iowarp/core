@@ -43,6 +43,7 @@
 #ifndef _WIN32
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <pthread.h>
 #endif
 
 #ifndef __NVCOMPILER
@@ -217,26 +218,35 @@ void Worker::Finalize() {
 }
 
 void Worker::Run() {
+  //Start Bryan's Changes
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  CPU_SET(worker_id_, &cpuset);
+  int rc = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+  if (rc != 0) {
+    // Log fatal error: "Failed to pin thread to core"
+  }
+  //End Bryan's Changes
+
   if (!is_initialized_) {
     return;
   }
-  // Set current worker once for the entire thread duration
+  HLOG(kInfo, "Worker {}: Running", worker_id_);
+
   SetAsCurrentWorker();
   is_running_ = true;
 
-  // Set up thread ID and signal event via EventManager
   pid_t tid = static_cast<pid_t>(syscall(SYS_gettid));
   if (assigned_lane_) {
     assigned_lane_->SetTid(tid);
   }
   event_manager_.AddSignalEvent(nullptr);
+  HLOG(kInfo, "Worker {}: EventManager signal event added, tid={}", worker_id_, tid);
 
-  // Main worker loop - process tasks from assigned lane
   while (is_running_) {
-    did_work_ = false;  // Reset work tracker at start of each loop iteration
-    task_did_work_ = false;  // Reset task-level work tracker
+    did_work_ = false;
+    task_did_work_ = false;
 
-    // Process tasks from assigned lane
     if (assigned_lane_) {
       u32 count = ProcessNewTasks(assigned_lane_);
       if (count > 0) did_work_ = true;
@@ -244,19 +254,13 @@ void Worker::Run() {
     u32 gpu_count = ProcessNewTasksGpu();
     if (gpu_count > 0) did_work_ = true;
 
-    // Check blocked queue for completed tasks at end of each iteration
     ContinueBlockedTasks(false);
-
-    // Increment iteration counter
     iteration_count_++;
 
     if (!did_work_) {
-      // No work was done - suspend worker with adaptive sleep
       SuspendMe();
     }
-
     if (did_work_) {
-      // Work was done - reset idle counters
       idle_iterations_ = 0;
       current_sleep_us_ = 0;
       sleep_count_ = 0;

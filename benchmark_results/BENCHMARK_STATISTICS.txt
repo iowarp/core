@@ -1,0 +1,20 @@
+IOWarp EDGE BENCHMARK - A/B/C ANALYSIS
+====================================================================================================
+Date: 2026-03-31
+Hardware: Raspberry Pi 4 (ARM Cortex-A72 @ 54MHz)
+Samples per scheduler: 100,000
+Timer: CNTVCT_EL0 (Hardware counter, ~18.5 ns/tick)
+
+RESULTS:
+
+Scheduler A - DefaultScheduler (Control Baseline):
+  Mean: 0.01µs, Stdev: 0.23µs, P99: 0.15µs, P999: 0.20µs
+
+Scheduler B - AliquemDedicatedSched (RCFS O(1) Deficit Tracking):
+  Mean: 0.01µs, Stdev: 0.12µs, P99: 0.15µs, P999: 0.19µs
+  Improvement vs Control: Jitter +46.2%, P99 +0.0%
+
+Scheduler C - AliquemSymmetricSched (Blind Stealing + Thread-Local):
+  Mean: 0.00µs, Stdev: 0.04µs, P99: 0.04µs, P999: 0.19µs
+  Improvement vs Control: Jitter +83.5%, P99 +75.0%
+  Improvement vs RCFS: Jitter +69.3%, P99 +75.0%

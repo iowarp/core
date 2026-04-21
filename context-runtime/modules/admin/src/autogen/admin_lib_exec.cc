@@ -191,7 +191,8 @@ chi::TaskResume Runtime::Run(chi::u32 method, hipc::FullPtr<chi::Task> task_ptr,
       break;
     }
     default: {
-      // Unknown method - do nothing
+      // Placeholder for future benchmark task handling
+      // Reserved for specialized task types
       break;
     }
   }

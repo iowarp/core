@@ -37,15 +37,25 @@
 #include "chimaera/scheduler/default_sched.h"
 #include "chimaera/scheduler/local_sched.h"
 
+//Bev Change
+#include "chimaera/scheduler/aliquem_dedicated_sched.h"
+#include "chimaera/scheduler/aliquem_symmetric_sched.h"
+//Bev End Change
+
 namespace chi {
 
 std::unique_ptr<Scheduler> SchedulerFactory::Get(const std::string &sched_name) {
   if (sched_name == "default") {
     return std::make_unique<DefaultScheduler>();
+  } else if (sched_name == "aliquem_dedicated") {
+    return std::make_unique<AliquemDedicatedSched>();
+  } else if (sched_name == "aliquem_symmetric") {
+    return std::make_unique<AliquemSymmetricSched>();
   }
   if (sched_name == "local") {
     return std::make_unique<LocalScheduler>();
   }
+
 
   // If scheduler name not recognized, return default scheduler
   HLOG(kWarning, "Unknown scheduler name '{}', using default scheduler",
