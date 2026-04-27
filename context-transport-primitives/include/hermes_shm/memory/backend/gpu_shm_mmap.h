@@ -118,11 +118,13 @@ class GpuShmMmap : public MemoryBackend, public UrlMemoryBackend {
     //     pinned pages DO participate in cache snooping on x86, making
     //     system-scope atomics (atomicExch_system, atomicAdd_system) immediately
     //     visible to CPU reads after cudaDeviceSynchronize() or via polling.
-    void *pinned_ptr = nullptr;
-    cudaError_t cuda_err = cudaMallocHost(&pinned_ptr, backend_size);
-    if (cuda_err != cudaSuccess) {
-      HLOG(kError, "cudaMallocHost failed: {}",
-           cudaGetErrorString(cuda_err));
+    // Route through GpuApi so each backend (CUDA, HIP, SYCL) uses its
+    // native pinned-host allocator: cudaMallocHost / hipHostMalloc /
+    // sycl::malloc_host respectively.
+    void *pinned_ptr = GpuApi::MallocHost<char>(backend_size);
+    if (!pinned_ptr) {
+      HLOG(kError, "GpuApi::MallocHost failed (backend_size={})",
+           backend_size);
       return false;
     }
 
@@ -178,9 +180,9 @@ class GpuShmMmap : public MemoryBackend, public UrlMemoryBackend {
       return;
     }
 
-    // Free pinned host memory allocated by shm_init via cudaMallocHost
+    // Free pinned host memory via the same backend used at shm_init.
     if (region_) {
-      cudaFreeHost(region_);
+      GpuApi::FreeHost(region_);
       region_ = nullptr;
       header_ = nullptr;
       data_ = nullptr;

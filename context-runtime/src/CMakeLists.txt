@@ -13,13 +13,18 @@ file(GLOB_RECURSE CHIMAERA_SOURCES
 # Only match src/ subdirectories to avoid picking up test files.
 file(GLOB_RECURSE CHIMAERA_MODULE_GPU_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/../modules/*/src/*_gpu.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/../modules/*/src/*_sycl.cc
 )
 
-# Separate GPU sources (_gpu.cc files) from CPU sources
+# Separate GPU sources (_gpu.cc / _sycl.cc files) from CPU sources.
+# _gpu.cc is compiled by NVCC/HIPCC under WRP_CORE_ENABLE_CUDA/ROCM,
+# and ignored under SYCL via its own #if HSHM_ENABLE_CUDA||HSHM_ENABLE_ROCM
+# guard. _sycl.cc is the SYCL twin: gated by #if HSHM_ENABLE_SYCL and
+# compiled by add_sycl_library() when WRP_CORE_ENABLE_SYCL is on.
 set(CHIMAERA_GPU_SOURCES "")
 set(CHIMAERA_CPU_SOURCES "")
 foreach(src ${CHIMAERA_SOURCES})
-  if(src MATCHES "_gpu\\.cc$")
+  if(src MATCHES "_(gpu|sycl)\\.cc$")
     list(APPEND CHIMAERA_GPU_SOURCES ${src})
   else()
     list(APPEND CHIMAERA_CPU_SOURCES ${src})
@@ -35,6 +40,7 @@ endforeach()
 # GPU containers in the orchestrator but live outside context-runtime/modules/.
 file(GLOB_RECURSE CHIMAERA_EXTERNAL_GPU_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/../../context-transfer-engine/core/src/*_gpu.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../context-transfer-engine/core/src/*_sycl.cc
 )
 foreach(src ${CHIMAERA_EXTERNAL_GPU_SOURCES})
   list(APPEND CHIMAERA_GPU_SOURCES ${src})
@@ -44,7 +50,7 @@ endforeach()
 set(CHIMAERA_LIB_NAME "${CHIMAERA_NAMESPACE}_cxx")
 add_library(${CHIMAERA_LIB_NAME} SHARED ${CHIMAERA_CPU_SOURCES})
 
-# Build GPU work orchestrator library if CUDA/ROCm enabled and GPU sources exist
+# Build GPU work orchestrator library if CUDA/ROCm/SYCL enabled and GPU sources exist
 if(CHIMAERA_GPU_SOURCES)
   if(WRP_CORE_ENABLE_CUDA)
     add_cuda_library(${CHIMAERA_LIB_NAME}_gpu SHARED TRUE ${CHIMAERA_GPU_SOURCES}
@@ -70,6 +76,28 @@ if(CHIMAERA_GPU_SOURCES)
     # PRIVATE link: prevents HSHM_ENABLE_CUDA from propagating to g++ compilations
     # of chimaera_cxx sources (transport-primitives headers use CUDA builtins
     # guarded by HSHM_ENABLE_CUDA which are not available in g++)
+    target_link_libraries(${CHIMAERA_LIB_NAME} PRIVATE ${CHIMAERA_LIB_NAME}_gpu)
+  elseif(WRP_CORE_ENABLE_SYCL)
+    add_sycl_library(${CHIMAERA_LIB_NAME}_gpu SHARED TRUE ${CHIMAERA_GPU_SOURCES}
+      INCLUDE_DIRS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../modules/admin/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../modules/MOD_NAME/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../modules/bdev/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../context-transport-primitives/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../context-transfer-engine/core/include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    target_include_directories(${CHIMAERA_LIB_NAME}_gpu PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../modules/admin/include>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../modules/MOD_NAME/include>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../modules/bdev/include>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../context-transport-primitives/include>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../context-transfer-engine/core/include>
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    )
+    target_link_libraries(${CHIMAERA_LIB_NAME}_gpu PUBLIC hshm::cxx)
     target_link_libraries(${CHIMAERA_LIB_NAME} PRIVATE ${CHIMAERA_LIB_NAME}_gpu)
   elseif(WRP_CORE_ENABLE_ROCM)
     add_rocm_gpu_library(${CHIMAERA_LIB_NAME}_gpu SHARED ${CHIMAERA_GPU_SOURCES})

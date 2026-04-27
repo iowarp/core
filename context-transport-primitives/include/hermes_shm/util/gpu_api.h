@@ -95,7 +95,9 @@ class GpuApi {
 #endif
   }
 
-  /** Synchronize a specific GPU stream instead of the whole device */
+  /** Synchronize a specific GPU stream instead of the whole device.
+   *  Under SYCL, "stream" is a heap-allocated sycl::queue created by
+   *  CreateStream(); pass null to fall back to whole-device synchronize. */
   static void Synchronize(void *stream) {
 #if HSHM_ENABLE_ROCM
     HIP_ERROR_CHECK(hipStreamSynchronize(static_cast<hipStream_t>(stream)));
@@ -104,9 +106,19 @@ class GpuApi {
     CUDA_ERROR_CHECK(
         cudaStreamSynchronize(static_cast<cudaStream_t>(stream)));
 #endif
+#if HSHM_ENABLE_SYCL
+    if (stream) {
+      static_cast<sycl::queue *>(stream)->wait_and_throw();
+    } else {
+      Synchronize();
+    }
+#endif
   }
 
-  /** Create a non-blocking GPU stream */
+  /** Create a non-blocking GPU stream.
+   *  Under SYCL, allocates a heap sycl::queue selected against the default
+   *  GPU device with the in_order property so submission order matches
+   *  CUDA stream semantics. Caller owns the returned pointer. */
   static void *CreateStream() {
     void *stream = nullptr;
 #if HSHM_ENABLE_ROCM
@@ -121,6 +133,10 @@ class GpuApi {
         cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking));
     stream = s;
 #endif
+#if HSHM_ENABLE_SYCL
+    stream = new sycl::queue(sycl::gpu_selector_v,
+                             sycl::property::queue::in_order{});
+#endif
     return stream;
   }
 
@@ -132,6 +148,9 @@ class GpuApi {
 #if HSHM_ENABLE_CUDA
     CUDA_ERROR_CHECK(
         cudaStreamDestroy(static_cast<cudaStream_t>(stream)));
+#endif
+#if HSHM_ENABLE_SYCL
+    delete static_cast<sycl::queue *>(stream);
 #endif
   }
 
@@ -171,11 +190,15 @@ class GpuApi {
     T *ptr;
     HIP_ERROR_CHECK(hipMalloc(&ptr, size));
     return ptr;
-#endif
-#if HSHM_ENABLE_CUDA
+#elif HSHM_ENABLE_CUDA
     void *vptr;
     CUDA_ERROR_CHECK(cudaMalloc(&vptr, size));
     return static_cast<T *>(vptr);
+#elif HSHM_ENABLE_SYCL
+    return static_cast<T *>(sycl::malloc_device(size, SyclQueue()));
+#else
+    (void)size;
+    return nullptr;
 #endif
   }
 
@@ -285,6 +308,9 @@ class GpuApi {
     CUDA_ERROR_CHECK(cudaMallocHost(&vptr, size));
     return static_cast<T *>(vptr);
 #endif
+#if HSHM_ENABLE_SYCL
+    return static_cast<T *>(sycl::malloc_host(size, SyclQueue()));
+#endif
     return nullptr;
   }
 
@@ -296,6 +322,9 @@ class GpuApi {
 #endif
 #if HSHM_ENABLE_CUDA
     CUDA_ERROR_CHECK(cudaFreeHost(ptr));
+#endif
+#if HSHM_ENABLE_SYCL
+    sycl::free(ptr, SyclQueue());
 #endif
   }
 

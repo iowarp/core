@@ -41,40 +41,52 @@
 #include "chimaera/MOD_NAME/MOD_NAME_gpu_runtime.h"
 #include "chimaera/singletons.h"
 #include "chimaera/gpu/container.h"
+#include "hermes_shm/util/gpu_intrinsics.h"
 
 namespace chimaera::MOD_NAME {
 
 HSHM_GPU_FUN void GpuRuntime::SubtaskTest(
     hipc::FullPtr<SubtaskTestTask> task,
     chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under SYCL resolves
+  // to the kernel-scope IpcManager pointer (set by the worker via
+  // rctx.ipc_mgr_). On CUDA/ROCm the rctx field is nullptr and CHI_IPC
+  // continues to reach the per-block __shared__ singleton.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   auto *ipc = CHI_IPC;
   chi::u32 num_subtasks = task->num_subtasks_;
   chi::u32 last_result = 0;
 
-  if (threadIdx.x == 0) {
-    printf("[SubtaskTest] START num_subtasks=%u test_value=%u "
-           "internal_queue=%p gpu_alloc=%p\n",
-           num_subtasks, task->test_value_,
-           (void*)ipc->gpu_info_.internal_queue,
-           (void*)ipc->gpu_alloc_);
+  // Backend-portable thread-0 guard: GetGpuThreadId returns threadIdx.x on
+  // CUDA/ROCm and 0 under SYCL single_task. HSHM_DEVICE_PRINTF is a no-op
+  // under SYCL since kernels can't call variadic ::printf.
+  const bool is_thread0 = (chi::gpu::IpcManager::GetGpuThreadId() == 0);
+  if (is_thread0) {
+    HSHM_DEVICE_PRINTF(
+        "[SubtaskTest] START num_subtasks=%u test_value=%u "
+        "internal_queue=%p gpu_alloc=%p\n",
+        num_subtasks, task->test_value_,
+        (void*)ipc->gpu_info_.internal_queue,
+        (void*)ipc->gpu_alloc_);
   }
-  __syncwarp();
+  HSHM_DEVICE_SYNCWARP();
 
   for (chi::u32 s = 0; s < num_subtasks; ++s) {
-    if (threadIdx.x == 0) printf("[SubtaskTest] iter %u: NewTask\n", s);
+    if (is_thread0) HSHM_DEVICE_PRINTF("[SubtaskTest] iter %u: NewTask\n", s);
     auto sub = ipc->NewTask<GpuSubmitTask>(
         chi::CreateTaskId(), pool_id_, chi::PoolQuery::Local(),
         /*gpu_id=*/chi::u32(0), task->test_value_);
-    if (threadIdx.x == 0) printf("[SubtaskTest] iter %u: Send, null=%d\n",
-                                  s, (int)sub.IsNull());
+    if (is_thread0) HSHM_DEVICE_PRINTF("[SubtaskTest] iter %u: Send, null=%d\n",
+                                       s, (int)sub.IsNull());
     auto future = ipc->Send(sub);
-    if (threadIdx.x == 0) printf("[SubtaskTest] iter %u: Wait\n", s);
+    if (is_thread0) HSHM_DEVICE_PRINTF("[SubtaskTest] iter %u: Wait\n", s);
     future.Wait();
     if (chi::gpu::IpcManager::IsWarpScheduler()) {
       last_result = future.get()->result_value_;
-      printf("[SubtaskTest] iter %u: done result=%u\n", s, last_result);
+      HSHM_DEVICE_PRINTF("[SubtaskTest] iter %u: done result=%u\n",
+                         s, last_result);
     }
-    __syncwarp();
+    HSHM_DEVICE_SYNCWARP();
   }
 
   if (chi::gpu::IpcManager::IsWarpScheduler()) {

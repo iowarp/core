@@ -42,7 +42,7 @@
 #include "chimaera/ipc/ipc_gpu2cpu.h"
 #include "chimaera/ipc/ipc_cpu2gpu.h"
 
-#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+#if HSHM_ENABLE_GPU
 
 #include "hermes_shm/memory/backend/gpu_malloc.h"
 #include "hermes_shm/memory/backend/gpu_shm_mmap.h"
@@ -83,6 +83,14 @@ class IpcManager {
   static HSHM_GPU_FUN inline u32 GetNumWarps() {
     return (gridDim.x * blockDim.x) / 32;
   }
+#elif HSHM_IS_SYCL_COMPILER
+  /** SYCL persistent orchestrator runs as 1-WI single_task; topology queries
+   *  collapse to constants. When Phase 3b lifts to nd_range submission these
+   *  will read from a captured sycl::nd_item passed via a kernel-scoped
+   *  thread-local; until then, returning the single-WI values is correct. */
+  static inline int GetGpuThreadId() { return 0; }
+  static inline int GetGpuNumThreads() { return 1; }
+  static inline u32 GetNumWarps() { return 1; }
 #endif
   /** Get the global warp ID within the grid */
   static HSHM_CROSS_FUN inline u32 GetWarpId() {
@@ -300,8 +308,10 @@ class IpcManager {
   // GPU-only allocator helpers
   // ================================================================
 
-#if HSHM_IS_GPU_COMPILER
-  HSHM_GPU_FUN HSHM_DEFAULT_ALLOC_GPU_T *FindGpuAlloc(
+#if HSHM_IS_GPU_COMPILER || HSHM_IS_SYCL_COMPILER
+  /** Resolve an allocator by id. Pure dispatch — no device intrinsics —
+   *  so it compiles under both CUDA/ROCm device passes and SYCL. */
+  HSHM_CROSS_FUN HSHM_DEFAULT_ALLOC_GPU_T *FindGpuAlloc(
       const hipc::AllocatorId &id) {
     if (gpu_alloc_ && gpu_alloc_->GetId() == id) {
       return static_cast<HSHM_DEFAULT_ALLOC_GPU_T *>(
@@ -311,7 +321,14 @@ class IpcManager {
                             static_cast<void *>(gpu_alloc_))
                       : nullptr;
   }
+#endif
 
+#if HSHM_IS_GPU_COMPILER
+  /** CUDA/ROCm only: return a pointer to per-block __shared__ storage so
+   *  every block in the persistent kernel grid gets its own IpcManager.
+   *  Under SYCL the equivalent is achieved with a stack-local IpcManager
+   *  in the SYCL CHIMAERA_GPU_*_INIT macros below — there is no portable
+   *  per-work-group `__shared__` analogue for single_task launches. */
   static HSHM_GPU_FUN __noinline__ IpcManager *GetBlockIpcManager() {
     __shared__ char s_ipc_bytes[sizeof(IpcManager)];
     return reinterpret_cast<IpcManager *>(s_ipc_bytes);
@@ -484,6 +501,11 @@ class IpcManager {
   bool is_gpu_runtime_ = false;
 
 #if HSHM_IS_HOST
+  // hipc::GpuMalloc lives in hermes_shm/memory/backend/gpu_malloc.h, which
+  // is gated to CUDA/ROCm. The SYCL host-side orchestrator uses
+  // GpuApi::Malloc / sycl::malloc_device directly; full SYCL counterparts
+  // for these per-device queue backends are a follow-up.
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
   struct GpuDeviceInfo {
     std::unique_ptr<hipc::GpuMalloc> gpu2gpu_queue_backend;
     std::unique_ptr<hipc::GpuMalloc> internal_queue_backend;
@@ -508,6 +530,7 @@ class IpcManager {
   std::vector<GpuDeviceInfo> gpu_devices_;
   std::vector<std::unique_ptr<hipc::GpuMalloc>> client_gpu_data_backends_;
   std::vector<std::unique_ptr<hipc::GpuMalloc>> client_alloc_backends_;
+#endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 
   struct GpuAllocInfo {
     hipc::AllocatorId alloc_id;
@@ -533,6 +556,55 @@ class IpcManager {
 // ================================================================
 // GPU kernel initialization macros
 // ================================================================
+
+#if HSHM_IS_SYCL_COMPILER
+
+// SYCL backend: orchestrator and client kernels run as q.single_task (one
+// work-item per kernel). There is no warp / sub-group consideration — the
+// IOWarp runtime no longer relies on warp-level intrinsics, so a single
+// IpcManager per kernel suffices.
+//
+// The IpcManager itself lives in HOST USM allocated by the host launcher
+// (e.g. WorkOrchestrator::Launch). The kernel functor captures the pointer
+// by value; these macros bind it to a kernel-scope local named
+// `g_ipc_manager_ptr` so the SYCL CHI_IPC macro (defined in ipc_manager.h)
+// can resolve to it via plain C++ name lookup. Code reachable from kernel
+// scope — including chimod methods called via the function-pointer
+// dispatch table — sees the same `g_ipc_manager_ptr`.
+//
+// The extra `ipc_ptr` parameter is the difference vs. CUDA's macros, which
+// reach a per-block IpcManager via __shared__ + GetBlockIpcManager().
+#define CHIMAERA_GPU_INIT(gpu_info, ipc_ptr)                                  \
+  chi::gpu::IpcManager *g_ipc_manager_ptr = (ipc_ptr);                        \
+  int num_threads = chi::gpu::IpcManager::GetGpuNumThreads();                 \
+  g_ipc_manager_ptr->ClientInitGpu(gpu_info, num_threads);                    \
+  chi::gpu::IpcManager &g_ipc_manager = *g_ipc_manager_ptr
+
+#define CHI_CLIENT_GPU_INIT(gpu_info, ipc_ptr) CHIMAERA_GPU_INIT(gpu_info, ipc_ptr)
+
+#define CHIMAERA_GPU_CLIENT_INIT(gpu_info, num_blocks, ipc_ptr)               \
+  chi::gpu::IpcManager *g_ipc_manager_ptr = (ipc_ptr);                        \
+  int num_threads = chi::gpu::IpcManager::GetGpuNumThreads();                 \
+  g_ipc_manager_ptr->ClientInitGpu(gpu_info, num_threads, num_blocks);        \
+  chi::gpu::IpcManager &g_ipc_manager = *g_ipc_manager_ptr
+
+#define CHIMAERA_GPU_ORCHESTRATOR_INIT(gpu_info, num_blocks, ipc_ptr)         \
+  chi::gpu::IpcManager *g_ipc_manager_ptr = (ipc_ptr);                        \
+  int num_threads = chi::gpu::IpcManager::GetGpuNumThreads();                 \
+  g_ipc_manager_ptr->ClientInitGpu(gpu_info, num_threads, num_blocks);        \
+  g_ipc_manager_ptr->is_gpu_runtime_ = true;                                  \
+  chi::gpu::IpcManager &g_ipc_manager = *g_ipc_manager_ptr
+
+#define CHIMAERA_GPU_SUBTASK_INIT(gpu_info, num_blocks, ipc_ptr)              \
+  chi::gpu::IpcManager *g_ipc_manager_ptr = (ipc_ptr);                        \
+  int num_threads = chi::gpu::IpcManager::GetGpuNumThreads();                 \
+  g_ipc_manager_ptr->ClientInitGpu(gpu_info, num_threads, num_blocks);        \
+  g_ipc_manager_ptr->is_gpu_runtime_ = true;                                  \
+  int s_partition_id = g_ipc_manager_ptr->ClaimPartition();                   \
+  chi::gpu::IpcManager &g_ipc_manager = *g_ipc_manager_ptr;                   \
+  (void)s_partition_id
+
+#else  // CUDA / ROCm path
 
 #define CHIMAERA_GPU_INIT(gpu_info)                                           \
   chi::gpu::IpcManager *g_ipc_manager_ptr =                                   \
@@ -585,5 +657,7 @@ class IpcManager {
   chi::gpu::IpcManager &g_ipc_manager = *g_ipc_manager_ptr;                   \
   (void)s_partition_id
 
-#endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+#endif  // HSHM_IS_SYCL_COMPILER
+
+#endif  // HSHM_ENABLE_GPU
 #endif  // CHIMAERA_INCLUDE_CHIMAERA_GPU_IPC_MANAGER_H_

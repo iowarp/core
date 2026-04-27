@@ -39,7 +39,7 @@
 #include "chimaera/gpu/gpu_info.h"
 #include <string>
 
-#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+#if HSHM_ENABLE_GPU
 
 namespace chi {
 
@@ -128,7 +128,15 @@ class WorkOrchestrator {
  public:
   WorkOrchestratorControl *control_ = nullptr;
   void *d_pool_mgr_ = nullptr;  // gpu::PoolManager* on device (opaque for header)
-  void *stream_ = nullptr;      // cudaStream_t for dedicated orchestrator stream
+  void *stream_ = nullptr;      // cudaStream_t / sycl::queue* for dedicated orchestrator stream
+  // Host USM staging for IpcManagerGpuInfo (SYCL only — captured by pointer
+  // in the persistent kernel since the struct isn't device-copyable).
+  // Always nullptr on the CUDA/ROCm path.
+  IpcManagerGpuInfo *gpu_info_storage_ = nullptr;
+  // Host USM IpcManager (SYCL only). The persistent kernel captures this
+  // pointer so CHI_IPC under SYCL resolves to it. Phase 10 plumbing —
+  // CUDA/ROCm reach the IpcManager through __shared__ + GetBlockIpcManager.
+  IpcManager *ipc_storage_ = nullptr;
   bool is_launched_ = false;
 
   // Saved launch parameters for Pause/Resume
@@ -220,5 +228,5 @@ hipc::FullPtr<GpuTaskQueue> InitQueueOnDevice(char *device_data, size_t capacity
 }  // namespace gpu
 }  // namespace chi
 
-#endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
+#endif  // HSHM_ENABLE_GPU
 #endif  // CHIMAERA_INCLUDE_CHIMAERA_GPU_WORK_ORCHESTRATOR_H_

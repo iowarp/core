@@ -12,6 +12,7 @@
 #include "chimaera/singletons.h"
 #include "chimaera/MOD_NAME/MOD_NAME_tasks.h"
 #include "chimaera/MOD_NAME/autogen/MOD_NAME_methods.h"
+#include "hermes_shm/util/gpu_intrinsics.h"  // HSHM_DEVICE_ATOMIC_ADD_*
 
 namespace chimaera::MOD_NAME {
 
@@ -30,7 +31,9 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task The subtask test task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void SubtaskTest(
+  // SubtaskTest body lives in MOD_NAME_runtime_gpu.cc — needs SYCL_EXTERNAL
+  // for cross-TU device linkage under DPC++.
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void SubtaskTest(
       hipc::FullPtr<SubtaskTestTask> task,
       chi::gpu::RunContext &rctx);
 
@@ -43,8 +46,11 @@ class GpuRuntime : public chi::gpu::Container {
   HSHM_GPU_FUN void GpuSubmit(hipc::FullPtr<GpuSubmitTask> task,
                                chi::gpu::RunContext &rctx) {
     task->result_value_ = (task->test_value_ * 3) + task->gpu_id_;
-#if !HSHM_IS_HOST
-    atomicAdd(&task->counter_value_, 1u);
+    // HSHM_IS_DEVICE_PASS fires on any device-only compile pass (CUDA,
+    // ROCm, SYCL); HSHM_IS_HOST stayed true under SYCL device pass and
+    // would have skipped the atomic.
+#if HSHM_IS_DEVICE_PASS
+    HSHM_DEVICE_ATOMIC_ADD_U32_DEVICE(&task->counter_value_, 1u);
 #endif
   }
 

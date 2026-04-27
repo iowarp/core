@@ -337,7 +337,17 @@ struct LockOwnerId {
   }
 };
 
+// Host implementation lives in chimaera_manager.cc. Under any device pass
+// (CUDA/ROCm/SYCL) return a default-constructed sentinel — chimods that
+// would call this from device code (corwlock helpers traced by DPC++) get
+// a parseable inline body instead of an unresolved external reference.
+#if !HSHM_IS_DEVICE_PASS
 LockOwnerId GetCurrentLockOwnerId();
+#else
+inline HSHM_CROSS_FUN LockOwnerId GetCurrentLockOwnerId() {
+  return LockOwnerId{};
+}
+#endif
 
 using MethodId = u32;
 
@@ -459,7 +469,13 @@ constexpr PoolId kAdminPoolId =
 /** Allocator scope for NewObj: private (warp-local) or shared (cross-warp) */
 enum class AllocScope { kPrivate, kShared };
 
-#if HSHM_IS_HOST
+// Use the host allocators when compiling host CPU code under any compiler;
+// any device pass (CUDA/ROCm/SYCL) takes the GPU branch below. Switching
+// from `HSHM_IS_HOST` to `!HSHM_IS_DEVICE_PASS` is what lets DPC++'s SYCL
+// device pass — where HSHM_IS_HOST=1 because no __CUDA_ARCH__ is set —
+// avoid the host-only MallocAllocatorSingleton (whose function-local
+// static is rejected by SYCL kernels).
+#if !HSHM_IS_DEVICE_PASS
 #define CHI_TASK_ALLOC_T  hipc::MultiProcessAllocator
 #define CHI_PRIV_ALLOC_T  hipc::MallocAllocator
 #define CHI_PRIV_ALLOC    HSHM_MALLOC
@@ -529,10 +545,12 @@ struct TaskCounter {
  * @return TaskId with pid, tid, major, replica_id_, unique, and node_id
  * populated
  */
-#if HSHM_IS_HOST
+#if !HSHM_IS_DEVICE_PASS
 TaskId CreateTaskId();  // Host implementation in chimaera_manager.cc
 #else
-// GPU inline implementation - simplified version
+// Device-pass inline implementation — simplified version. Used under
+// CUDA/ROCm/SYCL device passes; HSHM_IS_DEVICE_PASS makes the SYCL pass
+// pick the inline body instead of the unresolved host declaration.
 inline HSHM_CROSS_FUN TaskId CreateTaskId() {
   TaskId id;
   id.pid_ = 0;

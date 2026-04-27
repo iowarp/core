@@ -66,11 +66,26 @@ static constexpr const char *kCtePoolName = "wrp_cte_core";
 using Timestamp = chi::u64;
 
 #if HSHM_IS_GPU_COMPILER
-// GPU compiler: CROSS_FUN so __device__ bodies can call it in both passes.
-// Use __CUDA_ARCH__ (defined in device pass only) to select the right impl.
+// CUDA/ROCm GPU compiler: CROSS_FUN so __device__ bodies can call it in
+// both passes. Use __CUDA_ARCH__ (defined in device pass only) to select
+// the right impl.
 HSHM_CROSS_FUN inline Timestamp GetCurrentTimeNs() {
 #ifdef __CUDA_ARCH__
   return 0;  // GPU device code: return 0 (no clock available)
+#else
+  return static_cast<chi::u64>(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+#endif
+}
+#elif HSHM_IS_SYCL_COMPILER
+// SYCL: device pass has no portable clock and the SYCL frontend traces
+// through inline functions during kernel parsing, so std::chrono is
+// unreachable. Pick by HSHM_IS_DEVICE_PASS — host pass uses chrono,
+// device pass returns 0. Both branches must compile under the SYCL
+// driver since it processes the file twice.
+inline Timestamp GetCurrentTimeNs() {
+#if HSHM_IS_DEVICE_PASS
+  return 0;
 #else
   return static_cast<chi::u64>(
       std::chrono::steady_clock::now().time_since_epoch().count());

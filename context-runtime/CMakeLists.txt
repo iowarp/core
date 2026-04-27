@@ -14,6 +14,11 @@ if(WRP_CORE_ENABLE_ROCM)
     wrp_core_enable_rocm(HIP 17)
 endif()
 
+# Enable SYCL if requested
+if(WRP_CORE_ENABLE_SYCL)
+    wrp_core_enable_sycl(20)
+endif()
+
 # Read namespace from chimaera_repo.yaml in project root (function defined in ChimaeraCommon.cmake)
 # This will be called after the utilities are included below
 

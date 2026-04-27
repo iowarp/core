@@ -454,7 +454,7 @@ struct WriteTask : public chi::Task {
 
   /** Destructor - free buffer if TASK_DATA_OWNER is set */
   HSHM_CROSS_FUN ~WriteTask() {
-#if HSHM_IS_HOST
+#if !HSHM_IS_DEVICE_PASS
     if (task_flags_.Any(TASK_DATA_OWNER) && !data_.IsNull()) {
       auto *ipc_manager = CHI_CPU_IPC;
       if (ipc_manager) {
@@ -535,7 +535,7 @@ struct ReadTask : public chi::Task {
 
   /** Destructor - free buffer if TASK_DATA_OWNER is set */
   HSHM_CROSS_FUN ~ReadTask() {
-#if HSHM_IS_HOST
+#if !HSHM_IS_DEVICE_PASS
     if (task_flags_.Any(TASK_DATA_OWNER) && !data_.IsNull()) {
       auto *ipc_manager = CHI_CPU_IPC;
       if (ipc_manager) {

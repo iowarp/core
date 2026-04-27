@@ -94,12 +94,28 @@ namespace hshm {
  * @param LOG_CODE The log level (kDebug, kInfo, kWarning, kError, kFatal)
  * @param ... Format string and arguments
  */
+// On the host pass, dispatch through the Logger singleton.
+//
+// On any device pass (CUDA/ROCm/SYCL), HLOG must be a no-op:
+//   - HSHM_LOG resolves through CrossSingleton<Logger>::GetInstance(),
+//     which holds a function-local static. DPC++ rejects non-const
+//     statics in SYCL kernels.
+//   - The arguments (cast to (void)) need to still be parsed so callers
+//     don't accidentally rely on lazy evaluation.
+//   - Defensive HLOG calls in transitively-reachable code (e.g. inside
+//     hipc::vector growth, deserialization paths) get traced by DPC++
+//     during kernel JIT even when not executed; making this a no-op
+//     stops that trace at the HLOG seam.
+#if !HSHM_IS_DEVICE_PASS
 #define HLOG(LOG_CODE, ...)                                               \
   do {                                                                    \
     if constexpr (LOG_CODE >= HSHM_LOG_LEVEL) {                           \
       HSHM_LOG->Log<LOG_CODE>(__FILE__, __func__, __LINE__, __VA_ARGS__); \
     }                                                                     \
   } while (false)
+#else
+#define HLOG(LOG_CODE, ...) ((void)0)
+#endif
 
 /**
  * Logger class for handling log output
@@ -116,7 +132,7 @@ class Logger {
 
   HSHM_CROSS_FUN
   Logger() {
-#if HSHM_IS_HOST
+#if HSHM_IS_HOST && !HSHM_IS_DEVICE_PASS
     fout_ = nullptr;
     runtime_log_level_ = HSHM_LOG_LEVEL;  // Default to compile-time level
 
@@ -204,7 +220,7 @@ class Logger {
 
   template <typename... Args>
   HSHM_CROSS_FUN void Print(const char *fmt, Args &&...args) {
-#if HSHM_IS_HOST
+#if HSHM_IS_HOST && !HSHM_IS_DEVICE_PASS
     std::string msg = hshm::Formatter::format(fmt, std::forward<Args>(args)...);
     std::string out = hshm::Formatter::format("{}\n", msg);
     std::cout << out;
@@ -217,7 +233,7 @@ class Logger {
   template <int LOG_CODE, typename... Args>
   HSHM_CROSS_FUN void Log(const char *path, const char *func, int line,
                           const char *fmt, Args &&...args) {
-#if HSHM_IS_HOST
+#if HSHM_IS_HOST && !HSHM_IS_DEVICE_PASS
     // Runtime log level check
     if (!ShouldLog(LOG_CODE)) {
       return;

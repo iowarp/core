@@ -114,34 +114,135 @@ macro(wrp_core_enable_rocm GPU_RUNTIME CXX_STANDARD)
     endif()
 endmacro()
 
-# Enable Intel GPU / SYCL (oneAPI icpx -fsycl)
-# Note: SYCL flags are NOT applied globally to avoid breaking PCH and non-SYCL
-# targets. Use target_compile_options / target_link_options on SYCL targets,
-# or call wrp_core_apply_sycl_flags(<target>) defined below.
+# Enable Intel GPU / SYCL (oneAPI icpx -fsycl, or AdaptiveCpp acpp)
+#
+# Detects the SYCL compiler flavor and sets WRP_SYCL_COMPILER (DPCPP|ACPP).
+# Configures default values for SYCL_TARGET / SYCL_DEVICE / SYCL_CUDA_ARCH
+# that callers can override on the CMake command line.
+#
+# Flags are NOT applied globally to avoid breaking PCH and non-SYCL targets.
+# Use add_sycl_library / add_sycl_executable (defined below near
+# add_cuda_library / add_cuda_executable), or call wrp_core_apply_sycl_flags()
+# directly on a target that contains SYCL device code.
 macro(wrp_core_enable_sycl CXX_STANDARD)
     set(CMAKE_CXX_STANDARD ${CXX_STANDARD})
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-    # Intel GPU target for Aurora (Ponte Vecchio / PVC)
-    set(SYCL_TARGET "spir64_gen" CACHE STRING "SYCL AOT target (default: spir64_gen for Intel GPU)")
-    set(SYCL_DEVICE "pvc" CACHE STRING "SYCL AOT device (default: pvc for Aurora Ponte Vecchio)")
+    # Compiler flavor detection. Override with -DWRP_SYCL_COMPILER=DPCPP|ACPP.
+    if(NOT DEFINED WRP_SYCL_COMPILER)
+        get_filename_component(_wrp_cxx_name "${CMAKE_CXX_COMPILER}" NAME)
+        if(_wrp_cxx_name MATCHES "^(acpp|syclcc|hipsycl)" OR
+           CMAKE_CXX_COMPILER_ID STREQUAL "AdaptiveCpp")
+            set(WRP_SYCL_COMPILER "ACPP" CACHE STRING
+                "SYCL compiler flavor (DPCPP|ACPP)")
+        else()
+            # Default to DPC++ for icpx, dpcpp, and clang++ with -fsycl.
+            set(WRP_SYCL_COMPILER "DPCPP" CACHE STRING
+                "SYCL compiler flavor (DPCPP|ACPP)")
+        endif()
+    endif()
 
-    message(STATUS "SYCL enabled: target=${SYCL_TARGET} device=${SYCL_DEVICE}")
+    # SYCL target triple. Override with -DSYCL_TARGET=...
+    #   spir64               JIT, runs on any OpenCL/Level Zero device
+    #   spir64_gen           AOT, requires SYCL_DEVICE (e.g. pvc, dg2, gen12lp)
+    #   nvptx64-nvidia-cuda  NVIDIA GPUs via DPC++ CUDA backend
+    #   amdgcn-amd-amdhsa    AMD GPUs via DPC++ ROCm backend
+    if(NOT DEFINED CACHE{SYCL_TARGET})
+        set(SYCL_TARGET "spir64" CACHE STRING
+            "SYCL target triple (spir64|spir64_gen|nvptx64-nvidia-cuda|amdgcn-amd-amdhsa)")
+    endif()
+    if(NOT DEFINED CACHE{SYCL_DEVICE})
+        set(SYCL_DEVICE "" CACHE STRING
+            "SYCL AOT device for spir64_gen target (e.g. pvc, dg2, gen12lp)")
+    endif()
+    if(NOT DEFINED CACHE{SYCL_CUDA_ARCH})
+        set(SYCL_CUDA_ARCH "sm_70" CACHE STRING
+            "CUDA architecture when SYCL_TARGET=nvptx64-nvidia-cuda")
+    endif()
+
+    # Opt-in flag for SYCL device-side virtual functions.
+    # -fsycl-allow-virtual-functions is supported by recent DPC++ nightlies;
+    # leave OFF unless you have confirmed your toolchain accepts it.
+    option(WRP_SYCL_ALLOW_VIRTUAL_FUNCTIONS
+        "Pass -fsycl-allow-virtual-functions to DPC++ (recent compiler only)"
+        OFF)
+
+    message(STATUS "SYCL enabled: compiler=${WRP_SYCL_COMPILER} target=${SYCL_TARGET} device=${SYCL_DEVICE}")
 endmacro()
 
 # Apply SYCL compile and link flags to a specific target.
-# Call this for each executable or library that contains SYCL device code.
+# Used by add_sycl_library / add_sycl_executable; callers may also invoke
+# directly when integrating with externally-defined targets.
+#
+# Flags applied:
+#   DPCPP  -fsycl, -fsycl-targets=<target>, -fsycl-allow-func-ptr
+#          -fsycl-unnamed-lambda, plus AOT/CUDA backend args when applicable.
+#          -fsycl-allow-virtual-functions if WRP_SYCL_ALLOW_VIRTUAL_FUNCTIONS=ON.
+#   ACPP   --acpp-targets=<target>.
+#
+# -fsycl-allow-func-ptr is required by chi::gpu::Container's function-pointer
+# dispatch table; without it DPC++ rejects taking the address of device
+# functions.
 function(wrp_core_apply_sycl_flags target)
-    target_compile_options(${target} PRIVATE
-        -fsycl
-        -fsycl-targets=${SYCL_TARGET}
-        "SHELL:-Xsycl-target-backend \"-device ${SYCL_DEVICE}\""
-    )
-    target_link_options(${target} PRIVATE
-        -fsycl
-        -fsycl-targets=${SYCL_TARGET}
-        "SHELL:-Xsycl-target-backend \"-device ${SYCL_DEVICE}\""
-    )
+    if(NOT DEFINED WRP_SYCL_COMPILER)
+        message(FATAL_ERROR
+            "WRP_SYCL_COMPILER is not set; call wrp_core_enable_sycl(<CXX_STANDARD>) "
+            "before defining SYCL targets")
+    endif()
+
+    target_compile_definitions(${target} PRIVATE HSHM_ENABLE_SYCL=1)
+
+    if(WRP_SYCL_COMPILER STREQUAL "DPCPP")
+        # -fsycl-allow-func-ptr is a Clang -cc1 flag in current DPC++
+        # nightlies, so pass it through with -Xclang. Ditto for the
+        # virtual-functions opt-in.
+        target_compile_options(${target} PRIVATE
+            -fsycl
+            -fsycl-targets=${SYCL_TARGET}
+            -fsycl-unnamed-lambda
+            -Xclang -fsycl-allow-func-ptr
+        )
+        target_link_options(${target} PRIVATE
+            -fsycl
+            -fsycl-targets=${SYCL_TARGET}
+        )
+
+        # AOT device flags only meaningful for spir64_gen target
+        if(SYCL_TARGET STREQUAL "spir64_gen" AND SYCL_DEVICE)
+            target_compile_options(${target} PRIVATE
+                "SHELL:-Xsycl-target-backend \"-device ${SYCL_DEVICE}\""
+            )
+            target_link_options(${target} PRIVATE
+                "SHELL:-Xsycl-target-backend \"-device ${SYCL_DEVICE}\""
+            )
+        endif()
+
+        # NVIDIA backend (DPC++ with CUDA support, e.g. clang-sycl-cuda nightlies)
+        if(SYCL_TARGET MATCHES "nvptx64")
+            target_compile_options(${target} PRIVATE
+                "SHELL:-Xsycl-target-backend=nvptx64-nvidia-cuda --cuda-gpu-arch=${SYCL_CUDA_ARCH}"
+            )
+            target_link_options(${target} PRIVATE
+                "SHELL:-Xsycl-target-backend=nvptx64-nvidia-cuda --cuda-gpu-arch=${SYCL_CUDA_ARCH}"
+            )
+        endif()
+
+        if(WRP_SYCL_ALLOW_VIRTUAL_FUNCTIONS)
+            target_compile_options(${target} PRIVATE
+                -Xclang -fsycl-allow-virtual-functions)
+            target_link_options(${target} PRIVATE
+                -Xclang -fsycl-allow-virtual-functions)
+        endif()
+    elseif(WRP_SYCL_COMPILER STREQUAL "ACPP")
+        target_compile_options(${target} PRIVATE
+            --acpp-targets=${SYCL_TARGET}
+        )
+        target_link_options(${target} PRIVATE
+            --acpp-targets=${SYCL_TARGET}
+        )
+    else()
+        message(FATAL_ERROR "Unknown WRP_SYCL_COMPILER='${WRP_SYCL_COMPILER}' (expected DPCPP or ACPP)")
+    endif()
 endfunction()
 
 # Function for setting source files for rocm
@@ -328,6 +429,110 @@ function(add_cuda_executable TARGET DO_COPY)
 
     if(CUDA_LINK_LIBS)
         target_link_libraries(${TARGET} ${CUDA_LINK_LIBS})
+    endif()
+endfunction()
+
+
+# Function for setting SYCL source files.
+#
+# SYCL is a single-source C++ model: device code lives in regular .cc/.cpp
+# files compiled by the configured CXX compiler (icpx/clang++ for DPC++,
+# acpp for AdaptiveCpp). DO_COPY mirrors set_cuda_sources / set_rocm_sources
+# behavior — when TRUE, sources are configure_file()'d into a per-target
+# binary directory.
+function(set_sycl_sources DO_COPY SRC_FILES SYCL_SOURCE_FILES_VAR)
+    set(SYCL_SOURCE_FILES ${${SYCL_SOURCE_FILES_VAR}} PARENT_SCOPE)
+
+    foreach(SOURCE IN LISTS SRC_FILES)
+        if(${DO_COPY})
+            set(SYCL_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/sycl/${SOURCE})
+            configure_file(${SOURCE} ${SYCL_SOURCE} COPYONLY)
+        else()
+            set(SYCL_SOURCE ${SOURCE})
+        endif()
+
+        list(APPEND SYCL_SOURCE_FILES ${SYCL_SOURCE})
+    endforeach()
+
+    set(${SYCL_SOURCE_FILES_VAR} ${SYCL_SOURCE_FILES} PARENT_SCOPE)
+endfunction()
+
+
+# Function for adding a SYCL library (DPC++ icpx, or AdaptiveCpp acpp).
+#
+# Compiles via the configured CXX compiler with SYCL flags applied through
+# wrp_core_apply_sycl_flags(). wrp_core_enable_sycl(<CXX_STANDARD>) must be
+# called before use so WRP_SYCL_COMPILER and SYCL_TARGET are set.
+#
+# Usage:
+#   add_sycl_library(TARGET SHARED|STATIC DO_COPY source1.cc ...
+#       [INCLUDE_DIRS dir1 dir2 ...]
+#       [LINK_LIBS lib1 lib2 ...])
+function(add_sycl_library TARGET SHARED DO_COPY)
+    cmake_parse_arguments(SYCL "" "" "INCLUDE_DIRS;LINK_LIBS" ${ARGN})
+    set(SRC_FILES ${SYCL_UNPARSED_ARGUMENTS})
+
+    set(SYCL_SOURCE_FILES "")
+    set_sycl_sources("${DO_COPY}" "${SRC_FILES}" SYCL_SOURCE_FILES)
+
+    add_library(${TARGET} ${SHARED} ${SYCL_SOURCE_FILES})
+
+    set_target_properties(${TARGET} PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+
+    wrp_core_apply_sycl_flags(${TARGET})
+
+    if(SYCL_INCLUDE_DIRS)
+        foreach(_dir IN LISTS SYCL_INCLUDE_DIRS)
+            target_include_directories(${TARGET} PUBLIC
+                $<BUILD_INTERFACE:${_dir}>)
+        endforeach()
+    endif()
+
+    if(SYCL_LINK_LIBS)
+        target_link_libraries(${TARGET} ${SYCL_LINK_LIBS})
+    endif()
+endfunction()
+
+
+# Function for adding a SYCL executable (DPC++ icpx, or AdaptiveCpp acpp).
+#
+# Usage:
+#   add_sycl_executable(TARGET DO_COPY source1.cc ...
+#       [INCLUDE_DIRS dir1 dir2 ...]
+#       [LINK_LIBS lib1 lib2 ...]
+#       [DEFS DEF1 DEF2 ...])
+function(add_sycl_executable TARGET DO_COPY)
+    cmake_parse_arguments(SYCL "" "" "INCLUDE_DIRS;LINK_LIBS;DEFS" ${ARGN})
+    set(SRC_FILES ${SYCL_UNPARSED_ARGUMENTS})
+
+    set(SYCL_SOURCE_FILES "")
+    set_sycl_sources("${DO_COPY}" "${SRC_FILES}" SYCL_SOURCE_FILES)
+
+    add_executable(${TARGET} ${SYCL_SOURCE_FILES})
+
+    set_target_properties(${TARGET} PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+
+    wrp_core_apply_sycl_flags(${TARGET})
+
+    if(${DO_COPY})
+        target_include_directories(${TARGET} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    endif()
+
+    if(SYCL_INCLUDE_DIRS)
+        foreach(_dir IN LISTS SYCL_INCLUDE_DIRS)
+            target_include_directories(${TARGET} PUBLIC
+                $<BUILD_INTERFACE:${_dir}>)
+        endforeach()
+    endif()
+
+    if(SYCL_DEFS)
+        target_compile_definitions(${TARGET} PRIVATE ${SYCL_DEFS})
+    endif()
+
+    if(SYCL_LINK_LIBS)
+        target_link_libraries(${TARGET} ${SYCL_LINK_LIBS})
     endif()
 endfunction()
 
@@ -710,6 +915,13 @@ function(add_chimod_runtime)
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
       )
       message(STATUS "GPU companion ${GPU_TARGET_NAME} created with CUDA for: ${GPU_SOURCES}")
+    elseif(WRP_CORE_ENABLE_SYCL)
+      add_sycl_library(${GPU_TARGET_NAME} SHARED TRUE ${GPU_SOURCES})
+      target_link_libraries(${GPU_TARGET_NAME} PUBLIC ${TARGET_NAME} hshm::cxx)
+      target_include_directories(${GPU_TARGET_NAME} PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      )
+      message(STATUS "GPU companion ${GPU_TARGET_NAME} created with SYCL for: ${GPU_SOURCES}")
     elseif(WRP_CORE_ENABLE_ROCM)
       add_rocm_gpu_library(${GPU_TARGET_NAME} SHARED TRUE ${GPU_SOURCES})
       target_link_libraries(${GPU_TARGET_NAME} PUBLIC ${TARGET_NAME} hshm::cxx)

@@ -122,7 +122,9 @@ struct RwLock {
           return;
         }
       }
+#if !HSHM_IS_DEVICE_PASS
       HSHM_THREAD_MODEL->Yield();
+#endif
     } while (true);
   }
 
@@ -155,7 +157,9 @@ struct RwLock {
           return;
         }
       }
+#if !HSHM_IS_DEVICE_PASS
       HSHM_THREAD_MODEL->Yield();
+#endif
     } while (true);
   }
 

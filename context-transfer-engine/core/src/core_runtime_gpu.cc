@@ -49,6 +49,11 @@
 #include <hermes_shm/data_structures/priv/unordered_map_ll.h>
 #include <hermes_shm/thread/lock/mutex.h>
 
+// Backend-conditional GPU intrinsic wrappers (HSHM_DEVICE_FENCE_DEVICE,
+// HSHM_DEVICE_ATOMIC_ADD_U32_DEVICE) so this TU compiles under both
+// nvcc/hipcc (CUDA path) and DPC++/AdaptiveCpp (SYCL path).
+#include "hermes_shm/util/gpu_intrinsics.h"
+
 namespace wrp_cte::core {
 
 /** Default number of blob map slots (open addressing) */
@@ -169,10 +174,13 @@ HSHM_GPU_FUN static chi::priv::string MakeCompoundKey(
 
 HSHM_GPU_FUN void GpuRuntime::RegisterTarget(
     hipc::FullPtr<RegisterTargetTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)rctx;
   if (!chi::gpu::IpcManager::IsWarpScheduler()) return;
 
-  EnsureMetaInit();
+  EnsureMetaInit(g_ipc_manager_ptr);
 
   // Build TargetInfo directly — avoid string allocations that require
   // the GPU allocator (may not be available in CPU→GPU CDP context).
@@ -193,16 +201,25 @@ HSHM_GPU_FUN void GpuRuntime::RegisterTarget(
 
 HSHM_GPU_FUN void GpuRuntime::UnregisterTarget(
     hipc::FullPtr<UnregisterTargetTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
 HSHM_GPU_FUN void GpuRuntime::ListTargets(
     hipc::FullPtr<ListTargetsTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
 HSHM_GPU_FUN void GpuRuntime::StatTargets(
     hipc::FullPtr<StatTargetsTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
@@ -210,7 +227,13 @@ HSHM_GPU_FUN void GpuRuntime::StatTargets(
 // EnsureMetaInit — double-checked locking with threadfence
 //==============================================================================
 
-HSHM_GPU_FUN void GpuRuntime::EnsureMetaInit() {
+HSHM_GPU_FUN void GpuRuntime::EnsureMetaInit(
+    chi::gpu::IpcManager *ipc_mgr_in) {
+  // Bind g_ipc_manager_ptr so CHI_IPC (= g_ipc_manager_ptr under SYCL)
+  // resolves correctly inside this method body. ipc_mgr_in is passed by
+  // every caller from its rctx.ipc_mgr_; on CUDA/ROCm it's nullptr and
+  // CHI_IPC reaches the per-block __shared__ singleton.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = ipc_mgr_in;
   // Scratch persists across pause/resume — metadata is never invalidated.
   GpuMetadata *m = *reinterpret_cast<GpuMetadata *volatile *>(&meta_);
   if (m != nullptr) return;
@@ -220,9 +243,9 @@ HSHM_GPU_FUN void GpuRuntime::EnsureMetaInit() {
   hipc::FullPtr<GpuMetadata> ptr =
       CHI_IPC->NewObj<GpuMetadata>();
   ptr->targets_.reserve(16);
-  __threadfence();
+  HSHM_DEVICE_FENCE_DEVICE();
   meta_ = ptr.ptr_;
-  __threadfence();
+  HSHM_DEVICE_FENCE_DEVICE();
 }
 
 //==============================================================================
@@ -271,9 +294,12 @@ HSHM_GPU_FUN chi::priv::string GpuRuntime::MakeBlobKey(const TagId &tag_id,
 HSHM_GPU_FUN void GpuRuntime::GetOrCreateTag(
     hipc::FullPtr<GetOrCreateTagTask<CreateParams>> task,
     chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)rctx;
   if (!chi::gpu::IpcManager::IsWarpScheduler()) return;
-  EnsureMetaInit();
+  EnsureMetaInit(g_ipc_manager_ptr);
 
   chi::priv::string name(CHI_PRIV_ALLOC, task->tag_name_.data());
   TagId preferred_id = task->tag_id_;
@@ -292,7 +318,7 @@ HSHM_GPU_FUN void GpuRuntime::GetOrCreateTag(
     tag_id = preferred_id;
   } else {
     tag_id.major_ = container_id_;
-    tag_id.minor_ = atomicAdd(&next_tag_minor_, 1u) + 1;
+    tag_id.minor_ = HSHM_DEVICE_ATOMIC_ADD_U32_DEVICE(&next_tag_minor_, 1u) + 1;
   }
 
   // Insert into both maps (fine-grained locks inside)
@@ -308,6 +334,9 @@ HSHM_GPU_FUN void GpuRuntime::GetOrCreateTag(
 
 HSHM_GPU_FUN void GpuRuntime::GetTagSize(
     hipc::FullPtr<GetTagSizeTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
@@ -317,9 +346,12 @@ HSHM_GPU_FUN void GpuRuntime::GetTagSize(
 
 HSHM_GPU_FUN void GpuRuntime::DelTag(
     hipc::FullPtr<DelTagTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)rctx;
   if (!chi::gpu::IpcManager::IsWarpScheduler()) return;
-  EnsureMetaInit();
+  EnsureMetaInit(g_ipc_manager_ptr);
 
   TagId tag_id = task->tag_id_;
 
@@ -376,6 +408,9 @@ HSHM_GPU_FUN void GpuRuntime::DelTag(
 
 HSHM_GPU_FUN void GpuRuntime::GetContainedBlobs(
     hipc::FullPtr<GetContainedBlobsTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
@@ -385,9 +420,12 @@ HSHM_GPU_FUN void GpuRuntime::GetContainedBlobs(
 
 HSHM_GPU_FUN void GpuRuntime::PutBlob(
     hipc::FullPtr<PutBlobTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)rctx;
   if (!chi::gpu::IpcManager::IsWarpScheduler()) return;
-  EnsureMetaInit();
+  EnsureMetaInit(g_ipc_manager_ptr);
   TagId tag_id = task->tag_id_;
   const char *blob_name = task->blob_name_.data();
   int blob_name_len = static_cast<int>(task->blob_name_.size());
@@ -454,7 +492,12 @@ HSHM_GPU_FUN void GpuRuntime::PutBlob(
       chi::CreateTaskId(), target_info.bdev_client_.pool_id_,
       target_info.target_query_, size);
   auto alloc_future = CHI_IPC->Send(alloc_task_ptr);
+  // WaitGpu lives on chi::gpu::Future (device-pass return type of
+  // CHI_IPC->Send). Gate against HSHM_IS_DEVICE_PASS so the SYCL host
+  // pass — which sees chi::Future (no WaitGpu) — skips this line.
+#if HSHM_IS_DEVICE_PASS
   alloc_future.WaitGpu();
+#endif
 
   if (alloc_task_ptr->blocks_.empty()) {
     task->return_code_ = 8;  // Allocation failed
@@ -468,7 +511,9 @@ HSHM_GPU_FUN void GpuRuntime::PutBlob(
       chi::CreateTaskId(), target_info.bdev_client_.pool_id_,
       warp_query, alloc_task_ptr->blocks_, task->blob_data_, size);
   auto write_future = CHI_IPC->Send(write_task_ptr);
+#if HSHM_IS_DEVICE_PASS
   write_future.WaitGpu();
+#endif
 
   if (write_task_ptr->return_code_ != 0) {
     task->return_code_ = 9;  // Write failed
@@ -542,9 +587,12 @@ HSHM_GPU_FUN void GpuRuntime::PutBlob(
 
 HSHM_GPU_FUN void GpuRuntime::GetBlob(
     hipc::FullPtr<GetBlobTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)rctx;
   if (!chi::gpu::IpcManager::IsWarpScheduler()) return;
-  EnsureMetaInit();
+  EnsureMetaInit(g_ipc_manager_ptr);
   TagId tag_id = task->tag_id_;
   const char *blob_name = task->blob_name_.data();
   int blob_name_len = static_cast<int>(task->blob_name_.size());
@@ -602,7 +650,9 @@ HSHM_GPU_FUN void GpuRuntime::GetBlob(
       chi::CreateTaskId(), blocks[0].bdev_client_.pool_id_,
       warp_query, read_blocks, task->blob_data_, size);
   auto read_future = CHI_IPC->Send(read_task_ptr);
+#if HSHM_IS_DEVICE_PASS
   read_future.WaitGpu();
+#endif
 
   if (read_task_ptr->return_code_ != 0) {
     task->return_code_ = 4;  // Read failed
@@ -622,9 +672,12 @@ HSHM_GPU_FUN void GpuRuntime::GetBlob(
 
 HSHM_GPU_FUN void GpuRuntime::ReorganizeBlob(
     hipc::FullPtr<ReorganizeBlobTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)rctx;
   if (!chi::gpu::IpcManager::IsWarpScheduler()) return;
-  EnsureMetaInit();
+  EnsureMetaInit(g_ipc_manager_ptr);
   TagId tag_id = task->tag_id_;
   const char *blob_name = task->blob_name_.data();
   int blob_name_len = static_cast<int>(task->blob_name_.size());
@@ -656,9 +709,12 @@ HSHM_GPU_FUN void GpuRuntime::ReorganizeBlob(
 
 HSHM_GPU_FUN void GpuRuntime::DelBlob(
     hipc::FullPtr<DelBlobTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)rctx;
   if (!chi::gpu::IpcManager::IsWarpScheduler()) return;
-  EnsureMetaInit();
+  EnsureMetaInit(g_ipc_manager_ptr);
   TagId tag_id = task->tag_id_;
   const char *blob_name = task->blob_name_.data();
   int blob_name_len = static_cast<int>(task->blob_name_.size());
@@ -703,46 +759,73 @@ HSHM_GPU_FUN void GpuRuntime::DelBlob(
 
 HSHM_GPU_FUN void GpuRuntime::GetBlobScore(
     hipc::FullPtr<GetBlobScoreTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
 HSHM_GPU_FUN void GpuRuntime::GetBlobSize(
     hipc::FullPtr<GetBlobSizeTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
 HSHM_GPU_FUN void GpuRuntime::GetBlobInfo(
     hipc::FullPtr<GetBlobInfoTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
 HSHM_GPU_FUN void GpuRuntime::PollTelemetryLog(
     hipc::FullPtr<PollTelemetryLogTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
 HSHM_GPU_FUN void GpuRuntime::TagQuery(
     hipc::FullPtr<TagQueryTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
 HSHM_GPU_FUN void GpuRuntime::BlobQuery(
     hipc::FullPtr<BlobQueryTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
 HSHM_GPU_FUN void GpuRuntime::GetTargetInfo(
     hipc::FullPtr<GetTargetInfoTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
 HSHM_GPU_FUN void GpuRuntime::FlushMetadata(
     hipc::FullPtr<FlushMetadataTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 
 HSHM_GPU_FUN void GpuRuntime::FlushData(
     hipc::FullPtr<FlushDataTask> task, chi::gpu::RunContext &rctx) {
+  // Bind g_ipc_manager_ptr from RunContext so CHI_IPC under
+  // SYCL resolves to the kernel-scope IpcManager pointer.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
   (void)task; (void)rctx;
 }
 

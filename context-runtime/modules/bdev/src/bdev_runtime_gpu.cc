@@ -8,6 +8,10 @@
 #include "chimaera/bdev/bdev_gpu_runtime.h"
 #include "chimaera/singletons.h"
 
+// Backend-conditional GPU intrinsic wrappers (HSHM_DEVICE_FENCE_SYSTEM,
+// HSHM_DEVICE_ATOMIC_ADD_U64_DEVICE, HSHM_DEVICE_PRINTF).
+#include "hermes_shm/util/gpu_intrinsics.h"
+
 namespace chimaera::bdev {
 
 // ---------------------------------------------------------------------------
@@ -75,13 +79,16 @@ HSHM_GPU_FUN void GpuRuntime::AllocateBlocks(
   }
 
   if (!found) {
-    chi::u64 old_pos = (chi::u64)atomicAdd(
-        (unsigned long long *)&gpu_heap_,
-        (unsigned long long)alloc_size);
+    // Bump-pointer device-scope reservation. Wrap the rollback as
+    // unsigned-add of a negative-cast so the same expression works under
+    // CUDA atomicAdd and SYCL atomic_ref::fetch_add.
+    chi::u64 old_pos = static_cast<chi::u64>(
+        HSHM_DEVICE_ATOMIC_ADD_U64_DEVICE(&gpu_heap_, alloc_size));
 
     if (old_pos + alloc_size > total_size_) {
-      atomicAdd((unsigned long long *)&gpu_heap_,
-                (unsigned long long)(-(long long)alloc_size));
+      HSHM_DEVICE_ATOMIC_ADD_U64_DEVICE(
+          &gpu_heap_,
+          static_cast<unsigned long long>(-static_cast<long long>(alloc_size)));
       task->return_code_ = 1;
       (void)rctx;
       return;
@@ -126,16 +133,27 @@ HSHM_GPU_FUN void GpuRuntime::FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
 
 HSHM_GPU_FUN void GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
                                      chi::gpu::RunContext &rctx) {
-  (void)rctx;
-  chi::u32 lane = threadIdx.x % 32;
+  // Bind g_ipc_manager_ptr from RunContext::ipc_mgr_ so CHI_IPC (which
+  // expands to g_ipc_manager_ptr under SYCL) resolves correctly inside
+  // this method body. On CUDA/ROCm rctx.ipc_mgr_ is nullptr and CHI_IPC
+  // continues to reach the per-block __shared__ singleton via
+  // GetBlockIpcManager(); the unused local is elided by the compiler.
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
+  // GetLaneId() returns threadIdx.x % 32 on CUDA/ROCm and 0 under SYCL
+  // single_task (where the kernel runs as 1 work-item, so the warp-stripe
+  // copy collapses to lane-0-does-everything). num_lanes follows
+  // GetGpuNumThreads() so the SYCL single-thread path copies the full
+  // range instead of just stripe 0.
+  chi::u32 lane = chi::gpu::IpcManager::GetLaneId();
   if (lane == 0) {
     auto *ipc_tmp = CHI_IPC;
     auto dp = ipc_tmp->ToFullPtr(task->data_).template Cast<char>();
     char *db = reinterpret_cast<char*>((bdev_type_ == 2) ? hbm_ptr_ : pinned_ptr_);
-    printf("[BDEV-WRITE] len=%llu src=%p dst_base=%p blk0_off=%llu first_src=%02x\n",
-           (unsigned long long)task->length_, (void*)dp.ptr_, (void*)db,
-           (unsigned long long)(task->blocks_.size() > 0 ? task->blocks_[0].offset_ : 0),
-           (unsigned)(dp.ptr_ ? (unsigned char)dp.ptr_[0] : 0));
+    HSHM_DEVICE_PRINTF(
+        "[BDEV-WRITE] len=%llu src=%p dst_base=%p blk0_off=%llu first_src=%02x\n",
+        (unsigned long long)task->length_, (void*)dp.ptr_, (void*)db,
+        (unsigned long long)(task->blocks_.size() > 0 ? task->blocks_[0].offset_ : 0),
+        (unsigned)(dp.ptr_ ? (unsigned char)dp.ptr_[0] : 0));
   }
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
@@ -159,7 +177,7 @@ HSHM_GPU_FUN void GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
   hipc::FullPtr<char> data_ptr = ipc_mgr->ToFullPtr(task->data_).template Cast<char>();
   char *src = data_ptr.ptr_;
 
-  chi::u32 num_lanes = chi::gpu::kWarpSize;
+  chi::u32 num_lanes = static_cast<chi::u32>(chi::gpu::IpcManager::GetGpuNumThreads());
 
   size_t num_blocks = task->blocks_.size();
   chi::u64 data_off = 0;
@@ -181,6 +199,9 @@ HSHM_GPU_FUN void GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
     const char *my_src = block_src + my_start;
     char *my_dst = block_dst + my_start;
 
+#if HSHM_IS_GPU_COMPILER
+    // CUDA/ROCm fast path: 16-byte vector loads/stores when both ptrs are
+    // aligned. uint4 is a CUDA built-in type from <vector_types.h>.
     bool aligned16 = ((reinterpret_cast<uintptr_t>(my_dst) |
                         reinterpret_cast<uintptr_t>(my_src)) & 15) == 0;
     if (aligned16 && my_len >= sizeof(uint4)) {
@@ -199,15 +220,22 @@ HSHM_GPU_FUN void GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
         my_dst[b] = my_src[b];
       }
     }
-    __threadfence_system();
+#else
+    // SYCL: __builtin_memcpy. The compiler vectorizes through SPIR-V
+    // intrinsics; uint4 isn't part of the standard SYCL types and would
+    // require sycl::vec which complicates the dual-backend source.
+    __builtin_memcpy(my_dst, my_src, my_len);
+#endif
+    HSHM_DEVICE_FENCE_SYSTEM();
     data_off += copy_size;
   }
 
   if (lane == 0) {
     task->bytes_written_ = data_off;
     task->return_code_ = 0;
-    printf("[BDEV-WRITE] done bytes=%llu rc=%d\n",
-           (unsigned long long)data_off, (int)task->return_code_);
+    HSHM_DEVICE_PRINTF("[BDEV-WRITE] done bytes=%llu rc=%d\n",
+                       (unsigned long long)data_off,
+                       (int)task->return_code_);
   }
 }
 
@@ -217,8 +245,8 @@ HSHM_GPU_FUN void GpuRuntime::Write(hipc::FullPtr<WriteTask> task,
 
 HSHM_GPU_FUN void GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
                                     chi::gpu::RunContext &rctx) {
-  (void)rctx;
-  chi::u32 lane = threadIdx.x % 32;
+  [[maybe_unused]] auto *g_ipc_manager_ptr = rctx.ipc_mgr_;
+  chi::u32 lane = chi::gpu::IpcManager::GetLaneId();
   static constexpr chi::u32 kHbm    = static_cast<chi::u32>(BdevType::kHbm);
   static constexpr chi::u32 kPinned = static_cast<chi::u32>(BdevType::kPinned);
   static constexpr chi::u32 kNoop   = static_cast<chi::u32>(BdevType::kNoop);
@@ -241,12 +269,13 @@ HSHM_GPU_FUN void GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
   hipc::FullPtr<char> data_ptr = ipc_mgr->ToFullPtr(task->data_).template Cast<char>();
   char *dst = data_ptr.ptr_;
   if (lane == 0) {
-    printf("[BDEV-READ] len=%llu src_base=%p dst=%p blk0_off=%llu\n",
-           (unsigned long long)task->length_, (void*)src_base, (void*)dst,
-           (unsigned long long)(task->blocks_.size() > 0 ? task->blocks_[0].offset_ : 0));
+    HSHM_DEVICE_PRINTF(
+        "[BDEV-READ] len=%llu src_base=%p dst=%p blk0_off=%llu\n",
+        (unsigned long long)task->length_, (void*)src_base, (void*)dst,
+        (unsigned long long)(task->blocks_.size() > 0 ? task->blocks_[0].offset_ : 0));
   }
 
-  chi::u32 num_lanes = chi::gpu::kWarpSize;
+  chi::u32 num_lanes = static_cast<chi::u32>(chi::gpu::IpcManager::GetGpuNumThreads());
 
   size_t num_blocks = task->blocks_.size();
   chi::u64 data_off = 0;
@@ -268,6 +297,7 @@ HSHM_GPU_FUN void GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
     const char *my_src = block_src + my_start;
     char *my_dst = block_dst + my_start;
 
+#if HSHM_IS_GPU_COMPILER
     bool aligned16 = ((reinterpret_cast<uintptr_t>(my_dst) |
                         reinterpret_cast<uintptr_t>(my_src)) & 15) == 0;
     if (aligned16 && my_len >= sizeof(uint4)) {
@@ -286,11 +316,14 @@ HSHM_GPU_FUN void GpuRuntime::Read(hipc::FullPtr<ReadTask> task,
         my_dst[b] = my_src[b];
       }
     }
-    __threadfence_system();
+#else
+    __builtin_memcpy(my_dst, my_src, my_len);
+#endif
+    HSHM_DEVICE_FENCE_SYSTEM();
     data_off += copy_size;
   }
 
-  __threadfence_system();
+  HSHM_DEVICE_FENCE_SYSTEM();
 
   if (lane == 0) {
     task->bytes_read_ = data_off;

@@ -23,8 +23,10 @@ enum class GpuBlockSizeCategory : chi::u32 {
   kNumCategories = 4
 };
 
-/** Block sizes in bytes for each GPU category */
-__device__ static constexpr chi::u64 kGpuBlockSizes[] = {
+/** Block sizes in bytes for each GPU category.
+ *  HSHM_GPU_VAR expands to __device__ on CUDA/ROCm and to nothing on SYCL,
+ *  so this constexpr array is reachable from both backends. */
+HSHM_GPU_VAR static constexpr chi::u64 kGpuBlockSizes[] = {
     4096,       // 4KB
     65536,      // 64KB
     131072,     // 128KB
@@ -94,20 +96,24 @@ class GpuRuntime : public chi::gpu::Container {
     return -1;  // larger than any cached size
   }
 
-  HSHM_GPU_FUN void Update(hipc::FullPtr<UpdateTask> task,
-                            chi::gpu::RunContext &rctx);
+  // HSHM_DEVICE_EXTERN tags these as cross-TU device functions: their
+  // bodies live in bdev_runtime_gpu.cc. Required by SYCL_EXTERNAL on DPC++;
+  // a no-op on CUDA/ROCm (separable compilation handles cross-TU device
+  // linkage).
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void Update(
+      hipc::FullPtr<UpdateTask> task, chi::gpu::RunContext &rctx);
 
-  HSHM_GPU_FUN void AllocateBlocks(hipc::FullPtr<AllocateBlocksTask> task,
-                                    chi::gpu::RunContext &rctx);
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void AllocateBlocks(
+      hipc::FullPtr<AllocateBlocksTask> task, chi::gpu::RunContext &rctx);
 
-  HSHM_GPU_FUN void FreeBlocks(hipc::FullPtr<FreeBlocksTask> task,
-                                chi::gpu::RunContext &rctx);
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void FreeBlocks(
+      hipc::FullPtr<FreeBlocksTask> task, chi::gpu::RunContext &rctx);
 
-  HSHM_GPU_FUN void Write(hipc::FullPtr<WriteTask> task,
-                           chi::gpu::RunContext &rctx);
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void Write(
+      hipc::FullPtr<WriteTask> task, chi::gpu::RunContext &rctx);
 
-  HSHM_GPU_FUN void Read(hipc::FullPtr<ReadTask> task,
-                          chi::gpu::RunContext &rctx);
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void Read(
+      hipc::FullPtr<ReadTask> task, chi::gpu::RunContext &rctx);
 
   HSHM_GPU_FUN chi::TaskStat GetTaskStats(chi::u32 method_id) const {
     chi::TaskStat stat;

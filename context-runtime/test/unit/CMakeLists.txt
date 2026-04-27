@@ -496,6 +496,71 @@ if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
   )
 endif()
 
+# SYCL backend smoke test (WorkOrchestrator + GpuApi + HSHM_DEVICE_*
+# intrinsics). Built by add_sycl_executable so it picks up the same
+# -fsycl flags that compile chimaera_cxx_gpu under DPC++/AdaptiveCpp.
+if(WRP_CORE_ENABLE_SYCL)
+  add_sycl_executable(test_sycl_runtime FALSE gpu/test_sycl_runtime.cc
+    INCLUDE_DIRS
+      ${CHIMAERA_ROOT}/include
+      ${CHIMAERA_ROOT}/test
+    LINK_LIBS chimaera_cxx chimaera_cxx_gpu hshm::cxx ${CMAKE_THREAD_LIBS_INIT}
+  )
+  set_target_properties(test_sycl_runtime PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  add_test(NAME cr_sycl_runtime_tests COMMAND test_sycl_runtime
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_sycl_runtime_tests PROPERTIES
+    ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    TIMEOUT 60
+    LABELS "gpu;sycl"
+  )
+
+  # Per-chimod allocation smoke test — exercises the autogen SYCL kernel
+  # for each registered GpuRuntime subclass (admin, bdev, wrp_cte_core).
+  #
+  # The chimod _gpu.cc source files are added directly to the executable
+  # rather than pulled in through chimaera_cxx_gpu.so. DPC++ device-side
+  # linking does NOT propagate SYCL_EXTERNAL symbols across shared-library
+  # boundaries on the nvptx64 backend; the device images live alongside
+  # the host code inside libchimaera_cxx_gpu.so but the SYCL JIT can't
+  # resolve them when JIT-linking a downstream kernel. Including the
+  # source files keeps every HSHM_DEVICE_EXTERN-tagged definition in the
+  # same device-link unit as the autogen kernel that takes their
+  # addresses.
+  add_sycl_executable(test_sycl_chimods FALSE
+    gpu/test_sycl_chimods.cc
+    ${CHIMAERA_ROOT}/src/gpu/work_orchestrator_sycl.cc
+    ${CHIMAERA_ROOT}/modules/MOD_NAME/src/MOD_NAME_runtime_gpu.cc
+    ${CHIMAERA_ROOT}/modules/bdev/src/bdev_runtime_gpu.cc
+    ${CHIMAERA_ROOT}/../context-transfer-engine/core/src/core_runtime_gpu.cc
+    ${CHIMAERA_ROOT}/../context-transfer-engine/compressor/src/compressor_runtime_gpu.cc
+    INCLUDE_DIRS
+      ${CHIMAERA_ROOT}/include
+      ${CHIMAERA_ROOT}/src                      # autogen/gpu_work_orchestrator_modules.h
+      ${CHIMAERA_ROOT}/modules/admin/include    # admin_gpu_runtime.h
+      ${CHIMAERA_ROOT}/modules/bdev/include     # bdev_gpu_runtime.h
+      ${CHIMAERA_ROOT}/modules/MOD_NAME/include # MOD_NAME_gpu_runtime.h
+      ${CHIMAERA_ROOT}/../context-transfer-engine/core/include      # core_gpu_runtime.h
+      ${CHIMAERA_ROOT}/../context-transfer-engine/compressor/include # compressor_gpu_runtime.h
+      ${CHIMAERA_ROOT}/test
+    LINK_LIBS chimaera_cxx hshm::cxx ${CMAKE_THREAD_LIBS_INIT}
+  )
+  set_target_properties(test_sycl_chimods PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  add_test(NAME cr_sycl_chimods_tests COMMAND test_sycl_chimods
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+  )
+  set_tests_properties(cr_sycl_chimods_tests PROPERTIES
+    ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+    TIMEOUT 60
+    LABELS "gpu;sycl;chimod"
+  )
+endif()
+
 # GPU task trace tests — CPU->GPU, GPU->GPU, GPU->CPU end-to-end traces
 if(WRP_CORE_ENABLE_CUDA OR WRP_CORE_ENABLE_ROCM)
   add_cuda_executable(test_gpu_task_trace FALSE gpu/test_gpu_task_trace.cc

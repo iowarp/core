@@ -47,7 +47,17 @@
 #define HSHM_IS_ROCM_GPU
 #endif
 
-/** Function content selector for CPU vs GPU */
+/** Function content selector for CPU vs GPU.
+ *
+ * HSHM_IS_GPU stays gated to CUDA/ROCm device passes only — code under
+ * `#if HSHM_IS_GPU` uses raw nvcc/hipcc intrinsics (__threadfence,
+ * atomicCAS, __shfl_sync) that DPC++ does not provide. SYCL device-side
+ * code paths are guarded with HSHM_IS_SYCL_DEVICE.
+ *
+ * HSHM_IS_DEVICE_PASS (defined after HSHM_IS_SYCL_DEVICE further down
+ * this file) is the union: any device-only compilation pass. Use it to
+ * elide host-only headers (cout, FILE*, std streams) that would otherwise
+ * leak into DPC++'s SYCL device pass parsing. */
 #if defined(HSHM_IS_CUDA_GPU) || defined(HSHM_IS_ROCM_GPU)
 #define HSHM_IS_GPU 1
 #define HSHM_IS_HOST 0
@@ -121,13 +131,35 @@
 #define HSHM_IS_ROCM_COMPILER 0
 #endif
 
-/** Detect SYCL compiler (Intel oneAPI icpx -fsycl) */
+/** Detect SYCL compiler (Intel oneAPI icpx -fsycl, AdaptiveCpp acpp). */
 #if HSHM_ENABLE_SYCL && defined(SYCL_LANGUAGE_VERSION)
 #define HSHM_IS_SYCL_COMPILER 1
 #else
 #define HSHM_IS_SYCL_COMPILER 0
 #endif
 
+/** Detect device-side SYCL compilation pass.
+ *  __SYCL_DEVICE_ONLY__ is defined by both DPC++ and AdaptiveCpp during the
+ *  device pass of single-source SYCL compilation. */
+#if HSHM_IS_SYCL_COMPILER && defined(__SYCL_DEVICE_ONLY__)
+#define HSHM_IS_SYCL_DEVICE 1
+#else
+#define HSHM_IS_SYCL_DEVICE 0
+#endif
+
+/** Union: any device-only compilation pass. Guard host-only code (std::cout,
+ *  FILE*, exceptions) with `#if !HSHM_IS_DEVICE_PASS` so DPC++'s device pass
+ *  doesn't choke on it during parsing. */
+#if HSHM_IS_GPU || HSHM_IS_SYCL_DEVICE
+#define HSHM_IS_DEVICE_PASS 1
+#else
+#define HSHM_IS_DEVICE_PASS 0
+#endif
+
+/** HSHM_IS_GPU_COMPILER stays gated to CUDA/ROCm: blocks guarded by it use
+ *  raw __threadfence / atomicOr / __shfl_sync intrinsics that only exist on
+ *  nvcc and hipcc. SYCL device-side code paths use HSHM_IS_SYCL_COMPILER /
+ *  HSHM_IS_SYCL_DEVICE plus the abstractions in hermes_shm/util/gpu_intrinsics.h. */
 #if HSHM_IS_CUDA_COMPILER || HSHM_IS_ROCM_COMPILER
 #define HSHM_IS_GPU_COMPILER 1
 #else
@@ -243,6 +275,46 @@
 
 /** Test cross functions */
 #define HSHM_NO_INLINE_CROSS_FUN HSHM_NO_INLINE HSHM_CROSS_FUN HSHM_FUNC_IS_USED
+
+/** Mark a device function whose definition lives in another translation unit.
+ *
+ *  Use on every HSHM_GPU_FUN declaration in chimod headers (e.g. bdev's
+ *  AllocateBlocks(), CTE core's PutBlob()) when the body sits in a
+ *  separate _gpu.cc / _sycl.cc TU.
+ *
+ *  - On CUDA/ROCm: expands to nothing; nvcc/hipcc resolve cross-TU device
+ *    references through device-side relocatable linking by default
+ *    (CUDA_SEPARABLE_COMPILATION = ON).
+ *  - On DPC++/AdaptiveCpp: expands to SYCL_EXTERNAL. SYCL kernels can only
+ *    call functions that are either (a) defined in the same TU or (b)
+ *    marked SYCL_EXTERNAL — without the marker, DPC++ fails the device
+ *    compile with "SYCL kernel cannot call an undefined function". The
+ *    matching definition's TU must also be compiled with -fsycl. */
+#if HSHM_IS_SYCL_COMPILER
+#define HSHM_DEVICE_EXTERN SYCL_EXTERNAL
+#else
+#define HSHM_DEVICE_EXTERN
+#endif
+
+/** Mark a function whose address is taken on the device.
+ *
+ *  Use on every function that gets stored in a function-pointer table the
+ *  device side dispatches through (for example chi::gpu::Container::run_,
+ *  alloc_task_, save_task_, ...).
+ *
+ *  - On CUDA/ROCm: expands to nothing; nvcc/hipcc allow taking the address
+ *    of any __device__ function.
+ *  - On DPC++: emits [[intel::device_indirectly_callable]]. Recent DPC++
+ *    nightlies reject `&fn` from device code unless the function is tagged,
+ *    even with `-Xclang -fsycl-allow-func-ptr` enabled. The attribute also
+ *    makes call sites work under the sycl_ext_oneapi_virtual_functions
+ *    extension when WRP_SYCL_ALLOW_VIRTUAL_FUNCTIONS is on. Override with
+ *    -DHSHM_NO_SYCL_INDIRECTLY_CALLABLE=1 to fall back to no-op. */
+#if HSHM_IS_SYCL_COMPILER && !defined(HSHM_NO_SYCL_INDIRECTLY_CALLABLE)
+#define HSHM_INDIRECTLY_CALLABLE [[intel::device_indirectly_callable]]
+#else
+#define HSHM_INDIRECTLY_CALLABLE
+#endif
 
 /** Bitfield macros */
 #define MARK_FIRST_BIT_MASK(T) ((T)1 << (sizeof(T) * 8 - 1))

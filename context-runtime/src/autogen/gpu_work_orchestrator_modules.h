@@ -4,6 +4,11 @@
 #ifndef CHIMAERA_AUTOGEN_GPU_WORK_ORCHESTRATOR_MODULES_H_
 #define CHIMAERA_AUTOGEN_GPU_WORK_ORCHESTRATOR_MODULES_H_
 
+// gpu_ipc_manager.h must be visible BEFORE any chimod's _tasks.h, since
+// CHI_IPC->NewTask<...> dereferences chi::gpu::IpcManager (which
+// ipc_manager.h only forward-declares).
+#include "chimaera/gpu/gpu_ipc_manager.h"
+
 #include "chimaera/MOD_NAME/MOD_NAME_gpu_runtime.h"
 #include "chimaera/admin/admin_gpu_runtime.h"
 #include "chimaera/bdev/bdev_gpu_runtime.h"
@@ -11,14 +16,21 @@
 
 #include "chimaera/gpu/container.h"
 #include "chimaera/types.h"
+#include "hermes_shm/util/gpu_api.h"
 #include <cstring>
+
+#if HSHM_ENABLE_SYCL
+#include <sycl/sycl.hpp>
+#endif
 
 namespace chi {
 namespace gpu {
 
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 /**
  * Kernel to allocate a GPU container by module index.
- * Runs in the orchestrator's CUDA module context so vtables are correct.
+ * Runs in the orchestrator's CUDA/HIP module context so vtables
+ * are correct.
  */
 __global__ void _gpu_alloc_container(Container **out, u32 module_id,
                                       const PoolId *pid, u32 cid) {
@@ -33,6 +45,7 @@ __global__ void _gpu_alloc_container(Container **out, u32 module_id,
   if (obj) obj->Init(*pid, cid);
   *out = obj;
 }
+#endif  // HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
 
 /**
  * Map ChiMod name to module ID for GPU container allocation.
@@ -46,6 +59,21 @@ inline u32 GetGpuModuleId(const char *chimod_name) {
 }
 
 /**
+ * sizeof(GpuRuntime) for the given module ID. Used to pre-size
+ * device USM before placement-new in SYCL device code, which
+ * cannot call ::operator new for arbitrary types.
+ */
+inline size_t GetGpuModuleSize(u32 module_id) {
+  switch (module_id) {
+    case 0: return sizeof(chimaera::MOD_NAME::GpuRuntime);
+    case 1: return sizeof(chimaera::admin::GpuRuntime);
+    case 2: return sizeof(chimaera::bdev::GpuRuntime);
+    case 3: return sizeof(wrp_cte::core::GpuRuntime);
+    default: return 0;
+  }
+}
+
+/**
  * Host function to allocate a GPU container.
  * @return Device pointer to allocated container, or nullptr
  */
@@ -54,6 +82,7 @@ inline void *AllocGpuContainerHost(const PoolId &pool_id, u32 container_id,
   u32 module_id = GetGpuModuleId(chimod_name);
   if (module_id == 0xFFFFFFFF) return nullptr;
 
+#if HSHM_ENABLE_CUDA || HSHM_ENABLE_ROCM
   void *stream = hshm::GpuApi::CreateStream();
   Container **d_out = hshm::GpuApi::Malloc<Container *>(sizeof(Container *));
   PoolId *d_pid = hshm::GpuApi::Malloc<PoolId>(sizeof(PoolId));
@@ -67,6 +96,44 @@ inline void *AllocGpuContainerHost(const PoolId &pool_id, u32 container_id,
   hshm::GpuApi::Free(d_pid);
   hshm::GpuApi::DestroyStream(stream);
   return static_cast<void *>(h_ptr);
+#elif HSHM_ENABLE_SYCL
+  // SYCL path: size the USM region from GetGpuModuleSize, then
+  // submit a single_task that placement-news the right concrete
+  // GpuRuntime subclass (placement new is allowed in SYCL device
+  // code; ::operator new for arbitrary types is not).
+  size_t obj_size = GetGpuModuleSize(module_id);
+  if (obj_size == 0) return nullptr;
+  auto &q = hshm::GpuApi::SyclQueue();
+  void *d_obj = sycl::malloc_device(obj_size, q);
+  PoolId *d_pid = sycl::malloc_device<PoolId>(1, q);
+  q.memcpy(d_pid, &pool_id, sizeof(PoolId)).wait();
+  q.submit([&](sycl::handler &cgh) {
+    cgh.single_task<class chimaera_gpu_alloc_container_sycl_kernel>([=]() {
+      Container *obj = nullptr;
+      switch (module_id) {
+        case 0:
+          obj = new (d_obj) chimaera::MOD_NAME::GpuRuntime();
+          break;
+        case 1:
+          obj = new (d_obj) chimaera::admin::GpuRuntime();
+          break;
+        case 2:
+          obj = new (d_obj) chimaera::bdev::GpuRuntime();
+          break;
+        case 3:
+          obj = new (d_obj) wrp_cte::core::GpuRuntime();
+          break;
+        default: break;
+      }
+      if (obj) obj->Init(*d_pid, container_id);
+    });
+  }).wait();
+  sycl::free(d_pid, q);
+  return d_obj;
+#else
+  (void)pool_id; (void)container_id; (void)module_id;
+  return nullptr;
+#endif
 }
 
 }  // namespace gpu

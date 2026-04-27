@@ -83,7 +83,13 @@ struct Mutex {
         spin_count = 0;
       }
 #endif
+      // Yielding to a host thread model only makes sense on the CPU. On any
+      // device pass (CUDA, ROCm, SYCL) we busy-spin instead — the singleton
+      // chain reaches a non-const static which DPC++ rejects in kernels,
+      // and there's no host scheduler to yield to anyway.
+#if !HSHM_IS_DEVICE_PASS
       HSHM_THREAD_MODEL->Yield();
+#endif
     } while (true);
   }
 

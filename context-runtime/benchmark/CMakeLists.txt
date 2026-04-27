@@ -23,3 +23,6 @@ add_subdirectory(bench_gpu_runtime)
 
 # CDP (CUDA Dynamic Parallelism) overhead benchmark — NVCC only
 add_subdirectory(bench_cdp)
+
+# SYCL workload benchmark suite (gated on WRP_CORE_ENABLE_SYCL inside)
+add_subdirectory(sycl)

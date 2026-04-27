@@ -16,20 +16,20 @@ HSHM_GPU_FUN void SaveTaskTmpl(
   (void)method; (void)archive; (void)task;
 }
 
-static HSHM_GPU_FUN void RunImpl(
+HSHM_INDIRECTLY_CALLABLE static HSHM_GPU_FUN void RunImpl(
     chi::gpu::Container *self_, chi::u32 method,
     hipc::FullPtr<chi::Task> task_ptr, chi::gpu::RunContext &rctx) {
   auto *self = static_cast<GpuRuntime *>(self_);
   (void)self; (void)method; (void)task_ptr; (void)rctx;
 }
 
-static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocTaskImpl(
+HSHM_INDIRECTLY_CALLABLE static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocTaskImpl(
     chi::gpu::Container *self_, chi::u32 method) {
   (void)self_; (void)method;
   return hipc::FullPtr<chi::Task>::GetNull();
 }
 
-static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocLoadTaskDefaultImpl(
+HSHM_INDIRECTLY_CALLABLE static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocLoadTaskDefaultImpl(
     chi::gpu::Container *self_, chi::u32 method, chi::GpuLoadTaskArchive &ar) {
   auto *self = static_cast<GpuRuntime *>(self_);
   auto task_ptr = self->alloc_task_(self_, method);
@@ -39,7 +39,7 @@ static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocLoadTaskDefaultImpl(
   return task_ptr;
 }
 
-static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocLoadDeserImpl(
+HSHM_INDIRECTLY_CALLABLE static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocLoadDeserImpl(
     chi::gpu::Container *self_, chi::u32 method,
     chi::GpuLoadTaskArchive &ar) {
   auto *self = static_cast<GpuRuntime *>(self_);
@@ -51,27 +51,27 @@ static HSHM_GPU_FUN hipc::FullPtr<chi::Task> AllocLoadDeserImpl(
   return task_ptr;
 }
 
-static HSHM_GPU_FUN void LoadTaskDefaultImpl(
+HSHM_INDIRECTLY_CALLABLE static HSHM_GPU_FUN void LoadTaskDefaultImpl(
     chi::gpu::Container *self_, chi::u32 method,
     chi::GpuLoadTaskArchive &ar, const hipc::FullPtr<chi::Task> &task) {
   ar.SetMsgType(chi::LocalMsgType::kSerializeIn);
   static_cast<GpuRuntime *>(self_)->LoadTaskTmpl(method, ar, task);
 }
 
-static HSHM_GPU_FUN void SaveTaskDefaultImpl(
+HSHM_INDIRECTLY_CALLABLE static HSHM_GPU_FUN void SaveTaskDefaultImpl(
     chi::gpu::Container *self_, chi::u32 method,
     chi::GpuSaveTaskArchive &ar, const hipc::FullPtr<chi::Task> &task) {
   static_cast<GpuRuntime *>(self_)->SaveTaskTmpl(method, ar, task);
 }
 
-static HSHM_GPU_FUN void LoadTaskOutputImpl(
+HSHM_INDIRECTLY_CALLABLE static HSHM_GPU_FUN void LoadTaskOutputImpl(
     chi::gpu::Container *self_, chi::u32 method,
     chi::GpuLoadTaskArchive &ar, const hipc::FullPtr<chi::Task> &task) {
   ar.SetMsgType(chi::LocalMsgType::kSerializeOut);
   static_cast<GpuRuntime *>(self_)->LoadTaskTmpl(method, ar, task);
 }
 
-static HSHM_GPU_FUN void DestroyTaskImpl(
+HSHM_INDIRECTLY_CALLABLE static HSHM_GPU_FUN void DestroyTaskImpl(
     chi::gpu::Container *self_, chi::u32 method,
     hipc::FullPtr<chi::Task> &task) {
   if (task.IsNull()) return;

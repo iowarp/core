@@ -105,7 +105,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task RegisterTarget task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void RegisterTarget(hipc::FullPtr<RegisterTargetTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void RegisterTarget(hipc::FullPtr<RegisterTargetTask> task,
                                     chi::gpu::RunContext &rctx);
 
   /**
@@ -113,7 +113,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task UnregisterTarget task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void UnregisterTarget(hipc::FullPtr<UnregisterTargetTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void UnregisterTarget(hipc::FullPtr<UnregisterTargetTask> task,
                                       chi::gpu::RunContext &rctx);
 
   /**
@@ -121,7 +121,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task ListTargets task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void ListTargets(hipc::FullPtr<ListTargetsTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void ListTargets(hipc::FullPtr<ListTargetsTask> task,
                                  chi::gpu::RunContext &rctx);
 
   /**
@@ -129,7 +129,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task StatTargets task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void StatTargets(hipc::FullPtr<StatTargetsTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void StatTargets(hipc::FullPtr<StatTargetsTask> task,
                                  chi::gpu::RunContext &rctx);
 
   /**
@@ -137,7 +137,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task GetOrCreateTag task (default template instantiation).
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void GetOrCreateTag(
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void GetOrCreateTag(
       hipc::FullPtr<GetOrCreateTagTask<CreateParams>> task,
       chi::gpu::RunContext &rctx);
 
@@ -146,7 +146,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task GetTagSize task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void GetTagSize(hipc::FullPtr<GetTagSizeTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void GetTagSize(hipc::FullPtr<GetTagSizeTask> task,
                                 chi::gpu::RunContext &rctx);
 
   /**
@@ -154,7 +154,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task DelTag task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void DelTag(hipc::FullPtr<DelTagTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void DelTag(hipc::FullPtr<DelTagTask> task,
                             chi::gpu::RunContext &rctx);
 
   /**
@@ -162,7 +162,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task GetContainedBlobs task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void GetContainedBlobs(
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void GetContainedBlobs(
       hipc::FullPtr<GetContainedBlobsTask> task,
       chi::gpu::RunContext &rctx);
 
@@ -174,7 +174,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task PutBlob task containing blob_data_ ShmPtr.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void PutBlob(hipc::FullPtr<PutBlobTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void PutBlob(hipc::FullPtr<PutBlobTask> task,
                               chi::gpu::RunContext &rctx);
 
   /**
@@ -185,7 +185,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task GetBlob task containing blob_data_ ShmPtr output buffer.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void GetBlob(hipc::FullPtr<GetBlobTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void GetBlob(hipc::FullPtr<GetBlobTask> task,
                               chi::gpu::RunContext &rctx);
 
   /**
@@ -193,7 +193,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task ReorganizeBlob task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void ReorganizeBlob(hipc::FullPtr<ReorganizeBlobTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void ReorganizeBlob(hipc::FullPtr<ReorganizeBlobTask> task,
                                     chi::gpu::RunContext &rctx);
 
   /**
@@ -201,7 +201,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task DelBlob task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void DelBlob(hipc::FullPtr<DelBlobTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void DelBlob(hipc::FullPtr<DelBlobTask> task,
                               chi::gpu::RunContext &rctx);
 
   /**
@@ -209,7 +209,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task GetBlobScore task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void GetBlobScore(hipc::FullPtr<GetBlobScoreTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void GetBlobScore(hipc::FullPtr<GetBlobScoreTask> task,
                                   chi::gpu::RunContext &rctx);
 
   /**
@@ -217,7 +217,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task GetBlobSize task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void GetBlobSize(hipc::FullPtr<GetBlobSizeTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void GetBlobSize(hipc::FullPtr<GetBlobSizeTask> task,
                                  chi::gpu::RunContext &rctx);
 
   /**
@@ -225,7 +225,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task GetBlobInfo task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void GetBlobInfo(hipc::FullPtr<GetBlobInfoTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void GetBlobInfo(hipc::FullPtr<GetBlobInfoTask> task,
                                  chi::gpu::RunContext &rctx);
 
   /**
@@ -233,7 +233,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task PollTelemetryLog task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void PollTelemetryLog(hipc::FullPtr<PollTelemetryLogTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void PollTelemetryLog(hipc::FullPtr<PollTelemetryLogTask> task,
                                       chi::gpu::RunContext &rctx);
 
   /**
@@ -241,7 +241,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task TagQuery task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void TagQuery(hipc::FullPtr<TagQueryTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void TagQuery(hipc::FullPtr<TagQueryTask> task,
                               chi::gpu::RunContext &rctx);
 
   /**
@@ -249,7 +249,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task BlobQuery task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void BlobQuery(hipc::FullPtr<BlobQueryTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void BlobQuery(hipc::FullPtr<BlobQueryTask> task,
                                chi::gpu::RunContext &rctx);
 
   /**
@@ -257,7 +257,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task GetTargetInfo task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void GetTargetInfo(hipc::FullPtr<GetTargetInfoTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void GetTargetInfo(hipc::FullPtr<GetTargetInfoTask> task,
                                    chi::gpu::RunContext &rctx);
 
   /**
@@ -265,7 +265,7 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task FlushMetadata task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void FlushMetadata(hipc::FullPtr<FlushMetadataTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void FlushMetadata(hipc::FullPtr<FlushMetadataTask> task,
                                    chi::gpu::RunContext &rctx);
 
   /**
@@ -273,24 +273,29 @@ class GpuRuntime : public chi::gpu::Container {
    * @param task FlushData task.
    * @param rctx GPU run context.
    */
-  HSHM_GPU_FUN void FlushData(hipc::FullPtr<FlushDataTask> task,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void FlushData(hipc::FullPtr<FlushDataTask> task,
                                chi::gpu::RunContext &rctx);
 
  private:
-  /** Initialize metadata store on first use (uses CHI_PRIV_ALLOC GPU heap) */
-  HSHM_GPU_FUN void EnsureMetaInit();
+  /** Initialize metadata store on first use (uses CHI_PRIV_ALLOC GPU heap).
+   *  Takes IpcManager * explicitly so the SYCL device pass — which can't
+   *  resolve CHI_IPC outside the kernel-scope binding — has a clean path
+   *  to NewObj. CUDA callers pass nullptr and CHI_IPC continues to reach
+   *  the per-block __shared__ singleton. */
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN void EnsureMetaInit(
+      chi::gpu::IpcManager *ipc_mgr_in);
 
   /** Find TagInfo by TagId. Returns nullptr if not found. */
-  HSHM_GPU_FUN TagInfo *FindTagById(const TagId &tag_id);
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN TagInfo *FindTagById(const TagId &tag_id);
 
   /** Find TagId (as u64) by name. Returns nullptr if not found. */
-  HSHM_GPU_FUN chi::u64 *FindTagIdByName(const chi::priv::string &name);
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN chi::u64 *FindTagIdByName(const chi::priv::string &name);
 
   /** Insert or update tag in metadata */
-  HSHM_GPU_FUN TagInfo *UpsertTag(const chi::priv::string &tag_name, const TagId &tag_id);
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN TagInfo *UpsertTag(const chi::priv::string &tag_name, const TagId &tag_id);
 
   /** Build compound key for blob: "major.minor.blob_name" */
-  HSHM_GPU_FUN chi::priv::string MakeBlobKey(const TagId &tag_id,
+  HSHM_DEVICE_EXTERN HSHM_GPU_FUN chi::priv::string MakeBlobKey(const TagId &tag_id,
                                               const chi::priv::string &blob_name);
 
  public:

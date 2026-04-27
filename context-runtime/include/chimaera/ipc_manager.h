@@ -328,8 +328,17 @@ class IpcManager {
    * Free buffer from appropriate memory segment
    * Uses allocator's Free method
    * @param buffer_ptr FullPtr to buffer to free
+   *
+   * Host body lives in ipc_manager.cc. Under any device pass we provide an
+   * inline empty stub so DPC++'s SYCL device pass can parse through call
+   * sites in chimod ~Task destructors (traced via the autogen alloc kernel)
+   * without an unresolved external reference.
    */
+#if !HSHM_IS_DEVICE_PASS
   void FreeBuffer(FullPtr<char> buffer_ptr);
+#else
+  HSHM_INLINE_CROSS_FUN void FreeBuffer(FullPtr<char> /*buffer_ptr*/) {}
+#endif
 
   /**
    * Free buffer from appropriate memory segment (hipc::ShmPtr<> overload)
@@ -1568,6 +1577,78 @@ HSHM_GPU_FUN inline hipc::RoundRobinAllocator *GetSharedAllocGpu() {
 }  // namespace chi
 
 #endif  // HSHM_IS_GPU_COMPILER
+
+#if HSHM_IS_SYCL_COMPILER
+
+// SYCL has no analogue of CUDA's __shared__-backed GetBlockIpcManager(),
+// and DPC++ rejects function-local static variables in device code. The
+// CUDA path lets CHI_IPC auto-resolve via a static method; the SYCL path
+// instead binds a kernel-scope local variable named `g_ipc_manager_ptr`
+// in the CHIMAERA_GPU_*_INIT macros (see gpu_ipc_manager.h), and CHI_IPC
+// is a macro that resolves to that local via plain C++ name lookup.
+//
+// Consequence: CHI_IPC works inside the kernel body and inside any
+// device function called from the kernel where `g_ipc_manager_ptr` is
+// in lexical scope (typically because the function takes it as a
+// parameter or is inlined into the kernel). Free functions that take
+// no parameters and reach for CHI_IPC will not compile under SYCL —
+// pass the IpcManager pointer through explicitly. The chimaera runtime
+// follows this convention: chimod methods are called from the worker's
+// kernel body, where g_ipc_manager_ptr is in scope.
+//
+// CHI_CPU_IPC remains the host-side global pointer accessor for code
+// that runs on the CPU even in a SYCL build.
+namespace chi {
+// SYCL stubs for the per-warp allocator getters that types.h's
+// CHI_PRIV_ALLOC macro expands to under any device pass. Code that wants
+// a private allocator under SYCL should reach CHI_IPC->gpu_alloc_
+// directly; these stubs preserve build-time compatibility for paths that
+// happened to call them.
+inline hipc::PrivateBuddyAllocator *GetPrivAllocGpu() { return nullptr; }
+inline hipc::RoundRobinAllocator *GetSharedAllocGpu() { return nullptr; }
+
+}  // namespace chi
+
+// Global-namespace fallback for `g_ipc_manager_ptr`. Code inside the
+// kernel scope shadows this with a local established by
+// CHIMAERA_GPU_*_INIT and gets the real IpcManager pointer; host-only
+// methods that get parsed (but never emitted) in the SYCL device pass —
+// e.g. bdev_client's AsyncMonitor — find this nullptr fallback so they
+// parse cleanly. They are never reachable from a kernel, so DPC++ does
+// not emit device code for them and the nullptr is never dereferenced
+// on device.
+//
+// Declared at global namespace scope (rather than in `chi`) so the
+// unqualified name `g_ipc_manager_ptr` resolves to it from any
+// surrounding namespace via the standard C++ unqualified-lookup walk.
+//
+// Declared `inline` so multiple TUs sharing this header don't generate
+// conflicting definitions.
+inline ::chi::gpu::IpcManager *g_ipc_manager_ptr = nullptr;
+
+// CHI_IPC under SYCL needs different expansions in the two compilation
+// passes that DPC++ runs over a SYCL TU:
+//
+//   - Device pass (HSHM_IS_SYCL_DEVICE=1): resolve to the kernel-scope
+//     local `g_ipc_manager_ptr` established by CHIMAERA_GPU_*_INIT, picked
+//     up via unqualified C++ name lookup from the enclosing function.
+//   - Host pass: keep using the global pointer accessor — host-only
+//     functions (e.g. bdev_client::AsyncMonitor) get compiled in this
+//     pass too even when they're never called from device, and they
+//     legitimately want the host singleton.
+//
+// The two-form expansion lets HSHM_CROSS_FUN-tagged code (compiled in
+// both passes) get the right pointer in each.
+#undef CHI_IPC
+#if HSHM_IS_SYCL_DEVICE
+#define CHI_IPC (g_ipc_manager_ptr)
+#else
+#define CHI_IPC HSHM_GET_GLOBAL_PTR_VAR(::chi::IpcManager, g_ipc_manager)
+#endif
+#undef CHI_CPU_IPC
+#define CHI_CPU_IPC HSHM_GET_GLOBAL_PTR_VAR(::chi::IpcManager, g_ipc_manager)
+
+#endif  // HSHM_IS_SYCL_COMPILER
 
 // ================================================================
 // Future method implementations (unified for CPU and GPU TUs)

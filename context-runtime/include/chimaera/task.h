@@ -227,8 +227,12 @@ class Task {
 
   /**
    * Destructor — must explicitly free RunContext since we no longer use unique_ptr.
+   * Host pass uses the out-of-line definition in task.cc; any device pass
+   * (CUDA/ROCm/SYCL) uses `= default`. Switching from HSHM_IS_HOST to
+   * !HSHM_IS_DEVICE_PASS lets DPC++'s SYCL device pass — where HSHM_IS_HOST=1 —
+   * pick the inline default destructor instead of an unresolved declaration.
    */
-#if HSHM_IS_HOST
+#if !HSHM_IS_DEVICE_PASS
   ~Task();
 #else
   ~Task() = default;

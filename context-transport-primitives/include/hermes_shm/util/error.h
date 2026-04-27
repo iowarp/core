@@ -60,12 +60,15 @@
 #define HSHM_ERROR_HANDLE_CATCH catch (HSHM_ERROR_TYPE & HSHM_ERROR_PTR)
 #define HSHM_ERROR_IS(err, check) (err->get_code() == check.get_code())
 
-#if HSHM_IS_HOST
+// Exceptions are unsupported in any GPU device pass (CUDA __device__,
+// HIP __device__, and SYCL kernels). HSHM_IS_DEVICE_PASS is the union
+// of HSHM_IS_GPU and HSHM_IS_SYCL_DEVICE — using it here keeps DPC++'s
+// SYCL device pass from parsing through `throw` into <stdexcept> and
+// the libstdc++ exception class hierarchy.
+#if !HSHM_IS_DEVICE_PASS
 #define HSHM_THROW_ERROR(CODE, ...) throw CODE.format(__VA_ARGS__)
 #define HSHM_THROW_STD_ERROR(...) throw std::runtime_error(__VA_ARGS__);
-#endif
-
-#if HSHM_IS_GPU
+#else
 #define HSHM_THROW_ERROR(CODE, ...)
 #define HSHM_THROW_STD_ERROR(...)
 #endif

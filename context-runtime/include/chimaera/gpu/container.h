@@ -38,6 +38,10 @@
 #include "chimaera/pool_query.h"
 #include "chimaera/task.h"
 #include "chimaera/local_task_archives.h"
+// Pull in chi::gpu::IpcManager's full definition so chimod _gpu_runtime.h
+// files (which include this) can call CHI_IPC->NewTask<...> from the
+// autogen-emitted dispatch table without separate forward declarations.
+#include "chimaera/gpu/gpu_ipc_manager.h"
 
 namespace chi {
 namespace gpu {
@@ -68,6 +72,13 @@ struct RunContext {
   gpu::FutureShm *task_fshm_;
   /** Total thread parallelism for this task (gridDim.x * blockDim.x) */
   u32 parallelism_;
+  /** IpcManager pointer for cross-function CHI_IPC resolution under SYCL.
+   *  Set by the worker before dispatch; chimod methods reach it via
+   *  rctx.ipc_mgr_ (which the SYCL CHI_IPC macro picks up via name
+   *  lookup when the method body opens with `auto *g_ipc_manager_ptr =
+   *  rctx.ipc_mgr_;`). Always nullptr on CUDA/ROCm where __shared__ +
+   *  GetBlockIpcManager handles per-block resolution. */
+  IpcManager *ipc_mgr_ = nullptr;
 };
 
 /**
@@ -131,6 +142,15 @@ class Container {
   SaveTaskFn save_task_;
   LoadTaskFn load_task_output_;
   DestroyTaskFn destroy_task_;
+
+  /** Kernel-scope IpcManager pointer (Phase 10, SYCL only). The worker
+   *  writes this from rctx.ipc_mgr_ before dispatching so autogen-emitted
+   *  *Impl static methods (which don't receive rctx) can reach CHI_IPC
+   *  via `self_->ipc_mgr_`. Placed after the function-pointer table so
+   *  layout offsets to existing fields stay stable for code that depends
+   *  on them. Always nullptr on CUDA/ROCm where __shared__ +
+   *  GetBlockIpcManager handles per-block resolution. */
+  IpcManager *ipc_mgr_ = nullptr;
 
   // ====================================================================
   // Constructor
