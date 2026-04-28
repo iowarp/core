@@ -135,6 +135,10 @@ size_t ConfigManager::GetMemorySegmentSize(MemorySegment segment) const {
 
 u32 ConfigManager::GetPort() const { return port_; }
 
+u32 ConfigManager::GetRouterPortOffset() const { return router_port_offset_; }
+
+u32 ConfigManager::GetRouterPort() const { return port_ + router_port_offset_; }
+
 std::string ConfigManager::GetServerAddr() const { return server_addr_; }
 
 u32 ConfigManager::GetNeighborhoodSize() const { return neighborhood_size_; }
@@ -181,6 +185,7 @@ void ConfigManager::LoadDefault() {
   client_data_segment_size_ = 512 * 1024 * 1024;  // 512MB
 
   port_ = 9413;
+  router_port_offset_ = 3;
   neighborhood_size_ = 32;
 
   // Set default shared memory segment names with environment variables
@@ -270,6 +275,9 @@ void ConfigManager::ParseYAML(YAML::Node &yaml_conf) {
     auto networking = yaml_conf["networking"];
     if (networking["port"]) {
       port_ = networking["port"].as<u32>();
+    }
+    if (networking["router_port_offset"]) {
+      router_port_offset_ = networking["router_port_offset"].as<u32>();
     }
     if (networking["neighborhood_size"]) {
       neighborhood_size_ = networking["neighborhood_size"].as<u32>();

@@ -494,9 +494,12 @@ void Runtime::SendIn(hipc::FullPtr<chi::Task> origin_task,
       continue;
     }
 
-    // Get or create persistent Lightbeam client using connection pool
+    // Get or create persistent Lightbeam client using connection pool.
+    // Cross-node target binds its TCP ROUTER on GetRouterPort() (see
+    // ipc_manager ServerInit); using GetPort() here would silently queue
+    // messages to a port no server is listening on.
     auto *config_manager = CHI_CONFIG_MANAGER;
-    int port = static_cast<int>(config_manager->GetPort());
+    int port = static_cast<int>(config_manager->GetRouterPort());
     hshm::lbm::Transport *lbm_transport =
         ipc_manager->GetOrCreateClient(target_host->ip_address, port);
 
@@ -607,9 +610,10 @@ void Runtime::SendOut(hipc::FullPtr<chi::Task> origin_task) {
     return;
   }
 
-  // Get or create persistent Lightbeam client using connection pool
+  // Get or create persistent Lightbeam client using connection pool.
+  // See SendIn for why this must be GetRouterPort, not GetPort.
   auto *config_manager = CHI_CONFIG_MANAGER;
-  int port = static_cast<int>(config_manager->GetPort());
+  int port = static_cast<int>(config_manager->GetRouterPort());
   hshm::lbm::Transport *lbm_transport =
       ipc_manager->GetOrCreateClient(target_host->ip_address, port);
 
@@ -1920,7 +1924,8 @@ bool Runtime::RetrySendToNode(RetryEntry &entry, chi::u64 node_id) {
   if (!target_host) {
     return false;
   }
-  int port = static_cast<int>(config_manager->GetPort());
+  // Cross-node DEALER -> peer ROUTER (see GetRouterPort).
+  int port = static_cast<int>(config_manager->GetRouterPort());
   hshm::lbm::Transport *lbm_transport =
       ipc_manager->GetOrCreateClient(target_host->ip_address, port);
   if (!lbm_transport) {

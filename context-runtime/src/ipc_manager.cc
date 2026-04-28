@@ -160,13 +160,15 @@ bool IpcManager::ClientInit() {
         return false;
       }
     } else {
-      // TCP mode: ZMQ DEALER transport
+      // TCP mode: ZMQ DEALER transport (connects to local TCP ROUTER server,
+      // which binds on GetRouterPort() — see ServerInit / ipc_manager.cc:330).
       try {
+        u32 router_port = config->GetRouterPort();
         zmq_transport_ = hshm::lbm::TransportFactory::Get(
             config->GetServerAddr(), hshm::lbm::TransportType::kZeroMq,
-            hshm::lbm::TransportMode::kClient, "tcp", port + 3);
+            hshm::lbm::TransportMode::kClient, "tcp", router_port);
         HLOG(kInfo, "IpcManager: DEALER transport connected to port {}",
-             port + 3);
+             router_port);
       } catch (const std::exception &e) {
         HLOG(kError,
              "IpcManager::ClientInit: Failed to create DEALER transport: {}",
@@ -324,12 +326,13 @@ bool IpcManager::ServerInit() {
     u32 port = config->GetPort();
 
     try {
-      // TCP ROUTER server on port+3
+      // TCP ROUTER server on GetRouterPort() (port + router_port_offset).
+      u32 router_port = config->GetRouterPort();
       client_tcp_transport_ = hshm::lbm::TransportFactory::Get(
           "0.0.0.0", hshm::lbm::TransportType::kZeroMq,
-          hshm::lbm::TransportMode::kServer, "tcp", port + 3);
+          hshm::lbm::TransportMode::kServer, "tcp", router_port);
       HLOG(kInfo, "IpcManager: TCP ROUTER transport bound on port {}",
-           port + 3);
+           router_port);
     } catch (const std::exception &e) {
       HLOG(kError, "IpcManager::ServerInit: Failed to bind TCP server: {}",
            e.what());
@@ -1457,12 +1460,15 @@ void IpcManager::SetDead(u64 node_id) {
   entry.detected_at = std::chrono::steady_clock::now();
   dead_nodes_.push_back(entry);
 
-  // Remove cached client connections to the dead node
+  // Remove cached client connections to the dead node. Key must match
+  // the port we created the client with (GetRouterPort, see admin_runtime
+  // SendIn / SendOut).
   {
     std::lock_guard<std::mutex> lock(client_pool_mutex_);
     auto *config_manager = CHI_CONFIG_MANAGER;
-    int port = static_cast<int>(config_manager->GetPort());
-    std::string key = it->second.ip_address + ":" + std::to_string(port);
+    int router_port = static_cast<int>(config_manager->GetRouterPort());
+    std::string key =
+        it->second.ip_address + ":" + std::to_string(router_port);
     client_pool_.erase(key);
   }
 
@@ -2373,7 +2379,7 @@ bool IpcManager::ReconnectToOriginalHost() {
 bool IpcManager::ReconnectToNewHost(const std::string &new_addr) {
   HLOG(kInfo, "ReconnectToNewHost: Switching to {}", new_addr);
   auto *config = CHI_CONFIG_MANAGER;
-  u32 port = config->GetPort();
+  u32 router_port = config->GetRouterPort();
 
   // Stop recv thread
   if (zmq_recv_running_.load()) {
@@ -2400,11 +2406,12 @@ bool IpcManager::ReconnectToNewHost(const std::string &new_addr) {
   main_allocator_ = nullptr;
   runtime_pid_ = 0;
 
-  // Create new ZMQ DEALER transport
+  // Create new ZMQ DEALER transport (peer's TCP ROUTER lives on
+  // GetRouterPort()).
   try {
     zmq_transport_ = hshm::lbm::TransportFactory::Get(
         new_addr, hshm::lbm::TransportType::kZeroMq,
-        hshm::lbm::TransportMode::kClient, "tcp", port + 3);
+        hshm::lbm::TransportMode::kClient, "tcp", router_port);
   } catch (const std::exception &e) {
     HLOG(kError, "ReconnectToNewHost: Transport to {} failed: {}",
          new_addr, e.what());
