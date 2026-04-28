@@ -262,6 +262,12 @@ class ZeroMqTransport : public Transport {
 
   template <typename MetaT>
   int Send(MetaT& meta, const LbmContext& ctx = LbmContext()) {
+    // Serialize the multipart send so frames from different threads
+    // don't interleave. Without this the ZMTP frame stream is racy:
+    // identityA, delimiter, identityB (oops), metaA, ... — receiver
+    // drops the message and our SWIM probe never gets a reply.
+    std::lock_guard<std::mutex> lock(send_mtx_);
+
     // Compute send_bulks before serialization so receiver knows how many
     meta.send_bulks = 0;
     for (size_t i = 0; i < meta.send.size(); ++i) {
@@ -350,6 +356,10 @@ class ZeroMqTransport : public Transport {
 
   template <typename MetaT>
   ClientInfo Recv(MetaT& meta, const LbmContext& ctx = LbmContext()) {
+    // Mirror of Send's locking: a multipart Recv must consume identity /
+    // delimiter / meta / bulk frames atomically or threads can take
+    // each other's frames mid-message.
+    std::lock_guard<std::mutex> lock(recv_mtx_);
     ClientInfo info;
     info.rc = RecvMetadata(meta, ctx);
     if (info.rc != 0) return info;
@@ -542,6 +552,15 @@ class ZeroMqTransport : public Transport {
   bool owns_ctx_;
   void* socket_;
   ZmqFiredAction zmq_fired_action_;
+  // ZMQ sockets are not thread-safe (per the ZeroMQ guide). Multipart
+  // sends (identity / delimiter / meta / N bulk frames) issued from
+  // multiple chimaera worker threads on the same socket can interleave,
+  // corrupting the ZMTP frame stream. Receivers then silently drop
+  // unparseable messages — appearing as e.g. SWIM HeartbeatProbe
+  // timeouts on multi-node deployments. Hold these around Send/Recv so
+  // each multipart message is atomic.
+  std::mutex send_mtx_;
+  std::mutex recv_mtx_;
 };
 
 }  // namespace hshm::lbm
