@@ -1,0 +1,18 @@
+﻿{
+  "mcpServers": {
+    "acropolis": {
+      "command": "python",
+      "args": [
+        "C:\\Users\\rajni\\Documents\\GPU_OS\\clio-core\\context-transfer-engine\\test\\unit\\acropolis_mcp_server.py"
+      ],
+      "env": {
+        "ACROPOLIS_REPO":       "C:\\Users\\rajni\\Documents\\GPU_OS\\clio-core",
+        "ACROPOLIS_CACHE_DIR":  "C:\\temp",
+        "ACROPOLIS_ES_URL":     "http://localhost:9200",
+        "ACROPOLIS_QDRANT_URL": "http://localhost:6333",
+        "ACROPOLIS_NEO4J_URL":  "http://localhost:7474",
+        "ACROPOLIS_OLLAMA_URL": "http://localhost:11434"
+      }
+    }
+  }
+}
