@@ -299,19 +299,20 @@ bool Config::ParseYamlNode(const YAML::Node &node) {
     HLOG(kInfo, "Parsed KG config: backend={}, config={}", kg_backend_, kg_config_);
   }
 
-  // Parse Acropolis indexing-depth configuration
+  // Parse Acropolis indexing-depth configuration. Valid levels are 0..2:
+  //   0 name | 1 metadata | 2 content
   if (node["indexing_depth"]) {
     auto d_node = node["indexing_depth"];
     if (d_node["default"]) {
       depth_default_ = d_node["default"].as<int>();
-      if (depth_default_ < 0 || depth_default_ > 4) depth_default_ = 0;
+      if (depth_default_ < 0 || depth_default_ > 2) depth_default_ = 0;
     }
     if (d_node["formats"] && d_node["formats"].IsMap()) {
       for (auto it = d_node["formats"].begin();
            it != d_node["formats"].end(); ++it) {
         std::string ext = it->first.as<std::string>();
         int lvl = it->second.as<int>();
-        if (lvl < 0 || lvl > 4) continue;
+        if (lvl < 0 || lvl > 2) continue;
         depth_per_format_[ext] = lvl;
       }
     }
@@ -319,7 +320,7 @@ bool Config::ParseYamlNode(const YAML::Node &node) {
          depth_default_, depth_per_format_.size());
   }
 
-  // Parse shared embedding endpoint (used by L3 depth + semantic backends)
+  // Parse shared embedding endpoint (used at L1+ depth + semantic backends)
   if (node["embedding"]) {
     auto emb = node["embedding"];
     if (emb["endpoint"]) {

@@ -6,7 +6,7 @@
  * endpoints.
  *
  * Used by backends that need to turn text into a vector (Qdrant, Elasticsearch
- * in vector mode). Also used by Acropolis's L3 indexing-depth executor to
+ * in vector mode). Also used at Acropolis L1+ indexing depth to
  * generate an embedding from a file's text summary.
  *
  * Environment variables (override any config-supplied endpoint):

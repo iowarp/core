@@ -2,17 +2,19 @@
  * Acropolis set-depth CLI.
  *
  * Usage:
- *   acropolis-depth set <path> --level N
- *   acropolis-depth set <path> --level N --recursive
+ *   acropolis-depth set <path> --level N [--recursive]
+ *   acropolis-depth set <path> --level NAME [--recursive]
  *   acropolis-depth get <path>
  *   acropolis-depth clear <path>
  *
- * Stores the chosen depth level in the POSIX extended attribute
- *   user.acropolis.depth            (per-file)
- *   user.acropolis.depth_recursive  (per-directory, applies to children at ingest)
+ * Levels (numeric or named):
+ *   0 | name      filename only
+ *   1 | metadata  + format-specific extraction + embedding
+ *   2 | content   L1 + caller-supplied LLM summary (driven by CAE)
  *
- * The DepthController in the CTE runtime reads these xattrs on every PutBlob
- * to decide how deeply to index the file.
+ * Stores the chosen depth in the POSIX extended attribute
+ *   user.acropolis.depth            (per-file)
+ *   user.acropolis.depth_recursive  (per-directory; applies to children at ingest)
  */
 
 #include <sys/xattr.h>
@@ -35,12 +37,31 @@ void PrintUsage() {
       "  acropolis-depth get <path>\n"
       "  acropolis-depth clear <path>\n"
       "\n"
-      "Levels:\n"
-      "  0  Name only         (~0 cost)\n"
-      "  1  Stat metadata     (~0 cost)\n"
-      "  2  Format extraction (~ms)\n"
-      "  3  Embedding         (~$0.001-0.01)\n"
-      "  4  Deep content      (~$0.01-10+)\n";
+      "Levels (numeric or named):\n"
+      "  0 | name      filename only                 (~zero cost)\n"
+      "  1 | metadata  + format extraction + embed   (~ms)\n"
+      "  2 | content   L1 + LLM summary via CAE      (~LLM call)\n";
+}
+
+/** Accept "0".."2" or "name", "metadata", "content". Returns -1 if invalid. */
+int ParseLevel(const std::string &s) {
+  if (s == "0" || s == "name")     return 0;
+  if (s == "1" || s == "metadata") return 1;
+  if (s == "2" || s == "content")  return 2;
+  // Tolerate raw integers within range
+  char *end = nullptr;
+  long v = std::strtol(s.c_str(), &end, 10);
+  if (end != s.c_str() && *end == '\0' && v >= 0 && v <= 2) return static_cast<int>(v);
+  return -1;
+}
+
+const char *LevelLabel(int level) {
+  switch (level) {
+    case 0: return "0 (name)";
+    case 1: return "1 (metadata)";
+    case 2: return "2 (content)";
+  }
+  return "unknown";
 }
 
 int CmdSet(int argc, char **argv) {
@@ -53,7 +74,7 @@ int CmdSet(int argc, char **argv) {
     std::string a = argv[i];
     if (a == "--level") {
       if (i + 1 >= argc) { PrintUsage(); return 1; }
-      level = std::atoi(argv[++i]);
+      level = ParseLevel(argv[++i]);
     } else if (a == "--recursive") {
       recursive = true;
     } else if (path.empty()) {
@@ -64,7 +85,7 @@ int CmdSet(int argc, char **argv) {
     }
   }
 
-  if (path.empty() || level < 0 || level > 4) {
+  if (path.empty() || level < 0) {
     PrintUsage();
     return 1;
   }
@@ -76,7 +97,8 @@ int CmdSet(int argc, char **argv) {
     std::perror("setxattr");
     return 2;
   }
-  std::cout << "set " << attr << "=" << level << " on " << path << "\n";
+  std::cout << "set " << attr << "=" << LevelLabel(level)
+            << " on " << path << "\n";
   return 0;
 }
 
@@ -93,8 +115,15 @@ int CmdGet(int argc, char **argv) {
 
   std::string f = read_attr(kAttrFile);
   std::string d = read_attr(kAttrRecursive);
-  std::cout << "file:       " << (f.empty() ? "(unset)" : f) << "\n";
-  std::cout << "directory:  " << (d.empty() ? "(unset)" : d) << "\n";
+
+  auto pretty = [](const std::string &s) -> std::string {
+    if (s.empty()) return "(unset)";
+    int v = std::atoi(s.c_str());
+    return std::string(LevelLabel(v));
+  };
+
+  std::cout << "file:       " << pretty(f) << "\n";
+  std::cout << "directory:  " << pretty(d) << "\n";
   return 0;
 }
 

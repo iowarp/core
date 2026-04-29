@@ -150,8 +150,14 @@ std::string SummaryOperator::CallLlm(const std::string& description,
   // Two prompts:
   // 1. Description available: summarize the human-readable text
   // 2. Raw metadata only: interpret the metadata and generate a description
+  // Env-var override lets callers swap the default HPC-dataset prompt for a
+  // different one (e.g. code search needs keyword-dense multi-sentence
+  // summaries rather than 4-8 word labels).
   std::string system_prompt;
-  if (has_description_text) {
+  int max_tokens = 64;
+  if (const char* p = std::getenv("CAE_SUMMARY_SYSTEM_PROMPT")) {
+    system_prompt = p;
+  } else if (has_description_text) {
     system_prompt =
         "You are a scientific data analyst. Given a dataset description from "
         "a simulation output file, summarize it in exactly 4 to 8 words. "
@@ -164,6 +170,10 @@ std::string SummaryOperator::CallLlm(const std::string& description,
         "properties. Translate numeric codes and flags to their scientific "
         "meaning. Return ONLY the description, nothing else.";
   }
+  if (const char* mt = std::getenv("CAE_SUMMARY_MAX_TOKENS")) {
+    int v = std::atoi(mt);
+    if (v > 0 && v <= 4096) max_tokens = v;
+  }
 
   nlohmann::json request_body;
   request_body["model"] = model_;
@@ -171,7 +181,7 @@ std::string SummaryOperator::CallLlm(const std::string& description,
       {{"role", "system"}, {"content", system_prompt}},
       {{"role", "user"}, {"content", description}},
   });
-  request_body["max_tokens"] = 64;
+  request_body["max_tokens"] = max_tokens;
   request_body["temperature"] = 0.0;
 
   std::string payload = request_body.dump();

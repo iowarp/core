@@ -3,8 +3,9 @@
  *
  * Boots an embedded Chimaera + CTE runtime via CHI_SERVER_CONF pointing at a
  * compose YAML that configures the Qdrant backend + embedding endpoint, sets
- * an xattr on a file to force L3 (embedding), sends UpdateKnowledgeGraph, and
- * verifies that SemanticQuery returns the tag with a cosine-similarity score.
+ * an xattr on a file to force L1 (metadata + embedding), sends
+ * UpdateKnowledgeGraph, and verifies that SemanticQuery returns the tag with
+ * a cosine-similarity score.
  *
  * Requires:
  *   - Qdrant reachable at $QDRANT_URL (default host.docker.internal:6333/<col>)
@@ -69,8 +70,8 @@ std::string WriteComposeYaml() {
        "    indexing_depth:\n"
        "      default: 0\n"
        "      formats:\n"
-       "        h5: 3\n"
-       "        hdf5: 3\n";
+       "        h5: 1\n"
+       "        hdf5: 1\n";
   return path;
 }
 
@@ -102,13 +103,14 @@ struct RuntimeFx {
 
 }  // namespace
 
-TEST_CASE("Runtime+Qdrant E2E: L3 embedding round-trip", "[depth][qdrant][e2e]") {
+TEST_CASE("Runtime+Qdrant E2E: L1 embedding round-trip", "[depth][qdrant][e2e]") {
   RuntimeFx fx;
 
   auto tmp = fs::temp_directory_path() / "acropolis_runtime_qdrant.h5";
   { std::ofstream(tmp) << "x"; }
-  // Format default in compose YAML is already L3 for .h5, but set xattr too.
-  const char *val = "3";
+  // Format default in compose YAML is L1 for .h5; xattr forces L1 explicitly.
+  // (L1 is where embeddings start being generated.)
+  const char *val = "1";
   (void)::setxattr(tmp.c_str(), "user.acropolis.depth", val, 1, 0);
 
   std::string tag_name = tmp.string();
@@ -121,7 +123,7 @@ TEST_CASE("Runtime+Qdrant E2E: L3 embedding round-trip", "[depth][qdrant][e2e]")
   auto upd = fx.client->AsyncUpdateKnowledgeGraph(tag_id, tag_name, caller);
   upd.Wait();
   REQUIRE(upd->GetReturnCode() == 0);
-  INFO("UpdateKnowledgeGraph at L3 succeeded");
+  INFO("UpdateKnowledgeGraph at L1 succeeded (embedding generated)");
 
   // Self-query with the same text — Qdrant returns the point it just stored.
   auto sq = fx.client->AsyncSemanticQuery(caller, /*top_k=*/5,
@@ -144,7 +146,7 @@ TEST_CASE("Runtime+Qdrant E2E: L3 embedding round-trip", "[depth][qdrant][e2e]")
   REQUIRE(found);
 
   // Cosine similarity is in [-1, 1]; BM25 scores can easily exceed 2+.
-  // The stored L3 payload = L0 + L1 + L2 extractor output + caller summary,
+  // The stored L1 payload = L0 + format extractor output + caller summary,
   // which is NOT identical to the query text alone, so we don't expect a
   // perfect 1.0. Our mock SHA256-based embedder produces nearly-random
   // vectors for different inputs, so the sign of the score is meaningless —

@@ -189,7 +189,7 @@ class Config {
   int depth_default_ = 0;                                ///< global default level
   std::map<std::string, int> depth_per_format_;          ///< ext -> level
 
-  /** Shared embedding endpoint used for L3 indexing + semantic backends. */
+  /** Shared embedding endpoint used at L1+ indexing and by semantic backends. */
   std::string embedding_endpoint_;                       ///< e.g. "http://host:port/v1/embeddings"
   std::string embedding_model_;                          ///< e.g. "qwen2.5-3b"
 

@@ -1,0 +1,22 @@
+{
+  "agent": "claude-sonnet-4.7",
+  "arm": "with_acropolis_and_read",
+  "config": {"backend": "elasticsearch-vec", "level": 2, "k": 5},
+  "results": [
+    {"id": 1,  "n_sem_q_calls": 1, "n_reads": 0, "answer_path": "/workspace/context-transfer-engine/core/include/wrp_cte/core/kg_backend_qdrant.h"},
+    {"id": 2,  "n_sem_q_calls": 1, "n_reads": 0, "answer_path": "/workspace/context-transfer-engine/core/include/wrp_cte/core/kg_backend_elasticsearch.h"},
+    {"id": 3,  "n_sem_q_calls": 2, "n_reads": 0, "answer_path": "/workspace/context-transfer-engine/core/include/wrp_cte/core/kg_backend_neo4j.h"},
+    {"id": 4,  "n_sem_q_calls": 1, "n_reads": 0, "answer_path": "/workspace/context-transfer-engine/core/include/wrp_cte/core/hdf5_summary.h"},
+    {"id": 5,  "n_sem_q_calls": 2, "n_reads": 0, "answer_path": "/workspace/tools/acropolis_depth/set_depth.cc"},
+    {"id": 6,  "n_sem_q_calls": 2, "n_reads": 0, "answer_path": "/workspace/context-runtime/modules/MOD_NAME/test/test_gpu_submission_gpu.cc"},
+    {"id": 7,  "n_sem_q_calls": 2, "n_reads": 0, "answer_path": "/workspace/iowarp-llm/weights/src/ggml_iowarp_backend.cc"},
+    {"id": 8,  "n_sem_q_calls": 1, "n_reads": 0, "answer_path": "/workspace/iowarp-llm/kvcache/include/wrp_llm/kvcache/kvcache_manager.h"},
+    {"id": 9,  "n_sem_q_calls": 1, "n_reads": 0, "answer_path": "/workspace/run_e2e_gpu_test.sh"},
+    {"id": 10, "n_sem_q_calls": 2, "n_reads": 1, "answer_path": "/workspace/context-transfer-engine/test/unit/bench_repo_scan.cc"},
+    {"id": 11, "n_sem_q_calls": 1, "n_reads": 0, "answer_path": "/workspace/context-transfer-engine/core/include/wrp_cte/core/kg_backend_bm25.h"},
+    {"id": 12, "n_sem_q_calls": 2, "n_reads": 1, "answer_path": "/workspace/context-transfer-engine/core/include/wrp_cte/core/kg_backend_elasticsearch.h"},
+    {"id": 13, "n_sem_q_calls": 2, "n_reads": 0, "answer_path": "/workspace/context-transfer-engine/core/include/wrp_cte/core/depth_controller.h"},
+    {"id": 14, "n_sem_q_calls": 1, "n_reads": 0, "answer_path": "/workspace/context-transfer-engine/core/include/wrp_cte/core/embedding_client.h"},
+    {"id": 15, "n_sem_q_calls": 1, "n_reads": 0, "answer_path": "/workspace/context-transfer-engine/test/unit/test_indexing_depth_config.cc"}
+  ]
+}

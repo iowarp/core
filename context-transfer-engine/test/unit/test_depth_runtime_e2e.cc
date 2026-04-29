@@ -53,7 +53,7 @@ class RuntimeFixture {
   static inline bool g_inited = false;
 
   RuntimeFixture() {
-    // Ensure no embedding endpoint is set — L3 should degrade to "no vector".
+    // Ensure no embedding endpoint is set — L1+ should degrade to "no vector".
     ::unsetenv("CTE_EMBEDDING_ENDPOINT");
     ::unsetenv("QDRANT_EMBEDDING_ENDPOINT");
 

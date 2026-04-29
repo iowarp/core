@@ -1,6 +1,9 @@
-# Acropolis — end-to-end example: CTE with adaptive indexing depth + semantic
-# backend. Start with bm25 (no external deps) or switch to qdrant/elasticsearch
-# when an embedding endpoint is available.
+# Acropolis end-to-end example: CTE with adaptive indexing depth.
+#
+# Three levels:
+#   0  name        filename only
+#   1  metadata    + format-specific extraction + embedding
+#   2  content     L1 + caller-supplied LLM summary (CAE drives this)
 
 runtime:
   num_threads: 4
@@ -33,16 +36,16 @@ compose:
     indexing_depth:
       default: 0
       formats:
-        h5:      2
-        hdf5:    2
-        nc:      2
-        nc4:     2
-        parquet: 2
+        h5:      1
+        hdf5:    1
+        nc:      1
+        nc4:     1
+        parquet: 1
         csv:     1
         mp4:     0
 
-    # Shared embedding endpoint (used for L3 depth + semantic backends).
-    # Omit if you're only running L0-L2 with a keyword backend.
+    # Shared embedding endpoint (used at L1 and L2 + by Qdrant/ES vector mode).
+    # Omit if you're only running L0 with a keyword backend.
     embedding:
       endpoint: "http://localhost:8090/v1/embeddings"
       model: "qwen2.5-3b"

@@ -1,0 +1,81 @@
+{
+  "agent": "claude-sonnet-4.7",
+  "arm": "without_acropolis",
+  "results": [
+    {
+      "id": 1,
+      "n_calls": 2,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/context-transfer-engine/core/include/wrp_cte/core/kg_backend_qdrant.h"
+    },
+    {
+      "id": 2,
+      "n_calls": 3,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/context-transfer-engine/core/include/wrp_cte/core/kg_backend_elasticsearch.h"
+    },
+    {
+      "id": 3,
+      "n_calls": 3,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/context-transfer-engine/core/include/wrp_cte/core/kg_backend_neo4j.h"
+    },
+    {
+      "id": 4,
+      "n_calls": 4,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/context-transfer-engine/core/include/wrp_cte/core/hdf5_summary.h"
+    },
+    {
+      "id": 5,
+      "n_calls": 2,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/tools/acropolis_depth/set_depth.cc"
+    },
+    {
+      "id": 6,
+      "n_calls": 2,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/context-runtime/modules/MOD_NAME/test/test_gpu_submission_gpu.cc"
+    },
+    {
+      "id": 7,
+      "n_calls": 2,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/iowarp-llm/weights/src/ggml_iowarp_backend.cc"
+    },
+    {
+      "id": 8,
+      "n_calls": 3,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/iowarp-llm/kvcache/include/wrp_llm/kvcache/kvcache_manager.h"
+    },
+    {
+      "id": 9,
+      "n_calls": 2,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/run_e2e_gpu_test.sh"
+    },
+    {
+      "id": 10,
+      "n_calls": 2,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/context-transfer-engine/test/unit/bench_repo_scan.cc"
+    },
+    {
+      "id": 11,
+      "n_calls": 2,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/context-transfer-engine/core/include/wrp_cte/core/kg_backend_bm25.h"
+    },
+    {
+      "id": 12,
+      "n_calls": 4,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/context-transfer-engine/core/include/wrp_cte/core/kg_backend_elasticsearch.h"
+    },
+    {
+      "id": 13,
+      "n_calls": 2,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/context-transfer-engine/core/include/wrp_cte/core/depth_controller.h"
+    },
+    {
+      "id": 14,
+      "n_calls": 3,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/context-transfer-engine/core/include/wrp_cte/core/embedding_client.h"
+    },
+    {
+      "id": 15,
+      "n_calls": 2,
+      "answer_path": "c:/Users/rajni/Documents/GPU_OS/clio-core/context-transfer-engine/test/unit/test_indexing_depth_config.cc"
+    }
+  ]
+}

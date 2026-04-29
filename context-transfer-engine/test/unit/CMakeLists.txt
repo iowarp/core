@@ -73,10 +73,50 @@ add_executable(test_depth_runtime_e2e
 add_executable(test_qdrant_backend_live
     test_qdrant_backend_live.cc
 )
-# Acropolis — full runtime + Qdrant + L3 embedding pipeline E2E
+# Acropolis — full runtime + Qdrant + L1 embedding pipeline E2E
 add_executable(test_depth_qdrant_e2e
     test_depth_qdrant_e2e.cc
 )
+# Acropolis — repo-scan benchmark (ingests text files from a directory and
+# runs a fixed query set; lets you compare quality across depth levels).
+#
+# When CAE is available, also link CAE's SummaryOperator so the benchmark can
+# generate LLM summaries at L2. The summary path is gated at runtime by
+# CAE_SUMMARY_ENDPOINT + CAE_SUMMARY_MODEL env vars.
+add_executable(bench_repo_scan
+    bench_repo_scan.cc
+)
+target_link_libraries(bench_repo_scan
+    wrp_cte_core_runtime
+    wrp_cte_core_client
+    chimaera::admin_runtime
+    chimaera::admin_client
+    chimaera::bdev_runtime
+    chimaera::bdev_client
+    hshm::cxx
+    ${CMAKE_THREAD_LIBS_INIT}
+)
+if(WRP_CORE_ENABLE_CAE)
+    # Compile summary_operator.cc directly into the benchmark to avoid the
+    # ABI conflict between the system libcurl that libhdf5 needs and the conda
+    # libcurl that the wrp_cae_core_runtime might pull in.
+    target_sources(bench_repo_scan PRIVATE
+        ${CMAKE_SOURCE_DIR}/context-assimilation-engine/core/src/factory/summary_operator.cc)
+    target_include_directories(bench_repo_scan PRIVATE
+        ${CMAKE_SOURCE_DIR}/context-assimilation-engine/core/include)
+    target_link_libraries(bench_repo_scan wrp_cae_core_client)
+    target_compile_definitions(bench_repo_scan PRIVATE
+        ACROPOLIS_BENCH_USE_SUMMARY
+        WRP_CAE_ENABLE_SUMMARY_OP)
+    # SummaryOperator uses libcurl via its own #include in summary_operator.cc
+    if(EXISTS "/usr/lib/x86_64-linux-gnu/libcurl.so.4")
+        target_link_libraries(bench_repo_scan
+            "/usr/lib/x86_64-linux-gnu/libcurl.so.4")
+    elseif(TARGET CURL::libcurl)
+        target_link_libraries(bench_repo_scan CURL::libcurl)
+    endif()
+endif()
+
 # Acropolis — L2 HDF5 extractor on a real file
 if(WRP_CORE_ENABLE_HDF5)
   find_package(HDF5 QUIET COMPONENTS C)

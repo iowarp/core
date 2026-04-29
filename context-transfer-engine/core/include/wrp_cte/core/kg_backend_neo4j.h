@@ -1,31 +1,46 @@
 #ifndef WRPCTE_KG_BACKEND_NEO4J_H_
 #define WRPCTE_KG_BACKEND_NEO4J_H_
 
+#include <wrp_cte/core/embedding_client.h>
 #include <wrp_cte/core/kg_backend.h>
 #include <httplib.h>
 #include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <cctype>
+#include <memory>
 #include <sstream>
-#include <regex>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace wrp_cte::core {
 
 /**
- * Neo4j backend — true knowledge graph with entity extraction.
+ * Neo4j backend — native fulltext index + optional native vector index.
  *
- * Instead of storing flat text, extracts entities and relationships
- * from metadata at ingest time:
+ * Maps directly onto Neo4j 5.x built-ins:
+ *   (:Dataset {tag_major, tag_minor, text, embedding})
+ *   FULLTEXT INDEX cte_kg_idx  ON d.text       (configurable Lucene analyzer)
+ *   VECTOR   INDEX cte_kg_vec  ON d.embedding  (cosine, created when embedder
+ *                                               is configured)
  *
- *   (Dataset {name: "galaxy_hires/snapshot_023"})
- *     -[:HAS_PARTICLE_TYPE]-> (ParticleType {name: "dark_matter", count: 40000})
- *     -[:HAS_PARTICLE_TYPE]-> (ParticleType {name: "disk", count: 20000})
- *     -[:IS_SIM_TYPE]-> (SimType {name: "isolated_galaxy"})
- *     -[:HAS_PROPERTY]-> (Property {name: "non_cosmological"})
- *     -[:HAS_PROPERTY]-> (Property {name: "no_star_formation"})
+ * Config string:
+ *   "host:port [analyzer=<name>] [http://embedding-endpoint]"
  *
- * Search uses graph traversal + full-text index on Dataset.summary.
- * This enables relational queries that BM25/Qdrant can't handle:
- *   "Find simulations with dark matter but no gas"
- *   "Which runs have star formation enabled?"
+ * Analyzer choice matters: Lucene's default `standard` keeps
+ * underscore-joined identifiers as single tokens, so a query for "bm25"
+ * will not match a doc containing "kg_backend_bm25". The default here is
+ * `simple`, which splits on any non-letter.
+ *
+ * Search path:
+ *   - If an embedder is configured, run fulltext + vector and fuse with
+ *     Reciprocal Rank Fusion (k=60).
+ *   - Otherwise run fulltext only.
+ *
+ * Domain-specific entity extraction (e.g. `(\w+)_particles=N`) is explicitly
+ * NOT done here — it was dragging recall down on generic text. A caller that
+ * wants a graph overlay can run its own extractor on top.
  */
 class Neo4jBackend : public KGBackend {
  public:
@@ -34,35 +49,72 @@ class Neo4jBackend : public KGBackend {
   void Init(const std::string &config) override {
     endpoint_ = "localhost";
     port_ = 7474;
+    analyzer_ = "simple";
+    embedding_dim_ = 384;
+
+    std::string emb_endpoint;
 
     if (!config.empty()) {
-      auto colon = config.find(':');
-      if (colon != std::string::npos) {
-        endpoint_ = config.substr(0, colon);
-        port_ = std::stoi(config.substr(colon + 1));
-      } else {
-        endpoint_ = config;
+      std::istringstream iss(config);
+      std::string tok;
+      bool first = true;
+      while (iss >> tok) {
+        if (first) {
+          auto colon = tok.find(':');
+          if (colon != std::string::npos) {
+            endpoint_ = tok.substr(0, colon);
+            port_ = std::stoi(tok.substr(colon + 1));
+          } else {
+            endpoint_ = tok;
+          }
+          first = false;
+          continue;
+        }
+        if (tok.rfind("analyzer=", 0) == 0) {
+          analyzer_ = tok.substr(9);
+        } else {
+          emb_endpoint = tok;
+        }
       }
     }
+
+    embedder_.Configure(emb_endpoint);
 
     try {
       client_ = std::make_unique<httplib::Client>(endpoint_, port_);
       client_->set_connection_timeout(5);
       client_->set_read_timeout(30);
 
-      // Clean previous data
-      RunCypher("MATCH (n) DETACH DELETE n");
+      if (embedder_.Configured()) {
+        auto test = embedder_.Embed("test");
+        if (!test.empty()) embedding_dim_ = static_cast<int>(test.size());
+      }
 
-      // Create indexes for fast lookup
-      RunCypher("CREATE INDEX dataset_tag IF NOT EXISTS FOR (d:Dataset) ON (d.tag_major, d.tag_minor)");
-      RunCypher("CREATE INDEX particle_name IF NOT EXISTS FOR (p:ParticleType) ON (p.name)");
-      RunCypher("CREATE INDEX simtype_name IF NOT EXISTS FOR (s:SimType) ON (s.name)");
-      RunCypher("CREATE INDEX property_name IF NOT EXISTS FOR (p:Property) ON (p.name)");
+      RunCypher("MATCH (n:Dataset) DETACH DELETE n");
 
-      // Full-text index on Dataset summary for natural language search
       RunCypher(
-          "CREATE FULLTEXT INDEX cte_kg_idx IF NOT EXISTS "
-          "FOR (d:Dataset) ON EACH [d.summary, d.text]");
+          "CREATE INDEX dataset_tag IF NOT EXISTS "
+          "FOR (d:Dataset) ON (d.tag_major, d.tag_minor)");
+
+      {
+        nlohmann::json p = {{"analyzer", analyzer_}};
+        RunCypher(
+            "CREATE FULLTEXT INDEX cte_kg_idx IF NOT EXISTS "
+            "FOR (d:Dataset) ON EACH [d.text] "
+            "OPTIONS { indexConfig: { `fulltext.analyzer`: $analyzer } }",
+            p);
+      }
+
+      if (embedder_.Configured()) {
+        nlohmann::json p = {{"dims", embedding_dim_}};
+        RunCypher(
+            "CREATE VECTOR INDEX cte_kg_vec IF NOT EXISTS "
+            "FOR (d:Dataset) ON (d.embedding) "
+            "OPTIONS { indexConfig: { "
+            "  `vector.dimensions`: toInteger($dims), "
+            "  `vector.similarity_function`: 'cosine' } }",
+            p);
+      }
 
       size_ = 0;
     } catch (...) {
@@ -73,40 +125,44 @@ class Neo4jBackend : public KGBackend {
 
   void Destroy() override {
     if (client_) {
-      RunCypher("MATCH (n) DETACH DELETE n");
+      RunCypher("MATCH (n:Dataset) DETACH DELETE n");
       RunCypher("DROP INDEX cte_kg_idx IF EXISTS");
+      RunCypher("DROP INDEX cte_kg_vec IF EXISTS");
       RunCypher("DROP INDEX dataset_tag IF EXISTS");
-      RunCypher("DROP INDEX particle_name IF EXISTS");
-      RunCypher("DROP INDEX simtype_name IF EXISTS");
-      RunCypher("DROP INDEX property_name IF EXISTS");
       client_.reset();
     }
   }
 
   void Add(const TagId &tag_id, const std::string &text) override {
-    // Step 1: Create the Dataset node with the summary text
+    if (!client_) return;
     nlohmann::json params = {
         {"major", tag_id.major_},
         {"minor", tag_id.minor_},
-        {"text", text},
-        {"summary", text}
-    };
+        {"text", text}};
+
+    if (embedder_.Configured()) {
+      auto emb = embedder_.Embed(text);
+      if (!emb.empty()) {
+        params["embedding"] = emb;
+        RunCypher(
+            "MERGE (d:Dataset {tag_major: $major, tag_minor: $minor}) "
+            "SET d.text = $text, d.embedding = $embedding",
+            params);
+        size_++;
+        return;
+      }
+    }
     RunCypher(
         "MERGE (d:Dataset {tag_major: $major, tag_minor: $minor}) "
-        "SET d.text = $text, d.summary = $summary",
+        "SET d.text = $text",
         params);
-
-    // Step 2: Extract entities from the text and create graph relationships
-    ExtractAndLinkEntities(tag_id, text);
-
     size_++;
   }
 
   void Remove(const TagId &tag_id) override {
+    if (!client_) return;
     nlohmann::json params = {
-        {"major", tag_id.major_},
-        {"minor", tag_id.minor_}
-    };
+        {"major", tag_id.major_}, {"minor", tag_id.minor_}};
     RunCypher(
         "MATCH (d:Dataset {tag_major: $major, tag_minor: $minor}) "
         "DETACH DELETE d",
@@ -114,241 +170,130 @@ class Neo4jBackend : public KGBackend {
     if (size_ > 0) size_--;
   }
 
-  std::vector<KGSearchResult> Search(
-      const std::string &query, int top_k) override {
-    // Two-stage search:
-    // 1. Full-text search on Dataset.summary (Lucene BM25) — primary ranking
-    // 2. Graph-boosted search: find datasets via entity traversal, boost score
-    //
-    // The graph structure enables queries that pure text search can't handle:
-    //   "Find simulations with dark matter but no gas"
-    //   → Traverse: HAS_PARTICLE_TYPE->dark_matter AND NOT HAS_PARTICLE_TYPE->gas
+  std::vector<KGSearchResult> Search(const std::string &query,
+                                     int top_k) override {
+    std::vector<KGSearchResult> out;
+    if (!client_) return out;
 
-    std::vector<KGSearchResult> results;
-    std::unordered_map<uint64_t, float> score_map;
-
-    // Stage 1: Full-text search (primary — uses Lucene BM25 on summary)
-    nlohmann::json ft_params = {{"query", query}, {"top_k", top_k * 3}};
-    auto ft_response = RunCypher(
-        "CALL db.index.fulltext.queryNodes('cte_kg_idx', $query) "
-        "YIELD node, score "
-        "WHERE node:Dataset "
-        "RETURN node.tag_major AS major, node.tag_minor AS minor, score "
-        "LIMIT $top_k",
-        ft_params);
+    std::vector<KGSearchResult> ft;
     {
-      std::vector<KGSearchResult> ft_results;
-      ParseResults(ft_response, ft_results);
-      for (const auto &r : ft_results) {
-        uint64_t key = (static_cast<uint64_t>(r.key.major_) << 32) | r.key.minor_;
-        score_map[key] += r.score * 3.0f;  // Full-text dominates
+      std::string lq = SanitizeLucene(query);
+      if (!lq.empty()) {
+        nlohmann::json p = {{"q", lq}, {"k", top_k * 3}};
+        auto resp = RunCypher(
+            "CALL db.index.fulltext.queryNodes('cte_kg_idx', $q) "
+            "YIELD node, score "
+            "WHERE node:Dataset "
+            "RETURN node.tag_major AS major, node.tag_minor AS minor, score "
+            "LIMIT toInteger($k)",
+            p);
+        ParseResults(resp, ft);
       }
     }
 
-    // Stage 2: Graph traversal boost — single efficient query
-    // Count matching entities per dataset for all keywords at once
-    std::vector<std::string> keywords = Tokenize(query);
-    if (!keywords.empty()) {
-      // Build a keyword list for Cypher
-      nlohmann::json kw_array = nlohmann::json::array();
-      for (const auto &kw : keywords) kw_array.push_back(kw);
-
-      nlohmann::json gp = {{"keywords", kw_array}, {"top_k", top_k * 3}};
-      auto graph_response = RunCypher(
-          "UNWIND $keywords AS kw "
-          "MATCH (d:Dataset)-[rel]->(entity) "
-          "WHERE (entity:ParticleType OR entity:SimType OR entity:Property OR entity:Run) "
-          "  AND toLower(entity.name) CONTAINS toLower(kw) "
-          "WITH d, count(DISTINCT entity) AS matches, "
-          "  sum(CASE WHEN entity:SimType THEN 2.0 "
-          "           WHEN entity:ParticleType THEN 1.5 "
-          "           ELSE 1.0 END) AS weighted_matches "
-          "RETURN d.tag_major AS major, d.tag_minor AS minor, "
-          "  weighted_matches AS score "
-          "ORDER BY weighted_matches DESC "
-          "LIMIT $top_k",
-          gp);
-
-      std::vector<KGSearchResult> graph_results;
-      ParseResults(graph_response, graph_results);
-      for (const auto &r : graph_results) {
-        uint64_t key = (static_cast<uint64_t>(r.key.major_) << 32) | r.key.minor_;
-        score_map[key] += r.score;  // Graph boost adds to full-text
+    std::vector<KGSearchResult> vec;
+    if (embedder_.Configured()) {
+      auto qv = embedder_.Embed(query);
+      if (!qv.empty()) {
+        nlohmann::json p = {{"k", top_k * 3}, {"vec", qv}};
+        auto resp = RunCypher(
+            "CALL db.index.vector.queryNodes("
+            "  'cte_kg_vec', toInteger($k), $vec) "
+            "YIELD node, score "
+            "WHERE node:Dataset "
+            "RETURN node.tag_major AS major, node.tag_minor AS minor, score",
+            p);
+        ParseResults(resp, vec);
       }
     }
 
-    // Build final sorted results
-    for (const auto &[key, score] : score_map) {
+    // Reciprocal Rank Fusion (k=60) across the two ranked lists.
+    std::unordered_map<uint64_t, float> rrf;
+    auto accumulate = [&rrf](const std::vector<KGSearchResult> &lst) {
+      constexpr float kRrfK = 60.0f;
+      for (size_t i = 0; i < lst.size(); ++i) {
+        uint64_t key = (static_cast<uint64_t>(lst[i].key.major_) << 32) |
+                       lst[i].key.minor_;
+        rrf[key] += 1.0f / (kRrfK + static_cast<float>(i + 1));
+      }
+    };
+    accumulate(ft);
+    accumulate(vec);
+
+    out.reserve(rrf.size());
+    for (const auto &kv : rrf) {
       TagId tid;
-      tid.major_ = static_cast<chi::u32>(key >> 32);
-      tid.minor_ = static_cast<chi::u32>(key & 0xFFFFFFFF);
-      results.push_back({tid, score});
+      tid.major_ = static_cast<chi::u32>(kv.first >> 32);
+      tid.minor_ = static_cast<chi::u32>(kv.first & 0xFFFFFFFFu);
+      out.push_back({tid, kv.second});
     }
-    std::sort(results.begin(), results.end(),
+    std::sort(out.begin(), out.end(),
               [](const auto &a, const auto &b) { return a.score > b.score; });
-    if (static_cast<int>(results.size()) > top_k) {
-      results.resize(top_k);
-    }
-
-    return results;
+    if (static_cast<int>(out.size()) > top_k) out.resize(top_k);
+    return out;
   }
 
   size_t Size() const override { return size_; }
 
   void Clear() override {
-    RunCypher("MATCH (n) DETACH DELETE n");
+    if (!client_) return;
+    RunCypher("MATCH (n:Dataset) DETACH DELETE n");
     size_ = 0;
   }
 
  private:
-  /**
-   * Extract entities from metadata text and create graph relationships.
-   * Parses key=value pairs from the description to build structured graph.
-   */
-  void ExtractAndLinkEntities(const TagId &tag_id, const std::string &text) {
-    nlohmann::json base_params = {
-        {"major", tag_id.major_},
-        {"minor", tag_id.minor_}
-    };
-
-    // Extract particle types (e.g., "gas_particles=1472", "dark_matter_particles=40000")
-    std::regex particle_re(R"((\w+)_particles=(\d+))");
-    std::sregex_iterator it(text.begin(), text.end(), particle_re);
-    std::sregex_iterator end;
-    for (; it != end; ++it) {
-      std::string ptype = (*it)[1].str();
-      int count = std::stoi((*it)[2].str());
-      nlohmann::json params = base_params;
-      params["ptype"] = ptype;
-      params["count"] = count;
-      RunCypher(
-          "MATCH (d:Dataset {tag_major: $major, tag_minor: $minor}) "
-          "MERGE (p:ParticleType {name: $ptype}) "
-          "MERGE (d)-[:HAS_PARTICLE_TYPE {count: $count}]->(p)",
-          params);
-    }
-
-    // Extract simulation type (e.g., "simulation_type=isolated_galaxy_dark_matter_disk")
-    std::regex simtype_re(R"(simulation_type=(\S+))");
-    std::smatch simtype_match;
-    if (std::regex_search(text, simtype_match, simtype_re)) {
-      std::string simtype = simtype_match[1].str();
-      // Convert underscores to spaces for better matching
-      std::replace(simtype.begin(), simtype.end(), '_', ' ');
-      nlohmann::json params = base_params;
-      params["simtype"] = simtype;
-      RunCypher(
-          "MATCH (d:Dataset {tag_major: $major, tag_minor: $minor}) "
-          "MERGE (s:SimType {name: $simtype}) "
-          "MERGE (d)-[:IS_SIM_TYPE]->(s)",
-          params);
-    }
-
-    // Extract boolean properties (star_formation, cooling, cosmological)
-    std::regex prop_re(R"((star_formation|cooling|cosmological)=(\S+))");
-    std::sregex_iterator pit(text.begin(), text.end(), prop_re);
-    for (; pit != end; ++pit) {
-      std::string prop_name = (*pit)[1].str();
-      std::string prop_val = (*pit)[2].str();
-      std::string label = prop_name + "_" + prop_val;
-      nlohmann::json params = base_params;
-      params["label"] = label;
-      params["prop_name"] = prop_name;
-      params["prop_val"] = prop_val;
-      RunCypher(
-          "MATCH (d:Dataset {tag_major: $major, tag_minor: $minor}) "
-          "MERGE (pr:Property {name: $label}) "
-          "SET pr.property = $prop_name, pr.value = $prop_val "
-          "MERGE (d)-[:HAS_PROPERTY]->(pr)",
-          params);
-    }
-
-    // Extract run name
-    std::regex run_re(R"(run_name=(\S+))");
-    std::smatch run_match;
-    if (std::regex_search(text, run_match, run_re)) {
-      nlohmann::json params = base_params;
-      params["run_name"] = run_match[1].str();
-      RunCypher(
-          "MATCH (d:Dataset {tag_major: $major, tag_minor: $minor}) "
-          "MERGE (r:Run {name: $run_name}) "
-          "MERGE (d)-[:FROM_RUN]->(r)",
-          params);
-    }
-
-    // Extract numeric values (Time, Omega0, Redshift)
-    std::regex num_re(R"((Time|Omega0|Redshift|BoxSize)=([0-9.e+-]+))");
-    std::sregex_iterator nit(text.begin(), text.end(), num_re);
-    for (; nit != end; ++nit) {
-      std::string name = (*nit)[1].str();
-      std::string val = (*nit)[2].str();
-      nlohmann::json params = base_params;
-      params["name"] = name;
-      params["val"] = std::stod(val);
-      RunCypher(
-          "MATCH (d:Dataset {tag_major: $major, tag_minor: $minor}) "
-          "SET d." + name + " = $val",
-          params);
-    }
-  }
-
   void ParseResults(const std::string &response,
                     std::vector<KGSearchResult> &results) {
-    try {
-      auto body = nlohmann::json::parse(response, nullptr, false);
-      if (body.is_discarded()) return;
-      for (const auto &result : body["results"]) {
-        for (const auto &row : result["data"]) {
-          TagId tid;
-          tid.major_ = row["row"][0].get<chi::u32>();
-          tid.minor_ = row["row"][1].get<chi::u32>();
-          float score = row["row"][2].get<float>();
-          results.push_back({tid, score});
-        }
-      }
-    } catch (...) {}
-  }
-
-  std::vector<std::string> Tokenize(const std::string &text) {
-    std::vector<std::string> tokens;
-    std::istringstream iss(text);
-    std::string word;
-    // Stop words to skip
-    static const std::unordered_set<std::string> stop_words = {
-        "find", "the", "a", "an", "is", "are", "was", "were", "with",
-        "and", "or", "of", "in", "on", "at", "to", "for", "from",
-        "which", "that", "this", "those", "these", "locate", "where",
-        "show", "me", "any", "all", "simulation", "simulations",
-        "data", "output", "snapshot", "snapshots", "run", "runs"
-    };
-    while (iss >> word) {
-      // Lowercase
-      std::transform(word.begin(), word.end(), word.begin(), ::tolower);
-      if (stop_words.find(word) == stop_words.end() && word.size() > 2) {
-        tokens.push_back(word);
+    auto body = nlohmann::json::parse(response, nullptr, false);
+    if (body.is_discarded()) return;
+    if (!body.contains("results")) return;
+    for (const auto &result : body["results"]) {
+      if (!result.contains("data")) continue;
+      for (const auto &row : result["data"]) {
+        const auto &r = row["row"];
+        if (!r.is_array() || r.size() < 3) continue;
+        TagId tid;
+        tid.major_ = r[0].get<chi::u32>();
+        tid.minor_ = r[1].get<chi::u32>();
+        float score = r[2].get<float>();
+        results.push_back({tid, score});
       }
     }
-    return tokens;
+  }
+
+  // Strip Lucene reserved characters so raw user input can't break the parser.
+  // Keeps alphanumerics, underscores, whitespace; drops the rest.
+  static std::string SanitizeLucene(const std::string &in) {
+    std::string out;
+    out.reserve(in.size());
+    for (char c : in) {
+      if (std::isalnum(static_cast<unsigned char>(c)) ||
+          c == '_' || c == ' ' || c == '\t') {
+        out.push_back(c);
+      } else {
+        out.push_back(' ');
+      }
+    }
+    return out;
   }
 
   std::string RunCypher(const std::string &cypher,
-                        const nlohmann::json &params = {}) {
-    nlohmann::json body = {
-        {"statements", {{
-            {"statement", cypher},
-            {"parameters", params}
-        }}}
-    };
+                        const nlohmann::json &params = nlohmann::json()) {
+    if (!client_) return "{}";
+    nlohmann::json stmt = {{"statement", cypher}};
+    if (!params.is_null()) stmt["parameters"] = params;
+    nlohmann::json body = {{"statements", nlohmann::json::array({stmt})}};
     auto res = client_->Post("/db/neo4j/tx/commit",
                              body.dump(), "application/json");
-    if (res && res->status == 200) {
-      return res->body;
-    }
+    if (res && res->status == 200) return res->body;
     return "{}";
   }
 
   std::string endpoint_;
   int port_;
+  std::string analyzer_;
+  int embedding_dim_;
+  EmbeddingClient embedder_;
   std::unique_ptr<httplib::Client> client_;
   size_t size_ = 0;
 };

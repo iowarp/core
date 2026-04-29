@@ -324,11 +324,11 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
   {
     DepthDefaults dd;
     int glob = config_.depth_default_;
-    if (glob < 0 || glob > 4) glob = 0;
+    if (glob < 0 || glob > 2) glob = 0;
     dd.global_default = static_cast<IndexDepth>(glob);
     for (const auto &kv : config_.depth_per_format_) {
       int lvl = kv.second;
-      if (lvl < 0 || lvl > 4) continue;
+      if (lvl < 0 || lvl > 2) continue;
       dd.per_format[kv.first] = static_cast<IndexDepth>(lvl);
     }
     depth_controller_.SetDefaults(std::move(dd));
@@ -340,9 +340,9 @@ chi::TaskResume Runtime::Create(hipc::FullPtr<CreateTask> task,
 #ifdef WRP_CORE_ENABLE_HDF5
     // Register HDF5 L2 extractor so any H5 file gets full group/dataset
     // metadata indexed, regardless of whether CAE drives the ingest.
-    depth_controller_.RegisterL2Extractor("h5",   &Hdf5Summary::Extract);
-    depth_controller_.RegisterL2Extractor("hdf5", &Hdf5Summary::Extract);
-    HLOG(kInfo, "Acropolis L2: HDF5 extractor registered for .h5 and .hdf5");
+    depth_controller_.RegisterMetadataExtractor("h5",   &Hdf5Summary::Extract);
+    depth_controller_.RegisterMetadataExtractor("hdf5", &Hdf5Summary::Extract);
+    HLOG(kInfo, "Acropolis L1: HDF5 metadata extractor registered for .h5/.hdf5");
 #endif
 
     HLOG(kInfo,

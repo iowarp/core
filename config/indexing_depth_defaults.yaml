@@ -4,12 +4,19 @@
 # Per-file overrides use the xattr `user.acropolis.depth`.
 # Per-directory (recursive) overrides use `user.acropolis.depth_recursive`.
 #
-# Depth levels:
-#   0  Name only          (~zero cost)   filename, path, size, timestamps
-#   1  Stat metadata      (~zero cost)   format detection, xattrs
-#   2  Format extraction  (~ms)          HDF5/NetCDF/Parquet internals
-#   3  Embedding          (~$0.001-0.01) text summary -> embedding vector
-#   4  Deep content       (~$0.01-10+)   actual data values / statistics
+# Three depth levels (each is additive — N includes the work of all
+# lower levels):
+#
+#   0  Name      filename, path, size, ext            ~zero cost
+#   1  Metadata  + format detection,                   ~ms per file
+#                + format-specific extractor output
+#                  (HDF5 dataset tree, etc.),
+#                + embedding generated from this text
+#   2  Content   same as L1 inside CTE, plus the      ~LLM call
+#                caller (e.g. CAE) supplies an
+#                LLM-generated natural-language
+#                summary that the runtime appends
+#                to the indexed text.
 
 indexing_depth:
   # Global default applied when no xattr or format override matches.
@@ -17,13 +24,13 @@ indexing_depth:
 
   # Format-specific defaults (key = lowercase file extension).
   formats:
-    h5:      2        # HDF5
-    hdf5:    2
-    nc:      2        # NetCDF
-    nc4:     2
-    netcdf:  2
-    parquet: 2
-    pq:      2
+    h5:      1        # HDF5  -> walk groups + embedding
+    hdf5:    1
+    nc:      1        # NetCDF
+    nc4:     1
+    netcdf:  1
+    parquet: 1
+    pq:      1
     csv:     1
     tsv:     1
     bin:     0
@@ -31,9 +38,9 @@ indexing_depth:
     mov:     0
     jpg:     0
     png:     0
-    log:     1        # sniff format but don't parse internals
+    log:     0
 
-# Embedding endpoint (used for L3 depth and semantic backends like Qdrant).
+# Embedding endpoint (used at L1 and L2 — turns the indexed text into a vector).
 # Env vars CTE_EMBEDDING_ENDPOINT / CTE_EMBEDDING_MODEL override these.
 embedding:
   endpoint: "http://localhost:8090/v1/embeddings"

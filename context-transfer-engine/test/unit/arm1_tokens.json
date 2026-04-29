@@ -1,0 +1,174 @@
+{
+  "agent": "claude-sonnet-4.7",
+  "arm": "without_acropolis",
+  "source_jsonl": "C:\\Users\\rajni\\.claude\\projects\\c--Users-rajni-Documents-GPU-OS\\899b03bb-c890-4326-b5c0-78cf11ca2a4b.jsonl",
+  "total": {
+    "input_tokens": 5264,
+    "output_tokens": 57535,
+    "cache_read_input_tokens": 3188819,
+    "cache_creation_input_tokens": 293586,
+    "n_assistant_turns": 63,
+    "n_tool_calls": 0
+  },
+  "total_billable_equiv": 748663,
+  "unattributed": {
+    "input_tokens": 12,
+    "output_tokens": 2132,
+    "cache_read_input_tokens": 38756,
+    "cache_creation_input_tokens": 32394,
+    "n_assistant_turns": 2,
+    "n_tool_calls": 0
+  },
+  "per_query": [
+    {
+      "id": 1,
+      "input_tokens": 13,
+      "output_tokens": 2489,
+      "cache_read_input_tokens": 74331,
+      "cache_creation_input_tokens": 35298,
+      "n_assistant_turns": 3,
+      "n_tool_calls": 3,
+      "billable_equiv": 54057
+    },
+    {
+      "id": 2,
+      "input_tokens": 7,
+      "output_tokens": 1423,
+      "cache_read_input_tokens": 54953,
+      "cache_creation_input_tokens": 19101,
+      "n_assistant_turns": 2,
+      "n_tool_calls": 2,
+      "billable_equiv": 30801
+    },
+    {
+      "id": 3,
+      "input_tokens": 873,
+      "output_tokens": 3744,
+      "cache_read_input_tokens": 247912,
+      "cache_creation_input_tokens": 33079,
+      "n_assistant_turns": 7,
+      "n_tool_calls": 4,
+      "billable_equiv": 70756
+    },
+    {
+      "id": 4,
+      "input_tokens": 11,
+      "output_tokens": 5529,
+      "cache_read_input_tokens": 308198,
+      "cache_creation_input_tokens": 27108,
+      "n_assistant_turns": 6,
+      "n_tool_calls": 5,
+      "billable_equiv": 70244
+    },
+    {
+      "id": 5,
+      "input_tokens": 1,
+      "output_tokens": 930,
+      "cache_read_input_tokens": 60377,
+      "cache_creation_input_tokens": 1966,
+      "n_assistant_turns": 1,
+      "n_tool_calls": 1,
+      "billable_equiv": 9426
+    },
+    {
+      "id": 6,
+      "input_tokens": 3,
+      "output_tokens": 2407,
+      "cache_read_input_tokens": 192543,
+      "cache_creation_input_tokens": 8151,
+      "n_assistant_turns": 3,
+      "n_tool_calls": 3,
+      "billable_equiv": 31853
+    },
+    {
+      "id": 7,
+      "input_tokens": 863,
+      "output_tokens": 1553,
+      "cache_read_input_tokens": 104143,
+      "cache_creation_input_tokens": 14419,
+      "n_assistant_turns": 2,
+      "n_tool_calls": 2,
+      "billable_equiv": 30854
+    },
+    {
+      "id": 8,
+      "input_tokens": 866,
+      "output_tokens": 4034,
+      "cache_read_input_tokens": 307534,
+      "cache_creation_input_tokens": 21472,
+      "n_assistant_turns": 5,
+      "n_tool_calls": 4,
+      "billable_equiv": 62493
+    },
+    {
+      "id": 9,
+      "input_tokens": 7,
+      "output_tokens": 4728,
+      "cache_read_input_tokens": 388593,
+      "cache_creation_input_tokens": 11561,
+      "n_assistant_turns": 7,
+      "n_tool_calls": 5,
+      "billable_equiv": 58045
+    },
+    {
+      "id": 10,
+      "input_tokens": 2,
+      "output_tokens": 1707,
+      "cache_read_input_tokens": 127443,
+      "cache_creation_input_tokens": 5454,
+      "n_assistant_turns": 2,
+      "n_tool_calls": 1,
+      "billable_equiv": 21270
+    },
+    {
+      "id": 11,
+      "input_tokens": 1726,
+      "output_tokens": 3655,
+      "cache_read_input_tokens": 195906,
+      "cache_creation_input_tokens": 28344,
+      "n_assistant_turns": 4,
+      "n_tool_calls": 3,
+      "billable_equiv": 60401
+    },
+    {
+      "id": 12,
+      "input_tokens": 874,
+      "output_tokens": 8740,
+      "cache_read_input_tokens": 679662,
+      "cache_creation_input_tokens": 43450,
+      "n_assistant_turns": 13,
+      "n_tool_calls": 12,
+      "billable_equiv": 131892
+    },
+    {
+      "id": 13,
+      "input_tokens": 3,
+      "output_tokens": 11379,
+      "cache_read_input_tokens": 213080,
+      "cache_creation_input_tokens": 5186,
+      "n_assistant_turns": 3,
+      "n_tool_calls": 1,
+      "billable_equiv": 39172
+    },
+    {
+      "id": 14,
+      "input_tokens": 1,
+      "output_tokens": 1019,
+      "cache_read_input_tokens": 57443,
+      "cache_creation_input_tokens": 2934,
+      "n_assistant_turns": 1,
+      "n_tool_calls": 1,
+      "billable_equiv": 10431
+    },
+    {
+      "id": 15,
+      "input_tokens": 2,
+      "output_tokens": 2066,
+      "cache_read_input_tokens": 137945,
+      "cache_creation_input_tokens": 3669,
+      "n_assistant_turns": 2,
+      "n_tool_calls": 1,
+      "billable_equiv": 20448
+    }
+  ]
+}

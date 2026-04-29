@@ -69,24 +69,28 @@ using Timestamp = std::chrono::time_point<std::chrono::steady_clock>;
  * IndexDepth — Acropolis adaptive indexing depth levels.
  *
  * Controls how deeply a file is analyzed at ingest time. Higher levels are
- * additive (L3 includes everything L0-L2 did plus embedding generation) and
- * more expensive. Default is L0 — zero overhead.
+ * additive — running at level N includes the work of all lower levels.
+ * Default is L0 — zero overhead.
+ *
+ *   L0 (Name)      filename, path, size, timestamps           ~zero cost
+ *   L1 (Metadata)  + format detection, structural extraction  ~ms + embedding
+ *                    (e.g. HDF5 dataset names, shapes, attrs),
+ *                    + embedding generated from this text
+ *   L2 (Content)   + read actual file content,                seconds + LLM call
+ *                    + LLM-generated natural-language summary,
+ *                    + embedding regenerated from richer text
  */
 enum class IndexDepth : uint8_t {
-  kNameOnly      = 0,  ///< filename, path, size, timestamps (~zero cost)
-  kStatMeta      = 1,  ///< + format detection, xattrs (~zero cost)
-  kFormatExtract = 2,  ///< + HDF5/NetCDF/Parquet internal structure (~ms)
-  kEmbedding     = 3,  ///< + text summary -> embedding vector (~$0.001-0.01)
-  kDeepContent   = 4,  ///< + actual data values, statistical profiles (~$0.01+)
+  kNameOnly = 0,  ///< filename, path, size, timestamps
+  kMetadata = 1,  ///< + format extraction + embedding
+  kContent  = 2,  ///< + file content + LLM summary + re-embed
 };
 
 inline const char *IndexDepthName(IndexDepth d) {
   switch (d) {
-    case IndexDepth::kNameOnly:      return "L0-name";
-    case IndexDepth::kStatMeta:      return "L1-stat";
-    case IndexDepth::kFormatExtract: return "L2-format";
-    case IndexDepth::kEmbedding:     return "L3-embed";
-    case IndexDepth::kDeepContent:   return "L4-deep";
+    case IndexDepth::kNameOnly: return "L0-name";
+    case IndexDepth::kMetadata: return "L1-metadata";
+    case IndexDepth::kContent:  return "L2-content";
   }
   return "unknown";
 }

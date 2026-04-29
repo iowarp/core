@@ -10,6 +10,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace wrp_cte::core {
@@ -23,10 +24,10 @@ namespace wrp_cte::core {
  *
  *   keyword  - classic BM25 `match` query over the `text` field only.
  *   vector   - kNN on a `dense_vector` embedding generated from the text.
- *   both     - writes both fields; the runtime chooses which query path to use
- *              (for now each Search() issues both and returns vector-mode
- *              results with keyword-mode as a fallback when no embedder is
- *              available).
+ *   both     - runs both queries in parallel and fuses with Reciprocal Rank
+ *              Fusion (k=60). A single-list score boost on exact-phrase
+ *              matches (via the `text.keyword` sub-field) is added to each
+ *              BM25 result.
  *
  * Config string format:
  *   "host:port/index_name [mode] [embedding_endpoint]"
@@ -119,7 +120,6 @@ class ElasticsearchBackend : public KGBackend {
                           {"tag_major", tag_id.major_},
                           {"tag_minor", tag_id.minor_}};
 
-    // Include embedding when the mode uses vectors and we can generate one.
     if (UseVector() && embedder_.Configured()) {
       auto emb = embedder_.Embed(text);
       if (!emb.empty()) {
@@ -150,54 +150,82 @@ class ElasticsearchBackend : public KGBackend {
     // Make recent writes searchable.
     client_->Post("/" + index_ + "/_refresh", "", "application/json");
 
-    // Prefer vector search when configured.
-    if (UseVector() && embedder_.Configured()) {
-      auto q_emb = embedder_.Embed(query);
-      if (!q_emb.empty()) {
-        nlohmann::json body = {
-            {"knn",
-             {{"field", "embedding"},
-              {"query_vector", q_emb},
-              {"k", top_k},
-              {"num_candidates", std::max(top_k * 10, 50)}}},
-            {"size", top_k},
-            {"_source", nlohmann::json::array({"tag_major", "tag_minor"})}};
-        auto res = client_->Post("/" + index_ + "/_search", body.dump(),
-                                 "application/json");
-        if (res && res->status == 200) {
-          auto parsed = nlohmann::json::parse(res->body, nullptr, false);
-          if (!parsed.is_discarded()) {
-            for (const auto &hit : parsed["hits"]["hits"]) {
-              TagId tid;
-              tid.major_ = hit["_source"]["tag_major"].get<chi::u32>();
-              tid.minor_ = hit["_source"]["tag_minor"].get<chi::u32>();
-              float score = hit["_score"].get<float>();
-              results.push_back({tid, score});
-            }
-            if (!results.empty() || mode_ == Mode::kVector) return results;
-          }
+    // Over-fetch so RRF has enough candidates to work with.
+    const int fetch_k = std::max(top_k * 3, 10);
+
+    std::vector<KGSearchResult> vec_hits;
+    std::vector<KGSearchResult> kw_hits;
+
+    if (mode_ == Mode::kVector || mode_ == Mode::kBoth) {
+      if (embedder_.Configured()) {
+        auto q_emb = embedder_.Embed(query);
+        if (!q_emb.empty()) {
+          nlohmann::json body = {
+              {"knn",
+               {{"field", "embedding"},
+                {"query_vector", q_emb},
+                {"k", fetch_k},
+                {"num_candidates", std::max(fetch_k * 4, 50)}}},
+              {"size", fetch_k},
+              {"_source", nlohmann::json::array({"tag_major", "tag_minor"})}};
+          auto res = client_->Post("/" + index_ + "/_search", body.dump(),
+                                   "application/json");
+          ParseHits(res, vec_hits);
         }
       }
-      if (mode_ == Mode::kVector) return results;  // strict vector mode
+      if (mode_ == Mode::kVector) {
+        if (static_cast<int>(vec_hits.size()) > top_k) vec_hits.resize(top_k);
+        return vec_hits;
+      }
     }
 
-    // Keyword (BM25) path — used in kKeyword or as fallback in kBoth.
-    nlohmann::json body = {{"query", {{"match", {{"text", query}}}}},
-                           {"size", top_k}};
-    auto res = client_->Post("/" + index_ + "/_search", body.dump(),
-                             "application/json");
-    if (!res || res->status != 200) return results;
+    if (mode_ == Mode::kKeyword || mode_ == Mode::kBoth) {
+      // Use a bool-should that combines the analyzed text field with the
+      // `text.keyword` sub-field. `text.keyword` gives exact-string hits a
+      // boost without affecting the BM25 tokenization path.
+      nlohmann::json body = {
+          {"query",
+           {{"bool",
+             {{"should", nlohmann::json::array(
+                            {{{"match", {{"text", query}}}},
+                             {{"term", {{"text.keyword",
+                                          {{"value", query},
+                                           {"boost", 2.0}}}}}}})}}}}},
+          {"size", fetch_k},
+          {"_source", nlohmann::json::array({"tag_major", "tag_minor"})}};
+      auto res = client_->Post("/" + index_ + "/_search", body.dump(),
+                               "application/json");
+      ParseHits(res, kw_hits);
 
-    auto parsed = nlohmann::json::parse(res->body, nullptr, false);
-    if (parsed.is_discarded()) return results;
+      if (mode_ == Mode::kKeyword) {
+        if (static_cast<int>(kw_hits.size()) > top_k) kw_hits.resize(top_k);
+        return kw_hits;
+      }
+    }
 
-    for (const auto &hit : parsed["hits"]["hits"]) {
+    // Mode::kBoth — fuse via Reciprocal Rank Fusion (k=60).
+    std::unordered_map<uint64_t, float> rrf;
+    auto accumulate = [&rrf](const std::vector<KGSearchResult> &lst) {
+      constexpr float kRrfK = 60.0f;
+      for (size_t i = 0; i < lst.size(); ++i) {
+        uint64_t key = (static_cast<uint64_t>(lst[i].key.major_) << 32) |
+                       lst[i].key.minor_;
+        rrf[key] += 1.0f / (kRrfK + static_cast<float>(i + 1));
+      }
+    };
+    accumulate(vec_hits);
+    accumulate(kw_hits);
+
+    results.reserve(rrf.size());
+    for (const auto &kv : rrf) {
       TagId tid;
-      tid.major_ = hit["_source"]["tag_major"].get<chi::u32>();
-      tid.minor_ = hit["_source"]["tag_minor"].get<chi::u32>();
-      float score = hit["_score"].get<float>();
-      results.push_back({tid, score});
+      tid.major_ = static_cast<chi::u32>(kv.first >> 32);
+      tid.minor_ = static_cast<chi::u32>(kv.first & 0xFFFFFFFFu);
+      results.push_back({tid, kv.second});
     }
+    std::sort(results.begin(), results.end(),
+              [](const auto &a, const auto &b) { return a.score > b.score; });
+    if (static_cast<int>(results.size()) > top_k) results.resize(top_k);
     return results;
   }
 
@@ -211,11 +239,39 @@ class ElasticsearchBackend : public KGBackend {
   }
 
  private:
-  bool UseVector() const { return mode_ == Mode::kVector || mode_ == Mode::kBoth; }
+  bool UseVector() const {
+    return mode_ == Mode::kVector || mode_ == Mode::kBoth;
+  }
+
+  void ParseHits(const httplib::Result &res,
+                 std::vector<KGSearchResult> &out) {
+    if (!res || res->status != 200) return;
+    auto parsed = nlohmann::json::parse(res->body, nullptr, false);
+    if (parsed.is_discarded()) return;
+    if (!parsed.contains("hits") || !parsed["hits"].contains("hits")) return;
+    for (const auto &hit : parsed["hits"]["hits"]) {
+      TagId tid;
+      tid.major_ = hit["_source"]["tag_major"].get<chi::u32>();
+      tid.minor_ = hit["_source"]["tag_minor"].get<chi::u32>();
+      float score = hit["_score"].get<float>();
+      out.push_back({tid, score});
+    }
+  }
 
   nlohmann::json BuildMapping() const {
+    // Pattern analyzer splits on any non-alphanumeric run (including
+    // underscore/slash/dot/dash). Matches the BM25 backend's tokenization —
+    // so "kg_backend_bm25" tokenizes to [kg, backend, bm25] and a query for
+    // "bm25" correctly finds it. A `keyword` sub-field preserves the raw
+    // string for exact-match boosting.
     nlohmann::json properties = {
-        {"text", {{"type", "text"}, {"analyzer", "standard"}}},
+        {"text",
+         {{"type", "text"},
+          {"analyzer", "acropolis_analyzer"},
+          {"fields",
+           {{"keyword",
+             {{"type", "keyword"},
+              {"ignore_above", 8192}}}}}}},
         {"tag_major", {{"type", "long"}}},
         {"tag_minor", {{"type", "long"}}}};
     if (UseVector()) {
@@ -225,7 +281,15 @@ class ElasticsearchBackend : public KGBackend {
                                  {"similarity", "cosine"}};
     }
     return nlohmann::json{
-        {"settings", {{"number_of_shards", 1}, {"number_of_replicas", 0}}},
+        {"settings",
+         {{"number_of_shards", 1},
+          {"number_of_replicas", 0},
+          {"analysis",
+           {{"analyzer",
+             {{"acropolis_analyzer",
+               {{"type", "pattern"},
+                {"pattern", "[^a-zA-Z0-9]+"},
+                {"lowercase", true}}}}}}}}},
         {"mappings", {{"properties", properties}}}};
   }
 
