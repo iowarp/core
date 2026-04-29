@@ -19,6 +19,13 @@
 
 name: iowarp_apptainer_test
 
+# Pin chimaera's ZMQ TCP traffic (server bind + client source-bind) to a
+# single Aurora HSN rail so connections are symmetric. Without this the
+# FQDN can resolve to one of hsn0..hsn7 while connect() picks another
+# rail, causing silent drops at scale (PR #399).
+env:
+  LIGHTBEAM_TCP_DEVICE: hsn0
+
 install_manager: container
 container_engine: apptainer
 container_base: ubuntu:24.04
@@ -40,6 +47,7 @@ pkgs:
     cmake_preset: release-adapter
     port: 9413
     sleep: 2
+    log_level: debug
 
   - pkg_type: jarvis_iowarp.wrp_cte
     deploy_mode: container
