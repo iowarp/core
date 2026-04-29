@@ -143,10 +143,21 @@ class ZeroMqTransport : public Transport {
     std::string bind_device =
         (bind_device_env && *bind_device_env) ? bind_device_env : "";
 
+    // Loopback endpoints must stay on the host's lo interface — clients
+    // connecting to 127.0.0.1 / ::1 / localhost can't reach a socket
+    // pinned to a routed NIC, and the server's local-only ROUTER (used
+    // by same-host wrp_cte / runtime clients) MUST keep listening on
+    // 127.0.0.1 even when LIGHTBEAM_TCP_DEVICE is set for cross-node
+    // traffic. Otherwise every same-host client times out in
+    // WaitForLocalServer.
+    auto is_loopback_addr = [](const std::string &a) {
+      return a == "127.0.0.1" || a == "::1" || a == "localhost";
+    };
+
     std::string full_url;
     if (protocol_ == "ipc") {
       full_url = "ipc://" + addr_;
-    } else if (!bind_device.empty()) {
+    } else if (!bind_device.empty() && !is_loopback_addr(addr_)) {
       if (mode == TransportMode::kClient) {
         // tcp://<src_dev>:0;<dst_addr>:<dst_port> — source-bind outbound.
         full_url = protocol_ + "://" + bind_device + ":0;" + addr_ + ":" +
