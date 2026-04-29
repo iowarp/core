@@ -128,9 +128,32 @@ class ZeroMqTransport : public Transport {
     type_ = TransportType::kZeroMq;
     sock::InitSocketLib();
 
+    // Optional: pin TCP traffic to a specific local network interface on
+    // multi-rail fabrics (e.g. Aurora's Slingshot HSN where each compute
+    // node has hsn0..hsn7). When LIGHTBEAM_TCP_DEVICE is set:
+    //   - ROUTER (server) binds the device's IP directly: tcp://hsn0:port
+    //   - DEALER (client) source-binds outbound traffic to the device
+    //     using ZMQ's `<source>;<destination>` endpoint syntax, so
+    //     connect() routes via the chosen NIC regardless of how the
+    //     destination FQDN resolves. Both ends pinned to the same device
+    //     -> symmetric routing -> no asymmetric drops at scale.
+    const char *bind_device_env = std::getenv("LIGHTBEAM_TCP_DEVICE");
+    std::string bind_device =
+        (bind_device_env && *bind_device_env) ? bind_device_env : "";
+
     std::string full_url;
     if (protocol_ == "ipc") {
       full_url = "ipc://" + addr_;
+    } else if (!bind_device.empty()) {
+      if (mode == TransportMode::kClient) {
+        // tcp://<src_dev>:0;<dst_addr>:<dst_port> — source-bind outbound.
+        full_url = protocol_ + "://" + bind_device + ":0;" + addr_ + ":" +
+                   std::to_string(port_);
+      } else {
+        // Server: bind device's local IP. Override wildcard/0.0.0.0/host.
+        full_url =
+            protocol_ + "://" + bind_device + ":" + std::to_string(port_);
+      }
     } else {
       full_url = protocol_ + "://" + addr_ + ":" + std::to_string(port_);
     }
