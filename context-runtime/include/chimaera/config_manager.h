@@ -170,25 +170,6 @@ class ConfigManager : public hshm::BaseConfig {
   u32 GetPort() const;
 
   /**
-   * Get the TCP ROUTER port for cross-node task forwarding.
-   *
-   * Returns GetPort() + GetRouterPortOffset(). The local TCP ROUTER server
-   * binds here, and remote DEALER clients (SendIn / SendOut / SWIM
-   * HeartbeatProbe / etc.) connect here. Keeping this in one place avoids
-   * client/server drift — historically the offset was hardcoded to +3 on
-   * the bind path but the cross-node SendIn connected to the base port,
-   * silently breaking SWIM heartbeats on multi-node deployments.
-   */
-  u32 GetRouterPort() const;
-
-  /**
-   * Get the offset added to the configured port to obtain the cross-node
-   * TCP ROUTER port. Default 3; overridable via networking.router_port_offset
-   * in the YAML config.
-   */
-  u32 GetRouterPortOffset() const;
-
-  /**
    * Get server address for client connections
    * @return Server address (default: "127.0.0.1", overridden by CHI_SERVER_ADDR)
    */
@@ -307,9 +288,6 @@ class ConfigManager : public hshm::BaseConfig {
   size_t client_data_segment_size_ = hshm::Unit<size_t>::Megabytes(256);
 
   u32 port_ = 9413;
-  // Offset added to port_ to derive the cross-node TCP ROUTER port (see
-  // GetRouterPort). Configurable via networking.router_port_offset.
-  u32 router_port_offset_ = 3;
   std::string server_addr_ = "127.0.0.1";
   u32 neighborhood_size_ = 32;
 
