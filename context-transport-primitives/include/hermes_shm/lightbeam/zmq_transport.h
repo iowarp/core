@@ -157,17 +157,22 @@ class ZeroMqTransport : public Transport {
     std::string full_url;
     if (protocol_ == "ipc") {
       full_url = "ipc://" + addr_;
-    } else if (!bind_device.empty() && !is_loopback_addr(addr_)) {
-      if (mode == TransportMode::kClient) {
-        // tcp://<src_dev>:0;<dst_addr>:<dst_port> — source-bind outbound.
-        full_url = protocol_ + "://" + bind_device + ":0;" + addr_ + ":" +
-                   std::to_string(port_);
-      } else {
-        // Server: bind device's local IP. Override wildcard/0.0.0.0/host.
-        full_url =
-            protocol_ + "://" + bind_device + ":" + std::to_string(port_);
-      }
+    } else if (!bind_device.empty() && !is_loopback_addr(addr_) &&
+               mode == TransportMode::kClient) {
+      // Client: source-bind outbound traffic to the chosen NIC so
+      // connect() routes via that rail regardless of how the
+      // destination FQDN resolves. ZMQ syntax:
+      //   tcp://<src_dev>:0;<dst_addr>:<dst_port>
+      full_url = protocol_ + "://" + bind_device + ":0;" + addr_ + ":" +
+                 std::to_string(port_);
     } else {
+      // Server: keep the original bind address. Aurora HSN FQDNs are
+      // multi-A (one entry per rail); pinning the server to a single
+      // rail's IP makes peer DEALERs whose FQDN lookup landed on a
+      // different rail unable to reach us. Listening on 0.0.0.0
+      // (every interface) lets any rail accept connections; the
+      // client-side source-bind above is what makes outbound
+      // routing symmetric.
       full_url = protocol_ + "://" + addr_ + ":" + std::to_string(port_);
     }
 
