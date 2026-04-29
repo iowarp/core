@@ -38,10 +38,12 @@
 #endif
 #include <zmq.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 
 #include "hermes_shm/introspect/system_info.h"
@@ -197,6 +199,7 @@ class ZeroMqTransport : public Transport {
 
       HLOG(kDebug, "ZeroMqTransport(DEALER) connected to {} (pid={})", full_url, pid);
       zmq_fired_action_.socket_ = socket_;
+      StartMonitor("DEALER", full_url);
     } else {
       // ROUTER socket for server
       ctx_ = zmq_ctx_new();
@@ -233,12 +236,18 @@ class ZeroMqTransport : public Transport {
       }
       HLOG(kDebug, "ZeroMqTransport(ROUTER) bound successfully to {}", full_url);
       zmq_fired_action_.socket_ = socket_;
+      StartMonitor("ROUTER", full_url);
     }
   }
 
   ~ZeroMqTransport() {
     HLOG(kDebug, "ZeroMqTransport destructor - closing socket to {}:{}", addr_,
          port_);
+
+    monitor_running_.store(false);
+    if (monitor_thread_.joinable()) {
+      monitor_thread_.join();
+    }
 
     int linger = 0;  // Close immediately; don't wait for unsent messages
 
@@ -249,6 +258,99 @@ class ZeroMqTransport : public Transport {
       zmq_ctx_destroy(ctx_);
     }
     HLOG(kDebug, "ZeroMqTransport destructor - socket closed");
+  }
+
+  // ZMQ socket monitor — emits diagnostic events whenever the underlying
+  // ZMTP state machine changes (CONNECT / ACCEPT / HANDSHAKE / DISCONNECT
+  // etc.). Spawns a reader thread that translates each event into an
+  // HLOG(kInfo) line so we can see WHY a peer-to-peer link silently fails
+  // to deliver application messages.
+  void StartMonitor(const std::string& kind, const std::string& url) {
+    static std::atomic<uint64_t> mon_id{0};
+    monitor_endpoint_ = "inproc://lbm-mon-" +
+                        std::to_string(mon_id.fetch_add(1));
+    int rc = zmq_socket_monitor(socket_, monitor_endpoint_.c_str(),
+                                ZMQ_EVENT_ALL);
+    if (rc < 0) {
+      HLOG(kWarning, "[ZMQ Monitor {}] zmq_socket_monitor failed: {}",
+           kind, zmq_strerror(zmq_errno()));
+      return;
+    }
+    monitor_running_.store(true);
+    monitor_thread_ = std::thread([this, kind, url]() {
+      void* mon = zmq_socket(ctx_, ZMQ_PAIR);
+      if (!mon) return;
+      int linger = 0;
+      zmq_setsockopt(mon, ZMQ_LINGER, &linger, sizeof(linger));
+      int timeout = 200;
+      zmq_setsockopt(mon, ZMQ_RCVTIMEO, &timeout, sizeof(timeout));
+      if (zmq_connect(mon, monitor_endpoint_.c_str()) < 0) {
+        HLOG(kWarning, "[ZMQ Monitor {}] connect failed: {}", kind,
+             zmq_strerror(zmq_errno()));
+        zmq_close(mon);
+        return;
+      }
+      HLOG(kInfo, "[ZMQ Monitor {}] watching {}", kind, url);
+      while (monitor_running_.load()) {
+        zmq_msg_t evt_msg;
+        zmq_msg_init(&evt_msg);
+        int n = zmq_msg_recv(&evt_msg, mon, 0);
+        if (n < 0) {
+          if (zmq_errno() == EAGAIN) {
+            zmq_msg_close(&evt_msg);
+            continue;
+          }
+          if (zmq_errno() == ETERM) {
+            zmq_msg_close(&evt_msg);
+            break;
+          }
+          zmq_msg_close(&evt_msg);
+          continue;
+        }
+        if (zmq_msg_size(&evt_msg) < 6) {
+          zmq_msg_close(&evt_msg);
+          continue;
+        }
+        const uint8_t* d = static_cast<const uint8_t*>(zmq_msg_data(&evt_msg));
+        uint16_t event = static_cast<uint16_t>(d[0] | (d[1] << 8));
+        uint32_t value = 0;
+        std::memcpy(&value, d + 2, 4);
+        zmq_msg_close(&evt_msg);
+        zmq_msg_t addr_msg;
+        zmq_msg_init(&addr_msg);
+        zmq_msg_recv(&addr_msg, mon, 0);
+        std::string ep(static_cast<const char*>(zmq_msg_data(&addr_msg)),
+                       zmq_msg_size(&addr_msg));
+        zmq_msg_close(&addr_msg);
+        const char* name = "?";
+        switch (event) {
+          case ZMQ_EVENT_CONNECTED: name = "CONNECTED"; break;
+          case ZMQ_EVENT_CONNECT_DELAYED: name = "CONNECT_DELAYED"; break;
+          case ZMQ_EVENT_CONNECT_RETRIED: name = "CONNECT_RETRIED"; break;
+          case ZMQ_EVENT_LISTENING: name = "LISTENING"; break;
+          case ZMQ_EVENT_BIND_FAILED: name = "BIND_FAILED"; break;
+          case ZMQ_EVENT_ACCEPTED: name = "ACCEPTED"; break;
+          case ZMQ_EVENT_ACCEPT_FAILED: name = "ACCEPT_FAILED"; break;
+          case ZMQ_EVENT_CLOSED: name = "CLOSED"; break;
+          case ZMQ_EVENT_CLOSE_FAILED: name = "CLOSE_FAILED"; break;
+          case ZMQ_EVENT_DISCONNECTED: name = "DISCONNECTED"; break;
+          case ZMQ_EVENT_MONITOR_STOPPED: name = "MONITOR_STOPPED"; break;
+          case ZMQ_EVENT_HANDSHAKE_FAILED_NO_DETAIL:
+            name = "HANDSHAKE_FAILED_NO_DETAIL"; break;
+          case ZMQ_EVENT_HANDSHAKE_SUCCEEDED:
+            name = "HANDSHAKE_SUCCEEDED"; break;
+          case ZMQ_EVENT_HANDSHAKE_FAILED_PROTOCOL:
+            name = "HANDSHAKE_FAILED_PROTOCOL"; break;
+          case ZMQ_EVENT_HANDSHAKE_FAILED_AUTH:
+            name = "HANDSHAKE_FAILED_AUTH"; break;
+          default: name = "UNKNOWN"; break;
+        }
+        HLOG(kInfo, "[ZMQ Monitor {}] {} value={} ep={}", kind, name,
+             value, ep);
+        if (event == ZMQ_EVENT_MONITOR_STOPPED) break;
+      }
+      zmq_close(mon);
+    });
   }
 
   Bulk Expose(const hipc::FullPtr<char>& ptr, size_t data_size,
@@ -561,6 +663,10 @@ class ZeroMqTransport : public Transport {
   // each multipart message is atomic.
   std::mutex send_mtx_;
   std::mutex recv_mtx_;
+  // ZMQ socket monitor — diagnostic for ZMTP-layer connection events.
+  std::thread monitor_thread_;
+  std::atomic<bool> monitor_running_{false};
+  std::string monitor_endpoint_;
 };
 
 }  // namespace hshm::lbm

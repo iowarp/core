@@ -26,11 +26,24 @@ apt-get update && apt-get install -y --no-install-recommends \
     libelf-dev libaio-dev liburing-dev \
     libfuse3-dev fuse3 \
     openmpi-bin libopenmpi-dev mpi-default-dev \
+    openssh-server openssh-client \
     libboost-all-dev catch2 libcurl4-openssl-dev libssl-dev \
     nlohmann-json3-dev \
     zlib1g-dev libbz2-dev liblzo2-dev libzstd-dev liblz4-dev liblzma-dev \
     libbrotli-dev libsnappy-dev libblosc2-dev libzfp-dev \
  && rm -rf /var/lib/apt/lists/*
+
+# SSH host keys + passwordless root key, required by jarvis_cd's apptainer
+# multi-node start path (mpirun ssh's between instances on container_ssh_port).
+mkdir -p /var/run/sshd /root/.ssh \
+    && ssh-keygen -A \
+    && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 \
+    && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys \
+    && chmod 700 /root/.ssh \
+    && chmod 600 /root/.ssh/authorized_keys \
+    && sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/^#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /etc/ssh/ssh_config
 
 # --- yaml-cpp 0.8.0 ---------------------------------------------------------
 cd /tmp
@@ -105,7 +118,12 @@ git clone --depth 1 --branch ##GIT_BRANCH## \
     https://github.com/iowarp/clio-core.git /opt/iowarp
 
 cd /opt/iowarp
-cmake --preset ##CMAKE_PRESET## -DCMAKE_INSTALL_PREFIX=/usr/local
+# HSHM_LOG_LEVEL=0 (kDebug) compiles in all kDebug HLOG markers — needed
+# to trace the SWIM probe RPC path. Default release preset uses 1 (kInfo)
+# which strips them entirely.
+cmake --preset ##CMAKE_PRESET## -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DWRP_CORE_ENABLE_BENCHMARKS=ON \
+    -DHSHM_LOG_LEVEL=0
 cmake --build build -j"$(nproc)"
 cmake --install build
 ldconfig
