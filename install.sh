@@ -157,15 +157,34 @@ fi
 echo -e "${GREEN}Active conda environment: $CONDA_PREFIX${NC}"
 echo ""
 
-# Check if conda-build is installed
-if ! conda build --version &> /dev/null; then
-    echo -e "${YELLOW}Installing conda-build...${NC}"
-    conda install -y conda-build -c conda-forge
-    echo ""
-else
-    echo -e "${GREEN}conda-build detected: $(conda build --version)${NC}"
+# Check if conda-build is installed.
+# conda-build registers its subcommand plugin against the *base* environment's
+# conda CLI, so installing it into a non-base env leaves `conda build`
+# unrecognized. Always install into base.
+# conda-build is a *plugin* registered against the base env's conda CLI.
+# When we invoke it from a non-base active env (e.g. `iowarp` created
+# above), the active env's `conda` doesn't see the plugin. So always
+# use base's conda binary explicitly. This was found in CI on a fresh
+# Miniconda install: `conda install -n base conda-build` succeeds, but
+# the subsequent `conda build` from iowarp's PATH errors out with
+# "invalid choice: 'build'".
+CONDA_BASE="$(conda info --base)"
+CONDA_BIN="${CONDA_BASE}/bin/conda"
+
+if ! "$CONDA_BIN" build --version &> /dev/null; then
+    echo -e "${YELLOW}Installing conda-build into base environment...${NC}"
+    "$CONDA_BIN" install -n base -y conda-build -c conda-forge
     echo ""
 fi
+
+if ! "$CONDA_BIN" build --version &> /dev/null; then
+    echo -e "${RED}conda-build is still not available after install attempt.${NC}"
+    echo -e "${YELLOW}Try manually:${NC} conda install -n base -y conda-build -c conda-forge"
+    exit 1
+fi
+
+echo -e "${GREEN}conda-build detected: $("$CONDA_BIN" build --version)${NC}"
+echo ""
 
 # Initialize and update git submodules recursively (if in a git repository)
 if [ -d ".git" ]; then
@@ -201,7 +220,7 @@ export IOWARP_PRESET="$PRESET"
 TARGET_PYTHON="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 echo -e "${BLUE}Target Python version: $TARGET_PYTHON${NC}"
 
-if conda build "$RECIPE_DIR" \
+if "$CONDA_BIN" build "$RECIPE_DIR" \
     --output-folder "$OUTPUT_DIR" \
     -c conda-forge \
     --python="$TARGET_PYTHON" \
