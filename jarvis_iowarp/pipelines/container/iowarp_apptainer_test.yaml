@@ -1,0 +1,51 @@
+# Pipeline: IOWarp runtime + CTE + ADIOS2 Gray-Scott (Apptainer variant)
+# Purpose: Smoke test the IOWarp container stack on HPC where only
+# Apptainer is available (Aurora, etc.). Mirrors iowarp_container_test.yaml
+# but builds a SIF natively via 'apptainer build --fakeroot' and starts a
+# persistent 'apptainer instance' for the pipeline.
+#
+# Notes:
+#  - install_manager: container is required so deploy_mode=container is
+#    not overwritten back to 'default'.
+#  - container_engine: apptainer makes jarvis_cd.core.pipeline call
+#    _build_apptainer_native (no docker/podman dependency) and
+#    _start_containerized_pipeline's apptainer branch (instance start +
+#    sshd inside the instance on container_ssh_port).
+#  - No seccomp tweak needed: apptainer doesn't apply Docker's profile,
+#    so io_uring works for IOWarp's bdev backend out of the box.
+#  - engine: iowarp on adios2_gray_scott routes its writes through the
+#    IOWarp ADIOS2 engine, which talks to the chimaera runtime started
+#    by wrp_runtime. No FUSE / LD_PRELOAD interceptor is involved.
+
+name: iowarp_apptainer_test
+
+install_manager: container
+container_engine: apptainer
+container_base: ubuntu:24.04
+container_ssh_port: 2233
+
+pkgs:
+  # Library packages — embedded into the SIF via %post (each contributes
+  # its build.sh). Must precede wrp_runtime so its build sees them.
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+  - pkg_type: builtin.compress_libs
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    deploy_mode: container
+    git_branch: transparent-compress
+    cmake_preset: release-adapter
+    port: 9413
+    sleep: 2
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.adios2_gray_scott
+    deploy_mode: container
+    engine: iowarp
+    nprocs: 1
+    steps: 10
