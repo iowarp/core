@@ -194,6 +194,15 @@ class Adios2GrayScott(Application):
                 'type': bool,
                 'default': False,
             },
+            {
+                # Aurora canonical 12-rank socket-balanced binding is e.g.
+                # "1-8:9-16:17-24:25-32:33-40:41-48:53-60:61-68:69-76:77-84:85-92:93-100"
+                # Empty default = no --cpu-bind, mpiexec uses its own default.
+                'name': 'cpu_bind',
+                'msg': 'mpiexec --cpu-bind=list:<value> spec (Aurora 12-rank etc.)',
+                'type': str,
+                'default': '',
+            },
         ]
 
     # ------------------------------------------------------------------
@@ -313,6 +322,7 @@ class Adios2GrayScott(Application):
             shared_dir=self.shared_dir,
             private_dir=self.private_dir,
             bind_mounts=self.container_mounts,
+            cpu_bind=cfg.get('cpu_bind') or None,
         ))
         self.process.run()
 
