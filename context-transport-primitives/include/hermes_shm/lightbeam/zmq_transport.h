@@ -270,6 +270,21 @@ class ZeroMqTransport : public Transport {
       int mandatory = 1;
       zmq_setsockopt(socket_, ZMQ_ROUTER_MANDATORY, &mandatory, sizeof(mandatory));
 
+      // Allow a same-identity DEALER to take over its slot on reconnect.
+      // Default (0) makes the ROUTER reject a new connection whose
+      // ZMQ_IDENTITY matches an already-registered DEALER, so the new
+      // socket gets ACCEPTED then HANDSHAKE_FAILED_NO_DETAIL value=32
+      // (EPIPE) and disconnects in a tight loop. Observed at iow_s64
+      // (chimaera daemon's local 127.0.0.1:9416 ROUTER): the wrp_cte
+      // compose's DEALER (identity=hostname:pid) drops at startup
+      // because the daemon's ZMQ I/O threads are still saturated with
+      // SWIM probes during the first ZMTP greeting; the dead identity
+      // stays registered, and every reconnect from the same compose
+      // PID is rejected. HANDOVER=1 makes ZMQ atomically replace the
+      // old slot with the new socket on reconnect.
+      int handover = 1;
+      zmq_setsockopt(socket_, ZMQ_ROUTER_HANDOVER, &handover, sizeof(handover));
+
       int rcvbuf = 4 * 1024 * 1024;
       zmq_setsockopt(socket_, ZMQ_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 
