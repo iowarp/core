@@ -170,7 +170,22 @@ class WrpCte(Service):
             self.log(f"Error: Compose config not found: {self.compose_config_path}")
             return False
 
-        cmd = f'chimaera compose {self.compose_config_path}'
+        # At >=64 chimaera daemons on Aurora apptainer, the very first
+        # `chimaera compose` after wrp_runtime startup occasionally hits a
+        # ZMTP greeting timeout against the daemon's local 9416 ROUTER
+        # (the daemon's I/O threads are still saturated by initial SWIM
+        # convergence) and the compose process's ZMQ context gets into a
+        # half-open state that no in-process recreate path can recover
+        # from. Wrap each per-host compose in `timeout` + a 5-attempt
+        # bash retry: each retry forks a brand-new chimaera process, so
+        # its ZMQ context is fresh. A successful compose exits in <1s.
+        cmd = (
+            'for i in 1 2 3 4 5; do '
+            f'  timeout 60 chimaera compose {self.compose_config_path} && exit 0; '
+            '  sleep 5; '
+            'done; '
+            'exit 1'
+        )
 
         Exec(cmd, PsshExecInfo(
             env=self.mod_env,
