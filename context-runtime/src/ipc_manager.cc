@@ -1249,22 +1249,71 @@ bool IpcManager::WaitForLocalServer() {
     return false;
   }
 
+  // At scale (>=64 chimaera daemons) the daemon's local 9416 ROUTER's I/O
+  // thread is starved by initial cross-node SWIM probes when this DEALER
+  // first connects, the ZMTP greeting EPIPE's, and the DEALER ends up in
+  // a half-open state ZMQ's auto-reconnect cannot recover from. Sending a
+  // ClientConnectTask through that DEALER then sits in Future.Wait()
+  // forever — IsServerAlive's TCP-level connect() probe still succeeds
+  // (the ROUTER does accept()), so server_alive_ stays true and the
+  // ClientRecv spin loop never triggers WaitForServerAndReconnect.
+  // Defend ourselves with a per-attempt timeout + DEALER recreate loop;
+  // we keep the total wait budget = wait_server_timeout_ but split it
+  // across attempts so a single dead greeting can't burn the whole window.
+  float total_timeout = wait_server_timeout_ > 0 ? wait_server_timeout_ : 0;
+  float per_attempt = total_timeout > 0 ? std::min(total_timeout, 15.0f) : 0;
+  auto attempt_start = std::chrono::steady_clock::now();
+  int attempt_idx = 0;
+
+retry_attempt:
+  ++attempt_idx;
   // Send a ClientConnectTask via the lightbeam transport
   auto task = NewTask<chimaera::admin::ClientConnectTask>(
       CreateTaskId(), kAdminPoolId, PoolQuery::Local());
   auto future = IpcCpu2CpuZmq::ClientSend(this,task, ipc_mode_);
 
-  // Wait for response with timeout (-1 → pass 0 to Wait which means no limit)
-  float effective_timeout = wait_server_timeout_ > 0 ? wait_server_timeout_ : 0;
-  if (!future.Wait(effective_timeout)) {
-    HLOG(kError, "Timeout waiting for runtime after {} seconds",
-         wait_server_timeout_);
-    HLOG(kError, "This usually means:");
-    HLOG(kError, "1. Chimaera runtime is not running");
-    HLOG(kError, "2. Runtime failed to start");
-    HLOG(kError, "3. Network connectivity issues");
+  // Wait for response with per-attempt timeout
+  if (!future.Wait(per_attempt)) {
     DelTask(task);
-    return false;
+    float elapsed = std::chrono::duration<float>(
+        std::chrono::steady_clock::now() - attempt_start).count();
+    if (total_timeout > 0 && elapsed >= total_timeout) {
+      HLOG(kError, "Timeout waiting for runtime after {} seconds ({} attempts)",
+           wait_server_timeout_, attempt_idx);
+      HLOG(kError, "This usually means:");
+      HLOG(kError, "1. Chimaera runtime is not running");
+      HLOG(kError, "2. Runtime failed to start");
+      HLOG(kError, "3. Network connectivity issues");
+      return false;
+    }
+    HLOG(kWarning, "Attempt {} timed out after {:.1f}s; recreating DEALER",
+         attempt_idx, per_attempt);
+    if (ipc_mode_ == IpcMode::kTcp) {
+      auto *config = CHI_CONFIG_MANAGER;
+      u32 port = config->GetPort();
+      if (zmq_recv_running_.load()) {
+        zmq_recv_running_.store(false);
+        if (zmq_recv_thread_.joinable()) zmq_recv_thread_.join();
+      }
+      zmq_transport_.reset();
+      {
+        std::lock_guard<std::mutex> lock(pending_futures_mutex_);
+        pending_zmq_futures_.clear();
+        pending_response_archives_.clear();
+      }
+      try {
+        zmq_transport_ = hshm::lbm::TransportFactory::Get(
+            config->GetServerAddr(), hshm::lbm::TransportType::kZeroMq,
+            hshm::lbm::TransportMode::kClient, "tcp", port + 3);
+      } catch (const std::exception &e) {
+        HLOG(kError, "WaitForLocalServer: DEALER recreate failed: {}",
+             e.what());
+        return false;
+      }
+      zmq_recv_running_.store(true);
+      zmq_recv_thread_ = std::thread([this]() { RecvZmqClientThread(); });
+    }
+    goto retry_attempt;
   }
 
   if (task->response_ == 0) {
