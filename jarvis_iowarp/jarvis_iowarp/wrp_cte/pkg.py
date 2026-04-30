@@ -282,10 +282,20 @@ class WrpCte(Service):
     def _build_compose_config(self, devices):
         storage_config = []
         for path, capacity, score in devices:
-            bdev_type = 'ram' if path.startswith('ram::') else 'file'
+            is_ram = path.startswith('ram::')
+            bdev_type = 'ram' if is_ram else 'file'
+            # CTE FlushData ranks targets by `persistence_level_` (string
+            # in StorageDeviceConfig, mapped to enum kVolatile / kTemporary
+            # / kLongTerm). The default is "volatile" for every device type
+            # — so a file-backed bdev on PFS gets registered as volatile
+            # and FlushData with min_persistence_level >= 1 finds no
+            # target and the gray-scott write path blocks. Tag file bdevs
+            # as "long_term" by default so the tier is correctly chosen.
+            persistence_level = 'volatile' if is_ram else 'long_term'
             storage_config.append({
                 'path': path, 'bdev_type': bdev_type,
-                'capacity_limit': capacity, 'score': score
+                'capacity_limit': capacity, 'score': score,
+                'persistence_level': persistence_level
             })
 
         compose_list = [{
