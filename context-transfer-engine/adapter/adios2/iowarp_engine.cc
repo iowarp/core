@@ -38,6 +38,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <unistd.h>
 
 #include <hermes_shm/util/logging.h>
 
@@ -60,11 +61,39 @@ IowarpEngine::IowarpEngine(adios2::core::IO &io, const std::string &name,
       total_io_time_ms_(0.0) {
   HLOG(kDebug, "[IowarpEngine] Constructor entered, rank={}, name={}", rank_, name);
 
-  // Initialize CTE client - assumes Chimaera runtime is already running
+  // At >=512 nodes (>=6144 ranks at 12 ppn) calling WRP_CTE_CLIENT_INIT
+  // simultaneously across all ranks overwhelms each daemon's local 9416
+  // ROUTER — every per-rank ZMTP greeting times out and the SIM aborts
+  // before step 1. Stagger init per local-rank within a node so the
+  // burst spreads over ~1.2s instead of arriving as a single thundering
+  // herd. The world-rank stagger is unnecessary because each daemon
+  // only sees its node's local ranks (12 ppn).
+  {
+    int local_rank = rank_ % 12;
+    if (local_rank > 0) {
+      ::usleep(static_cast<useconds_t>(local_rank) * 100000);  // 0.1 s steps
+    }
+  }
+
+  // Initialize CTE client - assumes Chimaera runtime is already running.
+  // Retry with sleep around the call: at scale the daemon may be
+  // momentarily unresponsive while serving an earlier rank's connect; a
+  // few retries with backoff lets every rank eventually win its slot.
   HLOG(kDebug, "[IowarpEngine] About to call WRP_CTE_CLIENT_INIT");
-  if (!wrp_cte::core::WRP_CTE_CLIENT_INIT("", chi::PoolQuery::Local())) {
+  bool ok = false;
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    if (wrp_cte::core::WRP_CTE_CLIENT_INIT("", chi::PoolQuery::Local())) {
+      ok = true;
+      break;
+    }
+    HLOG(kWarning,
+         "[IowarpEngine] WRP_CTE_CLIENT_INIT failed (rank={}, attempt={}); retrying",
+         rank_, attempt + 1);
+    ::usleep(2000000);  // 2 s
+  }
+  if (!ok) {
     throw std::runtime_error(
-        "IowarpEngine: WRP_CTE_CLIENT_INIT failed - is Chimaera runtime running?");
+        "IowarpEngine: WRP_CTE_CLIENT_INIT failed after 5 attempts - is Chimaera runtime running?");
   }
   HLOG(kDebug, "[IowarpEngine] WRP_CTE_CLIENT_INIT completed");
 
