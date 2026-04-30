@@ -170,15 +170,29 @@ class WrpCte(Service):
             self.log(f"Error: Compose config not found: {self.compose_config_path}")
             return False
 
-        # At >=64 chimaera daemons on Aurora apptainer, the very first
-        # `chimaera compose` after wrp_runtime startup occasionally hits a
-        # ZMTP greeting timeout against the daemon's local 9416 ROUTER
-        # (the daemon's I/O threads are still saturated by initial SWIM
-        # convergence) and the compose process's ZMQ context gets into a
-        # half-open state that no in-process recreate path can recover
-        # from. Wrap each per-host compose in `timeout` + a 5-attempt
-        # bash retry: each retry forks a brand-new chimaera process, so
-        # its ZMQ context is fresh. A successful compose exits in <1s.
+        # WORKAROUND — proper fix lives in clio-core (chimaera client).
+        #
+        # At >=64 chimaera daemons on Aurora apptainer the very first
+        # `chimaera compose` after wrp_runtime startup hits a ZMTP greeting
+        # timeout against the daemon's local 9416 ROUTER (the daemon's I/O
+        # threads are still saturated by initial SWIM probes). The compose
+        # process's ZMQ shared context (chimaera GetSharedContext singleton)
+        # then ends up half-open, and no in-process retry can recover from
+        # it: ROUTER_HANDOVER=1, in-process DEALER recreate, and
+        # WaitForLocalServer per-attempt timeouts were all tried and all
+        # fail because the broken state is in the ZMQ ctx, not the socket.
+        # A brand-new chimaera process gets a fresh context and connects in
+        # <1s. The bash loop forks a new process per retry to sidestep the
+        # in-process recovery problem.
+        #
+        # Real fix (TODO, in clio-core/context-runtime):
+        #   1. Tear-down + recreate the ZMQ ctx on WaitForLocalServer
+        #      failure (GetSharedContext needs coordinated shutdown), OR
+        #   2. Make IsServerAlive ZMTP-aware (currently it does only a TCP
+        #      connect() probe, so server_alive_ stays true on a half-open
+        #      ctx and the existing reconnect path is never triggered).
+        # When either lands, drop this loop and revert to:
+        #   cmd = f'chimaera compose {self.compose_config_path}'
         cmd = (
             'for i in 1 2 3 4 5; do '
             f'  timeout 60 chimaera compose {self.compose_config_path} && exit 0; '
