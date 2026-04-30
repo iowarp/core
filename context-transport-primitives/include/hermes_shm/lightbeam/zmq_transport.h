@@ -113,8 +113,16 @@ class ZeroMqTransport : public Transport {
     std::lock_guard<std::mutex> lock(owner.mtx);
     if (!owner.ctx) {
       owner.ctx = zmq_ctx_new();
-      zmq_ctx_set(owner.ctx, ZMQ_IO_THREADS, 2);
-      HLOG(kInfo, "[ZeroMqTransport] Created shared context with 2 I/O threads");
+      // I/O thread count. Default 2 saturated at 64+ nodes during SWIM
+      // probe rounds + cross-node SendIn fan-out (each chimaera daemon
+      // talks to N-1 peers; N²=4096 connections at N=64 is enough to
+      // bottleneck 2 I/O threads). 8 scales comfortably to ~512.
+      // Override at runtime via CHI_ZMQ_IO_THREADS env if needed.
+      const char *iot_env = std::getenv("CHI_ZMQ_IO_THREADS");
+      int iot = (iot_env && *iot_env) ? std::atoi(iot_env) : 8;
+      if (iot < 1) iot = 1;
+      zmq_ctx_set(owner.ctx, ZMQ_IO_THREADS, iot);
+      HLOG(kInfo, "[ZeroMqTransport] Created shared context with {} I/O threads", iot);
     }
     return owner.ctx;
   }
@@ -243,7 +251,13 @@ class ZeroMqTransport : public Transport {
       // ROUTER socket for server
       ctx_ = zmq_ctx_new();
       owns_ctx_ = true;
-      zmq_ctx_set(ctx_, ZMQ_IO_THREADS, 2);
+      // I/O threads — same env knob and default as the shared context
+      // (see GetSharedContext). 8 scales to ~512 nodes; 2 saturated at
+      // 64.
+      const char *iot_env = std::getenv("CHI_ZMQ_IO_THREADS");
+      int iot = (iot_env && *iot_env) ? std::atoi(iot_env) : 8;
+      if (iot < 1) iot = 1;
+      zmq_ctx_set(ctx_, ZMQ_IO_THREADS, iot);
       socket_ = zmq_socket(ctx_, ZMQ_ROUTER);
 
       // Set mandatory routing - reject messages to unknown identities
