@@ -216,11 +216,17 @@ class ZeroMqTransport : public Transport {
       zmq_setsockopt(socket_, ZMQ_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 
       // ZMTP heartbeat: detect dead connections within seconds
-      int hb_ivl = 1000;    // Send ZMTP PING every 1 second
+      // ZMTP heartbeat: at scale (>=64 nodes) the daemon's ROUTER
+      // gets busy with cross-node SWIM probes and can't respond to a
+      // local DEALER's ZMTP greeting within the prior 3s window —
+      // observed at iow_s64 as a HANDSHAKE_FAILED_NO_DETAIL value=32
+      // (EPIPE) loop on tcp://127.0.0.1:9416. Bump to 30s so the
+      // greeting can complete even under heavy probe traffic.
+      int hb_ivl = 5000;     // ZMTP PING every 5 s
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_IVL, &hb_ivl, sizeof(hb_ivl));
-      int hb_timeout = 3000; // Consider dead after 3s of no traffic
+      int hb_timeout = 30000;  // dead after 30 s of no traffic
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_TIMEOUT, &hb_timeout, sizeof(hb_timeout));
-      int hb_ttl = 3000;     // Tell remote peer: drop me if no traffic for 3s
+      int hb_ttl = 30000;
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_TTL, &hb_ttl, sizeof(hb_ttl));
 
       int rc = zmq_connect(socket_, full_url.c_str());
@@ -270,12 +276,12 @@ class ZeroMqTransport : public Transport {
       int sndbuf = 4 * 1024 * 1024;
       zmq_setsockopt(socket_, ZMQ_SNDBUF, &sndbuf, sizeof(sndbuf));
 
-      // ZMTP heartbeat: detect dead client connections
-      int hb_ivl = 1000;
+      // ZMTP heartbeat — same scale-friendly window as DEALER side.
+      int hb_ivl = 5000;
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_IVL, &hb_ivl, sizeof(hb_ivl));
-      int hb_timeout = 3000;
+      int hb_timeout = 30000;
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_TIMEOUT, &hb_timeout, sizeof(hb_timeout));
-      int hb_ttl = 3000;
+      int hb_ttl = 30000;
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_TTL, &hb_ttl, sizeof(hb_ttl));
 
       HLOG(kDebug, "ZeroMqTransport(ROUTER) binding to URL: {}", full_url);
