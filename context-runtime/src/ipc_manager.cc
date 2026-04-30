@@ -1361,9 +1361,16 @@ bool IpcManager::LoadHostfile() {
   hosts_cache_valid_ = false;
 
   if (hostfile_path.empty()) {
-    // No hostfile configured - assume localhost as node 0
-    HLOG(kDebug, "No hostfile configured, using localhost as node 0");
-    Host host(config->GetServerAddr(), 0);
+    // No hostfile configured: bind on all local interfaces (0.0.0.0).
+    // GetServerAddr() defaults to 127.0.0.1 — fine for the client DEALER
+    // target on a single host, but useless as a hostfile entry because
+    // IdentifyThisHost matches entries against gethostname() and on real
+    // multi-rail hosts (e.g. Aurora's `x4315c7s0b0n0`) the hostname is
+    // never literally `127.0.0.1`. Pushing "0.0.0.0" here, combined with
+    // the wildcard match in IdentifyThisHost, lets the runtime come up
+    // anywhere without forcing every user to write a one-line hostfile.
+    HLOG(kDebug, "No hostfile configured, binding wildcard 0.0.0.0 as node 0");
+    Host host("0.0.0.0", 0);
     hostfile_map_[0] = host;
     return true;
   }
@@ -1590,7 +1597,11 @@ bool IpcManager::IdentifyThisHost() {
     std::string entry_short =
         host.ip_address.substr(0, host.ip_address.find('.'));
 
-    bool is_me = (host.ip_address == local_host) ||
+    // "0.0.0.0" is the synthetic wildcard pushed by LoadHostfile() when
+    // no hostfile is configured — treat it as "always me" so the runtime
+    // binds without needing the user to predeclare the local hostname.
+    bool is_me = (host.ip_address == "0.0.0.0") ||
+                 (host.ip_address == local_host) ||
                  (entry_short == local_short);
     if (!is_me) continue;
 
