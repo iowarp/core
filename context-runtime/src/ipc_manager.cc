@@ -2391,6 +2391,41 @@ bool IpcManager::ReconnectToOriginalHost() {
     }
   }
 
+  // For TCP mode the original WaitForLocalServer DEALER may have died
+  // mid-greeting (e.g. starved by SWIM I/O at startup) and now sits in a
+  // half-open state that ZMQ's auto-reconnect can't recover from — the
+  // ROUTER already saw an EPIPE on this identity and HANDSHAKE keeps
+  // failing on every retry. Tear the DEALER fully down and rebuild it
+  // so the next WaitForLocalServer goes through a fresh socket.
+  if (ipc_mode_ == IpcMode::kTcp) {
+    auto *config = CHI_CONFIG_MANAGER;
+    u32 port = config->GetPort();
+
+    if (zmq_recv_running_.load()) {
+      zmq_recv_running_.store(false);
+      if (zmq_recv_thread_.joinable()) {
+        zmq_recv_thread_.join();
+      }
+    }
+    zmq_transport_.reset();
+    {
+      std::lock_guard<std::mutex> lock(pending_futures_mutex_);
+      pending_zmq_futures_.clear();
+      pending_response_archives_.clear();
+    }
+    try {
+      zmq_transport_ = hshm::lbm::TransportFactory::Get(
+          config->GetServerAddr(), hshm::lbm::TransportType::kZeroMq,
+          hshm::lbm::TransportMode::kClient, "tcp", port + 3);
+    } catch (const std::exception &e) {
+      HLOG(kError, "ReconnectToOriginalHost: TCP transport recreate failed: {}",
+           e.what());
+      return false;
+    }
+    zmq_recv_running_.store(true);
+    zmq_recv_thread_ = std::thread([this]() { RecvZmqClientThread(); });
+  }
+
   // Re-verify server via ClientConnectTask (updates client_generation_)
   if (!WaitForLocalServer()) return false;
 
