@@ -38,10 +38,12 @@
 #endif
 #include <zmq.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 
 #include "hermes_shm/introspect/system_info.h"
@@ -111,8 +113,16 @@ class ZeroMqTransport : public Transport {
     std::lock_guard<std::mutex> lock(owner.mtx);
     if (!owner.ctx) {
       owner.ctx = zmq_ctx_new();
-      zmq_ctx_set(owner.ctx, ZMQ_IO_THREADS, 2);
-      HLOG(kInfo, "[ZeroMqTransport] Created shared context with 2 I/O threads");
+      // I/O thread count. Default 2 saturated at 64+ nodes during SWIM
+      // probe rounds + cross-node SendIn fan-out (each chimaera daemon
+      // talks to N-1 peers; N²=4096 connections at N=64 is enough to
+      // bottleneck 2 I/O threads). 8 scales comfortably to ~512.
+      // Override at runtime via CHI_ZMQ_IO_THREADS env if needed.
+      const char *iot_env = std::getenv("CHI_ZMQ_IO_THREADS");
+      int iot = (iot_env && *iot_env) ? std::atoi(iot_env) : 8;
+      if (iot < 1) iot = 1;
+      zmq_ctx_set(owner.ctx, ZMQ_IO_THREADS, iot);
+      HLOG(kInfo, "[ZeroMqTransport] Created shared context with {} I/O threads", iot);
     }
     return owner.ctx;
   }
@@ -141,20 +151,36 @@ class ZeroMqTransport : public Transport {
     std::string bind_device =
         (bind_device_env && *bind_device_env) ? bind_device_env : "";
 
+    // Loopback endpoints must stay on the host's lo interface — clients
+    // connecting to 127.0.0.1 / ::1 / localhost can't reach a socket
+    // pinned to a routed NIC, and the server's local-only ROUTER (used
+    // by same-host wrp_cte / runtime clients) MUST keep listening on
+    // 127.0.0.1 even when LIGHTBEAM_TCP_DEVICE is set for cross-node
+    // traffic. Otherwise every same-host client times out in
+    // WaitForLocalServer.
+    auto is_loopback_addr = [](const std::string &a) {
+      return a == "127.0.0.1" || a == "::1" || a == "localhost";
+    };
+
     std::string full_url;
     if (protocol_ == "ipc") {
       full_url = "ipc://" + addr_;
-    } else if (!bind_device.empty()) {
-      if (mode == TransportMode::kClient) {
-        // tcp://<src_dev>:0;<dst_addr>:<dst_port> — source-bind outbound.
-        full_url = protocol_ + "://" + bind_device + ":0;" + addr_ + ":" +
-                   std::to_string(port_);
-      } else {
-        // Server: bind device's local IP. Override wildcard/0.0.0.0/host.
-        full_url =
-            protocol_ + "://" + bind_device + ":" + std::to_string(port_);
-      }
+    } else if (!bind_device.empty() && !is_loopback_addr(addr_) &&
+               mode == TransportMode::kClient) {
+      // Client: source-bind outbound traffic to the chosen NIC so
+      // connect() routes via that rail regardless of how the
+      // destination FQDN resolves. ZMQ syntax:
+      //   tcp://<src_dev>:0;<dst_addr>:<dst_port>
+      full_url = protocol_ + "://" + bind_device + ":0;" + addr_ + ":" +
+                 std::to_string(port_);
     } else {
+      // Server: keep the original bind address. Aurora HSN FQDNs are
+      // multi-A (one entry per rail); pinning the server to a single
+      // rail's IP makes peer DEALERs whose FQDN lookup landed on a
+      // different rail unable to reach us. Listening on 0.0.0.0
+      // (every interface) lets any rail accept connections; the
+      // client-side source-bind above is what makes outbound
+      // routing symmetric.
       full_url = protocol_ + "://" + addr_ + ":" + std::to_string(port_);
     }
 
@@ -190,11 +216,17 @@ class ZeroMqTransport : public Transport {
       zmq_setsockopt(socket_, ZMQ_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 
       // ZMTP heartbeat: detect dead connections within seconds
-      int hb_ivl = 1000;    // Send ZMTP PING every 1 second
+      // ZMTP heartbeat: at scale (>=64 nodes) the daemon's ROUTER
+      // gets busy with cross-node SWIM probes and can't respond to a
+      // local DEALER's ZMTP greeting within the prior 3s window —
+      // observed at iow_s64 as a HANDSHAKE_FAILED_NO_DETAIL value=32
+      // (EPIPE) loop on tcp://127.0.0.1:9416. Bump to 30s so the
+      // greeting can complete even under heavy probe traffic.
+      int hb_ivl = 5000;     // ZMTP PING every 5 s
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_IVL, &hb_ivl, sizeof(hb_ivl));
-      int hb_timeout = 3000; // Consider dead after 3s of no traffic
+      int hb_timeout = 30000;  // dead after 30 s of no traffic
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_TIMEOUT, &hb_timeout, sizeof(hb_timeout));
-      int hb_ttl = 3000;     // Tell remote peer: drop me if no traffic for 3s
+      int hb_ttl = 30000;
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_TTL, &hb_ttl, sizeof(hb_ttl));
 
       int rc = zmq_connect(socket_, full_url.c_str());
@@ -220,16 +252,38 @@ class ZeroMqTransport : public Transport {
 
       HLOG(kDebug, "ZeroMqTransport(DEALER) connected to {} (pid={})", full_url, pid);
       zmq_fired_action_.socket_ = socket_;
+      StartMonitor("DEALER", full_url);
     } else {
       // ROUTER socket for server
       ctx_ = zmq_ctx_new();
       owns_ctx_ = true;
-      zmq_ctx_set(ctx_, ZMQ_IO_THREADS, 2);
+      // I/O threads — same env knob and default as the shared context
+      // (see GetSharedContext). 8 scales to ~512 nodes; 2 saturated at
+      // 64.
+      const char *iot_env = std::getenv("CHI_ZMQ_IO_THREADS");
+      int iot = (iot_env && *iot_env) ? std::atoi(iot_env) : 8;
+      if (iot < 1) iot = 1;
+      zmq_ctx_set(ctx_, ZMQ_IO_THREADS, iot);
       socket_ = zmq_socket(ctx_, ZMQ_ROUTER);
 
       // Set mandatory routing - reject messages to unknown identities
       int mandatory = 1;
       zmq_setsockopt(socket_, ZMQ_ROUTER_MANDATORY, &mandatory, sizeof(mandatory));
+
+      // Allow a same-identity DEALER to take over its slot on reconnect.
+      // Default (0) makes the ROUTER reject a new connection whose
+      // ZMQ_IDENTITY matches an already-registered DEALER, so the new
+      // socket gets ACCEPTED then HANDSHAKE_FAILED_NO_DETAIL value=32
+      // (EPIPE) and disconnects in a tight loop. Observed at iow_s64
+      // (chimaera daemon's local 127.0.0.1:9416 ROUTER): the wrp_cte
+      // compose's DEALER (identity=hostname:pid) drops at startup
+      // because the daemon's ZMQ I/O threads are still saturated with
+      // SWIM probes during the first ZMTP greeting; the dead identity
+      // stays registered, and every reconnect from the same compose
+      // PID is rejected. HANDOVER=1 makes ZMQ atomically replace the
+      // old slot with the new socket on reconnect.
+      int handover = 1;
+      zmq_setsockopt(socket_, ZMQ_ROUTER_HANDOVER, &handover, sizeof(handover));
 
       int rcvbuf = 4 * 1024 * 1024;
       zmq_setsockopt(socket_, ZMQ_RCVBUF, &rcvbuf, sizeof(rcvbuf));
@@ -237,12 +291,12 @@ class ZeroMqTransport : public Transport {
       int sndbuf = 4 * 1024 * 1024;
       zmq_setsockopt(socket_, ZMQ_SNDBUF, &sndbuf, sizeof(sndbuf));
 
-      // ZMTP heartbeat: detect dead client connections
-      int hb_ivl = 1000;
+      // ZMTP heartbeat — same scale-friendly window as DEALER side.
+      int hb_ivl = 5000;
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_IVL, &hb_ivl, sizeof(hb_ivl));
-      int hb_timeout = 3000;
+      int hb_timeout = 30000;
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_TIMEOUT, &hb_timeout, sizeof(hb_timeout));
-      int hb_ttl = 3000;
+      int hb_ttl = 30000;
       zmq_setsockopt(socket_, ZMQ_HEARTBEAT_TTL, &hb_ttl, sizeof(hb_ttl));
 
       HLOG(kDebug, "ZeroMqTransport(ROUTER) binding to URL: {}", full_url);
@@ -256,12 +310,18 @@ class ZeroMqTransport : public Transport {
       }
       HLOG(kDebug, "ZeroMqTransport(ROUTER) bound successfully to {}", full_url);
       zmq_fired_action_.socket_ = socket_;
+      StartMonitor("ROUTER", full_url);
     }
   }
 
   ~ZeroMqTransport() {
     HLOG(kDebug, "ZeroMqTransport destructor - closing socket to {}:{}", addr_,
          port_);
+
+    monitor_running_.store(false);
+    if (monitor_thread_.joinable()) {
+      monitor_thread_.join();
+    }
 
     int linger = 0;  // Close immediately; don't wait for unsent messages
 
@@ -272,6 +332,99 @@ class ZeroMqTransport : public Transport {
       zmq_ctx_destroy(ctx_);
     }
     HLOG(kDebug, "ZeroMqTransport destructor - socket closed");
+  }
+
+  // ZMQ socket monitor — emits diagnostic events whenever the underlying
+  // ZMTP state machine changes (CONNECT / ACCEPT / HANDSHAKE / DISCONNECT
+  // etc.). Spawns a reader thread that translates each event into an
+  // HLOG(kInfo) line so we can see WHY a peer-to-peer link silently fails
+  // to deliver application messages.
+  void StartMonitor(const std::string& kind, const std::string& url) {
+    static std::atomic<uint64_t> mon_id{0};
+    monitor_endpoint_ = "inproc://lbm-mon-" +
+                        std::to_string(mon_id.fetch_add(1));
+    int rc = zmq_socket_monitor(socket_, monitor_endpoint_.c_str(),
+                                ZMQ_EVENT_ALL);
+    if (rc < 0) {
+      HLOG(kWarning, "[ZMQ Monitor {}] zmq_socket_monitor failed: {}",
+           kind, zmq_strerror(zmq_errno()));
+      return;
+    }
+    monitor_running_.store(true);
+    monitor_thread_ = std::thread([this, kind, url]() {
+      void* mon = zmq_socket(ctx_, ZMQ_PAIR);
+      if (!mon) return;
+      int linger = 0;
+      zmq_setsockopt(mon, ZMQ_LINGER, &linger, sizeof(linger));
+      int timeout = 200;
+      zmq_setsockopt(mon, ZMQ_RCVTIMEO, &timeout, sizeof(timeout));
+      if (zmq_connect(mon, monitor_endpoint_.c_str()) < 0) {
+        HLOG(kWarning, "[ZMQ Monitor {}] connect failed: {}", kind,
+             zmq_strerror(zmq_errno()));
+        zmq_close(mon);
+        return;
+      }
+      HLOG(kInfo, "[ZMQ Monitor {}] watching {}", kind, url);
+      while (monitor_running_.load()) {
+        zmq_msg_t evt_msg;
+        zmq_msg_init(&evt_msg);
+        int n = zmq_msg_recv(&evt_msg, mon, 0);
+        if (n < 0) {
+          if (zmq_errno() == EAGAIN) {
+            zmq_msg_close(&evt_msg);
+            continue;
+          }
+          if (zmq_errno() == ETERM) {
+            zmq_msg_close(&evt_msg);
+            break;
+          }
+          zmq_msg_close(&evt_msg);
+          continue;
+        }
+        if (zmq_msg_size(&evt_msg) < 6) {
+          zmq_msg_close(&evt_msg);
+          continue;
+        }
+        const uint8_t* d = static_cast<const uint8_t*>(zmq_msg_data(&evt_msg));
+        uint16_t event = static_cast<uint16_t>(d[0] | (d[1] << 8));
+        uint32_t value = 0;
+        std::memcpy(&value, d + 2, 4);
+        zmq_msg_close(&evt_msg);
+        zmq_msg_t addr_msg;
+        zmq_msg_init(&addr_msg);
+        zmq_msg_recv(&addr_msg, mon, 0);
+        std::string ep(static_cast<const char*>(zmq_msg_data(&addr_msg)),
+                       zmq_msg_size(&addr_msg));
+        zmq_msg_close(&addr_msg);
+        const char* name = "?";
+        switch (event) {
+          case ZMQ_EVENT_CONNECTED: name = "CONNECTED"; break;
+          case ZMQ_EVENT_CONNECT_DELAYED: name = "CONNECT_DELAYED"; break;
+          case ZMQ_EVENT_CONNECT_RETRIED: name = "CONNECT_RETRIED"; break;
+          case ZMQ_EVENT_LISTENING: name = "LISTENING"; break;
+          case ZMQ_EVENT_BIND_FAILED: name = "BIND_FAILED"; break;
+          case ZMQ_EVENT_ACCEPTED: name = "ACCEPTED"; break;
+          case ZMQ_EVENT_ACCEPT_FAILED: name = "ACCEPT_FAILED"; break;
+          case ZMQ_EVENT_CLOSED: name = "CLOSED"; break;
+          case ZMQ_EVENT_CLOSE_FAILED: name = "CLOSE_FAILED"; break;
+          case ZMQ_EVENT_DISCONNECTED: name = "DISCONNECTED"; break;
+          case ZMQ_EVENT_MONITOR_STOPPED: name = "MONITOR_STOPPED"; break;
+          case ZMQ_EVENT_HANDSHAKE_FAILED_NO_DETAIL:
+            name = "HANDSHAKE_FAILED_NO_DETAIL"; break;
+          case ZMQ_EVENT_HANDSHAKE_SUCCEEDED:
+            name = "HANDSHAKE_SUCCEEDED"; break;
+          case ZMQ_EVENT_HANDSHAKE_FAILED_PROTOCOL:
+            name = "HANDSHAKE_FAILED_PROTOCOL"; break;
+          case ZMQ_EVENT_HANDSHAKE_FAILED_AUTH:
+            name = "HANDSHAKE_FAILED_AUTH"; break;
+          default: name = "UNKNOWN"; break;
+        }
+        HLOG(kInfo, "[ZMQ Monitor {}] {} value={} ep={}", kind, name,
+             value, ep);
+        if (event == ZMQ_EVENT_MONITOR_STOPPED) break;
+      }
+      zmq_close(mon);
+    });
   }
 
   Bulk Expose(const hipc::FullPtr<char>& ptr, size_t data_size,
@@ -285,6 +438,12 @@ class ZeroMqTransport : public Transport {
 
   template <typename MetaT>
   int Send(MetaT& meta, const LbmContext& ctx = LbmContext()) {
+    // Serialize the multipart send so frames from different threads
+    // don't interleave. Without this the ZMTP frame stream is racy:
+    // identityA, delimiter, identityB (oops), metaA, ... — receiver
+    // drops the message and our SWIM probe never gets a reply.
+    std::lock_guard<std::mutex> lock(send_mtx_);
+
     // Compute send_bulks before serialization so receiver knows how many
     meta.send_bulks = 0;
     for (size_t i = 0; i < meta.send.size(); ++i) {
@@ -373,6 +532,10 @@ class ZeroMqTransport : public Transport {
 
   template <typename MetaT>
   ClientInfo Recv(MetaT& meta, const LbmContext& ctx = LbmContext()) {
+    // Mirror of Send's locking: a multipart Recv must consume identity /
+    // delimiter / meta / bulk frames atomically or threads can take
+    // each other's frames mid-message.
+    std::lock_guard<std::mutex> lock(recv_mtx_);
     ClientInfo info;
     info.rc = RecvMetadata(meta, ctx);
     if (info.rc != 0) return info;
@@ -565,6 +728,19 @@ class ZeroMqTransport : public Transport {
   bool owns_ctx_;
   void* socket_;
   ZmqFiredAction zmq_fired_action_;
+  // ZMQ sockets are not thread-safe (per the ZeroMQ guide). Multipart
+  // sends (identity / delimiter / meta / N bulk frames) issued from
+  // multiple chimaera worker threads on the same socket can interleave,
+  // corrupting the ZMTP frame stream. Receivers then silently drop
+  // unparseable messages — appearing as e.g. SWIM HeartbeatProbe
+  // timeouts on multi-node deployments. Hold these around Send/Recv so
+  // each multipart message is atomic.
+  std::mutex send_mtx_;
+  std::mutex recv_mtx_;
+  // ZMQ socket monitor — diagnostic for ZMTP-layer connection events.
+  std::thread monitor_thread_;
+  std::atomic<bool> monitor_running_{false};
+  std::string monitor_endpoint_;
 };
 
 }  // namespace hshm::lbm

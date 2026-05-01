@@ -1,0 +1,101 @@
+# Pipeline: IOWarp runtime + CTE + ADIOS2 Gray-Scott (Apptainer variant)
+# Purpose: Smoke test the IOWarp container stack on HPC where only
+# Apptainer is available (Aurora, etc.). Mirrors iowarp_container_test.yaml
+# but builds a SIF natively via 'apptainer build --fakeroot' and starts a
+# persistent 'apptainer instance' for the pipeline.
+#
+# Notes:
+#  - install_manager: container is required so deploy_mode=container is
+#    not overwritten back to 'default'.
+#  - container_engine: apptainer makes jarvis_cd.core.pipeline call
+#    _build_apptainer_native (no docker/podman dependency) and
+#    _start_containerized_pipeline's apptainer branch (instance start +
+#    sshd inside the instance on container_ssh_port).
+#  - No seccomp tweak needed: apptainer doesn't apply Docker's profile,
+#    so io_uring works for IOWarp's bdev backend out of the box.
+#  - engine: iowarp on adios2_gray_scott routes its writes through the
+#    IOWarp ADIOS2 engine, which talks to the chimaera runtime started
+#    by wrp_runtime. No FUSE / LD_PRELOAD interceptor is involved.
+
+name: iowarp_apptainer_test
+
+# Pin chimaera's ZMQ TCP traffic (server bind + client source-bind) to a
+# single Aurora HSN rail so connections are symmetric. Without this the
+# FQDN can resolve to one of hsn0..hsn7 while connect() picks another
+# rail, causing silent drops at scale (PR #399).
+env:
+  LIGHTBEAM_TCP_DEVICE: hsn0
+  # At >=64 chimaera nodes, the daemon's ROUTER on 127.0.0.1:9416 is
+  # busy serving cross-node SWIM probes when chimaera-compose tries to
+  # connect, so the default 30s WaitForLocalServer expires before the
+  # daemon's ZMTP greeting completes — observed as
+  # HANDSHAKE_FAILED_NO_DETAIL value=32 (EPIPE) on the daemon's
+  # ROUTER monitor when the compose DEALER gives up. 300s gives the
+  # daemon plenty of time to answer.
+  CHI_WAIT_SERVER: "300"
+  CHI_RETRY_TIMEOUT: "300"
+  # Bump ZMQ I/O threads inside the chimaera daemon to handle the
+  # 1023-peer cross-node SWIM probe storm at scale (default 2
+  # saturates at >=64 nodes).
+  CHI_ZMQ_IO_THREADS: "8"
+  # Local same-node clients (gray-scott ranks doing IowarpEngine
+  # WRP_CTE_CLIENT_INIT) talk to the daemon over a Unix domain
+  # socket instead of TCP. At 6144 ranks across 512 nodes, the
+  # ZMTP greeting handshake on 9416 ROUTER doesn't scale (observed
+  # as ranks frozen at attempt 20/60 in iow_s512 v21). UDS has
+  # no greeting, no per-connect ROUTER throughput cap. The
+  # wrp_runtime pkg also sets this in its own env, but
+  # adios2_gray_scott ranks don't inherit that — we need it in
+  # the top-level pipeline env so every rank's process gets it.
+  # Cross-node DEALER traffic on 9413 still uses TCP.
+  CHI_IPC_MODE: ipc
+
+install_manager: container
+container_engine: apptainer
+container_base: ubuntu:24.04
+container_ssh_port: 2233
+
+pkgs:
+  # Library packages — embedded into the SIF via %post (each contributes
+  # its build.sh). Must precede wrp_runtime so its build sees them.
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+  - pkg_type: builtin.compress_libs
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    deploy_mode: container
+    git_branch: transparent-compress-router-port-offset
+    cmake_preset: release-adapter
+    port: 9413
+    # 60s post-startup sleep before wrp_cte compose. At >=64 chimaera
+    # daemons, SWIM probe round + initial cross-node DEALER warmup
+    # takes longer than the prior 2s; compose then races the
+    # half-formed cluster and fails ZMTP greeting (ACCEPTED ->
+    # HANDSHAKE_FAILED_NO_DETAIL value=32 loop on 127.0.0.1:9416).
+    sleep: 60
+    # log_level was 'debug' — at 512 nodes the daemon emits ~16GB of
+    # logs in 30 min and the accept thread starves on log I/O while
+    # 12 ranks per node are simultaneously trying to connect to the
+    # local 9416 ROUTER. 'warning' keeps just the ZMQ monitor events
+    # we need for diagnostics.
+    log_level: warning
+    # IPC mode: local clients (gray-scott ranks) talk to the daemon
+    # over a Unix domain socket instead of TCP. This bypasses ZMTP
+    # greeting handshake entirely for the same-node case (the only
+    # case for IowarpEngine), so it's not subject to the 9416 ROUTER
+    # accept-storm at 6144-rank scale. Cross-node DEALER traffic
+    # still uses TCP on port 9413.
+    ipc_mode: ipc
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.adios2_gray_scott
+    deploy_mode: container
+    engine: iowarp
+    nprocs: 2
+    ppn: 1
+    steps: 10

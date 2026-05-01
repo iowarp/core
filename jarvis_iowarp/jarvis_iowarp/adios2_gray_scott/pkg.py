@@ -194,6 +194,15 @@ class Adios2GrayScott(Application):
                 'type': bool,
                 'default': False,
             },
+            {
+                # Aurora canonical 12-rank socket-balanced binding is e.g.
+                # "1-8:9-16:17-24:25-32:33-40:41-48:53-60:61-68:69-76:77-84:85-92:93-100"
+                # Empty default = no --cpu-bind, mpiexec uses its own default.
+                'name': 'cpu_bind',
+                'msg': 'mpiexec --cpu-bind=list:<value> spec (Aurora 12-rank etc.)',
+                'type': str,
+                'default': '',
+            },
         ]
 
     # ------------------------------------------------------------------
@@ -301,18 +310,24 @@ class Adios2GrayScott(Application):
 
         cmd = f'gray-scott {self.settings_json_path}'
 
+        # Export IOWARP_PPN so IowarpEngine can compute local-rank-within-node
+        # for its connect-stagger (12 ranks → daemon's local 9416 ROUTER).
+        env = dict(self.mod_env) if self.mod_env else {}
+        env['IOWARP_PPN'] = str(cfg['ppn'])
+
         self.process = Exec(cmd, MpiExecInfo(
             nprocs=cfg['nprocs'],
             ppn=cfg['ppn'],
             hostfile=self.hostfile,
             port=self.ssh_port,
-            env=self.mod_env,
+            env=env,
             exec_async=cfg['run_async'],
             container=self._container_engine,
             container_image=self.deploy_image_name(),
             shared_dir=self.shared_dir,
             private_dir=self.private_dir,
             bind_mounts=self.container_mounts,
+            cpu_bind=cfg.get('cpu_bind') or None,
         ))
         self.process.run()
 

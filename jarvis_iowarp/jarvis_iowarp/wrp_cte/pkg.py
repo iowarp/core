@@ -170,7 +170,36 @@ class WrpCte(Service):
             self.log(f"Error: Compose config not found: {self.compose_config_path}")
             return False
 
-        cmd = f'chimaera compose {self.compose_config_path}'
+        # WORKAROUND — proper fix lives in clio-core (chimaera client).
+        #
+        # At >=64 chimaera daemons on Aurora apptainer the very first
+        # `chimaera compose` after wrp_runtime startup hits a ZMTP greeting
+        # timeout against the daemon's local 9416 ROUTER (the daemon's I/O
+        # threads are still saturated by initial SWIM probes). The compose
+        # process's ZMQ shared context (chimaera GetSharedContext singleton)
+        # then ends up half-open, and no in-process retry can recover from
+        # it: ROUTER_HANDOVER=1, in-process DEALER recreate, and
+        # WaitForLocalServer per-attempt timeouts were all tried and all
+        # fail because the broken state is in the ZMQ ctx, not the socket.
+        # A brand-new chimaera process gets a fresh context and connects in
+        # <1s. The bash loop forks a new process per retry to sidestep the
+        # in-process recovery problem.
+        #
+        # Real fix (TODO, in clio-core/context-runtime):
+        #   1. Tear-down + recreate the ZMQ ctx on WaitForLocalServer
+        #      failure (GetSharedContext needs coordinated shutdown), OR
+        #   2. Make IsServerAlive ZMTP-aware (currently it does only a TCP
+        #      connect() probe, so server_alive_ stays true on a half-open
+        #      ctx and the existing reconnect path is never triggered).
+        # When either lands, drop this loop and revert to:
+        #   cmd = f'chimaera compose {self.compose_config_path}'
+        cmd = (
+            'for i in 1 2 3 4 5; do '
+            f'  timeout 60 chimaera compose {self.compose_config_path} && exit 0; '
+            '  sleep 5; '
+            'done; '
+            'exit 1'
+        )
 
         Exec(cmd, PsshExecInfo(
             env=self.mod_env,
@@ -282,10 +311,20 @@ class WrpCte(Service):
     def _build_compose_config(self, devices):
         storage_config = []
         for path, capacity, score in devices:
-            bdev_type = 'ram' if path.startswith('ram::') else 'file'
+            is_ram = path.startswith('ram::')
+            bdev_type = 'ram' if is_ram else 'file'
+            # CTE FlushData ranks targets by `persistence_level_` (string
+            # in StorageDeviceConfig, mapped to enum kVolatile / kTemporary
+            # / kLongTerm). The default is "volatile" for every device type
+            # — so a file-backed bdev on PFS gets registered as volatile
+            # and FlushData with min_persistence_level >= 1 finds no
+            # target and the gray-scott write path blocks. Tag file bdevs
+            # as "long_term" by default so the tier is correctly chosen.
+            persistence_level = 'volatile' if is_ram else 'long_term'
             storage_config.append({
                 'path': path, 'bdev_type': bdev_type,
-                'capacity_limit': capacity, 'score': score
+                'capacity_limit': capacity, 'score': score,
+                'persistence_level': persistence_level
             })
 
         compose_list = [{

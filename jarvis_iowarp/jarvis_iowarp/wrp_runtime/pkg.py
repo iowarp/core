@@ -232,7 +232,14 @@ class WrpRuntime(Service):
 
     def start(self):
         self.log("Starting IOWarp runtime")
-        cmd = 'chimaera runtime start'
+        # Redirect daemon stdout/stderr to a per-host file inside the
+        # container so we can post-mortem silent crashes (otherwise the
+        # daemon's stdout goes to a pipe that's drained by apptainer's
+        # starter and never lands on disk). ulimit -c unlimited so a
+        # segfault leaves a core file in /tmp for gdb.
+        cmd = ("bash -c 'ulimit -c unlimited; "
+               "exec chimaera runtime start "
+               ">> /tmp/chimaera_daemon.log 2>&1'")
 
         if self.config.get('do_dbg', False):
             GdbServer(cmd, self.config['dbg_port'], PsshExecInfo(
