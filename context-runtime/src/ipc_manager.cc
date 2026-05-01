@@ -1590,7 +1590,11 @@ bool IpcManager::IdentifyThisHost() {
     std::string entry_short =
         host.ip_address.substr(0, host.ip_address.find('.'));
 
-    bool is_me = (host.ip_address == local_host) ||
+    bool is_loopback = (host.ip_address == "127.0.0.1") ||
+                       (host.ip_address == "localhost") ||
+                       (host.ip_address == "::1");
+    bool is_me = is_loopback ||
+                 (host.ip_address == local_host) ||
                  (entry_short == local_short);
     if (!is_me) continue;
 
