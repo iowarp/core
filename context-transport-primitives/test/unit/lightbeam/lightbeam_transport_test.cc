@@ -42,7 +42,7 @@
 using namespace hshm::lbm;
 
 void TestZeroMQ() {
-#ifdef HSHM_ENABLE_ZMQ
+#if HSHM_ENABLE_ZMQ
   std::cout << "\n==== Testing ZeroMQ ====\n";
 
   std::string addr = "127.0.0.1";

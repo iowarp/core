@@ -311,7 +311,7 @@ void TestSocketTransportWithEM() {
   std::cout << "[SocketTransport With EventManager] Test passed!\n";
 }
 
-#ifdef HSHM_ENABLE_ZMQ
+#if HSHM_ENABLE_ZMQ
 #include <hermes_shm/lightbeam/zmq_transport.h>
 
 void TestZmqTransportWithEM() {
@@ -382,7 +382,7 @@ int main() {
 #endif
   TestSocketTransportWithEM();
 
-#ifdef HSHM_ENABLE_ZMQ
+#if HSHM_ENABLE_ZMQ
   TestZmqTransportWithEM();
 #else
   std::cout << "\n[Skipped] ZmqTransport With EventManager (ZMQ not enabled)\n";
