@@ -38,6 +38,17 @@ env:
   # 1023-peer cross-node SWIM probe storm at scale (default 2
   # saturates at >=64 nodes).
   CHI_ZMQ_IO_THREADS: "8"
+  # Local same-node clients (gray-scott ranks doing IowarpEngine
+  # WRP_CTE_CLIENT_INIT) talk to the daemon over a Unix domain
+  # socket instead of TCP. At 6144 ranks across 512 nodes, the
+  # ZMTP greeting handshake on 9416 ROUTER doesn't scale (observed
+  # as ranks frozen at attempt 20/60 in iow_s512 v21). UDS has
+  # no greeting, no per-connect ROUTER throughput cap. The
+  # wrp_runtime pkg also sets this in its own env, but
+  # adios2_gray_scott ranks don't inherit that — we need it in
+  # the top-level pipeline env so every rank's process gets it.
+  # Cross-node DEALER traffic on 9413 still uses TCP.
+  CHI_IPC_MODE: ipc
 
 install_manager: container
 container_engine: apptainer
