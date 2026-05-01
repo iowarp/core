@@ -1,0 +1,18 @@
+# Pipeline: IOR — Aurora baremetal, 1-node smoke.
+# Uses a system/conda-installed `ior` binary directly via PALS mpiexec
+# (no chimaera, no container). Baseline POSIX numbers vs the
+# wrp_cte_bench_baremetal pipelines.
+
+name: ior_aurora_baremetal_1n
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior
+    api: posix
+    write: true
+    read: true
+    nprocs: 1
+    ppn: 1
+    xfer: 1m
+    block: 256m
+    out: /lus/flare/projects/gpu_hack/llogan/ior_1n.bin

@@ -1,0 +1,58 @@
+# Pipeline: IOWarp HDF5 VOL + IOR (Aurora)
+# Purpose: Same workload shape as ior_libfuse.yaml, but routes IOR's
+# HDF5 traffic through the wrp_adapters HDF5 VOL connector
+# (libiowarp_hdf5_vol.so) instead of mounting a libfuse filesystem.
+#
+# How it differs from the libfuse variant:
+#  - No FUSE: no CAP_SYS_ADMIN, no /dev/fuse bind, no mountpoint pkg.
+#    wrp_adapters preloads the VOL connector and sets
+#    HDF5_VOL_CONNECTOR=iowarp, so HDF5 dataset I/O is intercepted in
+#    the IOR process directly.
+#  - IOR uses api: HDF5 (not posix) so its writes go through H5Fcreate /
+#    H5Dwrite, which is what the VOL connector intercepts.
+#  - The CAE include pattern must cover the IOR output path so the
+#    adapter actually intercepts it; everything else falls through.
+#
+# Aurora-specific bits retained from ior_libfuse.yaml:
+#  - seccomp=unconfined / apparmor:unconfined: wrp_runtime's bdev
+#    backend prefers io_uring (syscall 425), which the default
+#    docker/podman seccomp profile blocks.
+#  - container_binds for the Lustre target dir; /lus/flare/... is not
+#    auto-mounted into the container.
+
+name: iowarp_ior_hdf5_aurora
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+  - pkg_type: builtin.compress_libs
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    deploy_mode: container
+    git_branch: transparent-compress
+    cmake_preset: release-adapter
+    port: 9413
+    sleep: 2
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    deploy_mode: container
+
+  - pkg_type: jarvis_iowarp.wrp_adapters
+    deploy_mode: container
+    vol: true
+    include:
+      - "/lus/flare/projects/gpu_hack/llogan/.*"
+
+  - pkg_type: builtin.ior
+    deploy_mode: container
+    api: HDF5
+    write: true
+    read: true
+    nprocs: 8
+    ppn: 8
+    xfer: 1m
+    block: 1g
+    out: /lus/flare/projects/gpu_hack/llogan/ior.h5

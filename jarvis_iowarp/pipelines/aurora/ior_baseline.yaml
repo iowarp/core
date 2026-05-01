@@ -1,0 +1,72 @@
+# Pipeline: IOWarp FUSE + IOR — Apptainer variant
+# Purpose: Same workload as iowarp_ior_libfuse_test.yaml (Docker) and
+# iowarp_ior_libfuse_podman_test.yaml (Podman), but using Apptainer.
+#
+# Apptainer caveats (vs Docker/Podman):
+#  - Apptainer has no long-running container concept like `docker run -d
+#    sleep infinity`. Every `apptainer exec <sif> <cmd>` spawns a fresh
+#    namespace. For the FUSE mount to persist across pkg starts (FUSE
+#    daemon in one process, IOR in the next), we rely on
+#    `apptainer instance start` — wrp_cte_libfuse/pkg.py's
+#    _exec_in_container() dispatches via `apptainer exec instance://<name>`
+#    when the engine is apptainer. The pipeline must start the instance
+#    before wrp_cte_libfuse runs; today that requires either the
+#    upstream jarvis_cd _start_containerized_pipeline to `apptainer
+#    instance start` (it does `docker compose up` for docker/podman but
+#    no-ops for apptainer), or a manual pre-step:
+#
+#        apptainer instance start --cap-add SYS_ADMIN \
+#            --bind /dev/fuse \
+#            <shared_dir>/<pipeline>.sif <pipeline>
+#
+#    Until upstream adds that, this pipeline YAML is best-effort.
+#
+#  - io_uring_setup: Apptainer doesn't apply Docker's seccomp profile,
+#    so io_uring works by default (no seccomp-unconfined equivalent
+#    needed, but --fakeroot or --no-eval may matter).
+#
+#  - FUSE in Apptainer: the daemon has to mount inside the instance
+#    namespace; --cap-add SYS_ADMIN + --device /dev/fuse (apptainer's
+#    equivalent) or running under --fakeroot are typical requirements.
+#
+# Until an install target on this host has apptainer available, this
+# pipeline is unvalidated — it builds the image and SIF, but the start
+# phase will fail without apptainer installed (`apptainer: command not
+# found`). See iowarp_ior_libfuse_test.yaml for the validated Docker
+# variant.
+
+name: iowarp_ior_baseline_test
+
+install_manager: container
+container_engine: podman
+container_base: ubuntu:24.04
+
+container_extensions:
+  pull_policy: never
+
+# Apptainer auto-binds $HOME, /tmp, $PWD, /etc/localtime, /etc/hosts.
+# Aurora's Lustre paths (/lus/flare/...) are not auto-bound, so IOR's
+# target dir has to be exposed explicitly or open64() inside the
+# instance gets ENOENT.
+container_binds:
+  - /lus/flare/projects/gpu_hack/llogan
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+  - pkg_type: builtin.compress_libs
+    deploy_mode: container
+
+  - pkg_type: builtin.ior
+    deploy_mode: container
+    container_cache: false
+    api: posix
+    write: true
+    read: true
+    nprocs: 8
+    ppn: 8
+    xfer: 1m
+    block: 1g
+    out: /lus/flare/projects/gpu_hack/llogan/ior.bin

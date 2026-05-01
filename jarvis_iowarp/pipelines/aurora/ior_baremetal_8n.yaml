@@ -1,0 +1,16 @@
+# Pipeline: IOR — Aurora baremetal, 8-node × 1 ppn.
+# 8 ranks total writing to /lus/flare. Mirrors ior_baremetal_1n.
+
+name: ior_aurora_baremetal_8n
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior
+    api: posix
+    write: true
+    read: true
+    nprocs: 8
+    ppn: 1
+    xfer: 1m
+    block: 256m
+    out: /lus/flare/projects/gpu_hack/llogan/ior_8n.bin

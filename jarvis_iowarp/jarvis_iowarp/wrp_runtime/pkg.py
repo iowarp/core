@@ -232,7 +232,13 @@ class WrpRuntime(Service):
 
     def start(self):
         self.log("Starting IOWarp runtime")
-        cmd = 'chimaera runtime start'
+        # Redirect per-node stdout/stderr to a host-stamped log so we
+        # can recover what every chimaera_runtime instance saw — pssh
+        # with exec_async detaches the remote process and discards its
+        # streams, hiding silent-failure modes on non-head nodes.
+        # Shell expansion of $(hostname) happens on the remote, so each
+        # of the N hosts in the hostfile gets its own log.
+        cmd = 'chimaera runtime start > /tmp/chimaera_runtime_$(hostname -s).log 2>&1'
 
         if self.config.get('do_dbg', False):
             GdbServer(cmd, self.config['dbg_port'], PsshExecInfo(

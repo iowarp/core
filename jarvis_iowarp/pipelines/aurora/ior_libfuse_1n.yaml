@@ -1,0 +1,51 @@
+# Pipeline: IOWarp FUSE + IOR — Aurora baremetal, 1 node × 1 ppn.
+# Sized to mirror ior_baremetal_1n.yaml so a direct comparison
+# between raw POSIX (baremetal) and POSIX-through-FUSE-adapter
+# (this pipeline) is meaningful.
+#
+# Stack:
+#   wrp_runtime  -> chimaera daemon
+#   wrp_cte      -> CTE storage tiers
+#   wrp_cte_libfuse -> mounts /home/llogan/libfuse via wrp_cte_fuse
+#   builtin.ior  -> POSIX writes through the mountpoint
+#
+# Requires the system-installed wrp_cte_fuse binary
+# (/usr/local/bin/wrp_cte_fuse), built with
+# WRP_CTE_ENABLE_FUSE_ADAPTER=ON (default for release-adapter).
+
+name: iowarp_ior_libfuse_aurora_1n
+
+pkgs:
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    pkg_name: runtime
+    num_threads: 4
+    client_data_segment_size: "2G"
+    port: 9413
+    ipc_mode: "tcp"
+    log_level: "info"
+    sleep: 4
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    pkg_name: cte_core
+    devices:
+      - ["ram::cte_ram_tier1", "8GB", 1.0]
+    dpe_type: "max_bw"
+    neighborhood: 1
+    default_target_timeout_ms: 30000
+    poll_period_ms: 5000
+
+  - pkg_type: jarvis_iowarp.wrp_cte_libfuse
+    pkg_name: cte_fuse
+    mountpoint: /home/llogan/libfuse
+    sleep: 2
+
+  - pkg_type: builtin.ior
+    pkg_name: ior
+    api: posix
+    write: true
+    read: true
+    nprocs: 1
+    ppn: 1
+    xfer: 1m
+    block: 256m
+    out: /home/llogan/libfuse/ior_1n.bin

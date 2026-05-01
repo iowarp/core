@@ -1,0 +1,43 @@
+# Pipeline: WRP CTE benchmark — Aurora baremetal, 512-node × 16 ppn.
+# Mirrors wrp_cte_bench_baremetal_64n.yaml but scaled to 8192 total ranks.
+
+name: wrp_cte_bench_aurora_baremetal_512n
+
+# Pin chimaera's ZMQ TCP traffic (server bind + client source-bind) to a
+# single Aurora HSN rail so connections are symmetric. Each compute
+# node has 8 HSN rails (hsn0..hsn7); without pinning, the FQDN may
+# resolve to a different rail than the one the kernel picks for
+# outbound, causing silent drops at scale.
+env:
+  LIGHTBEAM_TCP_DEVICE: hsn0
+
+pkgs:
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    pkg_name: runtime
+    num_threads: 4
+    client_data_segment_size: "2G"
+    port: 9413
+    ipc_mode: "tcp"
+    log_level: "info"
+    sleep: 4
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    pkg_name: cte_core
+    devices:
+      - ["ram::cte_ram_tier1", "64GB", 1.0]
+    dpe_type: "max_bw"
+    neighborhood: 1
+    default_target_timeout_ms: 30000
+    poll_period_ms: 5000
+
+  - pkg_type: jarvis_iowarp.wrp_cte_bench
+    pkg_name: cte_bench
+    test_case: "PutGet"
+    num_threads: 1
+    depth: 1
+    io_size: "1m"
+    io_count: 1000
+    nprocs: 8192
+    ppn: 16
+    init_runtime: false
+    output_file: cte_bench.log

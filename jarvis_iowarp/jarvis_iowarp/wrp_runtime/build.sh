@@ -34,6 +34,7 @@ apt-get update && apt-get install -y --no-install-recommends \
 
 # --- yaml-cpp 0.8.0 ---------------------------------------------------------
 cd /tmp
+rm -rf yaml-cpp-0.8.0 yaml-cpp-build
 curl -sL https://github.com/jbeder/yaml-cpp/archive/refs/tags/0.8.0.tar.gz | tar xz
 cmake -S yaml-cpp-0.8.0 -B yaml-cpp-build \
    -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release \
@@ -46,6 +47,7 @@ rm -rf /tmp/yaml-cpp-*
 
 # --- cereal 1.3.2 (header-only) ---------------------------------------------
 cd /tmp
+rm -rf cereal-1.3.2 cereal-build
 curl -sL https://github.com/USCiLab/cereal/archive/refs/tags/v1.3.2.tar.gz | tar xz
 cmake -S cereal-1.3.2 -B cereal-build \
    -DCMAKE_INSTALL_PREFIX=/usr/local -DSKIP_PERFORMANCE_COMPARISON=ON \
@@ -55,6 +57,7 @@ rm -rf /tmp/cereal-*
 
 # --- msgpack-c 6.1.0 --------------------------------------------------------
 cd /tmp
+rm -rf msgpack-c msgpack-build
 git clone --depth 1 --branch c-6.1.0 https://github.com/msgpack/msgpack-c.git
 cmake -S msgpack-c -B msgpack-build \
    -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
@@ -65,6 +68,7 @@ rm -rf /tmp/msgpack-c /tmp/msgpack-build
 
 # --- libsodium 1.0.20 -------------------------------------------------------
 cd /tmp
+rm -rf libsodium-1.0.20
 curl -sL https://github.com/jedisct1/libsodium/releases/download/1.0.20-RELEASE/libsodium-1.0.20.tar.gz | tar xz
 cd libsodium-1.0.20
 ./configure --prefix=/usr/local --with-pic
@@ -75,6 +79,7 @@ rm -rf /tmp/libsodium-*
 
 # --- zeromq 4.3.5 -----------------------------------------------------------
 cd /tmp
+rm -rf zeromq-4.3.5 zmq-build
 curl -sL https://github.com/zeromq/libzmq/releases/download/v4.3.5/zeromq-4.3.5.tar.gz | tar xz
 cmake -S zeromq-4.3.5 -B zmq-build \
    -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release \
@@ -88,6 +93,7 @@ rm -rf /tmp/zeromq-* /tmp/zmq-build
 
 # --- cppzmq 4.10.0 (header-only) --------------------------------------------
 cd /tmp
+rm -rf cppzmq-4.10.0 cppzmq-build
 curl -sL https://github.com/zeromq/cppzmq/archive/refs/tags/v4.10.0.tar.gz | tar xz
 cmake -S cppzmq-4.10.0 -B cppzmq-build \
    -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_PREFIX_PATH=/usr/local \
@@ -101,6 +107,7 @@ rm -rf /tmp/cppzmq-*
 # Submodules are NOT recursed at clone time: external/jarvis-cd pulls its
 # own `awesome-scienctific-applications` submodule via an SSH URL that
 # fails in containers, and the core build does not need it.
+rm -rf /opt/iowarp
 git clone --depth 1 --branch ##GIT_BRANCH## \
     https://github.com/iowarp/clio-core.git /opt/iowarp
 

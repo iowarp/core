@@ -23,10 +23,18 @@ class WrpCteLibfuse(Service):
 
     deploy_mode='default':   mounts on the host (requires libfuse3 + /dev/fuse).
     deploy_mode='container': mounts inside the pipeline's deploy container.
-                             The pipeline must grant the container
-                             CAP_SYS_ADMIN and access to /dev/fuse via
-                             container_extensions (see the libfuse example
-                             pipeline for the full recipe).
+                             docker/podman: pipeline must grant the
+                             container CAP_SYS_ADMIN and bind /dev/fuse
+                             via container_extensions.
+                             apptainer (unprivileged): the kernel forces
+                             nodev on user --bind mounts, so a FUSE
+                             program inside the instance gets EACCES on
+                             open(/dev/fuse) even with --fakeroot +
+                             --add-caps SYS_ADMIN. start() therefore uses
+                             apptainer's --fusemount helper, which opens
+                             /dev/fuse on the host side and hands the fd
+                             into the namespace. No container_caps /
+                             container_binds entries are needed for FUSE.
     """
 
     def _init(self):
@@ -134,13 +142,34 @@ class WrpCteLibfuse(Service):
         if self._exec_in_container(f'mkdir -p {mp}') != 0:
             raise RuntimeError(f'Failed to create mountpoint {mp}')
 
-        # libfuse daemonises by default unless -f is passed, so this call
-        # returns once the mount is live.
-        cmd = f'{self.binary} {mp}'
-        if extra:
-            cmd = f'{cmd} {extra}'
-        self.log(f"Mounting IOWarp CTE FUSE at {mp}: {cmd}")
-        rc = self._exec_in_container(cmd, env=self.mod_env)
+        engine = self._container_engine
+        if engine == 'apptainer':
+            # Unprivileged Apptainer forces nodev on every user --bind,
+            # including --bind /dev/fuse, so a FUSE program inside the
+            # instance gets EACCES when it open()s /dev/fuse — even with
+            # --fakeroot and --add-caps SYS_ADMIN. Apptainer's own
+            # --fusemount sidesteps this: its setuid helper opens
+            # /dev/fuse on the host and passes the fd into the namespace.
+            # type=container-daemon = run the FUSE binary inside the
+            # container, detached; the exec returns once the mount is
+            # live, and the daemon stays up for the instance lifetime.
+            image = self.deploy_image_name()
+            fuse_cmd = self.binary + ((' ' + extra) if extra else '')
+            fuse_spec = f'container-daemon:{fuse_cmd} {mp}'
+            cmd_list = ['apptainer', 'exec', '--cleanenv']
+            for k, v in (self.mod_env or {}).items():
+                cmd_list.extend(['--env', f'{k}={v}'])
+            cmd_list.extend(['--fusemount', fuse_spec,
+                             f'instance://{image}', '/bin/true'])
+            self.log(f"Mounting IOWarp CTE FUSE at {mp} via "
+                     f"apptainer --fusemount: {' '.join(cmd_list)}")
+            rc = subprocess.call(cmd_list)
+        else:
+            cmd = f'{self.binary} {mp}'
+            if extra:
+                cmd = f'{cmd} {extra}'
+            self.log(f"Mounting IOWarp CTE FUSE at {mp}: {cmd}")
+            rc = self._exec_in_container(cmd, env=self.mod_env)
         if rc != 0:
             raise RuntimeError(
                 f'wrp_cte_fuse failed to mount at {mp} (exit={rc})')
@@ -152,6 +181,15 @@ class WrpCteLibfuse(Service):
 
     def stop(self):
         mp = self.config['mountpoint']
+        if self._container_engine == 'apptainer':
+            # The mount is owned by Apptainer's fusemount helper (started
+            # via --fusemount in start()); fusermount3 from inside the
+            # instance can't unmount it ("Invalid argument"). The daemon
+            # and mount are torn down when the instance stops, so this
+            # path is a no-op.
+            self.log(f"Skipping in-container unmount of {mp}; apptainer "
+                     "instance teardown will release the fusemount.")
+            return
         self.log(f"Unmounting {mp}")
         # fusermount3 ships with libfuse3 and is the canonical unmount
         # for user-mounted FUSE filesystems.

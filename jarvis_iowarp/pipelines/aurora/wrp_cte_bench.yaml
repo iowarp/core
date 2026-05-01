@@ -1,0 +1,81 @@
+# Pipeline: WRP CTE benchmark — Aurora variant
+# Purpose: Run jarvis_iowarp.wrp_cte_bench end-to-end against a containerized
+# IOWarp runtime + CTE deployment on a single Aurora compute node.
+#
+# Mirrors pipelines/ares/cte_1n_1p.yaml (3-stage runtime → cte → bench) but
+# uses the same aurora container plumbing as ior_baseline.yaml: podman +
+# ubuntu:24.04 base, pull_policy: never, and the Lustre project path bound
+# into the container so any traces/output land somewhere persistent.
+#
+# Usage:
+#   jarvis hostfile set ~/hostfile.txt   # (or just localhost on a UAN)
+#   jarvis ppl load yaml \
+#       /home/llogan/clio-core/jarvis_iowarp/pipelines/aurora/wrp_cte_bench.yaml
+#   jarvis ppl run
+
+name: wrp_cte_bench_aurora
+
+install_manager: container
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+# hostfile: ${PBS_NODEFILE}
+
+container_extensions:
+  pull_policy: never
+
+# Aurora's Lustre is not auto-bound into containers — expose the project
+# path so trace_folder_path / output_file references survive outside the
+# container namespace.
+container_binds:
+  - /lus/flare/projects/gpu_hack/llogan
+
+pkgs:
+  # Library packages — built once and injected into wrp_runtime's build
+  # container via Phase-1 docker-cp (see jarvis_cd/core/pipeline.py
+  # _build_pipeline_container).
+  - pkg_type: builtin.hdf5
+    deploy_mode: container
+  - pkg_type: builtin.adios2
+    deploy_mode: container
+  - pkg_type: builtin.compress_libs
+    deploy_mode: container
+
+  # Stage 1: chimaera runtime
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    pkg_name: runtime
+    deploy_mode: container
+    git_branch: main
+    cmake_preset: release-adapter
+    num_threads: 4
+    client_data_segment_size: "2G"
+    port: 9413
+    ipc_mode: "tcp"
+    log_level: "info"
+    sleep: 4
+
+  # Stage 2: CTE pool deployment (RAM-only single tier — Aurora node-local)
+  - pkg_type: jarvis_iowarp.wrp_cte
+    pkg_name: cte_core
+    deploy_mode: container
+    devices:
+      - ["ram::cte_ram_tier1", "64GB", 1.0]
+    dpe_type: "max_bw"
+    neighborhood: 1
+    default_target_timeout_ms: 30000
+    poll_period_ms: 5000
+
+  # Stage 3: benchmark — single-node, single-rank by default. Bump nprocs/ppn
+  # for multi-rank runs (see ares/cte_integration_test.yaml for 64x16).
+  - pkg_type: jarvis_iowarp.wrp_cte_bench
+    pkg_name: cte_bench
+    deploy_mode: container
+    test_case: "PutGet"
+    num_threads: 1
+    depth: 1
+    io_size: "1m"
+    io_count: 1000
+    nprocs: 16
+    ppn: 16
+    init_runtime: false
+    output_file: cte_bench.log
