@@ -15,7 +15,7 @@
 	url = https://github.com/vllm-project/vllm.git
 [submodule "external/sglang"]
 	path = external/sglang
-	url = https://github.com/iowarp/sglang.git
+	url = https://github.com/sgl-project/sglang.git
 [submodule "docs"]
 	path = docs
 	url = https://github.com/iowarp/docs.git

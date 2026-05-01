@@ -568,7 +568,9 @@ HSHM_GPU_FUN void GpuRuntime::PutBlob(
   {
     for (size_t i = 0; i < meta_->targets_.size(); ++i) {
       if (meta_->targets_[i].target_name_ == target_info.target_name_) {
-        chi::u64 space_used = is_new_blob ? size : size - old_blob_size;
+        chi::u64 space_used = is_new_blob
+            ? size
+            : (size > old_blob_size ? size - old_blob_size : 0);
         meta_->targets_[i].remaining_space_ =
             (space_used <= meta_->targets_[i].remaining_space_)
                 ? meta_->targets_[i].remaining_space_ - space_used

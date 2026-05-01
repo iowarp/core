@@ -1565,23 +1565,53 @@ bool IpcManager::IdentifyThisHost() {
   // Collect list of attempted hosts for error reporting
   std::vector<std::string> attempted_hosts;
 
-  // Try to start TCP server on each host IP
+  // Resolve our local hostname so we can identify which hostfile entry
+  // corresponds to this node *without* using bind-failure as the test.
+  // Bind-failure-based identity used to work, but breaks on multi-rail
+  // fabrics like Aurora's Slingshot HSN: binding to a specific FQDN
+  // succeeds on whichever rail the FQDN resolves to, then peers
+  // routing via the *other* rail get silently dropped (the listener
+  // is on the wrong interface). Solution: identify by hostname match,
+  // then bind the actual server on "0.0.0.0" so it listens on every
+  // local interface (mirrors how `client_tcp_transport_` is bound).
+  char local_host_buf[256] = {0};
+  if (gethostname(local_host_buf, sizeof(local_host_buf) - 1) != 0) {
+    HLOG(kError, "Error: gethostname() failed: {}", std::strerror(errno));
+    return false;
+  }
+  std::string local_host(local_host_buf);
+  std::string local_short =
+      local_host.substr(0, local_host.find('.'));
+
+  // Try to identify (by hostname match) and start the server.
   for (const auto &pair : hostfile_map_) {
     const Host &host = pair.second;
     attempted_hosts.push_back(host.ip_address);
-    HLOG(kDebug, "Trying to bind TCP server to: {}", host.ip_address);
+    std::string entry_short =
+        host.ip_address.substr(0, host.ip_address.find('.'));
+
+    bool is_me = (host.ip_address == local_host) ||
+                 (entry_short == local_short);
+    if (!is_me) continue;
+
+    HLOG(kDebug, "Hostfile entry {} matches local host {}; binding 0.0.0.0",
+         host.ip_address, local_host);
 
     try {
-      if (TryStartMainServer(host.ip_address)) {
-        HLOG(kInfo, "SUCCESS: Main server started on {} (node={})",
-             host.ip_address, host.node_id);
+      if (TryStartMainServer("0.0.0.0")) {
+        HLOG(kInfo,
+             "SUCCESS: Main server started on 0.0.0.0:{} "
+             "(advertised as {}, node={})",
+             port, host.ip_address, host.node_id);
         this_host_ = host;
         return true;
       }
     } catch (const std::exception &e) {
-      HLOG(kDebug, "Failed to bind to {}: {}", host.ip_address, e.what());
+      HLOG(kDebug, "Failed to bind 0.0.0.0:{} for {}: {}",
+           port, host.ip_address, e.what());
     } catch (...) {
-      HLOG(kDebug, "Failed to bind to {}: Unknown error", host.ip_address);
+      HLOG(kDebug, "Failed to bind 0.0.0.0:{} for {}: unknown error",
+           port, host.ip_address);
     }
   }
 
