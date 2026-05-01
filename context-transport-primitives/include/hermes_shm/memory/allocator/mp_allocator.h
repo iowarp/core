@@ -176,19 +176,20 @@ class _ProducerConsumerAllocator : public Allocator {
    * Attach to an existing allocator (consumer process).
    *
    * Consumers only read from shared memory; they do not allocate or free.
-   * This sets up the TLS key so the allocator API can be called, but
-   * the consumer should not actually allocate.
+   * Do NOT call CreateTls here: tblock_key_ lives in the shared region and
+   * was set by the producer in shm_init. pthread keys are process-private,
+   * so calling pthread_key_create here would clobber the producer's key
+   * with one valid only in this process. The producer's later
+   * pthread_setspecific calls would then silently fail (EINVAL) and
+   * EnsureTls would allocate a new PcThreadBlock on every alloc.
+   *
+   * Consumers do not need TLS — they only resolve ShmPtrs, never allocate.
    *
    * @param backend The memory backend (unused, for API compatibility)
    * @return true on success
    */
   bool shm_attach(const MemoryBackend &backend) {
     (void)backend;
-    // Set up TLS key for this process
-    void *null_ptr = nullptr;
-    if (!HSHM_THREAD_MODEL->CreateTls<void>(tblock_key_, null_ptr)) {
-      return false;
-    }
     return true;
   }
 

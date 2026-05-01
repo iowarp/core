@@ -47,6 +47,12 @@ add_dependencies(test_mp_allocator_exec hermes_shm_host)
 target_link_libraries(test_mp_allocator_exec
         hermes_shm_host Catch2::Catch2WithMain)
 
+add_executable(test_mp_reuse_exec
+        test_mp_reuse.cc)
+add_dependencies(test_mp_reuse_exec hermes_shm_host)
+target_link_libraries(test_mp_reuse_exec
+        hermes_shm_host Catch2::Catch2WithMain)
+
 add_executable(test_mp_allocator_multiprocess_exec
         test_mp_allocator_multiprocess.cc)
 add_dependencies(test_mp_allocator_multiprocess_exec hermes_shm_host)
@@ -101,6 +107,9 @@ add_test(NAME ctp_mp_allocator COMMAND
 add_test(NAME ctp_mp_allocator_multithread COMMAND
         ${CMAKE_BINARY_DIR}/bin/test_mp_allocator_exec "[multithread]")
 
+add_test(NAME ctp_mp_reuse COMMAND
+        ${CMAKE_BINARY_DIR}/bin/test_mp_reuse_exec)
+
 add_test(NAME ctp_mp_allocator_multiprocess
         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run_mp_allocator_multiprocess_test.sh
                 ${CMAKE_BINARY_DIR}/bin/test_mp_allocator_multiprocess_exec)
@@ -127,6 +136,7 @@ set_tests_properties(
   ctp_mp_allocator
   ctp_mp_allocator_multithread
   ctp_mp_allocator_multiprocess
+  ctp_mp_reuse
   ctp_buddy_allocator_multiprocess
   PROPERTIES LABELS "msan_skip"
 )
