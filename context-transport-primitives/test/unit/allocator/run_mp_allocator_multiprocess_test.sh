@@ -43,9 +43,14 @@ cleanup() {
 # Set trap to cleanup on exit
 trap cleanup EXIT INT TERM
 
+# Use PID-unique log files to avoid conflicts when tests run in parallel
+LOG0="/tmp/mp_test_rank0_$$.log"
+LOG1="/tmp/mp_test_rank1_$$.log"
+LOG2="/tmp/mp_test_rank2_$$.log"
+
 # Start all three ranks in background
 echo -e "${YELLOW}[Step 1]${NC} Starting rank 0 (${DURATION}s, ${NTHREADS} threads) in background..."
-"$TEST_BINARY" 0 $DURATION $NTHREADS > /tmp/mp_test_rank0.log 2>&1 &
+"$TEST_BINARY" 0 $DURATION $NTHREADS > "$LOG0" 2>&1 &
 RANK0_PID=$!
 echo "Rank 0 PID: $RANK0_PID"
 
@@ -53,12 +58,12 @@ echo "Rank 0 PID: $RANK0_PID"
 sleep 2
 
 echo -e "${YELLOW}[Step 2]${NC} Starting rank 1 (${DURATION}s, ${NTHREADS} threads) in background..."
-"$TEST_BINARY" 1 $DURATION $NTHREADS > /tmp/mp_test_rank1.log 2>&1 &
+"$TEST_BINARY" 1 $DURATION $NTHREADS > "$LOG1" 2>&1 &
 RANK1_PID=$!
 echo "Rank 1 PID: $RANK1_PID"
 
 echo -e "${YELLOW}[Step 3]${NC} Starting rank 2 (${DURATION}s, ${NTHREADS} threads) in background..."
-"$TEST_BINARY" 2 $DURATION $NTHREADS > /tmp/mp_test_rank2.log 2>&1 &
+"$TEST_BINARY" 2 $DURATION $NTHREADS > "$LOG2" 2>&1 &
 RANK2_PID=$!
 echo "Rank 2 PID: $RANK2_PID"
 echo ""
@@ -103,13 +108,13 @@ echo "=========================================="
 # Display logs
 echo ""
 echo "--- Rank 0 Output ---"
-cat /tmp/mp_test_rank0.log
+cat "$LOG0"
 echo ""
 echo "--- Rank 1 Output ---"
-cat /tmp/mp_test_rank1.log
+cat "$LOG1"
 echo ""
 echo "--- Rank 2 Output ---"
-cat /tmp/mp_test_rank2.log
+cat "$LOG2"
 echo ""
 
 # Final result
@@ -119,7 +124,7 @@ if [ $RANK0_EXIT -eq 0 ] && [ $RANK1_EXIT -eq 0 ] && [ $RANK2_EXIT -eq 0 ]; then
     echo -e "==========================================${NC}"
 
     # Cleanup log files
-    rm -f /tmp/mp_test_rank0.log /tmp/mp_test_rank1.log /tmp/mp_test_rank2.log
+    rm -f "$LOG0" "$LOG1" "$LOG2"
 
     exit 0
 else
@@ -131,9 +136,9 @@ else
     echo "Rank 2 exit code: $RANK2_EXIT"
     echo ""
     echo "Log files preserved:"
-    echo "  - /tmp/mp_test_rank0.log"
-    echo "  - /tmp/mp_test_rank1.log"
-    echo "  - /tmp/mp_test_rank2.log"
+    echo "  - $LOG0"
+    echo "  - $LOG1"
+    echo "  - $LOG2"
 
     exit 1
 fi

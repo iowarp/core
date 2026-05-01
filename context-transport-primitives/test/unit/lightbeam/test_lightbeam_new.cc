@@ -58,7 +58,7 @@ class TestMeta : public LbmMeta<> {
 void TestBasicTransfer() {
   std::cout << "\n==== Testing Basic Transfer with New API ====\n";
 
-#ifdef HSHM_ENABLE_ZMQ
+#if HSHM_ENABLE_ZMQ
   // Create server
   std::string addr = "127.0.0.1";
   std::string protocol = "tcp";
@@ -135,7 +135,7 @@ void TestBasicTransfer() {
 void TestMultipleBulks() {
   std::cout << "\n==== Testing Multiple Bulks Transfer ====\n";
 
-#ifdef HSHM_ENABLE_ZMQ
+#if HSHM_ENABLE_ZMQ
   std::string addr = "127.0.0.1";
   std::string protocol = "tcp";
   int port = 8196;

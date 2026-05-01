@@ -5,6 +5,7 @@ if(WRP_CORE_ENABLE_ZMQ)
     add_test(NAME lightbeam_transport_test COMMAND lightbeam_transport_test)
     set_tests_properties(lightbeam_transport_test PROPERTIES
         LABELS "msan_skip"
+        RESOURCE_LOCK "lightbeam_port"
         ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}")
     install(TARGETS lightbeam_transport_test
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -17,6 +18,7 @@ if(WRP_CORE_ENABLE_ZMQ)
     add_test(NAME ctp_lightbeam_new COMMAND test_lightbeam_new)
     set_tests_properties(ctp_lightbeam_new PROPERTIES
         LABELS "msan_skip"
+        RESOURCE_LOCK "lightbeam_port"
         ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}")
     install(TARGETS test_lightbeam_new
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -29,6 +31,7 @@ target_link_libraries(socket_transport_test hermes_shm_host hshm::lightbeam hshm
 add_test(NAME ctp_socket_transport COMMAND socket_transport_test)
 set_tests_properties(ctp_socket_transport PROPERTIES
     LABELS "msan_skip"
+    RESOURCE_LOCK "lightbeam_port"
     ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}")
 install(TARGETS socket_transport_test
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -85,6 +88,7 @@ if(WRP_CORE_ENABLE_ZMQ)
     add_test(NAME ctp_zmq_transport_full COMMAND zmq_transport_full_test)
     set_tests_properties(ctp_zmq_transport_full PROPERTIES
         LABELS "msan_skip"
+        RESOURCE_LOCK "lightbeam_port"
         ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}")
     install(TARGETS zmq_transport_full_test
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -98,6 +102,7 @@ target_link_libraries(socket_transport_full_test hermes_shm_host hshm::lightbeam
 add_test(NAME ctp_socket_transport_full COMMAND socket_transport_full_test)
 set_tests_properties(ctp_socket_transport_full PROPERTIES
     LABELS "msan_skip"
+    RESOURCE_LOCK "lightbeam_port"
     ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}")
 install(TARGETS socket_transport_full_test
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
