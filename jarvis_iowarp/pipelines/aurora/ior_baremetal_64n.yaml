@@ -1,0 +1,16 @@
+# Pipeline: IOR — Aurora baremetal, 64-node × 1 ppn.
+# 64 ranks total writing to /lus/flare. Mirrors the smaller variants.
+
+name: ior_aurora_baremetal_64n
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior
+    api: posix
+    write: true
+    read: true
+    nprocs: 64
+    ppn: 1
+    xfer: 1m
+    block: 256m
+    out: /lus/flare/projects/gpu_hack/llogan/ior_64n.bin

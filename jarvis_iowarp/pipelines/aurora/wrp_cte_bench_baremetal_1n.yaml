@@ -1,0 +1,38 @@
+# Pipeline: WRP CTE benchmark — Aurora baremetal, single-node sanity.
+# Strips bench down to nprocs=1/ppn=1 so we test the end-to-end path
+# (runtime → cte → bench) without any cross-node SWIM coordination.
+# If this passes, repeat with the 2n variant to introduce one cross-
+# node link.
+
+name: wrp_cte_bench_aurora_baremetal_1n
+
+pkgs:
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    pkg_name: runtime
+    num_threads: 4
+    client_data_segment_size: "2G"
+    port: 9413
+    ipc_mode: "tcp"
+    log_level: "info"
+    sleep: 4
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    pkg_name: cte_core
+    devices:
+      - ["ram::cte_ram_tier1", "8GB", 1.0]
+    dpe_type: "max_bw"
+    neighborhood: 1
+    default_target_timeout_ms: 30000
+    poll_period_ms: 5000
+
+  - pkg_type: jarvis_iowarp.wrp_cte_bench
+    pkg_name: cte_bench
+    test_case: "PutGet"
+    num_threads: 1
+    depth: 1
+    io_size: "1m"
+    io_count: 100
+    nprocs: 1
+    ppn: 1
+    init_runtime: false
+    output_file: cte_bench.log

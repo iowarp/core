@@ -34,6 +34,16 @@
 #include "fuse_cte.h"
 
 #include <climits>
+#include <cstring>
+#include <string>
+#include <vector>
+
+#include <fuse3/fuse_lowlevel.h>  // fuse_session_custom_io, struct fuse_custom_io
+#include <sys/uio.h>              // struct iovec, writev
+#include <sys/mount.h>            // mount syscall
+#include <unistd.h>               // read, getuid, getgid
+#include <cerrno>                 // errno
+#include <cstdio>                 // snprintf, fprintf
 
 #include "chimaera/chimaera.h"
 #include "wrp_cte/core/content_transfer_engine.h"
@@ -363,6 +373,100 @@ static const struct fuse_operations cte_fuse_ops = {
     .utimens = cte_fuse_utimens,
 };
 
+// custom_io callbacks: when apptainer hands us an already-mounted
+// /dev/fuse fd, we need to drive the FUSE protocol on that fd directly
+// instead of having libfuse mount its own. Plain read/writev syscalls
+// suffice; splice is optional.
+static ssize_t cte_custom_writev(int fd, struct iovec *iov, int count,
+                                 void * /*userdata*/) {
+  return writev(fd, iov, count);
+}
+static ssize_t cte_custom_read(int fd, void *buf, size_t buf_len,
+                               void * /*userdata*/) {
+  return read(fd, buf, buf_len);
+}
+
 int main(int argc, char *argv[]) {
-  return fuse_main(argc, argv, &cte_fuse_ops, nullptr);
+  // Apptainer's --fusemount opens /dev/fuse on the host, performs the
+  // kernel mount, and passes the fd to the FUSE binary as the last
+  // argv ("/dev/fd/<N>"). libfuse 3's high-level argv parser doesn't
+  // recognize this token (it's a libfuse2-era convention) and aborts
+  // with "fuse: invalid argument '/dev/fd/N'". apptainer also strips
+  // the mountpoint from the argv since it has already mounted, so
+  // there's no fuse_main path that works.
+  //
+  // libfuse 3.14 added fuse_session_custom_io() which lets us drive
+  // the protocol on an existing fd. When we detect /dev/fd/<N> as the
+  // last argv, take the custom-io path; otherwise fall back to the
+  // normal fuse_main mount-and-serve flow (host bare-metal use).
+  int prefd = -1;
+  int new_argc = argc;
+  if (argc >= 2 && std::strncmp(argv[argc - 1], "/dev/fd/", 8) == 0) {
+    prefd = std::atoi(argv[argc - 1] + 8);
+    if (prefd < 0) {
+      prefd = -1;
+    } else {
+      new_argc = argc - 1;  // drop /dev/fd/N from argv
+    }
+  }
+
+  if (prefd == -1) {
+    return fuse_main(argc, argv, &cte_fuse_ops, nullptr);
+  }
+
+  // Apptainer 1.2.5 (unprivileged, no starter-suid) doesn't actually
+  // call mount(2) when --fusemount kicks in for a user-supplied
+  // binary — it only opens /dev/fuse and hands us the fd. We have to
+  // bind that fd to a mountpoint ourselves (this requires CAP_SYS_ADMIN
+  // in the current user_ns, which we have via apptainer's userns
+  // mapping). The mountpoint isn't communicated to us through argv or
+  // env by apptainer, so the caller MUST set WRP_CTE_FUSE_MOUNTPOINT
+  // before exec'ing the FUSE binary via --fusemount.
+  const char *mountpoint = std::getenv("WRP_CTE_FUSE_MOUNTPOINT");
+  if (mountpoint == nullptr) {
+    std::fprintf(stderr,
+                 "wrp_cte_fuse: got pre-opened fd %d but "
+                 "WRP_CTE_FUSE_MOUNTPOINT env var is not set\n", prefd);
+    return 1;
+  }
+  char mount_opts[256];
+  std::snprintf(mount_opts, sizeof(mount_opts),
+                "fd=%d,rootmode=040000,user_id=%u,group_id=%u",
+                prefd, (unsigned)getuid(), (unsigned)getgid());
+  if (mount("nodev", mountpoint, "fuse", MS_NODEV | MS_NOSUID,
+            mount_opts) != 0) {
+    std::fprintf(stderr, "wrp_cte_fuse: mount(\"%s\", fuse) failed: %s\n",
+                 mountpoint, std::strerror(errno));
+    return 1;
+  }
+  std::fprintf(stderr, "wrp_cte_fuse: mounted FUSE at %s with fd=%d\n",
+               mountpoint, prefd);
+
+  struct fuse_args args = FUSE_ARGS_INIT(new_argc, argv);
+  struct fuse *fuse =
+      fuse_new(&args, &cte_fuse_ops, sizeof(cte_fuse_ops), nullptr);
+  if (!fuse) {
+    fuse_opt_free_args(&args);
+    return 1;
+  }
+
+  struct fuse_session *se = fuse_get_session(fuse);
+  static const struct fuse_custom_io custom_io = {
+      .writev = cte_custom_writev,
+      .read = cte_custom_read,
+      .splice_receive = nullptr,
+      .splice_send = nullptr,
+  };
+
+  if (fuse_session_custom_io(se, &custom_io, prefd) != 0) {
+    fuse_destroy(fuse);
+    fuse_opt_free_args(&args);
+    return 1;
+  }
+
+  // Single-threaded loop: simpler, sufficient for adapter testing.
+  int ret = fuse_loop(fuse);
+  fuse_destroy(fuse);
+  fuse_opt_free_args(&args);
+  return ret;
 }

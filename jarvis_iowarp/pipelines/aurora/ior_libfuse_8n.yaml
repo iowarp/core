@@ -1,0 +1,44 @@
+# Pipeline: IOWarp FUSE + IOR — Aurora baremetal, 8 nodes × 1 ppn.
+# Mirrors ior_baremetal_8n.yaml but routes IOR's POSIX I/O through
+# the wrp_cte_libfuse mountpoint instead of writing directly to
+# /lus/flare.
+
+name: iowarp_ior_libfuse_aurora_8n
+
+env:
+  LIGHTBEAM_TCP_DEVICE: hsn0
+
+pkgs:
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    pkg_name: runtime
+    num_threads: 4
+    client_data_segment_size: "2G"
+    port: 9413
+    ipc_mode: "tcp"
+    log_level: "info"
+    sleep: 4
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    pkg_name: cte_core
+    devices:
+      - ["ram::cte_ram_tier1", "8GB", 1.0]
+    dpe_type: "max_bw"
+    neighborhood: 1
+    default_target_timeout_ms: 30000
+    poll_period_ms: 5000
+
+  - pkg_type: jarvis_iowarp.wrp_cte_libfuse
+    pkg_name: cte_fuse
+    mountpoint: /home/llogan/libfuse
+    sleep: 2
+
+  - pkg_type: builtin.ior
+    pkg_name: ior
+    api: posix
+    write: true
+    read: true
+    nprocs: 8
+    ppn: 1
+    xfer: 1m
+    block: 256m
+    out: /home/llogan/libfuse/ior_8n.bin
