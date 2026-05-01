@@ -310,12 +310,17 @@ class Adios2GrayScott(Application):
 
         cmd = f'gray-scott {self.settings_json_path}'
 
+        # Export IOWARP_PPN so IowarpEngine can compute local-rank-within-node
+        # for its connect-stagger (12 ranks → daemon's local 9416 ROUTER).
+        env = dict(self.mod_env) if self.mod_env else {}
+        env['IOWARP_PPN'] = str(cfg['ppn'])
+
         self.process = Exec(cmd, MpiExecInfo(
             nprocs=cfg['nprocs'],
             ppn=cfg['ppn'],
             hostfile=self.hostfile,
             port=self.ssh_port,
-            env=self.mod_env,
+            env=env,
             exec_async=cfg['run_async'],
             container=self._container_engine,
             container_image=self.deploy_image_name(),
