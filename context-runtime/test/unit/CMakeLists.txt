@@ -1237,22 +1237,30 @@ if(WRP_CORE_ENABLE_MPI)
     # 4-rank test: server + SHM + TCP + IPC clients
     add_test(
       NAME cr_mpi_bdev_transport_all_modes
-      COMMAND mpirun -n 4 ${CMAKE_BINARY_DIR}/bin/${MPI_BDEV_TRANSPORT_TEST_TARGET}
+      COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 4
+              ${MPIEXEC_PREFLAGS}
+              ${CMAKE_BINARY_DIR}/bin/${MPI_BDEV_TRANSPORT_TEST_TARGET}
+              ${MPIEXEC_POSTFLAGS}
       WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
     set_tests_properties(cr_mpi_bdev_transport_all_modes PROPERTIES
       ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+      RESOURCE_LOCK "chimaera_runtime_port"
       TIMEOUT 300
     )
 
     # 2-rank test: server + TCP client (minimal)
     add_test(
       NAME cr_mpi_bdev_transport_minimal
-      COMMAND mpirun -n 2 ${CMAKE_BINARY_DIR}/bin/${MPI_BDEV_TRANSPORT_TEST_TARGET}
+      COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+              ${MPIEXEC_PREFLAGS}
+              ${CMAKE_BINARY_DIR}/bin/${MPI_BDEV_TRANSPORT_TEST_TARGET}
+              ${MPIEXEC_POSTFLAGS}
       WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
     set_tests_properties(cr_mpi_bdev_transport_minimal PROPERTIES
       ENVIRONMENT "CHI_REPO_PATH=${CMAKE_BINARY_DIR}/bin;LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/bin:$ENV{LD_LIBRARY_PATH}"
+      RESOURCE_LOCK "chimaera_runtime_port"
       TIMEOUT 180
     )
   endif()
