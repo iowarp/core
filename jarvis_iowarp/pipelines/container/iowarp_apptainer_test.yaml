@@ -25,6 +25,19 @@ name: iowarp_apptainer_test
 # rail, causing silent drops at scale (PR #399).
 env:
   LIGHTBEAM_TCP_DEVICE: hsn0
+  # At >=64 chimaera nodes, the daemon's ROUTER on 127.0.0.1:9416 is
+  # busy serving cross-node SWIM probes when chimaera-compose tries to
+  # connect, so the default 30s WaitForLocalServer expires before the
+  # daemon's ZMTP greeting completes — observed as
+  # HANDSHAKE_FAILED_NO_DETAIL value=32 (EPIPE) on the daemon's
+  # ROUTER monitor when the compose DEALER gives up. 300s gives the
+  # daemon plenty of time to answer.
+  CHI_WAIT_SERVER: "300"
+  CHI_RETRY_TIMEOUT: "300"
+  # Bump ZMQ I/O threads inside the chimaera daemon to handle the
+  # 1023-peer cross-node SWIM probe storm at scale (default 2
+  # saturates at >=64 nodes).
+  CHI_ZMQ_IO_THREADS: "8"
 
 install_manager: container
 container_engine: apptainer
@@ -46,8 +59,25 @@ pkgs:
     git_branch: transparent-compress-router-port-offset
     cmake_preset: release-adapter
     port: 9413
-    sleep: 2
-    log_level: debug
+    # 60s post-startup sleep before wrp_cte compose. At >=64 chimaera
+    # daemons, SWIM probe round + initial cross-node DEALER warmup
+    # takes longer than the prior 2s; compose then races the
+    # half-formed cluster and fails ZMTP greeting (ACCEPTED ->
+    # HANDSHAKE_FAILED_NO_DETAIL value=32 loop on 127.0.0.1:9416).
+    sleep: 60
+    # log_level was 'debug' — at 512 nodes the daemon emits ~16GB of
+    # logs in 30 min and the accept thread starves on log I/O while
+    # 12 ranks per node are simultaneously trying to connect to the
+    # local 9416 ROUTER. 'warning' keeps just the ZMQ monitor events
+    # we need for diagnostics.
+    log_level: warning
+    # IPC mode: local clients (gray-scott ranks) talk to the daemon
+    # over a Unix domain socket instead of TCP. This bypasses ZMTP
+    # greeting handshake entirely for the same-node case (the only
+    # case for IowarpEngine), so it's not subject to the 9416 ROUTER
+    # accept-storm at 6144-rank scale. Cross-node DEALER traffic
+    # still uses TCP on port 9413.
+    ipc_mode: ipc
 
   - pkg_type: jarvis_iowarp.wrp_cte
     deploy_mode: container
