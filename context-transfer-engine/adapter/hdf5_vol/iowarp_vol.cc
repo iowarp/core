@@ -22,6 +22,12 @@
 #include <memory>
 
 #include <chimaera/chimaera.h>
+/* transport_factory_impl.h provides the inline definitions of
+   hshm::lbm::Transport::ClearRecvHandles / Send<...>. They are required
+   when AsyncPutBlob template-instantiates here (it doesn't fire from
+   chimaera.h alone). Without this include the linker leaves the
+   templated symbols undefined in our .so. */
+#include <hermes_shm/lightbeam/transport_factory_impl.h>
 #include <wrp_cte/core/core_client.h>
 #include <wrp_cte/core/core_tasks.h>
 #include <wrp_cte/core/content_transfer_engine.h>
@@ -30,9 +36,17 @@
  * Internal state structures
  * ======================================================================== */
 
+struct iowarp_file_t;  /* fwd */
+
+/* parent_file points to the iowarp_file_t this object belongs to. For
+   files it is a self-pointer; for groups, datasets, attributes it is
+   inherited from the containing file/group at create-time. The
+   dataset_t branch reads it to find the CTE tag for AsyncPutBlob /
+   AsyncGetBlob. */
 struct iowarp_obj_t {
-  void  *under_object;
-  hid_t  under_vol_id;
+  void           *under_object;
+  hid_t           under_vol_id;
+  iowarp_file_t  *parent_file;
 };
 
 struct iowarp_file_t {
@@ -99,10 +113,14 @@ static herr_t iowarp_get_wrap_ctx(const void *obj, void **wrap_ctx) {
 static void *iowarp_wrap_object(void *under_obj, H5I_type_t obj_type,
                                 void *wrap_ctx) {
   (void)obj_type; (void)wrap_ctx;
-  /* For passthrough objects (groups, attributes, etc.) */
+  /* For passthrough objects (groups, attributes, etc.). We don't have a
+     way to recover the parent file from wrap_ctx (HDF5's wrap context
+     is the native VOL's, not ours), so leave parent_file null —
+     anything created from this obj will fall back to native VOL. */
   auto *o = new iowarp_obj_t;
   o->under_object = under_obj;
   o->under_vol_id = H5VL_NATIVE;
+  o->parent_file = nullptr;
   return o;
 }
 
@@ -167,6 +185,7 @@ static void *iowarp_file_create(const char *name, unsigned flags,
   auto *file = new iowarp_file_t;
   file->obj.under_object = under_file;
   file->obj.under_vol_id = H5VL_NATIVE;
+  file->obj.parent_file = file;          /* self-pointer */
   file->tag_id = tag_task->tag_id_;
   file->file_name = name;
   file->chunk_size = chunk_size;
@@ -198,6 +217,7 @@ static void *iowarp_file_open(const char *name, unsigned flags,
   auto *file = new iowarp_file_t;
   file->obj.under_object = under_file;
   file->obj.under_vol_id = H5VL_NATIVE;
+  file->obj.parent_file = file;          /* self-pointer */
   file->tag_id = tag_task->tag_id_;
   file->file_name = name;
   file->chunk_size = chunk_size;
@@ -234,18 +254,23 @@ static herr_t iowarp_file_close(void *obj, hid_t dxpl_id, void **req) {
 
 /**
  * Helper: extract the iowarp_file_t from an obj pointer.
- * The obj may be a file, group, or dataset — walk up to find the file.
- * For groups/datasets created from the file, file pointer is stored;
- * for generic iowarp_obj_t (from group passthrough), we use a nullptr
- * file which disables CTE interception (pure passthrough).
+ *
+ * Every wrapper (file, group, dataset, attr) has an iowarp_obj_t as its
+ * first member with a parent_file pointer. Files set it to themselves;
+ * groups inherit it from their parent; datasets/attrs inherit it from
+ * their containing file or group.
+ *
+ * If obj came in without parent_file populated (e.g. from
+ * iowarp_wrap_object where the wrap context didn't include a file
+ * reference), this returns nullptr and the caller falls back to pure
+ * native-VOL passthrough.
  */
 static iowarp_file_t *find_parent_file(void *obj) {
-  /* iowarp_file_t, iowarp_dataset_t, and iowarp_obj_t all start with
-     iowarp_obj_t as first member, so this cast is always safe for
-     reading under_object / under_vol_id. But only iowarp_file_t has
-     the CTE tag. We use a simple heuristic: if it's a file, it has
-     a non-empty file_name. */
-  return nullptr;  /* CTE interception via tag requires the file handle */
+  if (!obj) return nullptr;
+  /* All iowarp wrappers (iowarp_obj_t, iowarp_file_t, iowarp_dataset_t)
+     start with iowarp_obj_t as their first member, so reading
+     parent_file via this cast is safe. */
+  return static_cast<iowarp_obj_t *>(obj)->parent_file;
 }
 
 static void *iowarp_dataset_create(void *obj,
@@ -265,10 +290,8 @@ static void *iowarp_dataset_create(void *obj,
   auto *dset = new iowarp_dataset_t;
   dset->obj.under_object = under_dset;
   dset->obj.under_vol_id = o->under_vol_id;
-  /* CTE interception via the file tag requires a real iowarp_file_t; we
-     don't have one here because `obj` comes in already-unwrapped. Leave
-     as nullptr → fall through to native VOL for writes/reads. */
-  dset->file = nullptr;
+  dset->file = find_parent_file(obj);
+  dset->obj.parent_file = dset->file;
   dset->dataset_path = name ? name : "";
 
   return dset;
@@ -288,7 +311,8 @@ static void *iowarp_dataset_open(void *obj,
   auto *dset = new iowarp_dataset_t;
   dset->obj.under_object = under_dset;
   dset->obj.under_vol_id = o->under_vol_id;
-  dset->file = nullptr;
+  dset->file = find_parent_file(obj);
+  dset->obj.parent_file = dset->file;
   dset->dataset_path = name ? name : "";
 
   return dset;
@@ -504,6 +528,7 @@ static void *iowarp_group_create(void *obj,
   auto *grp = new iowarp_obj_t;
   grp->under_object = under;
   grp->under_vol_id = o->under_vol_id;
+  grp->parent_file = o->parent_file;     /* inherit from parent */
   return grp;
 }
 
@@ -519,6 +544,7 @@ static void *iowarp_group_open(void *obj,
   auto *grp = new iowarp_obj_t;
   grp->under_object = under;
   grp->under_vol_id = o->under_vol_id;
+  grp->parent_file = o->parent_file;     /* inherit from parent */
   return grp;
 }
 
@@ -558,6 +584,7 @@ static void *iowarp_attr_create(void *obj,
   auto *attr = new iowarp_obj_t;
   attr->under_object = under;
   attr->under_vol_id = o->under_vol_id;
+  attr->parent_file = o->parent_file;
   return attr;
 }
 
@@ -572,6 +599,7 @@ static void *iowarp_attr_open(void *obj,
   auto *attr = new iowarp_obj_t;
   attr->under_object = under;
   attr->under_vol_id = o->under_vol_id;
+  attr->parent_file = o->parent_file;
   return attr;
 }
 
@@ -664,6 +692,7 @@ static void *iowarp_object_open(void *obj,
   auto *wrapped = new iowarp_obj_t;
   wrapped->under_object = under;
   wrapped->under_vol_id = o->under_vol_id;
+  wrapped->parent_file = o->parent_file;
   return wrapped;
 }
 
