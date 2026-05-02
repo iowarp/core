@@ -160,11 +160,14 @@ class SocketTransport : public Transport {
 
   ~SocketTransport() {
     if (IsClient()) {
+      if (em_) em_->RemoveEvent(fd_);
       sock::Close(fd_);
     } else {
       for (auto fd : client_fds_) {
+        if (em_) em_->RemoveEvent(fd);
         sock::Close(fd);
       }
+      if (em_) em_->RemoveEvent(listen_fd_);
       sock::Close(listen_fd_);
       if (protocol_ == "ipc") {
         sock::UnlinkPath(addr_.c_str());
@@ -328,6 +331,11 @@ class SocketTransport : public Transport {
           continue;
         }
         if (info.rc != 0) {
+          // Drop epoll registration BEFORE close so the kernel can't
+          // recycle the fd number and leave a stale entry in
+          // EventManager::fd_to_reg_ (which would later trip MOD->ENOENT
+          // when a fresh accept() picked the same number).
+          em_->RemoveEvent(fd);
           sock::Close(fd);
           client_fds_.erase(
               std::remove(client_fds_.begin(), client_fds_.end(), fd),
@@ -348,6 +356,7 @@ class SocketTransport : public Transport {
       info.fd_ = fd;
       if (info.rc == EAGAIN) continue;
       if (info.rc != 0) {
+        if (em_) em_->RemoveEvent(fd);
         sock::Close(fd);
         client_fds_.erase(client_fds_.begin() + i);
         return info;

@@ -32,7 +32,12 @@ bool IpcCpu2CpuZmq::RuntimeRecv(IpcManager *ipc, u32 &tasks_received) {
       int rc = recv_info.rc;
       if (rc == EAGAIN) break;
       if (rc != 0) {
-        HLOG(kError, "IpcCpu2CpuZmq::RuntimeRecv: Recv failed: {}", rc);
+        // -1 here is overwhelmingly "peer closed the socket" (RecvExact
+        // returns -1 on EOF). The lightbeam SocketTransport already cleaned
+        // up the dead fd inside Recv(); breaking out and retrying is the
+        // correct behavior. Demote to kDebug so a routine client exit
+        // doesn't spam the runtime log with kError lines.
+        HLOG(kDebug, "IpcCpu2CpuZmq::RuntimeRecv: Recv failed: {}", rc);
         break;
       }
 

@@ -68,23 +68,64 @@ class EventManager {
     ev.data.fd = fd;
     auto it = fd_to_reg_.find(fd);
     if (it != fd_to_reg_.end()) {
+      // Stale-entry-safe MOD: callers (e.g. socket_transport on accept of a
+      // recycled fd number) can leave fd_to_reg_ holding a dangling entry
+      // while the kernel auto-dropped the fd from epoll on close. ENOENT
+      // here means "fd not in epoll" — recover by promoting the call to
+      // EPOLL_CTL_ADD instead of erroring out.
       if (epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev) == -1) {
-        HLOG(kError,
-             "EventManager::AddEvent: epoll_ctl MOD failed for fd={}: {}", fd,
-             strerror(errno));
-        return -1;
+        if (errno == ENOENT) {
+          if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev) == -1) {
+            HLOG(kError,
+                 "EventManager::AddEvent: MOD->ADD fallback failed for fd={}: {}",
+                 fd, strerror(errno));
+            return -1;
+          }
+        } else {
+          HLOG(kError,
+               "EventManager::AddEvent: epoll_ctl MOD failed for fd={}: {}", fd,
+               strerror(errno));
+          return -1;
+        }
       }
       it->second.action_ = action;
       return it->second.event_id_;
     }
     int event_id = next_event_id_++;
     if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev) == -1) {
-      HLOG(kError, "EventManager::AddEvent: epoll_ctl ADD failed for fd={}: {}",
-           fd, strerror(errno));
-      return -1;
+      // Symmetric recovery for the rare case where the kernel still has the
+      // fd registered (e.g. another caller added it) but our local map is
+      // empty — promote to MOD.
+      if (errno == EEXIST &&
+          epoll_ctl(epoll_fd_, EPOLL_CTL_MOD, fd, &ev) != -1) {
+        // ok
+      } else {
+        HLOG(kError,
+             "EventManager::AddEvent: epoll_ctl ADD failed for fd={}: {}",
+             fd, strerror(errno));
+        return -1;
+      }
     }
     fd_to_reg_[fd] = {fd, event_id, action};
     return event_id;
+  }
+
+  /** Remove an fd from epoll and the bookkeeping map.
+   *  Must be called *before* sock::Close(fd); otherwise the kernel may
+   *  recycle the fd number for a different file and a later AddEvent call
+   *  trips MOD on a dangling entry. ENOENT here is benign — the fd was
+   *  already absent from epoll. */
+  void RemoveEvent(int fd) {
+    auto it = fd_to_reg_.find(fd);
+    if (it == fd_to_reg_.end()) {
+      return;
+    }
+    if (epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr) == -1 &&
+        errno != ENOENT && errno != EBADF) {
+      HLOG(kError, "EventManager::RemoveEvent: epoll_ctl DEL fd={}: {}", fd,
+           strerror(errno));
+    }
+    fd_to_reg_.erase(it);
   }
 
   int AddSignalEvent(EventAction *action = nullptr) {
