@@ -76,12 +76,27 @@ class Pthread : public ThreadModel {
 #endif
   }
 
-  /** Yield thread time slice */
+  /** Yield thread time slice.
+   *
+   * Used inside tight spin loops while waiting on an atomic flag (e.g. ring
+   * buffer Recv, FUTURE_COMPLETE polling). It MUST be cheap — Linux rounds
+   * any nanosleep below the hrtimer slack (~50µs by default) UP to that
+   * slack, which destroys IPC latency. A previous implementation called
+   * nanosleep({0, 100ns}); each call actually slept ~54µs and inflated
+   * single-RTT SHM latency from ~1µs to ~58µs. Use a CPU pause hint
+   * instead — it is <20ns, is a no-op for correctness, and lets the CPU
+   * relax branch prediction / pipeline. Callers that want to back off to
+   * sched_yield or to truly sleep should escalate explicitly. */
   HSHM_CROSS_FUN
   void Yield() {
 #if HSHM_IS_HOST
-    struct timespec ts = {0, 100};
-    nanosleep(&ts, nullptr);
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__) || defined(__arm__)
+    __asm__ __volatile__("yield" ::: "memory");
+#else
+    sched_yield();
+#endif
 #endif
   }
 

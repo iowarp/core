@@ -51,10 +51,13 @@ chi::Future<TaskT> IpcCpu2Gpu::ClientSend(
   memcpy(pinned_buf, reinterpret_cast<const char *>(task_ptr.ptr_),
          task_size);
 
-  // Initialize FutureShm (co-located after task in pinned host)
+  // Initialize FutureShm (co-located after task in pinned host).
+  // Cast to void* to silence -Wclass-memaccess: the struct has non-trivial
+  // members (atomics) but zero-initialization of its bytes is the intended
+  // start state; the field assignments below set the live values.
   auto *host_fshm = reinterpret_cast<gpu::FutureShm *>(
       pinned_buf + task_size);
-  memset(host_fshm, 0, sizeof(gpu::FutureShm));
+  memset(static_cast<void *>(host_fshm), 0, sizeof(gpu::FutureShm));
   host_fshm->pool_id_ = task_ptr->pool_id_;
   host_fshm->method_id_ = task_ptr->method_;
   host_fshm->origin_ = gpu::FutureShm::FUTURE_CLIENT_CPU2GPU;
@@ -100,7 +103,11 @@ bool IpcCpu2Gpu::ClientRecv(Future<TaskT, AllocT> &future, float max_sec) {
   // CPU can read pinned host without cudaMemcpy.
   void *pinned_task = reinterpret_cast<void *>(fshm->task_device_ptr_);
   if (future.task_ptr_.ptr_ && pinned_task) {
-    memcpy(future.task_ptr_.ptr_, pinned_task, sizeof(TaskT));
+    // Intentional raw POD copy: TaskT is layout-compatible with bytes on the
+    // GPU side, and FixupAfterCopy() below re-seats any inline pointer fields
+    // (e.g. priv::vector SVO). Cast to void* to silence -Wclass-memaccess.
+    memcpy(static_cast<void *>(future.task_ptr_.ptr_), pinned_task,
+           sizeof(TaskT));
     future.task_ptr_->FixupAfterCopy();
   }
   return true;
